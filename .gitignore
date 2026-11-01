@@ -1,0 +1,48 @@
+# cache
+/.cache/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache
+.ruff_cache
+.coverage
+
+# installed packages
+*.dist-info/
+*.egg-info/
+
+# profiling data
+*.nsys-rep
+*.ncu-rep
+htmlcov/
+
+# binaries
+build/
+dist/
+*.tar.gz
+
+# virtual environment
+.venv*/
+venv/
+# AV-sync checkout of the dubbing lip-sync step (scripts/setup_dub_align_env.sh)
+/.avsync/
+env/
+
+# clangd config
+.clangd
+
+# .vscode
+.vscode/
+
+# logs
+/logs
+
+# locally converted model checkpoints
+/checkpoints/
+
+# personal files
+default_voices/*
+!default_voices/AmericanFemale.mp3
+!default_voices/AmericanMale.mp3
+!default_voices/BritishFemale.mp3
+steering/**/pooled.npz

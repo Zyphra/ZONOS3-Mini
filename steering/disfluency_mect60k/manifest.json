@@ -1,0 +1,37 @@
+{
+ "dim": 1024,
+ "space": "attnres_source",
+ "checkpoint": "/data/groups/audio/gabriel/hf_release_zonos3mini_20261020/lm/mect_60k",
+ "corpus": "/data/groups/audio/sofian/runs/steer_corpora/disfluency/clips.json",
+ "spec": {
+  "space": "attnres_source",
+  "source_index": 19,
+  "group_by": "clip",
+  "directions": {
+   "disfluent": {
+    "regress": "disfl",
+    "within": "corpus",
+    "kind": "axis",
+    "poles": {
+     "+": "hesitant, fillers",
+     "-": "fluent"
+    }
+   }
+  },
+  "holdout": "clip"
+ },
+ "directions": {
+  "disfluent": {
+   "file": "disfluent.npy",
+   "kind": "axis",
+   "norm": 0.007459484146172073,
+   "poles": {
+    "+": "hesitant, fillers",
+    "-": "fluent"
+   }
+  }
+ },
+ "source_index": 19,
+ "source_name": "L9.attn",
+ "prompt_conditioning": "speaker_row=no,condition_rows=3:unknown"
+}

@@ -1,0 +1,355 @@
+{
+ "british": {
+  "norm": 1.6460160023035668,
+  "removed_share": 0.007576180840087932,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "vctk",
+      "accent": "English"
+     },
+     {
+      "corpus": "vctk",
+      "accent": "American"
+     }
+    ],
+    "train_speakers": [
+     26,
+     18
+    ],
+    "held_out_speakers": [
+     7,
+     3
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.7703393669925056
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "accent": "UK"
+     },
+     {
+      "corpus": "voxceleb",
+      "accent": "USA"
+     }
+    ],
+    "train_speakers": [
+     119,
+     122
+    ],
+    "held_out_speakers": [
+     31,
+     28
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.9871124902132461
+   }
+  ]
+ },
+ "american": {
+  "norm": 1.6460160023035668,
+  "removed_share": 0.007576180840087932,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "vctk",
+      "accent": "American"
+     },
+     {
+      "corpus": "vctk",
+      "accent": "English"
+     }
+    ],
+    "train_speakers": [
+     18,
+     26
+    ],
+    "held_out_speakers": [
+     3,
+     7
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.7703393669925056
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "accent": "USA"
+     },
+     {
+      "corpus": "voxceleb",
+      "accent": "UK"
+     }
+    ],
+    "train_speakers": [
+     122,
+     119
+    ],
+    "held_out_speakers": [
+     28,
+     31
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.9871124902132461
+   }
+  ]
+ },
+ "scottish": {
+  "norm": 1.5993952256562336,
+  "removed_share": 0.03577474487574517,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "vctk",
+      "accent": "Scottish"
+     },
+     {
+      "corpus": "vctk",
+      "accent": "American"
+     }
+    ],
+    "train_speakers": [
+     13,
+     18
+    ],
+    "held_out_speakers": [
+     6,
+     3
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.8626585135708608
+   },
+   {
+    "pair": [
+     {
+      "corpus": "english_dialects",
+      "accent": "scottish"
+     },
+     {
+      "corpus": "english_dialects",
+      "accent": "southern"
+     },
+     "+british"
+    ],
+    "train_speakers": [
+     11,
+     29
+    ],
+    "held_out_speakers": [
+     0,
+     2
+    ],
+    "held_out_auc": NaN,
+    "cos_with_direction": 0.8712762474012816
+   }
+  ]
+ },
+ "irish": {
+  "norm": 1.4670428877353188,
+  "removed_share": 0.030458260083314648,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "vctk",
+      "accent": "Irish"
+     },
+     {
+      "corpus": "vctk",
+      "accent": "American"
+     }
+    ],
+    "train_speakers": [
+     7,
+     18
+    ],
+    "held_out_speakers": [
+     2,
+     3
+    ],
+    "held_out_auc": 0.8333333333333334,
+    "cos_with_direction": 0.6602647548397248
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "accent": "Ireland"
+     },
+     {
+      "corpus": "voxceleb",
+      "accent": "USA"
+     }
+    ],
+    "train_speakers": [
+     12,
+     122
+    ],
+    "held_out_speakers": [
+     3,
+     28
+    ],
+    "held_out_auc": 0.9523809523809523,
+    "cos_with_direction": 0.8712574614439489
+   },
+   {
+    "pair": [
+     {
+      "corpus": "english_dialects",
+      "accent": "irish"
+     },
+     {
+      "corpus": "english_dialects",
+      "accent": "southern"
+     },
+     "+british"
+    ],
+    "train_speakers": [
+     2,
+     29
+    ],
+    "held_out_speakers": [
+     1,
+     2
+    ],
+    "held_out_auc": 0.0,
+    "cos_with_direction": 0.521591606405971
+   }
+  ]
+ },
+ "australian": {
+  "norm": 1.6846640382867135,
+  "removed_share": 0.0028896926186066096,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "vctk",
+      "accent": "Australian"
+     },
+     {
+      "corpus": "vctk",
+      "accent": "American"
+     }
+    ],
+    "train_speakers": [
+     2,
+     18
+    ],
+    "held_out_speakers": [
+     0,
+     3
+    ],
+    "held_out_auc": NaN,
+    "cos_with_direction": 0.605634548678038
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "accent": "Australia"
+     },
+     {
+      "corpus": "voxceleb",
+      "accent": "USA"
+     }
+    ],
+    "train_speakers": [
+     28,
+     122
+    ],
+    "held_out_speakers": [
+     9,
+     28
+    ],
+    "held_out_auc": 0.996031746031746,
+    "cos_with_direction": 0.992472713119429
+   }
+  ]
+ },
+ "indian": {
+  "norm": 1.9338742609604493,
+  "removed_share": 0.005098340575824034,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "vctk",
+      "accent": "Indian"
+     },
+     {
+      "corpus": "vctk",
+      "accent": "American"
+     }
+    ],
+    "train_speakers": [
+     1,
+     18
+    ],
+    "held_out_speakers": [
+     2,
+     3
+    ],
+    "held_out_auc": 0.5,
+    "cos_with_direction": 0.4830369027020469
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "accent": "India"
+     },
+     {
+      "corpus": "voxceleb",
+      "accent": "USA"
+     }
+    ],
+    "train_speakers": [
+     17,
+     122
+    ],
+    "held_out_speakers": [
+     8,
+     28
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.9885687008346927
+   }
+  ]
+ },
+ "welsh": {
+  "norm": 1.694260713795206,
+  "removed_share": 0.0015759263052679273,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "english_dialects",
+      "accent": "welsh"
+     },
+     {
+      "corpus": "english_dialects",
+      "accent": "southern"
+     },
+     "+british"
+    ],
+    "train_speakers": [
+     10,
+     29
+    ],
+    "held_out_speakers": [
+     1,
+     2
+    ],
+    "held_out_auc": 0.5,
+    "cos_with_direction": 0.9992117261595422
+   }
+  ]
+ }
+}

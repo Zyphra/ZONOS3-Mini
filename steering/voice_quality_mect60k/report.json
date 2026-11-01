@@ -1,0 +1,494 @@
+{
+ "deep": {
+  "norm": 0.5765019744974527,
+  "removed_share": 0.10945321039375322,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_deep": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_deep": false
+     }
+    ],
+    "train_speakers": [
+     3,
+     154
+    ],
+    "held_out_speakers": [
+     0,
+     41
+    ],
+    "held_out_auc": NaN,
+    "cos_with_direction": 0.11488527191150882
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_deep": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_deep": false
+     }
+    ],
+    "train_speakers": [
+     130,
+     157
+    ],
+    "held_out_speakers": [
+     33,
+     50
+    ],
+    "held_out_auc": 0.7606060606060606,
+    "cos_with_direction": 0.9142597249486913
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_deep": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_deep": false
+     }
+    ],
+    "train_speakers": [
+     23,
+     11
+    ],
+    "held_out_speakers": [
+     6,
+     3
+    ],
+    "held_out_auc": 0.5555555555555556,
+    "cos_with_direction": 0.3460187357905659
+   }
+  ]
+ },
+ "shrill": {
+  "norm": 0.8610223457716267,
+  "removed_share": 0.02757108513296458,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_shrill": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_shrill": false
+     }
+    ],
+    "train_speakers": [
+     31,
+     126
+    ],
+    "held_out_speakers": [
+     11,
+     30
+    ],
+    "held_out_auc": 0.6303030303030303,
+    "cos_with_direction": 0.8598823635483033
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_shrill": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_shrill": false
+     }
+    ],
+    "train_speakers": [
+     8,
+     279
+    ],
+    "held_out_speakers": [
+     0,
+     83
+    ],
+    "held_out_auc": NaN,
+    "cos_with_direction": 0.5593689746627238
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "female",
+      "q_shrill": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "female",
+      "q_shrill": false
+     }
+    ],
+    "train_speakers": [
+     7,
+     38
+    ],
+    "held_out_speakers": [
+     2,
+     17
+    ],
+    "held_out_auc": 0.29411764705882354,
+    "cos_with_direction": 0.37461099441188345
+   }
+  ]
+ },
+ "husky": {
+  "norm": 0.5867545131746184,
+  "removed_share": 0.048480306527915906,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_husky": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_husky": false
+     }
+    ],
+    "train_speakers": [
+     4,
+     153
+    ],
+    "held_out_speakers": [
+     1,
+     40
+    ],
+    "held_out_auc": 1.0,
+    "cos_with_direction": 0.4102496595275657
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_husky": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_husky": false
+     }
+    ],
+    "train_speakers": [
+     46,
+     241
+    ],
+    "held_out_speakers": [
+     11,
+     72
+    ],
+    "held_out_auc": 0.4659090909090909,
+    "cos_with_direction": 0.8882408911887717
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_husky": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_husky": false
+     }
+    ],
+    "train_speakers": [
+     9,
+     25
+    ],
+    "held_out_speakers": [
+     1,
+     8
+    ],
+    "held_out_auc": 0.5,
+    "cos_with_direction": 0.32969608139006235
+   }
+  ]
+ },
+ "raspy": {
+  "norm": 0.8753706576316298,
+  "removed_share": 0.006941417346383316,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_raspy": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_raspy": false
+     }
+    ],
+    "train_speakers": [
+     14,
+     143
+    ],
+    "held_out_speakers": [
+     1,
+     40
+    ],
+    "held_out_auc": 0.975,
+    "cos_with_direction": 0.7169767019735188
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_raspy": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_raspy": false
+     }
+    ],
+    "train_speakers": [
+     34,
+     253
+    ],
+    "held_out_speakers": [
+     15,
+     68
+    ],
+    "held_out_auc": 0.5666666666666667,
+    "cos_with_direction": 0.8540833566436784
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "female",
+      "q_raspy": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "female",
+      "q_raspy": false
+     }
+    ],
+    "train_speakers": [
+     5,
+     40
+    ],
+    "held_out_speakers": [
+     0,
+     19
+    ],
+    "held_out_auc": NaN,
+    "cos_with_direction": 0.40845282298831853
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_raspy": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_raspy": false
+     }
+    ],
+    "train_speakers": [
+     3,
+     31
+    ],
+    "held_out_speakers": [
+     2,
+     7
+    ],
+    "held_out_auc": 0.7142857142857143,
+    "cos_with_direction": 0.30758249206693555
+   }
+  ]
+ },
+ "soft": {
+  "norm": 0.722508601574993,
+  "removed_share": 0.006702683106764029,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_soft": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_soft": false
+     }
+    ],
+    "train_speakers": [
+     13,
+     144
+    ],
+    "held_out_speakers": [
+     3,
+     38
+    ],
+    "held_out_auc": 0.32456140350877194,
+    "cos_with_direction": 0.5949769185774906
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_soft": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_soft": false
+     }
+    ],
+    "train_speakers": [
+     14,
+     273
+    ],
+    "held_out_speakers": [
+     5,
+     78
+    ],
+    "held_out_auc": 0.5871794871794872,
+    "cos_with_direction": 0.6773755439423391
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "female",
+      "q_soft": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "female",
+      "q_soft": false
+     }
+    ],
+    "train_speakers": [
+     6,
+     39
+    ],
+    "held_out_speakers": [
+     6,
+     13
+    ],
+    "held_out_auc": 0.3076923076923077,
+    "cos_with_direction": 0.6324648783698372
+   }
+  ]
+ },
+ "authoritative": {
+  "norm": 0.6506623679403928,
+  "removed_share": 0.20802959135494703,
+  "pairs": [
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_authoritative": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "female",
+      "q_authoritative": false
+     }
+    ],
+    "train_speakers": [
+     13,
+     144
+    ],
+    "held_out_speakers": [
+     1,
+     40
+    ],
+    "held_out_auc": 0.825,
+    "cos_with_direction": 0.5232440873318961
+   },
+   {
+    "pair": [
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_authoritative": true
+     },
+     {
+      "corpus": "voxceleb",
+      "gender": "male",
+      "q_authoritative": false
+     }
+    ],
+    "train_speakers": [
+     50,
+     237
+    ],
+    "held_out_speakers": [
+     20,
+     63
+    ],
+    "held_out_auc": 0.6182539682539683,
+    "cos_with_direction": 0.7992828966285668
+   },
+   {
+    "pair": [
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_authoritative": true
+     },
+     {
+      "corpus": "ears",
+      "gender": "male",
+      "q_authoritative": false
+     }
+    ],
+    "train_speakers": [
+     10,
+     24
+    ],
+    "held_out_speakers": [
+     0,
+     9
+    ],
+    "held_out_auc": NaN,
+    "cos_with_direction": 0.33020482115861616
+   }
+  ]
+ }
+}

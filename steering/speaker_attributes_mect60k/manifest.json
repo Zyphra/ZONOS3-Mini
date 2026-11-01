@@ -1,0 +1,50 @@
+{
+  "dim": 192,
+  "input_dim": 192,
+  "space": "raw",
+  "speaker_codec": "ownmect_s2",
+  "ref_base_norm": 3.5114699447297797,
+  "corpus": "/data/groups/audio/sofian/bingua2-gdn-emotion/minisgl/speaker_corpus_libritts_ears/clips.json",
+  "labeller": "audeering/wav2vec2-large-robust-24-ft-age-gender",
+  "train_speakers": 850,
+  "age_gap_years": 27.869893920918308,
+  "checkpoint": "/data/groups/audio/gabriel/hf_release_zonos3mini_20261020/lm/mect_60k",
+  "checks": {
+    "gender_norm": 1.8763586747638452,
+    "age_norm": 1.2692715820938114,
+    "cos_age_gender": -0.16108777352606762,
+    "held_out": {
+      "n": 218,
+      "gender_auc": 1.0,
+      "age_spearman_female": 0.8699309930993099,
+      "age_spearman_male": 0.7659840989850961
+    },
+    "ears": {
+      "n": 99,
+      "gender_auc": 0.9327242524916943,
+      "age_spearman_female": 0.6403964456596036,
+      "age_spearman_male": 0.5382059800664452
+    }
+  },
+  "directions": {
+    "gender": {
+      "file": "gender.npy",
+      "kind": "axis",
+      "norm": 1.8763586747638452,
+      "poles": {
+        "+": "female",
+        "-": "male"
+      }
+    },
+    "age": {
+      "file": "age.npy",
+      "kind": "axis",
+      "norm": 1.2692715820938114,
+      "poles": {
+        "+": "older",
+        "-": "younger"
+      },
+      "years_per_dose": 27.869893920918308
+    }
+  }
+}

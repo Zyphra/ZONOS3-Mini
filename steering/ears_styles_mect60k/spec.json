@@ -1,0 +1,85 @@
+{
+ "space": "attnres_source",
+ "source_index": 19,
+ "group_by": "clip",
+ "center": "speaker",
+ "directions": {
+  "whisper": {
+   "pairs": [
+    [
+     {
+      "style": "whisper"
+     },
+     {
+      "style": "regular"
+     }
+    ]
+   ],
+   "kind": "named"
+  },
+  "loud": {
+   "pairs": [
+    [
+     {
+      "style": "loud"
+     },
+     {
+      "style": "regular"
+     }
+    ]
+   ],
+   "kind": "named"
+  },
+  "tempo": {
+   "pairs": [
+    [
+     {
+      "style": "fast"
+     },
+     {
+      "style": "slow"
+     }
+    ]
+   ],
+   "kind": "axis",
+   "poles": {
+    "+": "fast",
+    "-": "slow"
+   }
+  },
+  "pitch": {
+   "pairs": [
+    [
+     {
+      "style": "highpitch"
+     },
+     {
+      "style": "lowpitch"
+     }
+    ]
+   ],
+   "kind": "axis",
+   "poles": {
+    "+": "high",
+    "-": "low"
+   }
+  },
+  "conversational": {
+   "pairs": [
+    [
+     {
+      "mode": "freeform"
+     },
+     {
+      "style": "regular"
+     }
+    ]
+   ],
+   "kind": "axis",
+   "poles": {
+    "+": "spontaneous",
+    "-": "read"
+   }
+  }
+ }
+}
