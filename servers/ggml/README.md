@@ -35,11 +35,16 @@ hf auth login
 hf download Zyphra/ZONOS3_Mini_GGUF zonos3-qat.gguf dac.gguf spk-encoder.gguf --local-dir models
 # Optional raw-reference cloning companions:
 hf download Zyphra/ZONOS3_Mini_GGUF dac-encoder.gguf ssl-teacher.gguf --local-dir models
-# Optional voice-design steering directions (request `controls`, /studio/):
+# Optional voice-design steering directions (request `controls`, the studio's design controls, dub tempo buckets):
 hf download Zyphra/ZONOS3_Mini_GGUF steer.gguf --local-dir models
+# Optional emotion and accent steering directions (`emotion_*`, `accent`):
+hf download Zyphra/ZONOS3_Mini_GGUF emotion.gguf accent-directions.gguf --local-dir models
 ```
 
-Files downloaded before 2026-10-27 are the previous fullenc_120k release; re-download `zonos3-qat.gguf` and `spk-encoder.gguf` together (the backbone expects embeddings from the matching speaker encoder).
+The server picks up every companion it finds next to the backbone. Backbones downloaded before 2026-11-01 lack
+`zonos3.text_tokenizer_spec` and are refused: re-download `zonos3-qat.gguf` (and `steer.gguf`, which gained the dub's
+`rate_extension`). Files downloaded before 2026-10-27 are the previous fullenc_120k release; re-download
+`zonos3-qat.gguf` and `spk-encoder.gguf` together (the backbone expects embeddings from the matching speaker encoder).
 
 Or convert the checkpoints locally as below.
 
