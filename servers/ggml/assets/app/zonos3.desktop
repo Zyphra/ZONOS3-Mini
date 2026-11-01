@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zonos3
+Comment=Zonos3 text-to-speech
+Exec=zonos3-app
+Icon=zonos3
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+StartupWMClass=zonos3

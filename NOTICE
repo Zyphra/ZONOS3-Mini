@@ -11,7 +11,7 @@ text of each third-party license is reproduced in the licenses/ directory.
    SPDX-License-Identifier: MIT
    Full license: licenses/mini-sglang-MIT.txt
 
-   The TTS inference server and supporting runtime under python/zonos3/
+   The TTS inference server and supporting runtime under servers/sgl/src/zonos3_sgl/
    (including the scheduler, engine, KV-cache, attention, distributed,
    message, and server modules) are derived from Mini-SGLang.
 
@@ -23,7 +23,7 @@ text of each third-party license is reproduced in the licenses/ directory.
    SPDX-License-Identifier: Apache-2.0
    Full license: licenses/nemo-Apache-2.0.txt
 
-   Vendored under python/zonos3/vendor/nemo_text_processing/. These files have
+   Vendored under model/src/zonos3/vendor/nemo_text_processing/. These files have
    been modified by Zyphra, Inc.: import paths were re-namespaced under
    zonos3.vendor.nemo_text_processing. The original copyright and Apache-2.0
    license headers are retained in each file.

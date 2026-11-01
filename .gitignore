@@ -19,12 +19,14 @@ htmlcov/
 # binaries
 build/
 dist/
+# the studio's production build is committed (served from a checkout without Node)
+!/studio/dist/
 *.tar.gz
 
 # virtual environment
 .venv*/
 venv/
-# AV-sync checkout of the dubbing lip-sync step (scripts/setup_dub_align_env.sh)
+# AV-sync checkout of the dubbing lip-sync step (tools/setup_dub_align_env.sh)
 /.avsync/
 env/
 
@@ -45,4 +47,5 @@ default_voices/*
 !default_voices/AmericanFemale.mp3
 !default_voices/AmericanMale.mp3
 !default_voices/BritishFemale.mp3
+!default_voices/*.codes.npy
 steering/**/pooled.npz

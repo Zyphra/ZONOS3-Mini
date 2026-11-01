@@ -16,11 +16,11 @@ Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plai
 - [Zonos Voice Studio](#zonos-voice-studio)
   - [Span steering by reading position](#span-steering-by-reading-position)
   - [Projects on the server](#projects-on-the-server)
-  - [Dubbing (Dub screen, `/dub/*`)](#dubbing-dub-screen-dub)
+  - [Dubbing (Dub screen, `/v2/dub/*`)](#dubbing-dub-screen-v2dub)
 
 ## Raw-audio voice cloning
 
-Either upload reference audio (`speaker_audio_base64` / the web UI) or pass
+Either upload reference audio (`speaker_audio_base64` / the studio) or pass
 already-encoded codes with `speaker_reference_codes` (`[frames, 10]` ints, the
 same codes the training loader sees). The prefix is built exactly like
 `apps.zonos.reference_packing.encode_reference`: each codebook delayed by its
@@ -39,7 +39,7 @@ reads pronunciation input, see "Pronunciation input") add three text marker rows
 (`text_extra_tokens: 3`) and a span-end audio token (`span_end_id` =
 `audio_pad_id + 1` = 4098: one more embedding and head row per codebook). The
 runtime loads them as they are. Every request has an end token: utterances
-(`end_token="utterance"`, all of `/tts/generate`) stop on EOA and never sample
+(`end_token="utterance"`, all of `/v2/generate`) stop on EOA and never sample
 span-end; edit fills (`"span"`) stop on span-end and never sample EOA. An
 utterance is drawn over codes, EOA and pad only, so the same seed gives the same
 audio as a copy of the checkpoint without the span-end row. Stop boundaries count
@@ -49,7 +49,7 @@ host-processed frames, not submitted GPU work.
 (`(start_frame, length_frames)`, ascending, at most `text_extra_tokens`) as its
 own request over `[speaker row][condition rows][text][unmasked context][earlier
 fills][marker]` and splices the fills into the untouched codec frames;
-`scripts/edit_speech.py` wraps it (`--span START END` in seconds, or MMS spans
+`servers/sgl/scripts/edit_speech.py` wraps it (`--span START END` in seconds, or MMS spans
 from a word diff; `--max-context-seconds` / `--context-seconds` as below).
 
 Speech editing needs the MMS aligner of z-speech-alignment: clone
@@ -58,23 +58,23 @@ Speech editing needs the MMS aligner of z-speech-alignment: clone
 
 ```bash
 ZSA_ROOT=<z-speech-alignment checkout> SERVE_MODEL=<edit checkpoint> \
-STEER_BUNDLE=steering/studio_bundle_mect60k.json scripts/serve.sh
+STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
 ```
 
-`/tts/capabilities` then reports `speech_editing: true`, `edit_max_spans` (3),
+`/v2/capabilities` then reports `speech_editing: true`, `edit_max_spans` (3),
 `edit_frame_rate` (15), `edit_max_seconds` and `edit_align_max_seconds` (150, the
 MMS alignment limit, which every windowed edit needs); on other checkpoints
 `speech_editing` is false and the edit endpoints answer 400. A `<voice>.txt`
-next to a default voice becomes its `transcript` in `GET /tts/speakers`.
+next to a default voice becomes its `transcript` in `GET /v2/speakers`.
 
-- `POST /tts/edit/transcribe` `{audio_base64}`: MMS greedy transcript, `duration`
+- `POST /v2/edit/transcribe` `{audio_base64}`: MMS greedy transcript, `duration`
   and `words` (`word`, `start`, `end`, `confidence`, zsa-normalized `tokens`).
-- `POST /tts/edit/align` `{audio_base64, text}`: MMS forced alignment, same fields.
-- `POST /tts/edit` `{audio_base64, target_text}` regenerates the edited regions.
+- `POST /v2/edit/align` `{audio_base64, text}`: MMS forced alignment, same fields.
+- `POST /v2/edit` `{audio_base64, target_text}` regenerates the edited regions.
   Regions come from `spans` (`[start, end]` seconds in the original, ascending,
   at most `edit_max_spans`) or, without them, from a word diff of `original_text`
   (MMS transcript when omitted) against the target. Optional: `margin_seconds`,
-  `max_span_seconds` (30), the `/tts/generate` sampling fields, `seed` (take `k`
+  `max_span_seconds` (30), the `/v2/generate` sampling fields, `seed` (take `k`
   uses `seed + k`), `num_takes` (1-4), `verify` (MMS WER/CER and words per take),
   `speaker_embedding` (default on: the clip's embedding fills the speaker row;
   `false` leaves it out), `condition_buckets` / `condition_values`, `language`,
@@ -108,13 +108,13 @@ next to a default voice becomes its `transcript` in `GET /tts/speakers`.
   speaker row and per-region steering. `contexts` lists the windows (full-clip
   seconds; `null` when the clip is edited whole). Edit training used 2-20 s
   clips, which is why long clips are edited on windows.
-- `controls` (`/tts/generate` ids, see `/tts/controls`) apply to every region;
+- `controls` (`/v2/generate` ids, see `/v2/controls`) apply to every region;
   `region_controls` (one `{id: dose}` or `null` per explicit span) add to them
-  per region, doses summed per id. Each region is resolved like `/tts/generate`
+  per region, doses summed per id. Each region is resolved like `/v2/generate`
   `controls`: raw directions move the clip's speaker-row embedding (400 without a
   speaker row), hidden ones add their delta on the frames the fill generates.
   The prefilled prompt (text, unmasked context, earlier fills) is not steered,
-  as `/tts/generate` never steers reference or text rows; the context therefore
+  as `/v2/generate` never steers reference or text rows; the context therefore
   keeps its exact KV and only the new words take the delivery. Unknown ids,
   `region_controls` without `spans` or of the wrong length are 400s.
 
@@ -123,8 +123,8 @@ the audio (`TTSEncodeAudioMsg`) and builds each fill prompt
 (`TTSTokenizeMsg.edit_*`), the scheduler generates it with `end_token="span"`,
 the detokenizer returns its rows as codes (`TTSCodesReply`), and the tokenizer
 decodes the spliced frames (`TTSDecodeCodesMsg`). MMS-1B-all runs in persistent
-workers (`scripts/zsa_mms.py`), one per language adapter: `language` of `/tts/edit`,
-`/tts/edit/transcribe` and `/tts/edit/align` (server codes; en_us, fr_fr, de, es, it,
+workers (`model/src/zonos3/workers/zsa_mms.py`), one per language adapter: `language` of `/v2/edit`,
+`/v2/edit/transcribe` and `/v2/edit/align` (server codes; en_us, fr_fr, de, es, it,
 pt_br, ja, cmn, ko map to zsa's `WHISPER_TO_MMS` adapters, others are a 400) picks it
 for every MMS call of the request (transcription, alignment, windowing, verify); at
 most `ZONOS3_MMS_MAX_WORKERS` (default 2) stay resident, least recently used first.
@@ -144,15 +144,15 @@ holds `<accent>.pt` files from lingua's
 `python -m apps.zonos.accent_adapter --lora NAME=RUN/checkpoints/STEP`
 (schema `zonos-accent-lora/1`, or `/2` with per-expert MoE factors, see below);
 the file stem is the name requests use and
-`/tts/capabilities` lists the loaded names under `accents`. An unknown name
-returns 400. The web UI shows an accent selector and a strength slider when
+`/v2/capabilities` lists the loaded names under `accents`. An unknown name
+returns 400. The studio shows an accent selector and a strength slider when
 adapters are loaded. Tensor parallelism is not supported with adapters.
 `--accent-directions DIR` serves accents as hidden-space steering directions
 through the same request fields (see [Accent steering](#accent-steering)); both
 can be loaded together, a name in both is refused.
 
 ```bash
-scripts/serve.sh --accent-adapters <adapter dir>
+servers/sgl/scripts/serve.sh --accent-adapters <adapter dir>
 ```
 
 A request runs base + α × adapter, the merge the adapter was scored as offline.
@@ -164,7 +164,7 @@ inputs. The extra cost is fixed by the total columns loaded, not by how many
 accents a batch mixes.
 
 The adapter keys are lingua module names, which the converter keeps, and
-`zonos3.models.accent_adapters.TARGETS` mirrors lingua's
+`zonos3.models.accent_format.TARGETS` mirrors lingua's
 `apps.zonos.lora.DEFAULT_TARGETS`. Every target adds its shift to the flat
 `[out, in]` product before the runtime splits it, the product lingua's LoRA
 adapts:
@@ -192,7 +192,7 @@ w2 `[64, 256, 1536]`. The experts sit in the 256-wide latent between
 `latent_down` and `latent_up`, top-2, on layers 1-10. The non-expert entries
 and the router bias shifts are as in `/1`. Expert factors are served on the
 exact SonicMoE path only (`ZONOS3_USE_TRAINING_SONIC_EXPERTS=1`, which
-`scripts/env.sh` sets); elsewhere they are refused, as are expert entries in a
+`servers/sgl/scripts/env.sh` sets); elsewhere they are refused, as are expert entries in a
 `/1` file, expert weights other than w13 / w2, mismatched shapes or expert
 counts, and an adapter whose w13 and w2 ranks differ.
 
@@ -213,7 +213,7 @@ epilogue). A pair without expert factors (no accent, or a `/1` adapter) has a
 zero row in `C`, and the kernels with a zero addend return the plain call's
 bits.
 
-The shift itself is a Triton kernel (`zonos3/kernel/triton/expert_lora.py`).
+The shift itself is a Triton kernel (`zonos3_sgl/kernel/triton/expert_lora.py`).
 Each program takes one pair and one output tile, reads that pair's
 `(adapter, expert)` factors, and computes `α · U (D x)` in float32 in a fixed
 order. A pair's bits therefore do not depend on the rest of the batch, and the
@@ -229,7 +229,7 @@ requests the engine probes every adapted op at load with 1-256 rows against a
 1024-row product. Any op whose cuBLAS kernel depends on the row count runs its
 side path as fixed 16-row GEMMs instead (on H100, the LM head).
 
-`scripts/accent_parity.py` (wrapped by `tests/misc/test_accent_adapters_gpu.py`)
+`servers/sgl/scripts/accent_parity.py` (wrapped by `servers/sgl/tests/test_accent_adapters_gpu.py`)
 checks this offline on seeded requests and writes a `report.json`:
 
 - (a) requests without an accent, batched with accented requests, against the
@@ -237,7 +237,7 @@ checks this offline on seeded requests and writes a `report.json`:
 - (b) every request of a batch mixing accents and strengths against the same
   request run alone (bit-equal);
 - (c) an adapter at strength 1 against its merged checkpoint
-  (`accent_adapter --reconstruct`, then `scripts/convert_lingua_checkpoint.py`),
+  (`accent_adapter --reconstruct`, then `tools/convert_lingua_checkpoint.py`),
   teacher-forced on the adapter's codes. These agree closely but not bit for
   bit: the served sum and the merged bf16 weights round differently, and the
   MoE top-k turns some of those ulps into different experts. The base model on
@@ -249,7 +249,7 @@ with unknown condition rows; `--merged-model` is optional. The test wrapper
 reads `ZONOS3_TEST_MODEL`, `ZONOS3_TEST_ACCENT_DIR`, `ZONOS3_TEST_MERGED_MODEL`,
 `ZONOS3_TEST_MERGED_ACCENT`, and optionally `ZONOS3_TEST_MIXED_ACCENTS`,
 `ZONOS3_TEST_REFERENCE_AUDIO`, `ZONOS3_TEST_SPEAKER_EMBEDDING` and
-`ZONOS3_TEST_PARITY_OUT`; run it in the exact-mode environment of `scripts/env.sh`.
+`ZONOS3_TEST_PARITY_OUT`; run it in the exact-mode environment of `servers/sgl/scripts/env.sh`.
 
 `--eoa-policy codebook0` lets only an end-of-audio token sampled in codebook 0
 stop a request (lingua `generate --eoa-policy codebook0`); the default `any`
@@ -262,9 +262,9 @@ browser.
 ### ZONOS3 Mini release (`lm/mect_60k`)
 
 The release LM `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k` serves accent
-adapters with `scripts/serve.sh --accent-adapters <adapter dir>`, with the release
+adapters with `servers/sgl/scripts/serve.sh --accent-adapters <adapter dir>`, with the release
 decoder (full-size causal MR iSTFT head) and the speaker encoder from
-`registries/`. The server takes the encoder named by the model's `params.json`
+`model/src/zonos3/registries/`. The server takes the encoder named by the model's `params.json`
 (`speaker_embedding_codec: ownmect_s2`), and checks its sha256 at load.
 
 Speaker and condition conditioning are prompt-side. The speaker-embedding row
@@ -273,14 +273,14 @@ Speaker and condition conditioning are prompt-side. The speaker-embedding row
 before the transformer, so the adapters need no path for them. Those tensors
 are not LoRA targets: a factor on `speaker_projection` is refused as outside
 `TARGETS`, and an exact shift of it or of a condition table is refused as
-neither a linear factor nor a router bias (`tests/misc/test_accent_adapters.py`).
+neither a linear factor nor a router bias (`servers/sgl/tests/test_accent_adapters.py`).
 An accent applies on either speaker path. For an uploaded clip or a library
-voice the server's default is the raw reference prefix, which is what the web
-UI sends; `speaker_mode: "embedding"` uses the ownmect_s2 row instead. Speaker
+voice the server's default is the raw reference prefix, which is what the
+studio sends; `speaker_mode: "embedding"` uses the ownmect_s2 row instead. Speaker
 CFG twins carry the request's accent on both paths.
 
 A merged checkpoint (release LM plus an adapter, lingua
-`accent_adapter --reconstruct`) converted with `scripts/convert_lingua_checkpoint.py`
+`accent_adapter --reconstruct`) converted with `tools/convert_lingua_checkpoint.py`
 the way the release LM was converted (its `conversion.json` holds the converter
 arguments) is the release model plus the adapter, which is what parity check (c)
 compares against.
@@ -299,10 +299,10 @@ the release accent adapters apply to it unchanged. Phoneme checkpoints are not
 released; build one from the release LM and an exported row file.
 
 ```bash
-python scripts/add_text_extra_rows.py --base <release LM dir> \
+uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <release LM dir> \
     --rows <phoneme_tokens.pt> --out <phoneme checkpoint>
 SERVE_MODEL=<phoneme checkpoint> STEER_BUNDLE=steering/studio_bundle_mect60k.json \
-PHONEME_LEXICON=<lexicon dir> scripts/serve.sh
+PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh
 ```
 
 `add_text_extra_rows.py` appends the rows (`zonos-text-extra/1`, exported by
@@ -317,7 +317,7 @@ checks that markers plus the phoneme block fill `text_extra_tokens`, and
 new rows' ids shift:
 
 ```bash
-python scripts/add_text_extra_rows.py --base <edit checkpoint> \
+uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <edit checkpoint> \
     --rows <phoneme_tokens.pt> --out <edit + phoneme checkpoint>
 ```
 
@@ -325,7 +325,7 @@ The result has `text_extra_tokens` 141 (3 markers, open / close 8200 / 8201, pho
 from 8202), `speech_editing` with `edit_max_spans` 3 and the 136 phone symbols. On
 text without groups it is the edit checkpoint bit for bit. The rows were trained on
 the frozen release LM, not on the edit fine-tune. `PHONEME_LEXICON`
-(`scripts/serve.sh`) passes `--tts-phoneme-lexicon`; the launcher runs with the
+(`servers/sgl/scripts/serve.sh`) passes `--tts-phoneme-lexicon`; the launcher runs with the
 `phonemize` dependency group.
 
 - **Request text.** A group is U+E000 IPA U+E001 in `text`
@@ -334,16 +334,16 @@ the frozen release LM, not on the edit fine-tune. `PHONEME_LEXICON`
   training loader encodes it. Text normalization leaves groups as typed and
   verbalizes the text between them. Malformed groups and symbols outside the
   inventory are refused with 400 before they reach the tokenizer worker, as are
-  groups sent to a checkpoint without phoneme tokens (`/tts/generate`,
-  `/v1/audio/speech`, `/tts/edit` `target_text`).
-- **Groups in edits** (edit checkpoint with phoneme tokens). `/tts/edit`
+  groups sent to a checkpoint without phoneme tokens (`/v2/generate`,
+  `/v1/audio/speech`, `/v2/edit` `target_text`).
+- **Groups in edits** (edit checkpoint with phoneme tokens). `/v2/edit`
   `target_text` takes groups; `original_text` / `original_words` stay plain. MMS
   normalization would mangle a group (IPA upper-cased, the markers and tie bars
   become word breaks, so `t͡ʃiːz` reads `T ƩIːZ`), so a group never goes to MMS: it
   is one target token of its own in the word diff, windows and expected fill length
   (its length = its IPA symbols × 1.4 letter-equivalents,
   `GROUP_LETTERS_PER_SYMBOL`), and window texts keep it as typed, so fill prompts
-  carry the group ids as `/tts/generate` encodes them. With `verify`, each group is
+  carry the group ids as `/v2/generate` encodes them. With `verify`, each group is
   a wildcard word of the WER / CER reference (any one recognized word matches; ties
   go to the alignment with the fewest character edits), the take's word alignment
   uses the target with each group replaced by the word heard, and `verify.groups`
@@ -351,10 +351,10 @@ the frozen release LM, not on the edit fine-tune. `PHONEME_LEXICON`
   per IPA symbol (rather than the lexicon's average of about one) reflects that
   spoken duration follows the word, and respelled names and short words carry more
   letters per phone.
-- **Web UI.** Pronunciations are typed in X-SAMPA inside parentheses, e.g.
-  `I met (S@vQn)`; the UI shows the IPA each group becomes (flagging symbols the
+- **Studio.** Pronunciations are typed in X-SAMPA inside parentheses, e.g.
+  `I met (S@vQn)`; the studio shows the IPA each group becomes (flagging symbols the
   model has no token for) and sends U+E000 IPA U+E001 groups. On checkpoints
-  trained on parenthesized IPA (no `phoneme_tokens` in `/tts/capabilities`) it
+  trained on parenthesized IPA (no `phoneme_tokens` in `/v2/capabilities`) it
   sends `(IPA)` instead. Stress marks, syllable dots and spaces are dropped as in
   training; a lone `_` is a tie (`t_S` = t͡ʃ); symbols without an X-SAMPA spelling
   (superscript tone digits, `ᵝ`, `ˣ`, ...) are typed as-is.
@@ -364,13 +364,13 @@ the frozen release LM, not on the edit fine-tune. `PHONEME_LEXICON`
   has a single pronunciation come from the lexicon; hiragana, okurigana and single
   kanji/hanzi stay as text, as in training. Ambiguous and unknown words of the
   space-delimited languages are guessed by espeak-ng and mapped to the lexicon's
-  notation; the UI lists them as guesses to check. espeak-ng is GPL-3.0: it is the
+  notation; the studio lists them as guesses to check. espeak-ng is GPL-3.0: it is the
   opt-in `phonemize` dependency group (`espeakng-loader`; `uv sync --locked --group
-  phonemize`, and `scripts/serve.sh` runs with it); without it unknown words stay as
+  phonemize`, and `servers/sgl/scripts/serve.sh` runs with it); without it unknown words stay as
   text. Chinese, Japanese, Korean and Vietnamese are never guessed.
-- `/tts/capabilities` on a phoneme checkpoint lists the phone symbols,
+- `/v2/capabilities` on a phoneme checkpoint lists the phone symbols,
   `phonemize_languages` (the ten Text Norm languages) and the languages espeak-ng
-  guesses for (en_us, en_gb, fr_fr, de, es, it, pt_br). `POST /tts/phonemize`
+  guesses for (en_us, en_gb, fr_fr, de, es, it, pt_br). `POST /v2/phonemize`
   returns each word's pronunciation and whether it was guessed.
 
 ## Nonverbal markup and tag CFG
@@ -381,10 +381,10 @@ training steps). Serving one with pronunciation groups appends the phoneme rows 
 the edit marker rows, exactly as for the edit checkpoint:
 
 ```bash
-python scripts/add_text_extra_rows.py --base <NV checkpoint> \
+uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <NV checkpoint> \
     --rows <phoneme_tokens.pt> --out <NV + phoneme checkpoint>
 SERVE_MODEL=<NV + phoneme checkpoint> STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 \
-PHONEME_LEXICON=<lexicon dir> scripts/serve.sh
+PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh
 ```
 
 The result has `text_extra_tokens` 141 (3 edit markers, group open / close 8200 /
@@ -397,16 +397,16 @@ span tags over words, `<shouting>Get out!</shouting>`, `<crying>…</crying>` (a
 `<Laugh/>`) are plain text. Markup at `tag_cfg_scale` 1.0 is ordinary text on the unguided path; a checkpoint never
 trained on tags reads it as text.
 
-**Tag CFG.** `tag_cfg_scale` > 1 (`/tts/generate`, `/v1/audio/speech`) runs a plain twin next to the request: the
+**Tag CFG.** `tag_cfg_scale` > 1 (`/v2/generate`, `/v1/audio/speech`) runs a plain twin next to the request: the
 same normalized text with the markers removed (enclosed words kept, whitespace collapsed) and every other
 conditioning identical; both branches advance on the same sampled frames, and every step mixes the raw logits of
-all codebooks in float32 before any sampler transform, `plain + s · (tagged − plain)`. Rules (HTTP 400 otherwise):
-finite `1.0`–`4.0`; above `1.0` the text must contain a recognized tag; one twin per request, so `speaker_cfg_scale`
-and `emotion_cfg_scale` must be `1.0` and `laci` false. The offline `TTSLLM` does not build the twin (a request
+all codebooks in float32 before any sampler transform, `plain + s · (tagged − plain)`. Rules: finite `1.0`–`4.0`
+(422 otherwise); above `1.0` the text must contain a recognized tag; one twin per request, so `speaker_cfg_scale`
+and `emotion_cfg_scale` must be `1.0` and `laci` false (400 otherwise). The offline `TTSLLM` does not build the twin (a request
 above 1.0 there raises). The server logs both prompts (`tag CFG uid=…` from the tokenizer, `Tag CFG uid=… plain
 twin N rows` from the scheduler).
 
-`GET /tts/capabilities` reports `tag_cfg`: `available` (always true), `trained` (the checkpoint's training config,
+`GET /v2/capabilities` reports `tag_cfg`: `available` (always true), `trained` (the checkpoint's training config,
 `config.yaml` beside `params.json`, has a data source with `nonverbal: true`), `tags`, `min_scale` 1.0, `max_scale`
 4.0, `default_scale` 1.0.
 
@@ -427,7 +427,7 @@ twin N rows` from the scheduler).
   divides by the length without markers). Reading position: a span maps to the text tokens that spell it; tokens
   inside a marker never open or close a span that also covers words (markers inside stay in), a span over a marker
   alone keeps the marker's tokens.
-- */tts/edit*: `tag_cfg_scale` other than 1.0 is refused. Markup in `target_text` (and `original_text`) is allowed:
+- */v2/edit*: `tag_cfg_scale` other than 1.0 is refused. Markup in `target_text` (and `original_text`) is allowed:
   markers ride in the model's prompt text but never reach MMS (word diff, alignment, verify): each marker is a
   target piece with no zsa tokens, `<laugh />` is canonicalized to `<laugh/>`, and `original_text` in the response
   is the markup-free text MMS read. A marker alone between unchanged words is therefore no edit (400 "target text
@@ -446,12 +446,12 @@ while prosody shifts.
 
 The default direction set is `steering/emotion_directions_mect60k_axes/`, and the
 server **auto-loads it on startup when that folder is present** — emotion sliders
-appear in the web UI automatically, no extra flags. Point elsewhere (or disable)
+appear in the studio automatically, no extra flags. Point elsewhere (or disable)
 with `--tts-emotion-directions-dir <dir>` (`EMOTION_SERVE_DIRECTIONS` for
-`scripts/serve.sh`; pass an empty string to turn it off).
+`servers/sgl/scripts/serve.sh`; pass an empty string to turn it off).
 
 ```bash
-curl -X POST http://localhost:1919/tts/generate \
+curl -X POST http://localhost:1919/v2/generate \
   -H "Content-Type: application/json" \
   -d '{
         "text": "I cannot believe you did that!",
@@ -463,7 +463,7 @@ curl -X POST http://localhost:1919/tts/generate \
   --output excited.pcm
 ```
 
-`GET /tts/capabilities` reports what the loaded directions expose:
+`GET /v2/capabilities` reports what the loaded directions expose:
 `emotion_enabled`, `emotion_names`, `emotion_axes`, and `emotion_calibrated`
 (whether a per-speaker strength calibration is loaded). The shipped set includes a
 `calibration.json` so `emotion_strength: 1.0` is already a sensible per-voice,
@@ -502,13 +502,13 @@ is what the per-voice, per-pole calibration absorbs.
 
 ### Accent steering
 
-`--accent-directions DIR` (`ACCENT_SERVE_DIRECTIONS` for `scripts/serve.sh`)
+`--accent-directions DIR` (`ACCENT_SERVE_DIRECTIONS` for `servers/sgl/scripts/serve.sh`)
 loads `attnres_source` directions as accents: a request's `accent` /
 `accent_strength` adds `strength × dose × direction` to the set's bank source on
 every generated frame (dose from `DIR/calibration.json` per voice, 1 without
 one or with `emotion_calibrated: false`). A `raw` set moves the speaker
 embedding instead (see [Speaker-embedding accents](#speaker-embedding-accents)).
-`/tts/capabilities` lists them under
+`/v2/capabilities` lists them under
 `accents` and `accent_steering`. Emotion and accent sets may steer different
 sources: the engine keeps one row-buffer slot per steered source and the
 request delta carries one hidden-size slot per source (summed when they share
@@ -522,7 +522,7 @@ minus English mostly switches language before the accent moves); they stay on
 `--accent-adapters` or the speaker-embedding directions below.
 
 ```bash
-ACCENT_SERVE_DIRECTIONS=steering/accent_directions_mect60k scripts/serve.sh
+ACCENT_SERVE_DIRECTIONS=steering/accent_directions_mect60k servers/sgl/scripts/serve.sh
 ```
 
 #### Speaker-embedding accents
@@ -542,7 +542,7 @@ Mandarin, Korean and Japanese barely move in the embedding alone and stay on
 
 ```bash
 EMOTION_SERVE_DIRECTIONS=steering/speaker_attributes_mect60k \
-ACCENT_SERVE_DIRECTIONS=steering/speaker_accents_mect60k scripts/serve.sh
+ACCENT_SERVE_DIRECTIONS=steering/speaker_accents_mect60k servers/sgl/scripts/serve.sh
 ```
 
 #### East Asian accents: embedding and hidden together
@@ -662,7 +662,7 @@ A persona is a different speaker by design.
 
 ```bash
 EMOTION_SERVE_DIRECTIONS=steering/speaker_traits_mect60k \
-ACCENT_SERVE_DIRECTIONS=steering/ears_styles_mect60k scripts/serve.sh
+ACCENT_SERVE_DIRECTIONS=steering/ears_styles_mect60k servers/sgl/scripts/serve.sh
 ```
 
 #### The controls on the speech-editing checkpoint
@@ -702,8 +702,8 @@ direction at a negative dose.
 
 ## Zonos Voice Studio
 
-`/studio` serves Zonos Voice Studio (`ui/`: Vite + Preact + TypeScript, built into
-`python/zonos3/server/studio/`; see `ui/README.md`), a voice studio on top of every
+`/` serves Zonos Voice Studio (`studio/`: Vite + Preact + TypeScript, its committed production build in
+`studio/dist/` served by both servers; see [studio/README.md](../studio/README.md)), a voice studio on top of every
 direction set above:
 
 - **Cast**: start from a library voice, an upload or recording, or a rolled voice; move
@@ -728,8 +728,8 @@ tested ranges, identity curves and duration factors read from each set's evaluat
 landmarks of the six named moods (see More moods).
 
 ```bash
-STEER_BUNDLE=steering/studio_bundle_mect60k.json scripts/serve.sh
-# open http://127.0.0.1:1919/studio/
+STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
+# open http://127.0.0.1:1919/
 ```
 
 `--steer-bundle` (`zonos3.tts.steering`) serves all the sets at once: a request's
@@ -737,12 +737,12 @@ STEER_BUNDLE=steering/studio_bundle_mect60k.json scripts/serve.sh
 hidden ones into their Full AttnRes sources; `control_spans` add hidden controls on
 the frames generated while those characters are spoken (character position ×
 `control_span_rate`, stretched by the bundle's `timing` factors, 3-frame ramps; the
-same seed gives identical audio before a span). `GET /tts/controls` returns the sets,
+same seed gives identical audio before a span). `GET /v2/controls` returns the sets,
 the directions (raw vectors included, so the client computes positions and the
-steered embedding itself) and the UI metadata; `GET /tts/speakers/{id}/embedding`
+steered embedding itself) and the UI metadata; `GET /v2/speakers/{id}/embedding`
 returns a voice's embedding. With a bundle the server embeds every default voice at
-startup on the GPU (`scripts/serve.sh` sets `ZONOS3_SPEAKER_EMBEDDER_DEVICE=cuda`
-when `STEER_BUNDLE` is set), and `POST /tts/speakers` accepts embedding files on
+startup on the GPU (`servers/sgl/scripts/serve.sh` sets `ZONOS3_SPEAKER_EMBEDDER_DEVICE=cuda`
+when `STEER_BUNDLE` is set), and `POST /v2/speakers` accepts embedding files on
 dual-path checkpoints (designed voices).
 
 ### Span steering by reading position
@@ -751,7 +751,7 @@ dual-path checkpoints (designed voices).
 `control_span_rate` (`zonos3.tts.span_follow`). The tokenizer maps each span's characters through text normalization
 to the text tokens that spell them (SuperBPE offsets, every id of a pronunciation group, UTF-8 bytes on byte
 checkpoints); while the request decodes, the LACI alignment heads of its language (`--laci-heads`; the probe of
-`zonos3.tts.align_probe`, inside the decode CUDA graphs, no LACI retries unless `laci=true`) give one reading position
+`zonos3_sgl.tts.align_probe`, inside the decode CUDA graphs, no LACI retries unless `laci=true`) give one reading position
 per step, smoothed (median of 3, monotone, at most +1 token per step). A span ramps in (3 frames) once the smoothed
 position reaches its first token − `control_span_lead` (default 1) and out once it reaches the token after it +
 `control_span_lag` (default 0). The readout reaches the host with the step's tokens, so a frame is decided on readouts
@@ -767,7 +767,7 @@ property of the model, not of the placement), so offsets tend to run late.
 ### Projects on the server
 
 Studio projects can live on the server, shared by every browser that opens the studio link, and survive server
-restarts and a new tunnel URL (`zonos3.server.projects`). `--studio-projects-dir` enables them; `scripts/serve.sh`
+restarts and a new tunnel URL (`zonos3_sgl.server.projects`). `--studio-projects-dir` enables them; `servers/sgl/scripts/serve.sh`
 passes `ZONOS3_STUDIO_PROJECTS` (default empty = projects stay in each browser's IndexedDB, the studio's offline
 store). The directory holds `projects/<id>.json` (`{id, name, revision, updated_at, media_bytes, data}`, `data` = the
 studio's project document) and `media/<sha256>` (content-addressed, written once, `media/<sha256>.type` its MIME type);
@@ -775,38 +775,38 @@ every write is a temp file renamed into place, under a lock (flock, so servers c
 `--studio-max-project-bytes` (20 MB) and `--studio-max-media-bytes` (2 GB).
 
 ```bash
-ZONOS3_STUDIO_PROJECTS=<projects dir> STEER_BUNDLE=steering/studio_bundle_mect60k.json scripts/serve.sh
+ZONOS3_STUDIO_PROJECTS=<projects dir> STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
 ```
 
-- `GET /projects` → `[{id, name, updated_at, revision, bytes, media_bytes, summary}]`, newest first (`summary` =
+- `GET /v2/projects` → `[{id, name, updated_at, revision, bytes, media_bytes, summary}]`, newest first (`summary` =
   the document's `data.summary`, `updated_at` = epoch milliseconds).
-- `GET /projects/{id}` → `{id, name, revision, updated_at, media_bytes, data}`.
-- `PUT /projects/{id}` `{name, data, base_revision}` → `{id, revision, updated_at}`. `base_revision` must be the
+- `GET /v2/projects/{id}` → `{id, name, revision, updated_at, media_bytes, data}`.
+- `PUT /v2/projects/{id}` `{name, data, base_revision}` → `{id, revision, updated_at}`. `base_revision` must be the
   stored revision (`null` for a new id), else 409 `{detail, revision}` (the stored one; `null` = deleted): two tabs
   never overwrite each other silently. A project's media are the keys of `data.media` (`{<sha256>: {type, size}}`);
   all must be stored, else 400 `{detail, missing: [sha256...]}`.
-- `DELETE /projects/{id}`; `POST /projects/gc[?min_age_seconds=3600]` → `{removed, freed_bytes, kept}` removes media
+- `DELETE /v2/projects/{id}`; `POST /v2/projects/gc[?min_age_seconds=3600]` → `{removed, freed_bytes, kept}` removes media
   no project lists, older than the grace period (uploads of a save in flight are newer).
-- `HEAD` / `GET /media/{sha256}` (lowercase hex): the blob streamed from disk with its stored type,
+- `HEAD` / `GET /v2/media/{sha256}` (lowercase hex): the blob streamed from disk with its stored type,
   `ETag: "<sha256>"` (`If-None-Match` → 304) and `Cache-Control: … max-age=31536000, immutable` (`private` behind
-  `ZONOS3_ACCESS_TOKEN`). `PUT /media/{sha256}` raw bytes (type from `?type=` or `Content-Type`): streamed to a temp
+  `ZONOS3_ACCESS_TOKEN`). `PUT /v2/media/{sha256}` raw bytes (type from `?type=` or `Content-Type`): streamed to a temp
   file while hashed, 400 `{detail, sha256: <actual>}` on a mismatch, 413 over the limit, 201 stored / 200 already
   there (body not read).
-- `GET /tts/capabilities` → `projects: {enabled, max_media_bytes, max_project_bytes}`.
+- `GET /v2/capabilities` → `projects: {enabled, max_media_bytes, max_project_bytes}`.
 
-### Dubbing (Dub screen, `/dub/*`)
+### Dubbing (Dub screen, `/v2/dub/*`)
 
 The studio server also dubs (details in [laci_dub.md](laci_dub.md)): a video or audio reference → Qwen3-ASR transcript
 and ForcedAligner words (or `ref_words` the studio already has) → segments at pauses with the SimAlign-projected
 target text → per segment 10 LACI takes in neighbouring speaking-rate buckets, each held to the segment's length (LACI
 duration target) → best fit placed on the timeline → optional AV-sync lip warp → MP4 mux. Every take is a
-`/tts/generate` request on this server's scheduler (`laci=true` + duration target), so a dub uses the reference clone
+`/v2/generate` request on this server's scheduler (`laci=true` + duration target), so a dub uses the reference clone
 (`voice: {mode: "source"}`) or any studio voice (`{mode: "studio", speaker_embedding_id, controls}`), per dub or per
 segment, with per-segment direction (`segments[k].controls`) and pronunciation groups in target texts.
 
 ```bash
-bash scripts/setup_dub_align_env.sh   # once: .venv-dub-align (Qwen3-ASR/ForcedAligner, SimAlign) + .avsync (AV-sync)
-STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 scripts/serve.sh
+bash tools/setup_dub_align_env.sh   # once: .venv-dub-align (Qwen3-ASR/ForcedAligner, SimAlign) + .avsync (AV-sync)
+STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh
 ```
 
 `DUB=1` passes `--laci-heads` for the 9 target languages (the mect_60k heads in `laci_heads/`:
@@ -852,7 +852,7 @@ safe per target language. The kept scale is the bundle's `rate_extension` block 
 | ko | −2…−1 |
 
 - **Source voices use only the faster steered buckets** (`reference_sides: ["faster"]` in the bundle;
-  `/dub/capabilities.buckets[].voice_modes`): on the slower side the source voice (reference mode, where the buckets
+  `/v2/dub/capabilities` `buckets[].voice_modes`): on the slower side the source voice (reference mode, where the buckets
   were not validated) lost words or garbled. Studio voices use both sides.
 - Languages without a steered bucket on a side, and servers whose bundle has no `rate_extension`, take exactly the
   row-only path.

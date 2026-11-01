@@ -1,0 +1,18 @@
+[project]
+name = "zonos3-tools"
+version = "0.1.0"
+description = "ZONOS3 checkpoint and GGUF conversion tools"
+requires-python = ">=3.12"
+dependencies = [
+    "zonos3",
+    "gguf==0.19.0",
+    "numpy",
+    "safetensors",
+    "pyyaml",
+    "torch",
+    "torchaudio",
+    "transformers",
+]
+
+[tool.uv]
+package = false

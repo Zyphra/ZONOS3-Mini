@@ -1,0 +1,23 @@
+# build artifacts
+/build/
+/build-*/
+# generated model + validation data (large; regenerable)
+/out/
+*.gguf
+!tests/fixtures/*.gguf
+*.npy
+!tests/fixtures/*.npy
+!emotion_directions/*.npy
+*.npz
+*.wav
+# python
+__pycache__/
+*.pyc
+.venv/
+.venv-tts-norm/
+
+# zonos3-app (saucer) runtime state — cookies/localStorage SQLite db, not source
+.saucer
+
+# Personal Claude Code instructions (private)
+CLAUDE.local.md

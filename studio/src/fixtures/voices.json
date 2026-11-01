@@ -1,0 +1,17 @@
+{
+  "note": "Default release voices with the raw-direction doses their synthetic fixture embeddings carry (embedding = seeded base orthogonal to every raw direction + \u03a3 dose\u00b7vector). Gender and age come from ui.who's measured landmarks. Used when the server has no /v2/speakers/{id}/embedding, and as the speaker list when no server answers.",
+  "voices": [
+    {"label": "American Female", "priors": {"pitch.pitch": 0.3}},
+    {"label": "American Male", "priors": {}},
+    {"label": "Australian Female", "priors": {"accents_en.australian": 0.8}},
+    {"label": "British Female", "priors": {"accents_en.british": 0.9}},
+    {"label": "British Male", "priors": {"accents_en.british": 0.9, "pitch.pitch": -0.8}},
+    {"label": "David Attenborough", "priors": {"accents_en.british": 1.0, "texture.raspy": 1.0}},
+    {"label": "Dwarkesh", "priors": {"pitch.pitch_range": 0.6}},
+    {"label": "German Accent Male", "priors": {"accents_l1.deu": 0.9}},
+    {"label": "Obama", "priors": {"texture.deep": 1.5}},
+    {"label": "Obama Yelling", "priors": {"room.clean": -1.5}},
+    {"label": "Scottish Female", "priors": {"accents_en.scottish": 1.0, "pitch.pitch": 0.9}},
+    {"label": "Skyler", "priors": {"texture.shrill": 0.8}}
+  ]
+}

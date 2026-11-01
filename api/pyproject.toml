@@ -1,0 +1,16 @@
+[project]
+name = "zonos3-api"
+version = "0.1.0"
+description = "ZONOS3 HTTP API v2: OpenAPI spec and the server conformance suite"
+requires-python = ">=3.12"
+dependencies = [
+    "pytest",
+    "httpx",
+    "jsonschema",
+    "pyyaml",
+    "numpy",
+    "openapi-spec-validator",
+]
+
+[tool.uv]
+package = false

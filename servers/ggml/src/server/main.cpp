@@ -1,0 +1,340 @@
+// zonos3-server: the HTTP API v2 (api/openapi.yaml) over the native GGUF backbone, DAC decoder and companions, and the
+// studio at /. Module layout (src/server/):
+//   main.cpp          flags, model/companion loading, route registration, the accept loop (zonos3_server_main)
+//   http.*            {"detail"} errors, CORS, ZONOS3_ACCESS_TOKEN, X-Keepalive, X-TTS-Session-ID, studio serving
+//   schema.*          request validation against the embedded api/openapi.json (422 ValidationError)
+//   scheduler.*       continuous batching (backbone worker) + DAC decode lanes (prefix / whole decode)
+//   speakers.*        default + session voices, speaker prompts of requests, /v2/speakers*
+//   generate.*        /v2/generate, /v1/audio/speech
+//   capabilities.*    /v2/capabilities, /v2/controls, /v2/health, /v1/models
+//   projects.*        /v2/projects*, /v2/media/* (port of zonos3_sgl/server/projects.py)
+//   phonemize.*, edit.*, dub.*   their routes and capabilities
+//   workers.*, textnorm.*        JSON-lines helper processes (model/src/zonos3/workers/*.py)
+#include "compat.h"
+
+#include "server/capabilities.h"
+#include "server/dub.h"
+#include "server/edit.h"
+#include "server/generate.h"
+#include "server/http.h"
+#include "server/phonemize.h"
+#include "server/projects.h"
+#include "server/scheduler.h"
+#include "server/speakers.h"
+#include "server/state.h"
+#include "server/util.h"
+
+#include "exe-path.h"
+#include "model-paths.h"
+#include "server-embed.h"
+
+#include "httplib.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
+namespace {
+
+using namespace zs;
+
+void usage(const char * a0) {
+    fprintf(stderr,
+        "usage: %s <model.gguf> [--dac <dac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--dac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
+        "  (dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf, emotion.gguf, accents.gguf and\n"
+        "   accent-directions.gguf are auto-detected next to <model.gguf> when their flags are omitted)\n"
+        "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
+        "                      raw-reference cloning needs --dac-encoder + --ssl-teacher instead)\n"
+        "  --host H            bind address (default 127.0.0.1)\n"
+        "  --port P            port (default 1919; 0 picks a free ephemeral port)\n"
+        "  --gpu | --cpu       backend (default cpu)\n"
+        "  --dac-cpu           run the DAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
+        "  --dac-gpu           run the DAC decoder on the --gpu backend (default)\n"
+        "  --max N             max frames per request (default 2000, ~133s)\n"
+        "  --batch N           continuous-batching width / concurrent syntheses (default 8). A decode-graph\n"
+        "                      ladder runs the narrowest width covering the active slots; cache/state memory\n"
+        "                      scales with slots and context capacity.\n"
+        "  --dac-threads N     DAC decode pool lanes, parallel decode across requests (default 4)\n"
+        "  --reference-idle-unload N\n"
+        "                      free the reference encoder + SSL teacher after N idle seconds\n"
+        "                      (default 60; 0 keeps them loaded once used)\n"
+        "  --stream-decode-default prefix|whole\n"
+        "                      streaming decode of requests without stream_decode (default prefix: chunks of\n"
+        "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3\n"
+        "                      hold-back; whole: one exact chunk at EOS)\n"
+        "  --tts-default-voices-dir DIR\n"
+        "                      default voices: audio files (+ <stem>.codes.npy reference codes) and .npy/.npz\n"
+        "                      speaker embeddings (default default_voices; empty disables)\n"
+        "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
+        "                      model/src of the checkout holding the executable, else python/ beside it)\n"
+        "  --text-normalizer-python PY\n"
+        "                      enable text normalization: PY runs <python-src>/zonos3/workers/textnorm.py\n"
+        "                      (zonos3.tokenizer.textnorm, NeMo grammars) as a persistent worker\n"
+        "  --steer PATH        steering directions (steer.gguf) for request controls and /v2/controls\n"
+        "  --emotion-directions PATH   emotion directions (emotion.gguf)\n"
+        "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
+        "  --accent-directions PATH    accent steering directions (accent-directions.gguf)\n"
+        "  --laci-heads LANG=PATH      LACI alignment heads of a language (repeatable)\n"
+        "  --tts-phoneme-lexicon DIR   gold pronunciation lexicon (LMDB) for /v2/phonemize\n"
+        "  --studio-projects-dir DIR   server-side studio projects and media (/v2/projects, /v2/media)\n"
+        "  --studio-dir DIR    studio production build served at / (default: studio/dist of the checkout\n"
+        "                      holding the executable, else studio/ beside it)\n", a0);
+}
+
+bool env_int(const char * name, int dflt, int & out) {
+    const char * v = getenv(name);
+    if (!v || !*v) { out = dflt; return true; }
+    char * end = nullptr;
+    const long x = strtol(v, &end, 10);
+    if (!end || *end) return false;
+    out = (int) x;
+    return true;
+}
+
+int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
+    if (argc < 2) { usage(argv[0]); return 1; }
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);   // a helper worker that exits must not kill the server mid-write
+#endif
+
+    ServerState s;
+    std::string model_path = argv[1], dac_path, host = "127.0.0.1", projects_dir;
+    int port = 1919;
+    bool dac_cpu = false;
+    auto value = [&](int & i) -> const char * { return i + 1 < argc ? argv[++i] : nullptr; };
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        const bool has_value = i + 1 < argc;
+        if      (a == "--dac" && has_value) dac_path = value(i);
+        else if (a == "--dac-encoder" && has_value) s.encoder_path = value(i);
+        else if (a == "--ssl-teacher" && has_value) s.teacher_path = value(i);
+        else if (a == "--spk-encoder" && has_value) s.spk_path = value(i);
+        else if (a == "--steer" && has_value) s.steer_path = value(i);
+        else if (a == "--emotion-directions" && has_value) s.emotion_directions_path = value(i);
+        else if (a == "--accent-adapters" && has_value) s.accent_adapters_path = value(i);
+        else if (a == "--accent-directions" && has_value) s.accent_directions_path = value(i);
+        else if (a == "--tts-phoneme-lexicon" && has_value) s.phoneme_lexicon_dir = value(i);
+        else if (a == "--laci-heads" && has_value) {
+            const std::string spec = value(i);
+            const size_t eq = spec.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == spec.size()) {
+                fprintf(stderr, "error: --laci-heads takes LANG=PATH, got '%s'\n", spec.c_str());
+                return 1;
+            }
+            s.laci_heads[spec.substr(0, eq)] = spec.substr(eq + 1);
+        }
+        else if (a == "--host" && has_value) host = value(i);
+        else if (a == "--port" && has_value) port = atoi(value(i));
+        else if (a == "--gpu") s.use_gpu = true;
+        else if (a == "--cpu") s.use_gpu = false;
+        else if (a == "--dac-cpu") dac_cpu = true;
+        else if (a == "--dac-gpu") dac_cpu = false;
+        else if (a == "--max" && has_value) s.max_frames = atoi(value(i));
+        else if (a == "--batch" && has_value) s.batch_slots = std::max(1, atoi(value(i)));
+        else if (a == "--dac-threads" && has_value) s.dac_threads = std::max(1, atoi(value(i)));
+        else if (a == "--reference-idle-unload" && has_value) s.reference_idle_unload_s = std::max(0, atoi(value(i)));
+        else if (a == "--stream-decode-default" && has_value) {
+            s.stream_decode_default = value(i);
+            if (s.stream_decode_default != "prefix" && s.stream_decode_default != "whole") {
+                fprintf(stderr, "error: --stream-decode-default must be prefix or whole\n");
+                return 1;
+            }
+        }
+        else if (a == "--tts-default-voices-dir" && has_value) s.default_voice_dir = value(i);
+        else if (a == "--python-src" && has_value) s.python_src = value(i);
+        else if (a == "--text-normalizer-python" && has_value) s.text_norm_python = value(i);
+        else if (a == "--studio-projects-dir" && has_value) projects_dir = value(i);
+        else if (a == "--studio-dir" && has_value) s.studio_dir = value(i);
+        else { usage(argv[0]); return 1; }
+    }
+    if (!mp_file_exists(model_path)) {
+        fprintf(stderr, "failed to load model %s\n", model_path.c_str());
+        mp_print_missing_hint("zonos3-f16.gguf (or another quant)", model_path);
+        return 1;
+    }
+    s.model_path = model_path;
+
+    // Prefix streaming and silence prefill settings (the sgl vocoder's environment).
+    if (!env_int("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", 15, s.prefix.chunk_frames) ||
+        !env_int("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", 3, s.prefix.hold_back_frames) ||
+        !env_int("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", 450, s.prefix.context_frames) ||
+        s.prefix.chunk_frames < 1 || s.prefix.hold_back_frames < 0 || s.prefix.context_frames < s.prefix.chunk_frames) {
+        fprintf(stderr, "error: prefix stream settings: chunk_frames >= 1, hold_back_frames >= 0, context_frames >= chunk_frames\n");
+        return 1;
+    }
+    {
+        std::string err;
+        if (!configure_silence_prefill(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    }
+
+    // Companion discovery next to the backbone (the reference-audio models load lazily).
+    auto companion = [&](std::string & path, const char * name) {
+        if (path.empty()) path = mp_find_companion(model_path, name);
+    };
+    if (dac_path.empty()) {
+        dac_path = mp_find_companion(model_path, "dac.gguf");
+        if (!dac_path.empty()) fprintf(stderr, "zonos3-server: using dac.gguf found next to model: %s\n", dac_path.c_str());
+    }
+    companion(s.encoder_path, "dac-encoder.gguf");
+    companion(s.teacher_path, "ssl-teacher.gguf");
+    companion(s.spk_path, "spk-encoder.gguf");
+    companion(s.steer_path, "steer.gguf");
+    companion(s.emotion_directions_path, "emotion.gguf");
+    companion(s.accent_adapters_path, "accents.gguf");
+    companion(s.accent_directions_path, "accent-directions.gguf");
+    for (const std::string * p : {&s.encoder_path, &s.teacher_path, &s.spk_path, &s.steer_path, &s.emotion_directions_path,
+                                  &s.accent_adapters_path, &s.accent_directions_path}) {
+        if (!p->empty() && !mp_file_exists(*p)) { fprintf(stderr, "error: companion file %s does not exist\n", p->c_str()); return 1; }
+    }
+    for (const auto & [lang, path] : s.laci_heads)
+        if (!mp_file_exists(path)) { fprintf(stderr, "error: --laci-heads %s=%s: no such file\n", lang.c_str(), path.c_str()); return 1; }
+    if (!s.phoneme_lexicon_dir.empty()) {
+        std::string err;
+        if (!open_phoneme_lexicon(s, err)) { fprintf(stderr, "error: --tts-phoneme-lexicon: %s\n", err.c_str()); return 1; }
+    }
+    if (dac_path.empty()) {
+        fprintf(stderr, "error: --dac <dac.gguf> is required (also auto-detected when dac.gguf sits next to <model.gguf>)\n");
+        mp_print_missing_hint("dac.gguf", mp_parent_dir(model_path) + "/dac.gguf");
+        return 1;
+    }
+    if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
+    if (!s.text_norm_python.empty()) {
+        if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py")) {
+            fprintf(stderr, "error: --text-normalizer-python needs the zonos3 package: pass --python-src DIR (DIR/zonos3/workers/textnorm.py)\n");
+            return 1;
+        }
+        s.text_normalizer = std::make_unique<TextNormalizer>(s.text_norm_python, s.python_src);
+    }
+    if (!projects_dir.empty()) {
+        try {
+            s.projects = std::make_unique<ProjectStore>(projects_dir);
+        } catch (const std::exception & e) {
+            fprintf(stderr, "error: --studio-projects-dir %s: %s\n", projects_dir.c_str(), e.what());
+            return 1;
+        }
+    }
+    s.prof = getenv("ZONOS3_PROFILE") != nullptr;
+
+    if (!zonos3_model_load(s.model, model_path.c_str(), s.use_gpu)) {
+        fprintf(stderr, "failed to load model %s\n", model_path.c_str());
+        return 1;
+    }
+    if (s.max_frames < 1 || s.max_frames + 16 >= (int) s.model.hp.n_ctx_train) {
+        fprintf(stderr, "error: --max must be positive and leave prompt headroom in model context\n");
+        return 1;
+    }
+    s.context_capacity = std::min((int) s.model.hp.n_ctx_train, s.max_frames + 4096);
+    // LACI / span-follow alignment heads (sgl: LaciHeads.load per --laci-heads at scheduler start); every head must be a
+    // query head of a global-attention layer, the layers the probe reads.
+    for (const auto & [lang, path] : s.laci_heads) {
+        try {
+            zonos3_laci::LaciHeads heads = zonos3_laci::LaciHeads::load(path);
+            for (const auto & h : heads.heads)
+                if (h.layer < 0 || h.layer >= (int) s.model.layers.size() || s.model.layers[h.layer].is_gdn ||
+                    h.head < 0 || h.head >= (int) s.model.hp.n_head) {
+                    fprintf(stderr, "error: --laci-heads %s=%s: head (%d, %d) is not an attention head of this model\n",
+                            lang.c_str(), path.c_str(), h.layer, h.head);
+                    return 1;
+                }
+            s.laci[lang] = std::move(heads);
+        } catch (const std::exception & e) {
+            fprintf(stderr, "error: --laci-heads %s=%s: %s\n", lang.c_str(), path.c_str(), e.what());
+            return 1;
+        }
+    }
+    // The probe reads up to this many text rows of a request (sgl --align-probe-max-text default 2048 with heads).
+    if (!s.laci.empty()) s.probe_max_text = std::min(2048, s.context_capacity);
+    if (!s.steer_path.empty()) {
+        std::string err;
+        if (!zonos3_steer_load(s.steer, s.steer_path.c_str(), s.model, err)) {
+            fprintf(stderr, "failed to load steering %s: %s\n", s.steer_path.c_str(), err.c_str());
+            return 1;
+        }
+        s.controls_doc = zonos3_steer_controls_json(s.steer, (int) s.model.hp.speaker_dim);
+        s.steer_loaded = true;
+        std::string srcs;
+        for (int k : s.steer.sources) srcs += (srcs.empty() ? "" : ", ") + std::to_string(k);
+        fprintf(stderr, "zonos3-server: steering %s: %zu directions, hidden sources [%s] (%s)\n",
+                s.steer.name.c_str(), s.steer.dirs.size(), srcs.c_str(), s.steer_path.c_str());
+    }
+    {
+        std::string err;
+        if (!load_emotion_accents(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    }
+    if (s.studio_dir.empty()) s.studio_dir = zonos3_find_studio_dir();
+
+    if (!dac_load(s.dac, dac_path.c_str(), s.use_gpu && !dac_cpu)) {
+        fprintf(stderr, "failed to load dac %s\n", dac_path.c_str());
+        if (!mp_file_exists(dac_path)) mp_print_missing_hint("dac.gguf", dac_path);
+        return 1;
+    }
+    s.dac_name = std::filesystem::path(dac_path).filename().string();
+    // DAC decode pool: one backend + thread per lane (ggml backends are not reentrant); lanes share s.dac's weights.
+    s.dac_lanes = std::vector<DacLane>(s.dac_threads);
+    for (int i = 0; i < s.dac_threads; ++i)
+        if (!dac_clone(s.dac_lanes[i].dac, s.dac)) { fprintf(stderr, "failed to load dac for pool lane %d\n", i); return 1; }
+
+    start_scheduler(s);
+    start_reference_reaper(s);
+
+    httplib::Server svr;
+    svr.set_payload_max_length((size_t) ProjectStore::MAX_MEDIA_BYTES);   // media uploads; JSON bodies carry audio
+    svr.set_read_timeout(120);
+    svr.set_write_timeout(600);   // long synthesis streams
+
+    install_middleware(svr);
+    register_capability_routes(svr, s);
+    register_generate_routes(svr, s);
+    register_speaker_routes(svr, s);
+    register_phonemize_routes(svr, s);
+    register_edit_routes(svr, s);
+    register_dub_routes(svr, s);
+    register_project_routes(svr, s.projects.get());
+    install_studio(svr, s.studio_dir);   // last: every API route matches first
+
+    fprintf(stderr, "zonos3-server: backbone=%s dac=%s spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d dac-threads=%d python-src=%s\n",
+            model_path.c_str(), dac_path.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
+            s.encoder_path.empty() ? "(none)" : s.encoder_path.c_str(), s.teacher_path.empty() ? "(none)" : s.teacher_path.c_str(),
+            s.steer_path.empty() ? "(none)" : s.steer_path.c_str(), s.use_gpu ? "GPU" : "CPU", s.batch_slots, s.dac_threads,
+            s.python_src.empty() ? "(none)" : s.python_src.c_str());
+    // Bind before announcing (and before publishing to ctl): --port 0 asks the OS for a free ephemeral port, which the
+    // embedding app reads back from ctl->port.
+    bool bound = !s.worker_failed;
+    if (bound) {
+        if (port == 0) { port = svr.bind_to_any_port(host); bound = port > 0; }
+        else bound = svr.bind_to_port(host, port);
+    }
+    bool ok = false;
+    if (bound) {
+        fprintf(stderr, "zonos3-server: listening on http://%s:%d  (studio: %s)\n", host.c_str(), port,
+                s.studio_dir.empty() ? "not built" : s.studio_dir.c_str());
+        if (ctl) { ctl->svr = &svr; ctl->port.store(port); }
+        ok = svr.listen_after_bind();
+    }
+
+    stop_scheduler(s);   // stop the worker, reaper + DAC pool before returning
+    stop_reference_reaper(s);
+    if (s.text_normalizer) s.text_normalizer->close();
+    if (ctl) ctl->svr = nullptr;   // svr is about to go out of scope
+    if (!bound) { fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port); return 1; }
+    // listen_after_bind() returns true on a graceful stop() and false only if the accept loop died on a real error.
+    return ok ? 0 : 1;
+}
+
+}  // namespace
+
+int zonos3_server_main(int argc, char ** argv, zonos3_server_ctl * ctl) {
+    const int rc = server_run(argc, argv, ctl);
+    if (rc != 0 && ctl) ctl->failed.store(true);
+    return rc;
+}
+
+#ifndef ZONOS3_APP_EMBED
+int main(int argc, char ** argv) { return zonos3_server_main(argc, argv, nullptr); }
+#endif

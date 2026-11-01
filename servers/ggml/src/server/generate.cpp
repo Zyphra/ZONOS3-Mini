@@ -1,0 +1,841 @@
+#include "compat.h"
+
+#include "server/generate.h"
+
+#include "server/http.h"
+#include "server/schema.h"
+#include "server/speakers.h"
+#include "server/textnorm.h"
+#include "server/util.h"
+
+#include "zonos3-markup.h"
+
+#include <algorithm>
+#include <cmath>
+#include <random>
+#include <stdexcept>
+#include <unordered_map>
+
+namespace zs {
+
+using json = nlohmann::json;
+
+namespace {
+
+constexpr double TAG_CFG_MIN_SCALE = 1.0, TAG_CFG_MAX_SCALE = 4.0;
+
+std::string py_list(const std::vector<std::string> & items) {
+    std::string out = "[";
+    for (size_t i = 0; i < items.size(); ++i) out += (i ? ", " : "") + py_repr(items[i]);
+    return out + "]";
+}
+
+bool set(const json & j, const char * key) { return j.contains(key) && !j[key].is_null(); }
+double num(const json & j, const char * key, double d) { return set(j, key) ? j[key].get<double>() : d; }
+// Python truthiness of an optional container (None, {} and [] are false).
+bool truthy(const json & j, const char * key) { return set(j, key) && !j[key].empty(); }
+
+// sgl _validate_tag_cfg: tagged-vs-plain guidance needs recognized markup and no other CFG.
+void validate_tag_cfg(const std::string & text, double scale, double speaker_cfg, double emotion_cfg) {
+    if (!std::isfinite(scale) || scale < TAG_CFG_MIN_SCALE || scale > TAG_CFG_MAX_SCALE)
+        fail(400, "tag_cfg_scale must be finite and between 1.0 and 4.0.");
+    if (scale == 1.0) return;
+    if (!zonos3_has_nonverbal_markup(text) || zonos3_strip_nonverbal_markup(text) == text) {
+        std::string tags;
+        for (const auto & t : zonos3_nonverbal_markup_tags()) tags += (tags.empty() ? "" : ", ") + ("<" + t + "/>");
+        fail(400, "tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags " + tags +
+                  " or the same names as span tags (<shouting>...</shouting>).");
+    }
+    if (speaker_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.");
+    if (emotion_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with emotion_cfg_scale; set emotion_cfg_scale to 1.0.");
+}
+
+// sgl _resolve_speaker_mode.
+std::string resolve_speaker_mode(const ServerState & s, const json & body) {
+    const auto modes = checkpoint_speaker_modes(s);
+    if (!set(body, "speaker_mode")) return modes.empty() ? "" : modes[0];
+    const std::string mode = body["speaker_mode"].get<std::string>();
+    if (std::find(modes.begin(), modes.end(), mode) == modes.end())
+        fail(400, "speaker_mode=" + py_repr(mode) + " is not available for this checkpoint (supported: " + py_list(modes) + ")");
+    return mode;
+}
+
+}  // namespace
+
+// sgl _resolve_condition_buckets: explicit ids win, raw values map through the edges, anything else is unknown.
+std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json & body) {
+    const auto & hp = s.model.hp;
+    const json buckets = set(body, "condition_buckets") ? body["condition_buckets"] : json();
+    const json values = set(body, "condition_values") ? body["condition_values"] : json();
+    if (hp.n_cond == 0) {
+        if ((!buckets.is_null() && !buckets.empty()) || (!values.is_null() && !values.empty()))
+            fail(400, "This checkpoint has no condition rows (loudness / fmax / speaking rate)");
+        return {};
+    }
+    const auto & names = hp.cond_names;
+    const int n_buckets = (int) hp.n_cond_buckets;
+    auto as_map = [&](const json & raw, const char * what) {
+        std::map<std::string, json> out;
+        if (raw.is_null()) return out;
+        if (raw.is_object()) {
+            std::vector<std::string> unknown;
+            for (auto it = raw.begin(); it != raw.end(); ++it) {
+                if (std::find(names.begin(), names.end(), it.key()) == names.end()) unknown.push_back(it.key());
+                else out[it.key()] = it.value();
+            }
+            if (!unknown.empty())
+                fail(400, std::string(what) + ": unknown condition name(s) " + py_list(unknown) + "; expected " + py_list(names));
+            return out;
+        }
+        if (raw.size() != names.size())
+            fail(400, std::string(what) + ": expected " + std::to_string(names.size()) + " entries in the order " + py_list(names));
+        for (size_t i = 0; i < names.size(); ++i) out[names[i]] = raw[i];
+        return out;
+    };
+    const auto ids = as_map(buckets, "condition_buckets");
+    const auto vals = as_map(values, "condition_values");
+    std::vector<int32_t> out;
+    for (size_t i = 0; i < names.size(); ++i) {
+        const std::string & name = names[i];
+        auto id = ids.find(name);
+        auto val = vals.find(name);
+        int bucket;
+        if (id != ids.end() && !id->second.is_null()) {
+            bucket = id->second.get<int>();
+            if (bucket < 0 || bucket > n_buckets)
+                fail(400, "condition_buckets[" + name + "] must be in [0, " + std::to_string(n_buckets - 1) + "] or " +
+                          std::to_string(n_buckets) + " (= unknown)");
+        } else if (val != vals.end() && !val->second.is_null()) {
+            const double v = val->second.get<double>();
+            if (!std::isfinite(v)) fail(400, "condition_values[" + name + "] must be finite");
+            if (i >= hp.cond_edges.size() || hp.cond_edges[i].empty())
+                fail(400, "the checkpoint carries no edges for " + name + "; send condition_buckets[" + name + "] instead");
+            bucket = zonos3_condition_bucket(s.model, (int) i, v);
+        } else {
+            bucket = n_buckets;
+        }
+        out.push_back(bucket);
+    }
+    return out;
+}
+
+// sgl _normalize_tts_request_language.
+std::string resolve_language(const json & body) {
+    const std::string given = set(body, "language") ? body["language"].get<std::string>() : "en_us";
+    std::string lang = lower_ascii(strip(given));
+    std::replace(lang.begin(), lang.end(), '-', '_');
+    const auto & langs = text_norm_languages();
+    if (std::find(langs.begin(), langs.end(), lang) == langs.end()) {
+        std::string supported;
+        for (const auto & l : langs) supported += (supported.empty() ? "" : ", ") + l;
+        fail(400, "Unsupported language code: " + py_repr(given) + ". Supported: " + supported + ".");
+    }
+    return lang;
+}
+
+std::string normalize_text(ServerState & s, const std::string & text, const std::string & language, bool requested) {
+    if (!requested || !s.text_normalizer) return text;
+    try {
+        return s.text_normalizer->normalize(text, language);
+    } catch (const WorkerError & e) {
+        fail(500, std::string("text normalization failed: ") + e.what());
+    }
+}
+
+namespace {
+
+bool calibrated(const json & body) { return !set(body, "emotion_calibrated") || body["emotion_calibrated"].get<bool>(); }
+
+// The request's speaker embedding when it conditions on one (sgl: msg.speaker_embedding is not None).
+std::vector<float> * request_embedding(GenReq & gr) {
+    return gr.speaker_mode == "embedding" && !gr.speaker_embedding.empty() ? &gr.speaker_embedding : nullptr;
+}
+
+// sgl _apply_request_emotion: raw / lda directions move the speaker embedding in place; proj / attnres_source
+// directions return their hidden delta (empty = none). Nothing happens without an emotion request.
+std::vector<float> apply_emotion(const ServerState & s, const json & body, GenReq & gr) {
+    if (!(set(body, "emotion_enabled") && body["emotion_enabled"].get<bool>())) return {};
+    zonos3_emotion_sliders sliders;
+    if (set(body, "emotion_sliders"))
+        for (auto it = body["emotion_sliders"].begin(); it != body["emotion_sliders"].end(); ++it)
+            sliders.emplace_back(it.key(), it.value().get<double>());
+    double valence = num(body, "emotion_valence", 0.0), arousal = num(body, "emotion_arousal", 0.0);
+    if (sliders.empty() && valence == 0.0 && arousal == 0.0) return {};
+    if (!s.emotion)
+        fail(400, "Emotion control requested but no emotion directions are configured for this model. "
+                  "Start the server with --emotion-directions (or place emotion.gguf next to the backbone).");
+    const zonos3_directions & d = *s.emotion;
+    std::vector<float> * embedding = request_embedding(gr);
+    if (!embedding && d.space != "attnres_source") return {};
+    if (calibrated(body)) zonos3_emotion_calibrate(d, gr.speaker_id, sliders, valence, arousal);
+    const double strength = num(body, "emotion_strength", 1.0);
+    std::string err;
+    std::vector<float> delta;
+    if (d.hidden()) {
+        if (!zonos3_emotion_hidden_delta(d, sliders, valence, arousal, strength, /*strict=*/true, delta, err)) fail(400, err);
+        return delta;
+    }
+    std::vector<float> moved;
+    if (!zonos3_emotion_apply(d, *embedding, sliders, valence, arousal, strength, /*preserve_norm=*/true,
+                              /*strict=*/true, moved, err))
+        fail(400, err);
+    *embedding = std::move(moved);
+    return {};
+}
+
+// sgl _resolve_tts_request_accent + _apply_steering_accent: an adapter accent selects its adapter for the scheduler
+// (gr.accent); a direction accent moves the speaker embedding (raw) or returns its hidden delta (empty = none).
+std::vector<float> apply_accent(const ServerState & s, const json & body, GenReq & gr) {
+    if (!set(body, "accent")) return {};
+    const std::string accent = body["accent"].get<std::string>();
+    if (accent.empty() || accent == "none") return {};
+    const std::vector<std::string> accents = server_accents(s);
+    if (std::find(accents.begin(), accents.end(), accent) == accents.end()) {
+        std::string loaded;
+        for (const auto & a : accents) loaded += (loaded.empty() ? "" : ", ") + a;
+        if (loaded.empty()) loaded = "none (start the server with --accent-adapters or --accent-directions)";
+        fail(400, "Unknown accent " + py_repr(accent) + "; loaded accents: " + loaded + ".");
+    }
+    const double strength = num(body, "accent_strength", 1.0);
+    if (s.accent_directions && s.accent_directions->find(accent)) {
+        std::vector<float> hidden;
+        std::string err;
+        if (!zonos3_accent_steering(*s.accent_directions, accent, strength, gr.speaker_id, calibrated(body),
+                                    request_embedding(gr), hidden, err))
+            fail(400, err);
+        return hidden;
+    }
+    gr.accent = zonos3_accent_index(*s.accent_adapters, accent);
+    gr.accent_strength = (float) strength;
+    return {};
+}
+
+// sgl _layout_steering_delta: the emotion and accent hidden deltas, each in its directions' bank-source slot of the
+// request's steering layout (s.steer_sources), added to the constant delta of the controls.
+void add_hidden_delta(const ServerState & s, GenReq & gr, int source, const std::vector<float> & delta) {
+    if (delta.empty()) return;
+    if (gr.steering.sources.empty()) {
+        gr.steering.sources = s.steer_sources;
+        gr.steering.hidden_size = (int) s.model.hp.n_embd;
+    }
+    if (!zonos3_steer_add_delta(gr.steering.sources, gr.steering.hidden_size, source, delta, gr.steering.hidden))
+        fail(500, "steering source " + std::to_string(source) + " is not among the server's steered sources");
+}
+
+// sgl _apply_request_controls: steering-bundle controls and spans -> resolved steering (raw controls move the
+// embedding in place).
+void apply_controls(ServerState & s, const json & body, GenReq & gr) {
+    if (!truthy(body, "controls") && !truthy(body, "control_spans")) return;
+    if (!s.steer_loaded)
+        fail(400, "This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); "
+                  "`controls` are unavailable.");
+    if (set(body, "emotion_enabled") && body["emotion_enabled"].get<bool>() &&
+        (truthy(body, "emotion_sliders") || num(body, "emotion_valence", 0.0) != 0.0 || num(body, "emotion_arousal", 0.0) != 0.0))
+        fail(400, "`controls` and the emotion_* fields cannot be combined; send the emotion as controls.");
+    std::map<std::string, double> controls;
+    if (set(body, "controls"))
+        for (auto it = body["controls"].begin(); it != body["controls"].end(); ++it) controls[it.key()] = it.value().get<double>();
+    std::vector<zonos3_control_span> spans;
+    if (set(body, "control_spans"))
+        for (const json & e : body["control_spans"]) {
+            zonos3_control_span sp;
+            sp.start = e["start"].get<int>();
+            sp.end = e["end"].get<int>();
+            for (auto it = e["controls"].begin(); it != e["controls"].end(); ++it) sp.controls[it.key()] = it.value().get<double>();
+            spans.push_back(std::move(sp));
+        }
+    const double rate = set(body, "control_span_rate") ? body["control_span_rate"].get<double>() : 0.0;
+    std::string err;
+    if (!zonos3_steer_resolve(s.steer, controls, spans, zonos3_steer_text_chars(gr.raw_text), rate,
+                              gr.speaker_mode == "embedding" ? &gr.speaker_embedding : nullptr, gr.steering, err))
+        fail(400, err);
+}
+
+// sgl _validate_phoneme_groups: pronunciation groups need a phoneme-token checkpoint and must be well formed.
+void check_phoneme_groups(const ServerState & s, const std::string & text) {
+    const std::string err = zonos3_check_phoneme_groups(s.model.tok, text);
+    if (!err.empty()) fail(400, err);
+}
+
+std::u32string utf8_to_u32(const std::string & s) {
+    std::u32string out;
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = (unsigned char) s[i];
+        const int n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        char32_t cp = n == 1 ? c : n == 2 ? (c & 0x1F) : n == 3 ? (c & 0x0F) : (c & 0x07);
+        for (int k = 1; k < n && i + k < s.size(); ++k) cp = (cp << 6) | ((unsigned char) s[i + k] & 0x3F);
+        out.push_back(cp);
+        i += n;
+    }
+    return out;
+}
+
+std::string u32_to_utf8(const std::u32string & s) {
+    std::string out;
+    for (char32_t cp : s) {
+        if (cp < 0x80) out += (char) cp;
+        else if (cp < 0x800) { out += (char) (0xC0 | (cp >> 6)); out += (char) (0x80 | (cp & 0x3F)); }
+        else if (cp < 0x10000) {
+            out += (char) (0xE0 | (cp >> 12)); out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F));
+        } else {
+            out += (char) (0xF0 | (cp >> 18)); out += (char) (0x80 | ((cp >> 12) & 0x3F));
+            out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F));
+        }
+    }
+    return out;
+}
+
+// UTF-8 bytes behind a model text id of the SuperBPE tokenizer: a byte-level symbol holds one code point per byte; an
+// added token its literal content. The server loads one model, so the table is built once.
+int token_bytes(const zonos3_tokenizer & tok, int32_t id) {
+    static const std::unordered_map<int32_t, int> table = [&tok] {
+        std::unordered_map<int32_t, int> t;
+        for (const auto & [sym, v] : tok.vocab) {
+            int n = 0;
+            for (unsigned char c : sym) n += (c & 0xC0) != 0x80;
+            t[v + tok.offset] = n;
+        }
+        for (const auto & [content, v] : tok.added) t[v + tok.offset] = (int) content.size();
+        return t;
+    }();
+    const auto it = table.find(id);
+    return it == table.end() ? 0 : it->second;
+}
+
+// sgl _check_laci_request (minus its naive-cache clause: every rollback here re-prefills the slot): heads for the
+// request's language and no CFG twin (the probe reads and masks the conditional request alone).
+void check_laci(const ServerState & s, const json & body, const std::string & language) {
+    if (!(set(body, "laci") && body["laci"].get<bool>())) return;
+    if (s.laci.empty()) fail(400, "LACI is not enabled on this server (start it with --laci-heads LANG=PATH)");
+    if (!s.laci.count(language)) {
+        std::string configured;
+        for (const auto & [lang, heads] : s.laci) configured += (configured.empty() ? "" : ", ") + lang;
+        fail(400, "No LACI alignment heads for language " + py_repr(language) + " (configured: " + configured + ")");
+    }
+    if (num(body, "speaker_cfg_scale", 1.0) != 1.0 || num(body, "emotion_cfg_scale", 1.0) != 1.0)
+        fail(400, "LACI needs speaker_cfg_scale = emotion_cfg_scale = 1");
+    if (num(body, "tag_cfg_scale", 1.0) != 1.0) fail(400, "LACI needs tag_cfg_scale = 1");
+}
+
+// sgl _span_follow: the request's spans follow the reading position when it asks for it, has span-schedule rows and its
+// language has alignment heads; otherwise the character-rate schedule places them.
+void resolve_span_follow(const ServerState & s, const json & body, GenReq & gr) {
+    if (!(set(body, "control_span_follow") && body["control_span_follow"].get<std::string>() == "reading")) return;
+    if (gr.steering.spans.empty()) return;
+    const auto heads = s.laci.find(gr.language);
+    if (heads == s.laci.end()) return;
+    const zonos3_follow::FollowConfig defaults;
+    gr.follow = &heads->second;
+    gr.follow_lead = num(body, "control_span_lead", defaults.lead);
+    gr.follow_lag = num(body, "control_span_lag", defaults.lag);
+}
+
+// The tokenizer's follow tokens (span_follow.span_token_ranges): each span's characters in the request text -> the
+// text-span positions [a, b) of the tokens spelling them in the normalized text.
+void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
+    if (!gr.follow) return;
+    const auto & tok = s.model.tok;
+    const std::u32string text = utf8_to_u32(gr.raw_text), final_ = utf8_to_u32(gr.text);
+    zonos3_follow::BpeOffsets bpe;
+    if (!tok.vocab.empty()) {
+        // SuperBPE offsets: each byte-level token symbol is one code point per UTF-8 byte; a token's characters run
+        // from the character of its first byte to the one of its last (tokenizers' byte-level offsets).
+        bpe = [&tok](const std::u32string & piece) {
+            std::vector<zonos3_follow::Range> out;
+            const std::string utf8 = u32_to_utf8(piece);
+            std::vector<int> char_of(utf8.size() + 1, (int) piece.size());
+            for (size_t b = 0, c = 0; b < utf8.size(); ++b) {
+                if (b > 0 && ((unsigned char) utf8[b] & 0xC0) != 0x80) ++c;
+                char_of[b] = (int) c;
+            }
+            const std::vector<int32_t> ids = zonos3_tokenize(tok, utf8);   // [BOS] tokens [EOS]
+            size_t at = 0;
+            for (size_t i = 1; i + 1 < ids.size(); ++i) {
+                const size_t n = (size_t) token_bytes(tok, ids[i]);
+                if (n == 0) continue;
+                out.push_back({char_of[at], char_of[at + n - 1] + 1});
+                at += n;
+            }
+            return out;
+        };
+    }
+    std::optional<zonos3_follow::PhonemeMarkers> phonemes;
+    if (tok.has_phonemes) phonemes = zonos3_follow::PhonemeMarkers{utf8_to_u32(tok.phonemes.open_marker),
+                                                                   utf8_to_u32(tok.phonemes.close_marker)};
+    std::vector<zonos3_follow::Range> spans, markers;
+    for (const auto & sp : gr.steering.spans) spans.push_back({sp.char_start, sp.char_end});
+    for (const auto & m : zonos3_nonverbal_marker_spans(gr.text)) markers.push_back(m);
+    const auto ranges = zonos3_follow::token_char_ranges(final_, bpe, phonemes);
+    const auto tokens = zonos3_follow::span_token_ranges(text, final_, spans, ranges, markers);
+    gr.follow_tokens.assign(tokens.begin(), tokens.end());
+}
+
+// sgl _resolve_stream_decode for a streaming response.
+bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
+    if (!streaming) return false;
+    if (!set(body, "stream_decode")) return s.stream_decode_default == "prefix";
+    return body["stream_decode"].get<std::string>() == "prefix";
+}
+
+// GenerateRequest -> GenReq (sgl _tts_generate_msg order: tag CFG, speaker mode, condition rows, speaker, emotion,
+// language, max_tokens, accent, controls, stream decode, speaker CFG, pronunciation groups, LACI; then the scheduler's
+// CFG twin choice).
+GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session) {
+    GeneratePlan out;
+    GenReq & gr = out.gr;
+    const std::string text = body["text"].get<std::string>();
+    gr.raw_text = text;
+    const double speaker_cfg = num(body, "speaker_cfg_scale", 1.0), emotion_cfg = num(body, "emotion_cfg_scale", 1.0);
+    validate_tag_cfg(text, num(body, "tag_cfg_scale", 1.0), speaker_cfg, emotion_cfg);
+    const std::string mode = resolve_speaker_mode(s, body);
+    gr.condition_buckets = resolve_condition_buckets(s, body);
+    ResolvedSpeaker spk = resolve_request_speaker(s, body, session, mode);
+    gr.speaker_mode = spk.mode;
+    gr.reference_codes = std::move(spk.codes);
+    gr.speaker_embedding = std::move(spk.embedding);
+    if (set(body, "speaker_embedding_id")) gr.speaker_id = body["speaker_embedding_id"].get<std::string>();
+    std::vector<float> emotion_delta = apply_emotion(s, body, gr);
+    gr.language = resolve_language(body);
+    // sgl _resolve_tts_max_tokens: the server's frame limit, or the request's (positive) budget below it.
+    gr.max_frames = s.max_frames;
+    if (set(body, "max_tokens")) {
+        const int64_t requested = body["max_tokens"].get<int64_t>();
+        if (requested <= 0) fail(400, "max_tokens must be positive.");
+        gr.max_frames = (int) std::min<int64_t>(requested, s.max_frames);
+    }
+    const std::vector<float> accent_delta = apply_accent(s, body, gr);
+    apply_controls(s, body, gr);
+    // A proj-space emotion delta lands on the projected speaker row; hidden-space deltas join the controls' constant
+    // delta in the per-source layout (main.cpp refuses proj-space emotion next to steered sources).
+    if (s.emotion && s.emotion->space == "proj") out.speaker_delta = std::move(emotion_delta);
+    else if (s.emotion) add_hidden_delta(s, gr, s.emotion->source_index, emotion_delta);
+    if (s.accent_directions) add_hidden_delta(s, gr, s.accent_directions->source_index, accent_delta);
+    resolve_span_follow(s, body, gr);
+    // X-Control-Span-Follow: how the request's control spans are placed
+    if (truthy(body, "control_spans")) out.span_follow = gr.follow ? "reading" : "rate";
+    gr.stream = !set(body, "stream") || body["stream"].get<bool>();
+    gr.prefix = resolve_prefix(s, body, gr.stream);
+    if (speaker_cfg != 1.0) {
+        const bool has_prompt = (gr.speaker_mode == "reference" && !gr.reference_codes.empty()) ||
+                                (gr.speaker_mode == "embedding" && !gr.speaker_embedding.empty());
+        if (!has_prompt)
+            fail(400, "Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or "
+                      "speaker_mode=embedding with a clip or an embedding");
+        if (emotion_cfg != 1.0) fail(400, "Speaker and emotion CFG cannot be combined");
+        if (s.batch_slots < 2) fail(400, "speaker CFG needs --batch >= 2 (the CFG twin takes a second slot)");
+        gr.cfg_scale = (float) speaker_cfg;
+        out.cfg_kind = "speaker";
+    }
+    // Tag CFG (validated above, exclusive with speaker / emotion CFG): the twin is the same prompt on
+    // strip_nonverbal_markup(text), guided like speaker CFG (scheduler._schedule_prefill).
+    const double tag_cfg = num(body, "tag_cfg_scale", 1.0);
+    if (tag_cfg > 1.0) {
+        if (s.batch_slots < 2) fail(400, "tag CFG needs --batch >= 2 (the CFG twin takes a second slot)");
+        gr.cfg_scale = (float) tag_cfg;
+        out.cfg_kind = "tag";
+    }
+    // Emotion CFG (scheduler._schedule_prefill): a request with an emotion / steering delta and a speaker embedding
+    // runs an unconditional twin on the same prompt without the delta; otherwise emotion_cfg_scale does nothing.
+    if (emotion_cfg != 1.0 && (!gr.steering.hidden.empty() || !out.speaker_delta.empty()) && request_embedding(gr)) {
+        if (s.batch_slots < 2) fail(400, "emotion CFG needs --batch >= 2 (the CFG twin takes a second slot)");
+        gr.cfg_scale = (float) emotion_cfg;
+        gr.twin_steered = false;
+        out.cfg_kind = "emotion";
+    }
+    check_phoneme_groups(s, text);
+    check_laci(s, body, gr.language);
+    if (set(body, "laci") && body["laci"].get<bool>()) gr.laci = &s.laci.at(gr.language);
+
+    // sampling (TTSSamplingParams)
+    gr.sp.temperature = (float) num(body, "temperature", 0.75);
+    gr.sp.top_k = set(body, "topk") ? body["topk"].get<int>() : 80;
+    gr.sp.top_p = (float) num(body, "top_p", 0.69);
+    gr.sp.min_p = (float) num(body, "min_p", 0.0);
+    gr.sp.rep_penalty = (float) num(body, "repetition_penalty", 2.4);
+    gr.sp.rep_window = set(body, "repetition_window") ? body["repetition_window"].get<int>() : 96;
+    gr.sp.rep_codebooks = set(body, "repetition_codebooks") ? body["repetition_codebooks"].get<int>() : 6;
+    if (gr.sp.rep_codebooks < 0) gr.sp.rep_codebooks = (int) s.model.hp.n_codebooks;
+    if (set(body, "seed")) gr.sp.seed = (uint32_t) body["seed"].get<uint64_t>();
+    else {   // secrets.randbelow(2**31)
+        static std::random_device rd;
+        gr.sp.seed = (uint32_t) (rd() & 0x7FFFFFFFu);
+    }
+    gr.sp.greedy = gr.sp.temperature <= 0.0f;
+    gr.fade_out_ms = num(body, "fade_out_ms", 0.0);
+    gr.headroom_db = set(body, "headroom_db") ? body["headroom_db"].get<double>() : -1.0;
+    gr.silence_prefill = s.silence_prefill_on ? s.silence_prefill_frames : 0;   // silence_prefill_frames_for(None)
+    if (set(body, "silence_prefill_frames")) {
+        const int64_t frames = body["silence_prefill_frames"].get<int64_t>();
+        if (frames < 0 || frames > ZONOS3_MAX_SILENCE_PREFILL)
+            fail(400, "silence_prefill_frames must be 0.." + std::to_string(ZONOS3_MAX_SILENCE_PREFILL));
+        gr.silence_prefill = (int) frames;
+    }
+    // decode_context: the last decode_context_frames (`or 30`) of the reference prompt, decoded ahead of the stream.
+    if (set(body, "decode_context") && body["decode_context"].get<bool>() && !gr.reference_codes.empty()) {
+        const int64_t asked = set(body, "decode_context_frames") ? body["decode_context_frames"].get<int64_t>() : 30;
+        const int64_t frames = asked ? asked : 30;
+        const int64_t ref_frames = (int64_t) gr.reference_codes.size() / s.model.hp.n_codebooks;
+        const int64_t k = std::max<int64_t>(0, std::min(frames, ref_frames));
+        gr.decode_context.assign(gr.reference_codes.end() - (size_t) k * s.model.hp.n_codebooks, gr.reference_codes.end());
+    }
+    // text normalization (the tokenizer's: TTSTextNormalizer when enabled and requested)
+    gr.text = normalize_text(s, text, gr.language, !set(body, "text_normalization") || body["text_normalization"].get<bool>());
+    resolve_follow_tokens(s, gr);
+    return out;
+}
+
+// float32 PCM as a 16-bit mono WAV, samples clipped to [-1, 1] (sgl _pcm16_wav: (x * 32767).astype("<i2")).
+std::string pcm16_wav(const std::vector<float> & audio, int sample_rate) {
+    std::string out;
+    auto w32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) out += (char) (v >> (8 * i)); };
+    auto w16 = [&](uint16_t v) { out += (char) v; out += (char) (v >> 8); };
+    const uint32_t data = (uint32_t) audio.size() * 2;
+    out += "RIFF"; w32(36 + data); out += "WAVE";
+    out += "fmt "; w32(16); w16(1); w16(1); w32((uint32_t) sample_rate); w32((uint32_t) sample_rate * 2); w16(2); w16(16);
+    out += "data"; w32(data);
+    for (float v : audio) {
+        const float c = std::min(1.0f, std::max(-1.0f, v));
+        w16((uint16_t) (int16_t) (c * 32767.0f));
+    }
+    return out;
+}
+
+void generate(ServerState & s, const json & body, const std::optional<std::string> & session, httplib::Response & res) {
+    const bool wav = set(body, "format") && body["format"].get<std::string>() == "wav";
+    const bool stream = !set(body, "stream") || body["stream"].get<bool>();
+    if (stream && wav) fail(400, "format=wav needs stream=false");
+    GeneratePlan r = plan_generate(s, body, session);
+    r.gr.wav = wav;
+    const std::string span_follow = r.span_follow;
+    auto job = make_job(s, std::move(r));
+    const int sr = s.dac.sample_rate;
+    res.set_header("X-Audio-Sample-Rate", std::to_string(sr));
+    res.set_header("X-Audio-Channels", "1");
+    res.set_header("X-Audio-Format", wav ? "pcm16" : "float32");
+    res.set_header("X-Seed", std::to_string(job->gr.sp.seed));
+    if (!span_follow.empty()) res.set_header("X-Control-Span-Follow", span_follow);
+    submit_job(s, job);
+
+    if (job->gr.stream) {
+        res.set_chunked_content_provider("audio/pcm", [job](size_t, httplib::DataSink & sink) -> bool {
+            for (;;) {
+                std::vector<float> block;
+                bool done = false, failed = false;
+                {
+                    std::unique_lock<std::mutex> lk(job->m);
+                    job->cv.wait(lk, [&] { return !job->pcm.empty() || job->finished; });
+                    if (!job->pcm.empty()) { block = std::move(job->pcm.front()); job->pcm.pop_front(); }
+                    else done = job->finished;
+                    failed = job->failed;
+                }
+                if (!block.empty() && !sink.write((const char *) block.data(), block.size() * sizeof(float))) {
+                    std::lock_guard<std::mutex> lk(job->m);
+                    job->client_dropped = true;
+                    return false;   // client gone; the worker evicts the slot next tick
+                }
+                if (done) {
+                    if (failed) return false;
+                    sink.done();
+                    return true;
+                }
+            }
+        }, [job](bool) {   // the response is gone (finished, failed or never written): stop generating
+            std::lock_guard<std::mutex> lk(job->m);
+            if (!job->finished) job->client_dropped = true;
+        });
+        return;
+    }
+    std::vector<float> audio;
+    bool failed;
+    {
+        std::unique_lock<std::mutex> lk(job->m);
+        job->cv.wait(lk, [&] { return job->finished; });
+        failed = job->failed;
+        for (auto & b : job->pcm) audio.insert(audio.end(), b.begin(), b.end());
+    }
+    if (failed) fail(500, "generation failed");
+    if (wav) res.set_content(pcm16_wav(audio, sr), "audio/wav");
+    else res.set_content((const char *) audio.data(), audio.size() * sizeof(float), "audio/pcm");
+}
+
+// The speaker input fields a SpeechRequest `voice` cannot be combined with.
+const char * SPEAKER_INPUT_FIELDS[] = {
+    "speaker_audio_base64", "speaker_audio_name", "speaker_reference_codes", "speaker_embedding_base64",
+    "speaker_embedding_name", "speaker_embedding_id", "speaker_blend_embedding_id_a", "speaker_blend_embedding_id_b",
+    "speaker_blend_t",
+};
+
+}  // namespace
+
+bool configure_silence_prefill(ServerState & s, std::string & err) {
+    s.silence_prefill_frames = ZONOS3_DEFAULT_SILENCE_PREFILL;
+    if (const char * v = getenv("ZONOS3_SILENCE_PREFILL_FRAMES"); v && *v) {
+        char * end = nullptr;
+        const long x = strtol(v, &end, 10);
+        if (end && !*end) s.silence_prefill_frames = (int) std::max(0L, x);
+    }
+    if (s.silence_prefill_frames > ZONOS3_MAX_SILENCE_PREFILL) {
+        err = "ZONOS3_SILENCE_PREFILL_FRAMES must be 0.." + std::to_string(ZONOS3_MAX_SILENCE_PREFILL);
+        return false;
+    }
+    const char * on = getenv("ZONOS3_SILENCE_PREFILL_DEFAULT");
+    const std::string v = lower_ascii(strip(on ? on : "1"));
+    s.silence_prefill_on = !(v == "0" || v == "false" || v == "no" || v == "off") && s.silence_prefill_frames > 0;
+    return true;
+}
+
+std::vector<std::string> server_accents(const ServerState & s) {
+    std::vector<std::string> out;
+    if (s.accent_adapters) out = s.accent_adapters->names;
+    if (s.accent_directions)
+        for (const auto & name : s.accent_directions->controls()) out.push_back(name);
+    return out;
+}
+
+bool load_emotion_accents(ServerState & s, std::string & err) {
+    const auto & hp = s.model.hp;
+    const bool full_attnres = s.model.attnres_q != nullptr;
+    // Hidden directions are hidden-size vectors on a bank source; speaker-space ones match the speaker embedding.
+    auto check_dims = [&](const zonos3_directions & d, const std::string & path) {
+        if (d.hidden() && d.dim != (int) hp.n_embd) {
+            err = path + ": " + std::to_string(d.dim) + "-dim " + d.space + " directions; the backbone hidden size is " +
+                  std::to_string(hp.n_embd);
+            return false;
+        }
+        if (d.space == "attnres_source" && d.source_index > 2 * (int) hp.n_layer) {
+            err = path + ": source_index " + std::to_string(d.source_index) +
+                  " is outside the backbone's Full AttnRes bank (0.." + std::to_string(2 * hp.n_layer) + ")";
+            return false;
+        }
+        if (!d.hidden() && d.input_dim != (int) hp.speaker_dim) {
+            err = path + ": " + d.space + " directions take a " + std::to_string(d.input_dim) +
+                  "-dim speaker embedding; the backbone's is " + std::to_string(hp.speaker_dim);
+            return false;
+        }
+        return true;
+    };
+    if (!s.accent_adapters_path.empty()) {
+        auto bank = std::shared_ptr<zonos3_accents>(new zonos3_accents(), [](zonos3_accents * b) {
+            zonos3_accents_free(*b);
+            delete b;
+        });
+        if (!zonos3_accents_load(*bank, s.accent_adapters_path.c_str(), s.model, err)) return false;
+        s.accent_adapters = bank;
+        s.model.accents = bank.get();
+        std::string names;
+        for (const auto & n : bank->names) names += (names.empty() ? "" : ", ") + n;
+        fprintf(stderr, "zonos3-server: accent adapters %s: %s\n", s.accent_adapters_path.c_str(), names.c_str());
+    }
+    if (!s.accent_directions_path.empty()) {   // sgl _accent_directions: a failure is an error
+        auto d = std::make_shared<zonos3_directions>();
+        const std::string & path = s.accent_directions_path;
+        if (!zonos3_directions_load(*d, path.c_str(), err)) return false;
+        if (d->space != "attnres_source" && d->space != "raw") {
+            err = "--accent-directions " + path + ": needs attnres_source or raw directions";
+            return false;
+        }
+        if (d->space == "raw" && hp.speaker_dim == 0) {
+            err = "--accent-directions " + path + ": raw (speaker-embedding) accents need a checkpoint that conditions "
+                  "on speaker embeddings";
+            return false;
+        }
+        if (!check_dims(*d, path)) return false;
+        std::vector<std::string> clash;
+        for (const auto & n : d->controls())
+            if (s.accent_adapters && zonos3_accent_index(*s.accent_adapters, n) >= 0) clash.push_back(n);
+        if (!clash.empty()) {
+            std::sort(clash.begin(), clash.end());
+            err = "accent names in both --accent-adapters and --accent-directions: " + py_list(clash);
+            return false;
+        }
+        s.accent_directions = d;
+        std::string names;
+        for (const auto & n : d->controls()) names += (names.empty() ? "" : ", ") + n;
+        fprintf(stderr, "zonos3-server: %s accent directions %s: %s\n", d->space.c_str(), path.c_str(), names.c_str());
+    }
+    if (!s.emotion_directions_path.empty()) {
+        // sgl _get_emotion_directions / _emotion_directions_for_model: an unreadable or empty set, or one the
+        // backbone cannot consume, leaves emotion control off.
+        auto d = std::make_shared<zonos3_directions>();
+        const std::string & path = s.emotion_directions_path;
+        std::string why;
+        if (!zonos3_directions_load(*d, path.c_str(), why)) {
+            fprintf(stderr, "zonos3-server: warning: failed to load emotion directions from %s: %s\n", path.c_str(), why.c_str());
+        } else if (d->empty()) {
+            fprintf(stderr, "zonos3-server: no emotion directions found at %s; emotion control disabled.\n", path.c_str());
+        } else if (d->space == "attnres_source" ? !full_attnres : hp.speaker_dim == 0) {
+            fprintf(stderr, "zonos3-server: the backbone cannot consume the %s emotion directions %s; emotion control "
+                    "disabled.\n", d->space.c_str(), path.c_str());
+        } else {
+            if (!check_dims(*d, path)) return false;
+            s.emotion = d;
+            std::string names;
+            for (const auto & n : d->controls()) names += (names.empty() ? "" : ", ") + n;
+            fprintf(stderr, "zonos3-server: %s emotion directions %s (%s)%s\n", d->space.c_str(), path.c_str(),
+                    names.c_str(), d->calibrated ? ", calibrated" : "");
+        }
+    }
+    // sgl _steering_sources.
+    std::vector<int> sources = s.steer_loaded ? s.steer.sources : std::vector<int>{};
+    if (s.emotion && s.emotion->space == "attnres_source") sources.push_back(s.emotion->source_index);
+    if (s.accent_directions && s.accent_directions->space == "attnres_source")
+        sources.push_back(s.accent_directions->source_index);
+    std::sort(sources.begin(), sources.end());
+    sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
+    if (s.emotion && s.emotion->space == "proj" && !sources.empty()) {
+        // one request delta cannot carry a speaker-row (proj) emotion delta and a generated-row delta at once
+        err = "hidden-space steering cannot be combined with proj-space emotion directions";
+        return false;
+    }
+    s.steer_sources = sources;
+    if (s.steer_loaded) s.steer.sources = sources;   // controls resolve into the same per-source layout
+    return true;
+}
+
+GeneratePlan plan_generate(ServerState & s, const json & body, const std::optional<std::string> & session) {
+    GeneratePlan plan = resolve(s, body, session);
+    const GenReq & gr = plan.gr;
+    zonos3_prompt_options opt;
+    if (gr.speaker_mode == "reference" && !gr.reference_codes.empty()) {
+        opt.reference_codes = gr.reference_codes.data();
+        opt.reference_frames = (int) (gr.reference_codes.size() / s.model.hp.n_codebooks);
+    } else if (gr.speaker_mode == "embedding" && !gr.speaker_embedding.empty()) {
+        opt.speaker_embedding = gr.speaker_embedding.data();
+    }
+    opt.condition_buckets = gr.condition_buckets;
+    opt.silence_prefill_frames = gr.silence_prefill;
+    std::string err;
+    if (!zonos3_build_prompt(s.model, gr.text, opt, plan.prompt, &err))
+        fail(400, "could not build the prompt: " + err);
+    // The prompt's rows run with the request's proj-space emotion delta (on the speaker row) and accent adapter.
+    if (plan.prompt.cond.speaker_row >= 0) plan.prompt.cond.speaker_delta = plan.speaker_delta;
+    plan.prompt.cond.accent = gr.accent;
+    plan.prompt.cond.accent_strength = gr.accent_strength;
+    if (plan.cfg_kind == "speaker") {
+        if (!zonos3_build_cfg_twin(s.model, plan.prompt, plan.twin))
+            fail(400, "could not build the speaker-CFG twin prompt");
+    } else if (plan.cfg_kind == "tag") {
+        // Same speaker, condition and silence rows; the text without its nonverbal markup.
+        if (!zonos3_build_prompt(s.model, zonos3_strip_nonverbal_markup(gr.text), opt, plan.twin, &err))
+            fail(400, "could not build the tag-CFG twin prompt: " + err);
+        if (plan.twin.cond.speaker_row >= 0) plan.twin.cond.speaker_delta = plan.speaker_delta;
+    } else if (plan.cfg_kind == "emotion") {
+        // The same prompt and speaker without the emotion delta (the scheduler leaves the twin unsteered).
+        plan.twin = plan.prompt;
+        plan.twin.cond.speaker_delta.clear();
+    }
+    // The accent adapter applies to both branches.
+    plan.twin.cond.accent = gr.accent;
+    plan.twin.cond.accent_strength = gr.accent_strength;
+    return plan;
+}
+
+std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan) {
+    auto job = std::make_shared<ReqJob>();
+    job->prompt = std::move(plan.prompt);
+    job->twin = std::move(plan.twin);
+    const GenReq & gr = plan.gr;
+    const int64_t rows = std::max(job->prompt.n_rows, job->twin.n_rows);
+    if (rows + gr.max_frames > s.context_capacity)
+        fail(400, "reference, text and max_tokens exceed the slot context capacity (" + std::to_string(s.context_capacity) + " rows)");
+    job->idf.assign(job->prompt.ids.begin(), job->prompt.ids.end());
+    job->idf_twin.assign(job->twin.ids.begin(), job->twin.ids.end());
+    job->n0 = job->prompt.n_rows;
+    job->ctx_frames = (int) (gr.decode_context.size() / s.model.hp.n_codebooks);
+    job->skip_samples = (int64_t) (job->prompt.prefill_frames + job->ctx_frames) * dac_samples_per_frame(s.dac);
+    job->gain = dac_output_gain(s.dac, gr.headroom_db);
+    job->gr = std::move(plan.gr);
+    try {
+        attach_probe(s, *job);
+    } catch (const std::invalid_argument & e) {
+        fail(400, e.what());
+    }
+    return job;
+}
+
+std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, const std::optional<std::string> & session) {
+    const json & body = take.request;
+    if (!(set(body, "laci") && body["laci"].get<bool>())) fail(400, "A LACI duration target needs laci=true");
+    GeneratePlan plan = plan_generate(s, body, session);
+    GenReq & gr = plan.gr;
+    gr.stream = false;
+    gr.prefix = false;
+    gr.laci_duration = take.duration;
+    if (take.scale) {   // _dub_take_rate_steering
+        const LaciTake::Scale & sc = *take.scale;
+        const auto & hp = s.model.hp;
+        int index = -1;
+        for (size_t i = 0; i < hp.cond_names.size(); ++i) if (hp.cond_names[i] == "speaking_rate") index = (int) i;
+        if (index < 0) fail(400, "an extended speaking-rate scale needs the checkpoint's speaking-rate condition");
+        zonos3_laci::RateBuckets rates;
+        rates.index = index;
+        rates.edges = sc.edges;
+        rates.n_buckets = (int) hp.n_cond_buckets;
+        rates.first = sc.first;
+        if (!(rates.first <= sc.bucket && sc.bucket <= rates.last()))
+            fail(400, "speaking-rate bucket " + std::to_string(sc.bucket) + " is outside the scale [" +
+                      std::to_string(rates.first) + ", " + std::to_string(rates.last()) + "]");
+        const std::vector<float> base = gr.steering.hidden;
+        std::vector<std::vector<float>> deltas;
+        for (int b = rates.first; b <= rates.last(); ++b) {
+            const auto dose = sc.doses.find(b);
+            if (dose == sc.doses.end()) { deltas.push_back(base); continue; }
+            if (!s.steer_loaded) fail(400, "a steered speaking-rate bucket needs the steering bundle (steer.gguf)");
+            zonos3_steering tempo;
+            std::string err;
+            if (!zonos3_steer_resolve(s.steer, {{sc.direction, dose->second}}, {}, 0, 0.0, nullptr, tempo, err))
+                fail(400, err);
+            std::vector<float> d = tempo.hidden.empty() ? base : tempo.hidden;
+            if (!tempo.hidden.empty()) for (size_t i = 0; i < base.size() && i < d.size(); ++i) d[i] += base[i];
+            deltas.push_back(std::move(d));
+        }
+        gr.steering.hidden = deltas[(size_t) (sc.bucket - rates.first)];
+        gr.laci_rates = rates;
+        gr.laci_bucket = sc.bucket;
+        gr.laci_rate_deltas = std::move(deltas);
+    }
+    return make_job(s, std::move(plan));
+}
+
+TakeResult wait_take(const std::shared_ptr<ReqJob> & job) {
+    TakeResult out;
+    bool failed;
+    {
+        std::unique_lock<std::mutex> lk(job->m);
+        job->cv.wait(lk, [&] { return job->finished; });
+        failed = job->failed;
+        for (auto & b : job->pcm) out.pcm.insert(out.pcm.end(), b.begin(), b.end());
+    }
+    if (failed) throw std::runtime_error("the LACI take failed");
+    if (job->laci_record.empty()) throw std::runtime_error("the scheduler sent no LACI record");
+    out.laci = json::parse(job->laci_record);
+    return out;
+}
+
+void register_generate_routes(httplib::Server & svr, ServerState & s) {
+    svr.Post("/v2/generate", guarded([&s](const httplib::Request & req, httplib::Response & res) {
+        const json body = schema::parse_body(req, "GenerateRequest");
+        generate(s, body, session_id(req), res);
+    }));
+    // OpenAI-compatible: the /v2/generate request of `input` (pcm streams, wav is buffered), with `voice` (a speaker
+    // id of GET /v2/speakers) as its speaker_embedding_id.
+    svr.Post("/v1/audio/speech", guarded([&s](const httplib::Request & req, httplib::Response & res) {
+        json body = schema::parse_body(req, "SpeechRequest");
+        const auto session = session_id(req);
+        const std::string format = set(body, "response_format") ? body["response_format"].get<std::string>() : "pcm";
+        if (set(body, "voice")) {
+            for (const char * field : SPEAKER_INPUT_FIELDS)
+                if (set(body, field)) fail(400, "voice cannot be combined with speaker_* fields");
+            const std::string voice = body["voice"].get<std::string>();
+            if (!speaker_known(s, session, voice)) fail(400, "unknown voice '" + voice + "'");
+            body["speaker_embedding_id"] = voice;
+        }
+        body["text"] = body["input"];
+        body["stream"] = format == "pcm";
+        body["format"] = format;
+        for (const char * k : {"model", "input", "voice", "response_format"}) body.erase(k);
+        generate(s, body, session, res);
+    }));
+}
+
+}  // namespace zs

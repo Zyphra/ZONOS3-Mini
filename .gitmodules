@@ -1,0 +1,3 @@
+[submodule "servers/ggml/ggml"]
+	path = servers/ggml/ggml
+	url = https://github.com/ggml-org/ggml

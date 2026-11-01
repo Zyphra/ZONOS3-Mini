@@ -8,39 +8,39 @@ optional post-processing step (AV-sync) then time-warps the dub onto the speaker
 ## Setup (once)
 
 ```bash
-bash scripts/setup_dub_align_env.sh   # .venv-dub-align: qwen-asr 0.0.6 (transformers 4.57.6) + simalign; downloads the weights;
+bash tools/setup_dub_align_env.sh   # .venv-dub-align: qwen-asr 0.0.6 (transformers 4.57.6) + simalign; downloads the weights;
                                       # AV-sync at a pinned commit in .avsync/ with its SyncNet and S3FD models (re-runnable)
 ```
 
 ## Run
 
-One server: the studio server (`python -m zonos3`, `zonos3/server/api_server.py`) hosts `/dub/*`. `DUB=1` in
-`scripts/serve.sh` passes `--laci-heads` for every dub target language (the heads selected on lm/mect_60k in
+One server: the studio server (`python -m zonos3_sgl`, `zonos3_sgl/server/api_server.py`) hosts `/v2/dub/*`. `DUB=1` in
+`servers/sgl/scripts/serve.sh` passes `--laci-heads` for every dub target language (the heads selected on lm/mect_60k in
 `laci_heads/`: `zonos3_mini_mect60k_heads_zh.json` for `cmn`, `zonos3_mini_mect60k_heads.json` for the rest;
 `LACI_HEADS_DIR` / `LACI_HEADS` override) and points the server at the alignment worker and AV-sync
 (`ZONOS3_DUB_ALIGN_PYTHON`, `ZONOS3_DUB_AVSYNC_HOME`, `ZONOS3_DUB_ALIGN_DEVICE`; defaults: the repo's `.venv-dub-align`,
 `.avsync`, `cuda`):
 
 ```bash
-STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 scripts/serve.sh      # open http://127.0.0.1:1919/studio/ -> Dub
+STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh      # open http://127.0.0.1:1919/ -> Dub
 # pronunciation groups in target texts: SERVE_MODEL=<phoneme checkpoint> PHONEME_LEXICON=<lexicon dir>
 ```
 
-Every take is a `/tts/generate` request on the server's scheduler (`api_server._dub_synthesize`): `laci=true`, the
+Every take is a `/v2/generate` request on the server's scheduler (`api_server._dub_synthesize`): `laci=true`, the
 take's LACI duration target (`TTSTokenizeMsg.laci_target_frames` / `laci_adjust_rate` -> `zonos3.tts.laci.DurationTarget`
 in the scheduler), its speaking-rate bucket in the condition rows (the others unknown), the release sampling defaults,
 speaker CFG 1 (LACI's constraint), and its voice. The LACI record comes back on the request's final `TTSAudioReply`.
 At most twice `--max-running-requests` takes are in flight, so studio requests interleave with a dub. The alignment
-worker (`scripts/dub_align_worker.py`, own venv) starts on the first call that needs it (transcribe / analyze /
+worker (`model/src/zonos3/workers/dub_align.py`, own venv) starts on the first call that needs it (transcribe / analyze /
 generate / lips) and again after it died; it shares the server's GPU.
 
-Voices and direction (`zonos3/dub/runtime.py`): `voice: {mode: "source"}` (default) clones the reference speaker from
+Voices and direction (`zonos3_sgl/dub/runtime.py`): `voice: {mode: "source"}` (default) clones the reference speaker from
 its own audio (raw reference prefix codes of the clip from the first source-voice segment, up to 20 s);
 `{mode: "studio", speaker_embedding_id, controls?}` is a studio library / saved voice in `speaker_mode=embedding` with
 Cast-bench controls (raw + hidden doses; the request's `X-TTS-Session-ID` reaches the session's saved voices). Each
 segment may override the voice (`segments[k].voice`) and add its own direction (`segments[k].controls`, summed per id
-with the voice's controls, as `/tts/edit`'s `region_controls`); speaker-embedding (raw) controls need a studio voice.
-Controls resolve through the same `_apply_request_controls` / `resolve_controls` path as `/tts/generate`. Target
+with the voice's controls, as `/v2/edit`'s `region_controls`); speaker-embedding (raw) controls need a studio voice.
+Controls resolve through the same `_apply_request_controls` / `resolve_controls` path as `/v2/generate`. Target
 texts may carry pronunciation groups (U+E000 IPA U+E001) on phoneme-token checkpoints: the TTS reads the group, the
 forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`edit_align.token_chars`). Rows echo
 `voice` (effective) and `controls` (the segment's own).
@@ -96,11 +96,11 @@ forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`ed
    Regenerate makes new takes for one segment with the given seed, text and bucket, and optionally a new `voice` and
    `controls` (omitted: the segment's; `controls: {}` clears its own direction); an empty text silences the segment.
    The other segments keep their takes, and the timeline is placed again, so later segments can shift.
-4. For video input `POST /dub/mux/{dub_id}` copies the video stream and muxes the dub as the audio track (ffmpeg).
+4. For video input `POST /v2/dub/mux/{dub_id}` copies the video stream and muxes the dub as the audio track (ffmpeg).
 5. **Lip-sync** (video input, on by default): [AV-sync](https://github.com/Ryu1845/AV-sync) ("Dynamic Temporal
    Alignment of Speech to Lips", Halperin et al.) warps the finished dub onto the speaker's lips.
    - The server finds the video's first face track (S3FD) and computes the SyncNet lip embeddings
-     (`POST /dub/lips/{ref_id}`); generate / regenerate with `lipsync: true` need it first.
+     (`POST /v2/dub/lips/{ref_id}`); generate / regenerate with `lipsync: true` need it first.
    - After each Generate / Regenerate the dub's SyncNet audio embeddings over the face track are aligned to the lips by
      AV-sync's banded dynamic programming (modality `va`, up to ±2 s), and the path is smoothed as in `align_audio.py`.
      WSOLA (`plan.wsola`: 23 ms Hann frames at 50 % overlap, each taken within ±11.6 ms of its nominal source position
@@ -125,21 +125,23 @@ forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`ed
      `lip_squeeze` (largest local speed-up) and `lip_warp` (geometric mean of the local factor). Local factors are
      capped at 10x; the cap means the warp stood the dub still (or jumped over it) there. The words are in
      warped time; segment placement metrics (`start_error`, …) stay those of the unwarped timeline.
-   - The glue lives in `scripts/dub_avsync.py`: AV-sync's two entry points are scripts, so their face tracking / crop
+   - The glue lives in `model/src/zonos3/workers/dub_avsync.py`: AV-sync's two entry points are scripts, so their face tracking / crop
      and path post-processing are ported there with the same constants; everything else is imported from the checkout.
 
 ## HTTP API
 
-`GET /dub/capabilities` (target languages with LACI heads, rate edges and bucket count, `buckets` (the extended scale:
+`GET /v2/dub/capabilities` (target languages with LACI heads, rate edges and bucket count, `buckets` (the extended scale:
 `[{index, label, rate, low, high, steered, languages, doses?}]`, nominal B/s midpoint and edges, the target languages
 that have the bucket, the tempo dose per language of a steered one), `lipsync`, `voice_modes`,
-`phoneme_groups`, limits, `enabled`; `/tts/capabilities` carries `dub`), `POST /dub/ref?name=` (raw audio bytes, or a
-video whose first audio track is taken), `/dub/transcribe {ref_id, ref_lang?}` (text, language and the ForcedAligner
-`words`), `/dub/analyze {ref_id, ref_text | ref_words, ref_lang, target_text, target_lang, min_pause_s}` (segments
-with `bucket_auto`), `/dub/generate {ref_id, target_lang, seed, segments: [{ref_start, ref_end, target_text, bucket?,
-voice?, controls?}], voice?, lipsync}`, `/dub/regenerate {dub_id, segment, target_text, seed, bucket, voice?, controls?,
-lipsync}` (new takes for one segment, the others kept; returns a new dub), `POST /dub/lips/{ref_id}?name=` (raw video
-bytes -> face track for lip-sync), `POST /dub/mux/{dub_id}?name=` (raw video bytes -> MP4). generate / regenerate read
-`X-TTS-Session-ID` for the session's saved voices. Errors: 400 invalid input, 404 unknown `ref_id` / `dub_id` (the
-server keeps the last 8 of each), 503 alignment worker failure. Tests: `tests/misc/test_dub_plan.py` (planning),
-`tests/misc/test_dub_runtime.py` (voices, controls, regenerate, `ref_words`, groups).
+`phoneme_groups`, limits, `enabled`; `/v2/capabilities` carries `dub`), `POST /v2/dub/ref?name=` (raw audio bytes, or a
+video whose first audio track is taken), `/v2/dub/transcribe {ref_id, ref_lang?}` (text, language and the ForcedAligner
+`words`), `/v2/dub/analyze {ref_id, ref_text | ref_words, ref_lang, target_text, target_lang, min_pause_s}` (segments
+with `bucket_auto`), `/v2/dub/generate {ref_id, target_lang, seed, segments: [{ref_start, ref_end, target_text, bucket?,
+voice?, controls?}], voice?, lipsync}`, `/v2/dub/regenerate {dub_id, segment, target_text, seed, bucket, voice?, controls?,
+lipsync}` (new takes for one segment, the others kept; returns a new dub), `POST /v2/dub/lips/{ref_id}?name=` (raw video
+bytes -> face track for lip-sync), `POST /v2/dub/mux/{dub_id}?name=` (raw video bytes -> MP4). generate / regenerate read
+`X-TTS-Session-ID` for the session's saved voices; every route but capabilities and mux accepts `X-Keepalive: 1`
+([api.md](api.md#headers)). The schemas are in [api/openapi.yaml](../api/openapi.yaml). Errors: 400 invalid input, 404
+unknown `ref_id` / `dub_id` (the server keeps the last 8 of each), 422 schema violations (unknown fields included), 503
+alignment worker failure. Tests: `model/tests/test_dub_plan.py` (planning), `servers/sgl/tests/test_dub_runtime.py`
+(voices, controls, regenerate, `ref_words`, groups).

@@ -4,6 +4,8 @@
 
 mini-sglang serves a multi-codebook TTS transformer (Zonos3) through a multi-process pipeline with streaming audio output. Text is encoded as SuperBPE (or UTF-8 byte) token frames, fed through an autoregressive transformer that predicts 10 parallel audio codebook streams of the matched dual codec, and decoded to 44.1 kHz PCM audio by that codec's causal iSTFT decoder - with streaming responses to the HTTP client.
 
+Paths below are relative to the two packages: `zonos3/` (`model/src/zonos3`, model code shared with the ggml server and the reference) and `zonos3_sgl/` (`servers/sgl/src/zonos3_sgl`, the CUDA server).
+
 ## Process Architecture
 
 Four process types communicate over ZMQ:
@@ -17,20 +19,20 @@ Four process types communicate over ZMQ:
 
 | Process | Count | Role |
 |---------|-------|------|
-| Frontend | 1 | FastAPI server. Accepts `POST /tts/generate`, streams PCM chunks back. Logs TTFB, E2E latency, RTF. |
+| Frontend | 1 | FastAPI server. Accepts `POST /v2/generate` and `POST /v1/audio/speech`, streams PCM chunks back. Logs TTFB, E2E latency, RTF. |
 | Tokenizer | N (default 0 = shared with detokenizer) | Runs `TTSPromptBuilder`: text → SuperBPE / byte tokens → 2D prompt tensor (speaker row, condition rows, reference prefix, text). Sends `TTSUserMsg` to scheduler. |
 | Scheduler | 1 per TP rank | Runs `TTSScheduler` wrapping `Engine`. Autoregressive decode loop: prefill → decode → sample → emit frames. |
 | Detokenizer | 1 | Runs `TTSVocoderManager`: audio codes → matched codec decoder → PCM bytes. Sends `TTSAudioReply` to frontend. |
 
-Spawned by `launch_server()` in `server/launch.py`. Each scheduler process holds one GPU; tensor parallelism across ranks is coordinated via NCCL.
+Spawned by `launch_server()` in `zonos3_sgl/server/launch.py`. Each scheduler process holds one GPU; tensor parallelism across ranks is coordinated via NCCL.
 
 ### Message types
 
-Defined in `message/tts.py`:
+Defined in `zonos3_sgl/message/tts.py`:
 
 | Message | Direction | Key fields |
 |---------|-----------|------------|
-| `TTSTokenizeMsg` | Frontend → Tokenizer | `uid`, `text`, `sampling_params`, optional speaker/rate conditioning |
+| `TTSTokenizeMsg` | Frontend → Tokenizer | `uid`, `text`, `sampling_params`, optional speaker/condition conditioning |
 | `TTSUserMsg` | Tokenizer → Scheduler | `uid`, `input_ids: Tensor (seq_len, frame_width)`, `sampling_params` |
 | `TTSDetokenizeMsg` | Scheduler → Detokenizer | `uid`, `audio_codes: List[int]` (one frame), `finished`, `eos_frame` |
 | `TTSAudioReply` | Detokenizer → Frontend | `uid`, `audio_data: bytes` (float32 PCM), `finished`, `sample_rate` |
@@ -49,20 +51,20 @@ Each time step is a **frame** of width `n_codebooks + 1`:
 - **Text column**: SuperBPE (or byte) token ID during prompt; `text_vocab` placeholder during generation. Extra rows after the text padding row hold the edit markers and phoneme-group tokens (`text_extra_tokens`).
 - **Conditioning rows**: speaker-embedding checkpoints put a speaker row (`speaker_projection`, 192 → model dim) before the text; checkpoints with condition tokens (ZONOS3 Mini: `loudness`, `fmax`, `speaking_rate`, 10 buckets each or unknown) add one condition row per condition (`condition_embeddings`). Raw-reference cloning places the delayed reference codes (the reference prefix) before the text.
 
-During the prompt phase, audio columns are filled with `audio_pad_id` and the text column carries the token sequence. An optional codec-matched silence prefill (`prepend_silence` / `silence_prefill_frames`; default 3 frames = 0.2 s, `ZONOS3_SILENCE_PREFILL_FRAMES` / `ZONOS3_SILENCE_PREFILL_DEFAULT`) appends the delayed rows of the registry's `silence_frame` after the text; the vocoder decodes them as left context and never emits them.
+During the prompt phase, audio columns are filled with `audio_pad_id` and the text column carries the token sequence. An optional codec-matched silence prefill (`silence_prefill_frames`; default 3 frames = 0.2 s, `ZONOS3_SILENCE_PREFILL_FRAMES` / `ZONOS3_SILENCE_PREFILL_DEFAULT`) appends the delayed rows of the registry's `silence_frame` after the text; the vocoder decodes them as left context and never emits them.
 
 ### Shear pattern
 
-The model is trained with an inter-codebook delay: codebook `j` is shifted by `j` frames. `shear()` applies this delay to the prompt; `shear_up()` inverts it before vocoder decoding.
+The model is trained with an inter-codebook delay: codebook `j` is shifted by `j` frames. `shear()` (`zonos3/tts/prompt.py`) applies this delay to the prompt; `shear_up()` (`zonos3/tts/delay.py`) inverts it before vocoder decoding.
 
 ## Request Lifecycle
 
 ```
-1. HTTP POST /tts/generate
+1. HTTP POST /v2/generate (or /v1/audio/speech)
    └─ FrontendManager assigns uid, creates TTSTokenizeMsg
 
 2. Tokenizer process
-   ├─ TTSPromptBuilder.build(text)         # SuperBPE / byte tokenization (tts/prompt.py)
+   ├─ TTSPromptBuilder.build(text)         # SuperBPE / byte tokenization (zonos3/tts/prompt.py)
    │   └─ per text token: [audio_pad_id]*10 + [text_token_id]
    ├─ speaker row / condition rows / reference prefix before the text
    ├─ append sheared silence prefill rows  # optional, codec-matched silence frame (default 3 frames)
@@ -90,7 +92,7 @@ The model is trained with an inter-codebook delay: codebook `j` is shifted by `j
 
 ## Model Architecture (Zonos3)
 
-`Zonos3ForCausalLM` in `models/zonos3.py`.
+`Zonos3ForCausalLM` in `zonos3_sgl/models/zonos3.py` (the plain-PyTorch twin with the same parameter names is `Zonos3LM` in `zonos3/reference/lm.py`).
 
 ```
 Input (seq_len, frame_width)
@@ -143,7 +145,7 @@ Activated for middle layers (`moe_start_from_layer` to `num_layers - moe_end_fro
 
 ## Sampling
 
-`sample_tts()` in `tts/sampler.py`. Input: `(B, n_codebooks, vocab_size)` logits.
+`sample_tts()` in `zonos3/tts/sampler.py`. Input: `(B, n_codebooks, vocab_size)` logits.
 
 1. **Repetition penalty**: For each request and selected codebook, gather the last `repetition_window` generated tokens from that codebook only and apply `repetition_penalty` to matching logits. `repetition_codebooks=N` applies this to CB0 through CB(N-1), while a negative value means all codebooks. `repetition_window=0` or `repetition_penalty=1.0` disables this path.
 2. **Temperature**: Per-sequence scaling, broadcast over codebooks.
@@ -156,7 +158,7 @@ Default params (`TTSSamplingParams`): temperature=0.75, topk=80, top_p=0.69, min
 
 ## EOS Detection
 
-Managed by `TTSReq.check_eos()` in `core.py`. Each request has one stop id (`TTSReq.stop_id`): EOA for utterances
+Managed by `TTSReq.check_eos()` in `zonos3_sgl/core.py`. Each request has one stop id (`TTSReq.stop_id`): EOA for utterances
 (`end_token="utterance"`), the span-end token for edit fills (`end_token="span"`, edit checkpoints only).
 
 1. Each frame, check whether any delayed audio codebook sampled the request's stop id.
@@ -164,19 +166,19 @@ Managed by `TTSReq.check_eos()` in `core.py`. Each request has one stop id (`TTS
 3. Sequence marked finished when countdown reaches 0 — this buffer allows frame alignment across codebooks due to the shear pattern.
 4. Also terminates if `num_completion_tokens >= max_tokens`.
 
-The sampler (`sample_tts` in `tts/sampler.py`) masks padding and every special id except the request's stop id, so an
+The sampler (`sample_tts` in `zonos3/tts/sampler.py`) masks padding and every special id except the request's stop id, so an
 utterance never samples span-end and a fill never samples EOA. Utterances draw over codes, EOA and padding only: with
 one random number per column in `torch.multinomial`, an edit checkpoint then produces the same audio for the same
 seed as its weights without the span-end row.
 
 ## Vocoder (matched dual codec)
 
-`TTSVocoderManager` in `tokenizer/vocoder.py` decodes with the codec the LM's training data was tokenized with (the
+`TTSVocoderManager` in `zonos3_sgl/tokenizer/vocoder.py` decodes with the codec the LM's training data was tokenized with (the
 checkpoint's `audio_codec`). Only matched codecs of the codec registry are accepted.
 
 ### Codec registry
 
-`registries/codec_registry.json` (override: `ZONOS3_CODEC_REGISTRY`; `registries/codec_registry_keep2_plain.json`
+`zonos3/registries/codec_registry.json` (override: `ZONOS3_CODEC_REGISTRY`; `zonos3/registries/codec_registry_keep2_plain.json`
 selects the pruned `keep2_plain` decoder head) holds one entry per codec. The ZONOS3 Mini entry
 (`opus_dual_3n_600k_sched600k_r4096_step600000`, family `dual`) declares:
 
@@ -228,7 +230,7 @@ delayed rows (seq_len, 10)
 ### Reference encoder
 
 Raw-reference cloning and the silence-frame fallback encode audio with the same codec:
-`tokenizer/dual_reference.py` takes the registry's single `dual`-family entry and builds
+`zonos3/tokenizer/dual_reference.py` takes the registry's single `dual`-family entry and builds
 `zonos3.codec.codec_adapter.MossAutoencoder` from its generator checkpoint, SSL teacher, step and codebook sizes
 (SSL teacher → semantic Q1, acoustic residual RVQ). Reference audio is mixed to mono, resampled to 44.1 kHz, peak
 normalized only above 1.0 and cut to whole codec frames within the reference limit; the result is int32 codes
@@ -236,7 +238,7 @@ normalized only above 1.0 and cut to whole codec frames within the reference lim
 
 ## GDN / Full-AttnRes family (2026-10)
 
-Checkpoints with `attention_pattern != "global"` use `models/gdn.py` (`OriginalGDN`): the canonical 64-frame chunked
+Checkpoints with `attention_pattern != "global"` use `zonos3_sgl/models/gdn.py` (`OriginalGDN`): the canonical 64-frame chunked
 gated-delta-rule recompute (FLA `chunk_gated_delta_rule` + `causal_conv1d`) with per-slot float32 recurrent and
 convolution states (`--cache-type naive`). The unfinished chunk of every slot is kept in a fixed 64-row window
 (`_window`, `_win_len`), which the eager prefill path reads and writes and which makes decode a static-shape
@@ -249,24 +251,24 @@ valid: all layers share one set of static `cu_seqlens` tensors (FLA memoizes its
 identity in 4-entry caches), and the engine pins the cache results those tensors produced (`pin_fla_cache`) because
 the captured kernels hold raw pointers to them and eager prefills would otherwise evict and free them. The fused
 Full-AttnRes bank is one persistent context per decode batch size (`_attnres_state`). `residual_type == "full_attnres"` routes
-every sub-layer output through `full_attnres_route()` in `models/zonos3.py` (reference schedule
-`_forward_full_attnres_reference`, or the trainer's Triton kernels in `models/training_attnres*.py` when
+every sub-layer output through `full_attnres_route()` in `zonos3_sgl/models/zonos3.py` (reference schedule
+`_forward_full_attnres_reference`, or the trainer's Triton kernels in `zonos3_sgl/models/training_attnres*.py` when
 `ZONOS3_USE_TRAINING_ATTNRES=1`). The `ZONOS3_USE_TRAINING_{RMSNORM,ROUTER_WEIGHTS,SONIC_EXPERTS,ATTNRES,ROPE}` switches
 make the forward bit-exact with the packed training forward ("exact mode"); the scheduler samples these models from
-float32 logits (`sample_logits_in_fp32` in `tts/sampler.py`). Exact mode is also batch-invariant and exact at long
+float32 logits (`sample_logits_in_fp32` in `zonos3/tts/sampler.py`). Exact mode is also batch-invariant and exact at long
 context: `MultiOutputHead` pads the head GEMM to `head_min_rows()` (2 for this family) because cuBLAS uses a different,
 one-ulp-off kernel for a single row, and `FlashAttentionBackend` passes `fa_num_splits()` (1 for this family, the
 training kernel's setting) because FA3's automatic KV split rounds differently for caches beyond ~512 rows.
 `Engine._check_head_batch_invariance()` verifies the head property at load. Every other kernel in the exact path (all
 other linears, the FLA chunk kernel, SonicMoE, the training RMSNorm and AttnRes kernels) is batch-invariant as is.
 
-Text uses the SuperBPE convention in `tts/superbpe.py` (`[2] + (ids + 4) + [3]`, artifact pinned by SHA-256 through
+Text uses the SuperBPE convention in `zonos3/tts/superbpe.py` (`[2] + (ids + 4) + [3]`, artifact pinned by SHA-256 through
 `params.json`). Audio uses 10 codebooks of 4096 (`eoa_id` 4096, `audio_pad_id` 4097) from the dual codec; the matched
-codec registry (`tokenizer/matched_codec.py`, `ZONOS3_CODEC_REGISTRY`) provides both the encoder for reference audio
-(`tokenizer/dual_reference.py`) and the vocoder. The raw-audio reference prefix (`speaker_reference_prefix_tokens` in
-`tts/prompt.py`, or caller-supplied `speaker_reference_codes`) precedes the text rows; speaker CFG removes it for the
+codec registry (`zonos3/tokenizer/matched_codec.py`, `ZONOS3_CODEC_REGISTRY`) provides both the encoder for reference audio
+(`zonos3/tokenizer/dual_reference.py`) and the vocoder. The raw-audio reference prefix (`speaker_reference_prefix_tokens` in
+`zonos3/tts/prompt.py`, or caller-supplied `speaker_reference_codes`) precedes the text rows; speaker CFG removes it for the
 unconditional twin. Speech-editing checkpoints add a span-end row per codebook (`span_end_id` 4098) and
-`text_extra_tokens` marker rows after the text vocabulary; `tts/edit.py` builds the fill prompts
+`text_extra_tokens` marker rows after the text vocabulary; `zonos3/tts/edit.py` builds the fill prompts
 ([guide: Speech editing](guide.md#speech-editing)).
 
 ## Tensor Parallelism
@@ -286,11 +288,11 @@ Weights are sharded across TP ranks:
 | `multi_output` | Output vocabulary sharded |
 | `attention.temp` | Split heads (dim 1) |
 
-Sharding logic in `models/weight.py`. Communication via NCCL all-reduce in output projections.
+Sharding logic in `zonos3_sgl/models/weight.py`. Communication via NCCL all-reduce in output projections.
 
 ## Configuration
 
-Key `ServerArgs` fields (in `server/args.py`):
+Key `ServerArgs` fields (in `zonos3_sgl/server/args.py`):
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -299,32 +301,35 @@ Key `ServerArgs` fields (in `server/args.py`):
 | `tts_text_vocab` | `None` | Text vocabulary size (auto-detected from config) |
 | `tts_sample_rate` | `44100` | Output audio sample rate |
 | `tts_audio_codec` | `opus_dual_3n_600k_sched600k_r4096_step600000` | Matched codec, taken from the checkpoint's `audio_codec` |
-| `tts_default_voices_dir` | `None` | Optional folder of audio or `.npy`/`.npz` embedding files pre-populated in the web UI speaker picker (`scripts/serve.sh`: `default_voices/`) |
+| `tts_default_voices_dir` | `None` | Optional folder of audio or `.npy`/`.npz` embedding files listed as default voices in `GET /v2/speakers` and the studio's speaker picker (`servers/sgl/scripts/serve.sh`: `default_voices/`) |
+| `studio_dir` | `<repo>/studio/dist` | Studio build served at `/` |
 | `tts_emotion_directions_dir` | `steering/emotion_directions_mect60k_axes` | Emotion direction set; sliders auto-enable when present, an empty string disables |
 
-Model-level config is loaded from checkpoint via `cached_load_checkpoint_config()` and `ModelConfig.from_checkpoint_config()` in `models/config.py`. Key fields: `n_codebooks`, `codebook_size`, `text_vocab`, `eoa_id`, `audio_pad_id`, `loss_softcap`, `moe_n_experts`, `moe_start_from_layer`, `moe_router_dim`.
+Model-level config is loaded from checkpoint via `cached_load_checkpoint_config()` (`zonos3/utils/hf.py`) and `ModelConfig.from_checkpoint_config()` in `zonos3/models/config.py`. Key fields: `n_codebooks`, `codebook_size`, `text_vocab`, `eoa_id`, `audio_pad_id`, `loss_softcap`, `moe_n_experts`, `moe_start_from_layer`, `moe_router_dim`.
 
 ## Key Files
 
 | Path | Role |
 |------|------|
-| `server/api_server.py` | HTTP endpoints, `FrontendManager` |
-| `server/launch.py` | Process spawning |
-| `server/args.py` | `ServerArgs` configuration |
-| `tokenizer/server.py` | Tokenizer/detokenizer worker loop |
-| `tts/prompt.py` | Prompt rows (speaker, condition, reference prefix, text), shear, silence prefill rows |
-| `tts/superbpe.py` | SuperBPE text convention, phoneme groups |
-| `tokenizer/vocoder.py` | `TTSVocoderManager`: undelay, whole / prefix decode |
-| `tokenizer/matched_codec.py` | Codec registry, `ISTFTCodec` decoder load and decode |
-| `tokenizer/dual_reference.py` | Reference-audio encoder (`MossAutoencoder`) |
-| `codec/` | Vendored dual codec: encoder adapter, quantizer, causal MR iSTFT decoder |
-| `engine/engine.py` | `Engine.forward_batch_tts()` |
-| `models/zonos3.py` | `Zonos3ForCausalLM` |
-| `models/config.py` | `ModelConfig` |
-| `models/weight.py` | Weight loading and TP sharding |
-| `tts/sequence.py` | `TTSSequence`, EOS detection |
-| `tts/sampler.py` | `sample_tts()` |
-| `tts/llm.py` | `TTSLLM` offline generation interface |
-| `message/tts.py` | Message dataclasses, `TTSSamplingParams` |
-| `attention/` | FlashInfer / FlashAttention backends |
-| `layers/` | Linear, norm, RoPE, MoE layers |
+| `zonos3_sgl/server/api_server.py` | HTTP endpoints, `FrontendManager` |
+| `zonos3_sgl/server/schemas.py` | Request models (the v2 `GenerateRequest`, `SpeechRequest`, …) |
+| `zonos3_sgl/server/launch.py` | Process spawning |
+| `zonos3_sgl/server/args.py` | `ServerArgs` configuration |
+| `zonos3_sgl/tokenizer/server.py` | Tokenizer/detokenizer worker loop |
+| `zonos3/tts/prompt.py` | Prompt rows (speaker, condition, reference prefix, text), shear, silence prefill rows |
+| `zonos3/tts/superbpe.py` | SuperBPE text convention, phoneme groups |
+| `zonos3_sgl/tokenizer/vocoder.py` | `TTSVocoderManager`: undelay, whole / prefix decode |
+| `zonos3/tokenizer/matched_codec.py` | Codec registry, `ISTFTCodec` decoder load and decode |
+| `zonos3/tokenizer/dual_reference.py` | Reference-audio encoder (`MossAutoencoder`) |
+| `zonos3/codec/` | Vendored dual codec: encoder adapter, quantizer, causal MR iSTFT decoder |
+| `zonos3_sgl/engine/engine.py` | `Engine.forward_batch_tts()` |
+| `zonos3_sgl/models/zonos3.py` | `Zonos3ForCausalLM` |
+| `zonos3/models/config.py` | `ModelConfig` |
+| `zonos3_sgl/models/weight.py` | Weight loading and TP sharding |
+| `zonos3_sgl/tts/sequence.py` | `TTSSequence`, EOS detection |
+| `zonos3/tts/sampler.py` | `sample_tts()` |
+| `zonos3_sgl/tts/llm.py` | `TTSLLM` offline generation interface |
+| `zonos3_sgl/message/tts.py` | Message dataclasses, `TTSSamplingParams` |
+| `zonos3_sgl/attention/` | FlashInfer / FlashAttention backends |
+| `zonos3_sgl/layers/` | Linear, norm, RoPE, MoE layers |
+| `zonos3/reference/` | Plain-PyTorch reference LM and synthesis (`python -m zonos3.reference`) |

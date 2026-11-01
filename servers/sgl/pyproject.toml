@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zonos3-sgl"
+version = "0.1.0"
+description = "Mini-SGL inference server of the ZONOS3 TTS model"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "zonos3",
+    "msgpack",
+    "sgl_kernel>=0.3.17.post1",
+    "pyzmq",
+    "uvicorn",
+    "fastapi",
+    "apache-tvm-ffi>=0.1.4",
+    "nvidia-cutlass-dsl==4.4.2",
+    "flashinfer-cubin==0.5.3",
+    "flashinfer-python>=0.5.3",
+    "flashinfer-jit-cache",
+    "ninja>=1.13.0",
+    # Gated DeltaNet kernels (FLA_TILELANG=1), MoE experts and fused norms of the ZONOS3 LM.
+    "fla-core==0.5.2",
+    "tilelang==0.1.14",
+    "sonic-moe==0.1.2.post1",
+    "quack-kernels==0.4.1",
+]
+
+[tool.setuptools]
+include-package-data = true
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"zonos3_sgl.kernel" = ["csrc/**/*"]
+
+[dependency-groups]
+# Opt-in: espeak-ng guesses pronunciations the gold lexicon lacks (phonemize). GPL-3.0, so it stays out of the
+# default install; servers/sgl/scripts/serve.sh runs with it.
+phonemize = [
+    "espeakng-loader>=0.2.4",
+]

@@ -1,0 +1,38 @@
+#pragma once
+#include "dac.h"
+#include <functional>
+
+struct ssl_model;
+// Encoder weights live separately from the decode-only codec. A model is single-threaded;
+// callers sharing a model must serialize encoding (backend allocator is reused).
+struct dac_encoder_model {
+    dac_model codec;
+    float window_ratio = 2.0f;
+    struct quantizer {
+        int input_dim = 0, code_dim = 0, size = 0;
+        std::vector<float> in_weight, in_bias, out_weight, out_bias, codebook, normalized, norm_squared;
+    };
+    std::vector<quantizer> rvq;
+};
+bool dac_encoder_load(dac_encoder_model & m, const char * gguf, bool use_gpu);
+void dac_encoder_free(dac_encoder_model & m);
+bool dac_encode(const dac_encoder_model & m, const ssl_model & teacher, const float * audio,
+                int n_samples, std::vector<int32_t> & codes);
+// Diagnostic callback uses row-major [time,channels], with an independent padded lane prefix.
+// Return false to abort on an output error. Outputs include full-file internal_audio,
+// lane.N.audio/teacher_audio/acoustic/ssl/pooled/semantic/q1/semantic_prediction/residual,
+// lane.N.rvq.C.projected/quantized/codes and final ordinary codes.
+using dac_encoder_dump = std::function<bool(const std::string &, const float *, int, int)>;
+bool dac_encode_diagnostic(const dac_encoder_model & m, const ssl_model & teacher, const float * audio,
+                           int n_samples, std::vector<int32_t> & codes, const dac_encoder_dump & dump);
+
+// Codec graph internals shared with the streaming decoder; not an application interface.
+namespace dac_encoder_detail {
+ggml_tensor * conv(ggml_context *, ggml_cgraph *, const dac_model &, ggml_tensor *,
+                   const std::string &, int dilation = 1, int stride = 1);
+ggml_tensor * snake(ggml_context *, ggml_cgraph *, const dac_model &, ggml_tensor *, const std::string &);
+ggml_tensor * residual(ggml_context *, ggml_cgraph *, const dac_model &, ggml_tensor *, const std::string &, int);
+ggml_tensor * convnext(ggml_context *, ggml_cgraph *, const dac_model &, ggml_tensor *, const std::string &, bool);
+ggml_tensor * moss(ggml_context *, ggml_cgraph *, const dac_model &, ggml_tensor *, const std::string &,
+                   const dac_stage_hp &, ggml_tensor * positions, ggml_tensor * mask, bool first);
+}

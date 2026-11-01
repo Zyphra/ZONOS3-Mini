@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zonos3"
+version = "0.1.0"
+description = "ZONOS3 TTS model: plain-PyTorch reference, codec, speaker encoders, prompt/conditioning and workers"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "torch",
+    "torchaudio==2.9.1",
+    "descript-audio-codec==1.0.0",
+    "transformers>=4.56.0,<=4.57.3",
+    "huggingface_hub",
+    "pyyaml",
+    "omegaconf",
+    "numpy",
+    "soundfile",
+    "tokenizers",
+    "kernels>=0.12.1",
+    # Vendored NeMo TTS text normalization (src/zonos3/vendor):
+    # pynini matches WeTextProcessing's pin; sacremoses pulls regex/joblib/tqdm.
+    # NOTE: the pt grammar miscompiles under pynini 2.1.5.
+    "pynini==2.1.6",
+    "sacremoses>=0.1.1",
+    "tqdm",
+    # Gold pronunciation lexicon (LMDB) behind phonemize.
+    "lmdb>=1.4",
+]
+
+[tool.setuptools]
+include-package-data = true
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Vendored NeMo text-normalization grammars: the .tsv tables and .far caches.
+"zonos3.vendor.nemo_text_processing" = ["**/*.tsv", "**/*.far"]
+"zonos3.registries" = ["*.json"]
