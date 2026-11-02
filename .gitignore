@@ -42,6 +42,9 @@ env/
 # locally converted model checkpoints
 /checkpoints/
 
+# golden dumps and parity scratch (tools/dump_golden.py, compare_golden.py)
+/out/
+
 # personal files
 default_voices/*
 !default_voices/AmericanFemale.mp3
