@@ -8,8 +8,8 @@ import time
 import pytest
 from fastapi import FastAPI
 
-from zonos3_sgl.server import projects as P
-from zonos3_sgl.server.projects import ProjectStore, make_router
+from zonos3.server import projects as P
+from zonos3.server.projects import ProjectStore, make_router
 
 
 def _sha(blob: bytes) -> str:

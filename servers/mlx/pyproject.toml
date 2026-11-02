@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zonos3-mlx"
+version = "0.1.0"
+description = "MLX inference server of the ZONOS3 TTS model (Apple Silicon)"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "zonos3",
+    # Apple Silicon only; the marker keeps the universal lock valid on Linux, where the package installs but
+    # `import mlx` fails and servers/mlx/tests skip.
+    "mlx>=0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "gguf==0.19.0",
+    "fastapi",
+    "uvicorn",
+    "numpy",
+    "soundfile",
+    "pyyaml",
+]
+
+[project.scripts]
+zonos3-mlx-server = "zonos3_mlx.__main__:main"
+
+[tool.setuptools]
+include-package-data = true
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+# Tests import tools/convert_gguf.py (tiny-checkpoint GGUFs) and drive the app through httpx.
+dev = [
+    "pytest",
+    "httpx",
+    "safetensors",
+    "pyyaml",
+    "transformers",
+]
+# Opt-in: espeak-ng guesses pronunciations the gold lexicon lacks (phonemize). GPL-3.0, so it stays out of the
+# default install; servers/mlx/scripts/serve.sh runs with it.
+phonemize = [
+    "espeakng-loader>=0.2.4",
+]

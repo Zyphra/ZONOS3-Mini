@@ -767,7 +767,7 @@ property of the model, not of the placement), so offsets tend to run late.
 ### Projects on the server
 
 Studio projects can live on the server, shared by every browser that opens the studio link, and survive server
-restarts and a new tunnel URL (`zonos3_sgl.server.projects`). `--studio-projects-dir` enables them; `servers/sgl/scripts/serve.sh`
+restarts and a new tunnel URL (`zonos3.server.projects`). `--studio-projects-dir` enables them; `servers/sgl/scripts/serve.sh`
 passes `ZONOS3_STUDIO_PROJECTS` (default empty = projects stay in each browser's IndexedDB, the studio's offline
 store). The directory holds `projects/<id>.json` (`{id, name, revision, updated_at, media_bytes, data}`, `data` = the
 studio's project document) and `media/<sha256>` (content-addressed, written once, `media/<sha256>.type` its MIME type);

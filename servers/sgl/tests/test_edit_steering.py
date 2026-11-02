@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
-from zonos3_sgl.server.schemas import EditRequest  # noqa: E402
+from zonos3.server.schemas import EditRequest  # noqa: E402
 
 
 def _set(root, name, space, vectors, source=None):

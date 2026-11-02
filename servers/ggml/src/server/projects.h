@@ -1,4 +1,4 @@
-// Zonos Voice Studio projects on the server: an exact port of servers/sgl/src/zonos3_sgl/server/projects.py, so both
+// Zonos Voice Studio projects on the server: an exact port of model/src/zonos3/server/projects.py, so all
 // servers can share one --studio-projects-dir.
 //
 // Layout: projects/<id>.json ({id, name, revision, updated_at, media_bytes, data}), media/<sha256> (+ <sha256>.type),

@@ -1,4 +1,4 @@
-// Dubbing routes (/v2/dub/*): a port of zonos3_sgl/dub/runtime.py (DubRuntime) and the sgl /v2/dub routes over
+// Dubbing routes (/v2/dub/*): a port of model/src/zonos3/dub/runtime.py (DubRuntime) and the sgl /v2/dub routes over
 // dub-plan (zonos3/dub/plan.py): the reference / dub stores, ffmpeg decode and mux, the alignment worker (a
 // JsonLinesWorker over <python-src>/zonos3/workers/dub_align.py) and take synthesis through the scheduler
 // (plan_laci_take) with PaceMonitor duration targets; the steer.gguf rate_extension feeds the steered rate buckets.

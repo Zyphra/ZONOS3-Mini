@@ -264,7 +264,7 @@ class DubRegenerateRequest(_Strict):
 
 # ------------------------------------------------------------------------------------------------------- projects
 class ProjectPutRequest(_Strict):
-    """PUT /v2/projects/{id}: the store (zonos3_sgl.server.projects) checks media references, revisions and sizes."""
+    """PUT /v2/projects/{id}: the store (zonos3.server.projects) checks media references, revisions and sizes."""
 
     name: str = Field(min_length=1, max_length=200)
     data: Dict[str, Any]

@@ -33,7 +33,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import ValidationError
 
-from .schemas import ProjectPutRequest
+from zonos3.server.schemas import ProjectPutRequest
 
 MAX_PROJECT_BYTES = 20 * 1024**2
 MAX_MEDIA_BYTES = 2 * 1024**3

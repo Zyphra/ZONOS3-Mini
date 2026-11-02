@@ -1,4 +1,4 @@
-"""Server-hosted dub requests (zonos3_sgl.dub.runtime): voices, per-segment controls and their merging, regenerate's
+"""Server-hosted dub requests (zonos3.dub.runtime): voices, per-segment controls and their merging, regenerate's
 inheritance, ref_words, pronunciation groups. Synthesis, the codec and the alignment worker are faked."""
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from zonos3.dub import plan as P
-from zonos3_sgl.dub import runtime as R
+from zonos3.dub import runtime as R
 
 EDGES = (10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208)
 

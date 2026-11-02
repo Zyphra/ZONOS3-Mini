@@ -27,4 +27,15 @@ text of each third-party license is reproduced in the licenses/ directory.
    been modified by Zyphra, Inc.: import paths were re-namespaced under
    zonos3.vendor.nemo_text_processing. The original copyright and Apache-2.0
    license headers are retained in each file.
+
+================================================================================
+3. mlx-lm
+   https://github.com/ml-explore/mlx-lm
+   Copyright (c) 2023 Apple Inc.
+   SPDX-License-Identifier: MIT
+   Full license: licenses/mlx-lm-MIT.txt
+
+   The gated-delta Metal kernel and its decode step in
+   servers/mlx/src/zonos3_mlx/models/gdn_kernel.py are adapted from
+   mlx_lm/models/gated_delta.py.
 ================================================================================

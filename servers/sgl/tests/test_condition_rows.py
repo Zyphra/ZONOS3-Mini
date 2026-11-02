@@ -10,7 +10,7 @@ api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 from zonos3_sgl.core import TTSBatch, TTSReq  # noqa: E402
 from zonos3_sgl.message.tts import TTSSamplingParams  # noqa: E402
 from zonos3_sgl.scheduler.scheduler import TTSScheduler  # noqa: E402
-from zonos3_sgl.server.schemas import GenerateRequest, SpeechRequest  # noqa: E402
+from zonos3.server.schemas import GenerateRequest, SpeechRequest  # noqa: E402
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig  # noqa: E402
 
 EDGES = {

@@ -14,7 +14,7 @@ import pytest
 
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
-from zonos3_sgl.server import schemas  # noqa: E402
+from zonos3.server import schemas  # noqa: E402
 
 SPEC = json.loads((Path(__file__).resolve().parents[3] / "api" / "openapi.json").read_text())
 CODEC = "opus_dual_3n_600k_sched600k_r4096_step600000"

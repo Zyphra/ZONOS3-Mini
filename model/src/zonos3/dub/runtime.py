@@ -1,4 +1,4 @@
-"""Dubbing in the studio server (``/v2/dub/*`` of zonos3_sgl.server.api_server).
+"""Dubbing in the Python studio servers (``/v2/dub/*`` of zonos3_sgl and zonos3_mlx).
 
 ``DubRuntime`` keeps the uploaded references and the generated dubs, runs the alignment worker
 (zonos3/workers/dub_align.py in its own venv: Qwen3-ASR, Qwen3-ForcedAligner, SimAlign, AV-sync) and plans, picks and
@@ -36,7 +36,7 @@ import zonos3
 import zonos3.workers
 from zonos3.dub import plan as P
 
-DUB_ROOT = Path(__file__).resolve().parents[5]  # the repo root
+DUB_ROOT = Path(__file__).resolve().parents[4]  # the repo root
 STORE_CAPACITY = 8
 VOICE_MODES = ("source", "studio")
 MAX_REF_WORDS = 20000

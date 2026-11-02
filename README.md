@@ -1,8 +1,8 @@
 # ZONOS3
 
-Inference runtime for **ZONOS3 Mini**, Zyphra's multilingual text-to-speech model: two HTTP servers (a CUDA server
-built on Mini-SGLang and a portable ggml server) that serve the Zonos Voice Studio, a plain-PyTorch reference model, an
-offline Python API, and the GGUF conversion tools.
+Inference runtime for **ZONOS3 Mini**, Zyphra's multilingual text-to-speech model: three HTTP servers (a CUDA server
+built on Mini-SGLang, a portable ggml server and an MLX server for Apple Silicon) that serve the Zonos Voice Studio, a
+plain-PyTorch reference model, an offline Python API, and the GGUF conversion tools.
 
 ZONOS3 Mini is an 11-layer language model that mixes gated-DeltaNet layers with global attention (one global layer
 in four), uses Full AttnRes residuals and a latent mixture-of-experts. It reads SuperBPE text tokens and predicts
@@ -17,14 +17,16 @@ embedding.
 | `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, registries and the Python workers (text normalization, speech-editing alignment, dub alignment) |
 | `servers/sgl/` | The `zonos3-sgl` package (`zonos3_sgl`): the CUDA server built on [Mini-SGLang](https://github.com/sgl-project/mini-sglang), its launch scripts and benchmark |
 | `servers/ggml/` | The C++/ggml server and CLI (CPU, CUDA, Metal, Vulkan); ggml is the submodule `servers/ggml/ggml` |
-| `studio/` | Zonos Voice Studio (Preact, pnpm); `studio/dist/` is the committed production build both servers serve at `/` |
+| `servers/mlx/` | The `zonos3-mlx` package (`zonos3_mlx`): the Apple Silicon server running the ggml server's GGUF files in MLX |
+| `studio/` | Zonos Voice Studio (Preact, pnpm); `studio/dist/` is the committed production build every server serves at `/` |
 | `tools/` | Checkpoint and GGUF conversion tools (`zonos3-tools`) |
-| `default_voices/`, `steering/`, `laci_heads/` | Runtime assets shared by both servers |
+| `default_voices/`, `steering/`, `laci_heads/` | Runtime assets shared by the servers |
 
 ## Requirements
 
 - Linux x86_64 with an NVIDIA GPU (tested on H100) and the CUDA 12.8 toolkit (`CUDA_HOME`, default
-  `/usr/local/cuda-12.8`).
+  `/usr/local/cuda-12.8`) for the sgl server; an Apple Silicon Mac for the MLX server
+  ([servers/mlx/README.md](servers/mlx/README.md)).
 - [uv](https://docs.astral.sh/uv/getting-started/installation/); the project pins Python 3.12.
 - Access to the Hugging Face repo [`Zyphra/ZONOS3_Mini_release_ckpts`](https://huggingface.co/Zyphra/ZONOS3_Mini_release_ckpts)
   (LM, codec and speaker encoder weights). While it is private, set `HF_TOKEN` or run `huggingface-cli login`.
@@ -38,10 +40,11 @@ cd ZONOS3
 uv sync --locked --all-packages
 ```
 
-The repo is a uv workspace (`model`, `servers/sgl`, `tools`, `api`). `--group phonemize` adds espeak-ng guesses for
-`POST /v2/phonemize` (GPL-3.0, opt-in); the `dev` group (installed by default) holds the test tools. In an existing
-checkout, `git submodule update --init servers/ggml/ggml` fetches ggml for the C++ server
-([servers/ggml/README.md](servers/ggml/README.md)).
+The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `api`). `--group phonemize` adds espeak-ng
+guesses for `POST /v2/phonemize` (GPL-3.0, opt-in); the `dev` group (installed by default) holds the test tools. In an
+existing checkout, `git submodule update --init servers/ggml/ggml` fetches ggml for the C++ server
+([servers/ggml/README.md](servers/ggml/README.md)). On macOS, `uv sync --locked --package zonos3-mlx` installs the
+MLX server.
 
 ## Serve
 
@@ -54,6 +57,8 @@ The launcher sources `servers/sgl/scripts/env.sh` (CUDA toolchain, the TileLang 
 `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k` on `127.0.0.1:1919` with `--attention-backend fa --cache-type
 naive`, two running requests and CUDA graphs. Extra server flags are appended (e.g. `servers/sgl/scripts/serve.sh --port 1920`).
 The first start JIT-compiles kernels and builds the text-normalization grammar cache, which takes several minutes.
+On Apple Silicon, `servers/mlx/scripts/serve.sh` serves the GGUF files of `Zyphra/ZONOS3_Mini_GGUF` on the same port
+with the same variables.
 
 | Variable | Effect |
 | --- | --- |
@@ -171,14 +176,15 @@ uv run --locked --group phonemize pytest
 ```
 
 Tests that load weights run when `ZONOS3_TEST_MODEL` names a checkpoint (e.g. the release LM) and a GPU is present.
-The API conformance suite runs against a live server of either kind (tests of capabilities the server lacks skip):
+The API conformance suite runs against a live server of any kind (tests of capabilities the server lacks skip):
 
 ```bash
 uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919
 ```
 
 The ggml parity tests compare the C++ build with the reference:
-`uv run --package zonos3-tools pytest servers/ggml/tests/parity --ggml-build servers/ggml/build`.
+`uv run --package zonos3-tools pytest servers/ggml/tests/parity --ggml-build servers/ggml/build`. On Apple Silicon,
+`uv run --package zonos3-mlx pytest servers/mlx/tests` runs the MLX server's tests (they skip elsewhere).
 
 ## License
 

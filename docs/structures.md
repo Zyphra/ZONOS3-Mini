@@ -1,8 +1,9 @@
 # Structure
 
 Zonos3 is a TTS-only serving stack for ZONOS3 checkpoints (an `hf://` location, a Hugging Face repo id or a local path).
-This page describes the CUDA server (`servers/sgl`, package `zonos3_sgl`) and the model package it builds on
-(`model`, package `zonos3`); the ggml server is described in [servers/ggml/README.md](../servers/ggml/README.md).
+This page describes the CUDA server (`servers/sgl`, package `zonos3_sgl`), the MLX server (`servers/mlx`, package
+`zonos3_mlx`) and the model package they build on (`model`, package `zonos3`); the ggml server is described in
+[servers/ggml/README.md](../servers/ggml/README.md).
 
 ## Processes
 
@@ -30,8 +31,9 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 - `zonos3.models`: Model config conversion, the MECT speaker encoder, speaker cloning and the accent adapter file format.
 - `zonos3.tokenizer`: Text normalization (`textnorm.py`), the matched-codec registry (`matched_codec.py`) and the reference encoder (`dual_reference.py`).
 - `zonos3.tts`: Prompt building, markup, conditioning, emotion, steering, LACI and span-follow, speech-edit prompts and alignment, sampling helpers.
-- `zonos3.dub`: The dub planner (`plan.py`).
-- `zonos3.reference`: The plain-PyTorch reference LM and synthesis (`python -m zonos3.reference`), the numerical oracle for both servers.
+- `zonos3.dub`: The dub planner (`plan.py`) and the dub runtime behind `/v2/dub/*` of the Python servers (`runtime.py`).
+- `zonos3.server`: Pieces the Python servers share: request schemas, studio projects and the keepalive middleware.
+- `zonos3.reference`: The plain-PyTorch reference LM and synthesis (`python -m zonos3.reference`), the numerical oracle for every server.
 - `zonos3.registries`: Codec and speaker-encoder registries.
 - `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, MMS alignment, dub alignment).
 
@@ -46,6 +48,16 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 - `zonos3_sgl.models`: Zonos3 model (GDN / global attention, Full AttnRes, latent MoE), local checkpoint weight loading, and accent adapters.
 - `zonos3_sgl.attention`: FlashAttention and FlashInfer backends.
 - `zonos3_sgl.kvcache`: KV cache pools and cache managers.
-- `zonos3_sgl.dub`: The dub runtime behind `/v2/dub/*`.
-- `zonos3_sgl.server`: CLI parsing, process launch, request schemas, studio projects, and the HTTP API.
+- `zonos3_sgl.server`: CLI parsing, process launch and the HTTP API.
 - `zonos3_sgl.kernel`: Custom CUDA kernels and bindings.
+
+`zonos3_mlx` (`servers/mlx/src/zonos3_mlx`, Apple Silicon; one process, the GGUF files of the ggml server):
+
+- `zonos3_mlx.gguf_io`, `zonos3_mlx.audio_io`: GGUF reading (Q4_0 / Q8_0 blocks repacked as MLX affine-quantized weights) and ffmpeg decoding.
+- `zonos3_mlx.models`: The LM backbone (with the gated-delta Metal kernel of mlx-lm), codec decoder, speaker encoder, SSL teacher and reference encoder.
+- `zonos3_mlx.companions`: Steering, emotion and accent-direction GGUFs as the `zonos3.tts` dataclasses; the accent adapter bank.
+- `zonos3_mlx.engine`: The loaded networks and companions, and `plan_request` (a v2 request's prompt rows, conditioning and CFG twin).
+- `zonos3_mlx.scheduler`: The worker thread that owns every MLX call: batched slots, CFG, LACI and span-follow, work items.
+- `zonos3_mlx.vocoder`: Per-request whole / prefix streaming decode.
+- `zonos3_mlx.server`: The FastAPI app (speakers, generate, capabilities, phonemize, edit, dub, projects, studio); `python -m zonos3_mlx` launches it.
+- `zonos3_mlx.tools`, `zonos3_mlx.validate`: Single-network CLIs and LM captures for `tools/compare_golden.py`.

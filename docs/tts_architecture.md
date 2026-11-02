@@ -312,7 +312,7 @@ Model-level config is loaded from checkpoint via `cached_load_checkpoint_config(
 | Path | Role |
 |------|------|
 | `zonos3_sgl/server/api_server.py` | HTTP endpoints, `FrontendManager` |
-| `zonos3_sgl/server/schemas.py` | Request models (the v2 `GenerateRequest`, `SpeechRequest`, …) |
+| `zonos3/server/schemas.py` | Request models (the v2 `GenerateRequest`, `SpeechRequest`, …), shared by the Python servers |
 | `zonos3_sgl/server/launch.py` | Process spawning |
 | `zonos3_sgl/server/args.py` | `ServerArgs` configuration |
 | `zonos3_sgl/tokenizer/server.py` | Tokenizer/detokenizer worker loop |

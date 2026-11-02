@@ -44,7 +44,7 @@ class ServerArgs(SchedulerConfig):
     # `control_spans`, plus the studio's UI metadata (/v2/controls).
     steer_bundle: str | None = None
     tts_phoneme_lexicon: str | None = None
-    # Studio projects on the server (zonos3_sgl.server.projects: /v2/projects, /v2/media); None = disabled.
+    # Studio projects on the server (zonos3.server.projects: /v2/projects, /v2/media); None = disabled.
     studio_projects_dir: str | None = None
     studio_max_project_bytes: int = 20 * 1024**2
     studio_max_media_bytes: int = 2 * 1024**3
@@ -366,7 +366,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         type=str,
         default=ServerArgs.studio_projects_dir,
         help="Directory of the studio's shared projects (projects/<id>.json, content-addressed media/<sha256>): "
-        "enables /v2/projects and /v2/media (zonos3_sgl.server.projects); created if missing. Unset: projects stay in the "
+        "enables /v2/projects and /v2/media (zonos3.server.projects); created if missing. Unset: projects stay in the "
         "browser.",
     )
     parser.add_argument(

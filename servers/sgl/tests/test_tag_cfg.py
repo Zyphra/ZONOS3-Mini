@@ -473,7 +473,7 @@ def test_edit_target_markup_is_outside_the_word_diff():
 
 
 def test_dub_text_rate_and_alignment_ignore_markup():
-    from zonos3_sgl.dub.runtime import spoken_text, text_bytes
+    from zonos3.dub.runtime import spoken_text, text_bytes
 
     assert text_bytes("hi <laugh/> there") == text_bytes("hi there") == len("hi there")
     assert text_bytes("<shouting>go</shouting>") == 2

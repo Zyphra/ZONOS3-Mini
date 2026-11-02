@@ -82,13 +82,9 @@ from zonos3.tts.steering import (
     resolve_controls,
 )
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip_nonverbal_markup, trained_on_tags
-from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
-from zonos3_sgl.utils.logger import init_logger
-
-from .args import ServerArgs
-from .keepalive import KeepaliveMiddleware
-from .projects import ProjectStore, make_router as _projects_router
-from .schemas import (
+from zonos3.server.keepalive import KeepaliveMiddleware
+from zonos3.server.projects import ProjectStore, make_router as _projects_router
+from zonos3.server.schemas import (
     DubAnalyzeRequest,
     DubGenerateRequest,
     DubRegenerateRequest,
@@ -101,6 +97,10 @@ from .schemas import (
     SpeakerCreateRequest,
     SpeechRequest,
 )
+from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
+from zonos3_sgl.utils.logger import init_logger
+
+from .args import ServerArgs
 
 
 logger = init_logger(__name__, "FrontendAPI")
@@ -178,7 +178,7 @@ _PROJECT_STORE: ProjectStore | None = None
 
 
 def _project_store() -> ProjectStore | None:
-    """The studio's shared project store (zonos3_sgl.server.projects) under --studio-projects-dir; None when unset."""
+    """The studio's shared project store (zonos3.server.projects) under --studio-projects-dir; None when unset."""
     global _PROJECT_STORE
     config = get_global_state().config
     if getattr(config, "studio_projects_dir", None) is None:
@@ -1657,7 +1657,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Zonos3 API Server", version="2.0.0", lifespan=lifespan,
               openapi_url=None, docs_url=None, redoc_url=None)
 
-# Innermost, so CORS and the access check wrap its early status line (zonos3_sgl.server.keepalive). The /v2/edit
+# Innermost, so CORS and the access check wrap its early status line (zonos3.server.keepalive). The /v2/edit
 # prefix covers /v2/edit/transcribe and /v2/edit/align.
 app.add_middleware(
     KeepaliveMiddleware,
@@ -2790,7 +2790,7 @@ async def tts_edit(req: EditRequest):
 
 # ----------------------------------------------------------------------------- dubbing (zonos3.dub, docs/laci_dub.md)
 # The studio's Dub screen: references, the alignment worker (own venv; ZONOS3_DUB_ALIGN_* env) and the dub plan live in
-# zonos3_sgl.dub.runtime; every take is a /v2/generate request on this server's scheduler with laci=true and the take's
+# zonos3.dub.runtime; every take is a /v2/generate request on this server's scheduler with laci=true and the take's
 # LACI duration target, so dub takes use studio voices, steering controls and pronunciation groups.
 _DUB_RUNTIME = None
 _DUB_TAKE_SLOTS: asyncio.Semaphore | None = None
@@ -2831,7 +2831,7 @@ def _dub_runtime():
     """The server's DubRuntime (created on first use; its alignment worker starts with the first call that needs it)."""
     global _DUB_RUNTIME
     if _DUB_RUNTIME is None:
-        from zonos3_sgl.dub.runtime import DubModel, DubRuntime
+        from zonos3.dub.runtime import DubModel, DubRuntime
 
         config = get_global_state().config
         spec = _condition_spec(config)
@@ -2869,7 +2869,7 @@ def _dub_ready():
 
 async def _dub_call(awaitable):
     """Run a DubRuntime call, mapping its errors to HTTP statuses."""
-    from zonos3_sgl.dub.runtime import AlignWorkerError, UnknownId
+    from zonos3.dub.runtime import AlignWorkerError, UnknownId
 
     try:
         return await awaitable
@@ -3001,7 +3001,7 @@ async def _dub_upload(request: Request, name: str, directory: str) -> Path:
 
 @app.get("/v2/dub/capabilities")
 async def dub_capabilities():
-    """Target languages, rate buckets, lip-sync, voice modes and limits of the dub (zonos3_sgl.dub.runtime)."""
+    """Target languages, rate buckets, lip-sync, voice modes and limits of the dub (zonos3.dub.runtime)."""
     config = get_global_state().config
     return {**_dub_runtime().capabilities(), "enabled": _dub_available(config)}
 

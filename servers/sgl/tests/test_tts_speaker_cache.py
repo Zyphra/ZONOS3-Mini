@@ -6,7 +6,7 @@ import pytest
 np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
-from zonos3_sgl.server.schemas import SpeakerCreateRequest  # noqa: E402
+from zonos3.server.schemas import SpeakerCreateRequest  # noqa: E402
 
 
 class _DummyModelConfig:

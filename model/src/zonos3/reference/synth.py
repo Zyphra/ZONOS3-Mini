@@ -261,7 +261,7 @@ class PromptPlan:
         return doc
 
 
-def _decode_base64_blob(data: str, field_name: str) -> bytes:
+def decode_base64_blob(data: str, field_name: str) -> bytes:
     payload = data.strip()
     if payload.startswith("data:"):
         if "," not in payload:
@@ -273,7 +273,7 @@ def _decode_base64_blob(data: str, field_name: str) -> bytes:
         raise ValueError(f"{field_name} must be valid base64-encoded data.") from exc
 
 
-def _load_embedding_vector(embedding_bytes: bytes, *, expected_dim: int, file_name: str | None) -> torch.Tensor:
+def load_embedding_vector(embedding_bytes: bytes, *, expected_dim: int, file_name: str | None) -> torch.Tensor:
     try:
         loaded = np.load(io.BytesIO(embedding_bytes), allow_pickle=False)
     except Exception as exc:
@@ -321,7 +321,7 @@ def _speaker_modes(config) -> list[str]:
     return modes
 
 
-def _resolve_speaker_mode(config, value) -> str:
+def resolve_speaker_mode(config, value) -> str:
     modes = _speaker_modes(config)
     if value in (None, ""):
         return modes[0]
@@ -379,7 +379,7 @@ def resolve_condition_buckets(config, buckets, values) -> list[int]:
     return out
 
 
-def _validate_tag_cfg(text: str, scale: float, *, speaker_cfg_scale: float, emotion_cfg_scale: float) -> None:
+def validate_tag_cfg(text: str, scale: float, *, speaker_cfg_scale: float, emotion_cfg_scale: float) -> None:
     scale = float(scale)
     if not math.isfinite(scale) or not _TAG_CFG_MIN_SCALE <= scale <= _TAG_CFG_MAX_SCALE:
         raise ValueError(f"tag_cfg_scale must be finite and between {_TAG_CFG_MIN_SCALE} and {_TAG_CFG_MAX_SCALE}.")
@@ -397,7 +397,7 @@ def _validate_tag_cfg(text: str, scale: float, *, speaker_cfg_scale: float, emot
         raise ValueError("tag_cfg_scale above 1.0 cannot be combined with emotion_cfg_scale; set emotion_cfg_scale to 1.0.")
 
 
-def _validate_phoneme_groups(spec: dict | None, text: str) -> None:
+def validate_phoneme_groups(spec: dict | None, text: str) -> None:
     from zonos3.tts.superbpe import PHONEME_CLOSE, PHONEME_OPEN, payload_ids
 
     phonemes = None if spec is None else spec.get("phonemes")
@@ -412,7 +412,7 @@ def _validate_phoneme_groups(spec: dict | None, text: str) -> None:
         raise ValueError(f"Pronunciation groups: {exc}") from exc
 
 
-def _normalize_language(language: str) -> str:
+def normalize_language(language: str) -> str:
     from zonos3.tokenizer.textnorm import SERVER_TO_NEMO_LANG
 
     normalized = str(language or "").strip().lower().replace("-", "_")
@@ -432,13 +432,13 @@ def _speaker_embedding(lm: Zonos3LM, req: Request, assets: ReferenceAssets, devi
     if req.speaker_audio_base64 and req.speaker_embedding_base64:
         raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
     if req.speaker_embedding_base64:
-        return _load_embedding_vector(_decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
+        return load_embedding_vector(decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
                                       expected_dim=c.speaker_embedding_dim, file_name=req.speaker_embedding_name)
     if not req.speaker_audio_base64:
         return None
     from zonos3.tts.audio import _decode_audio_bytes
 
-    wav, sample_rate = _decode_audio_bytes(_decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
+    wav, sample_rate = _decode_audio_bytes(decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
     encoder = assets.speaker_encoder(c.speaker_embedding_codec, c.speaker_embedding_dim, device)
     with torch.inference_mode():
         output = encoder(wav, sample_rate)
@@ -471,7 +471,7 @@ def _reference_codes(lm: Zonos3LM, req: Request, mode: str, device) -> torch.Ten
     from zonos3.tokenizer.dual_reference import encode_dual_reference
     from zonos3.tts.audio import _decode_audio_bytes
 
-    wav, sample_rate = _decode_audio_bytes(_decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
+    wav, sample_rate = _decode_audio_bytes(decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
     index = device.index if device.index is not None else torch.cuda.current_device()
     return encode_dual_reference(wav, sample_rate, max_seconds=c.speaker_reference_max_seconds, device=f"cuda:{index}")
 
@@ -546,7 +546,7 @@ def _accent(assets: ReferenceAssets, req: Request, embedding, delta):
     return None, strength, embedding, _layout_delta(assets, delta, (strength * float(dose)) * vec)
 
 
-def _silence_frames(requested) -> int:
+def silence_frames(requested) -> int:
     """Silence prefill length: silence_prefill_frames, or the server default (ZONOS3_SILENCE_PREFILL_FRAMES, 3 frames =
     0.2 s, off with ZONOS3_SILENCE_PREFILL_DEFAULT=0)."""
     if requested is not None:
@@ -598,9 +598,9 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
     c = lm.config
     device = torch.device(device if device is not None else lm.device)
     req = parse_request(request)
-    _validate_tag_cfg(req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale,
+    validate_tag_cfg(req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale,
                       emotion_cfg_scale=req.emotion_cfg_scale)
-    mode = _resolve_speaker_mode(c, req.speaker_mode)
+    mode = resolve_speaker_mode(c, req.speaker_mode)
     condition_values = resolve_condition_buckets(c, req.condition_buckets, req.condition_values)
     _slerp_free_speaker_ids(req)
     if mode == "reference":
@@ -612,7 +612,7 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
         embedding = _speaker_embedding(lm, req, assets, device)
     reference_codes = _reference_codes(lm, req, mode, device)
     embedding, delta = _emotion(assets, req, embedding)
-    language = _normalize_language(req.language)
+    language = normalize_language(req.language)
     if req.max_tokens is not None and int(req.max_tokens) <= 0:
         raise ValueError("max_tokens must be positive.")
     max_tokens = c.max_seqlen if req.max_tokens is None else min(int(req.max_tokens), c.max_seqlen)
@@ -646,7 +646,7 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
         if req.emotion_cfg_scale != 1.0:
             raise ValueError("Speaker and emotion CFG cannot be combined")
     builder = prompt_builder(lm)
-    _validate_phoneme_groups(builder.config.text_tokenizer_spec, req.text)
+    validate_phoneme_groups(builder.config.text_tokenizer_spec, req.text)
     if req.laci:
         if not assets.laci_heads:
             raise ValueError("LACI is not enabled (pass --laci-heads LANG=PATH)")
@@ -660,7 +660,7 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
 
     # ---- tokenizer worker (zonos3_sgl.tokenizer.server)
     text = normalize_text(req.text, language, bool(req.text_normalization), assets)
-    frames = _silence_frames(req.silence_prefill_frames)
+    frames = silence_frames(req.silence_prefill_frames)
     silence = None
     if frames > 0:
         silence = silence_rows_from_codes(silence_frame(c.audio_codec, device), frames, builder.config)
@@ -711,7 +711,7 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
     twin = None
     cfg_kind, cfg_scale = None, 1.0
     if speaker_cfg:
-        msg = _TwinMsg(t, reference_prefix_length, embedding, max(speaker_row, 0))
+        msg = TwinMsg(t, reference_prefix_length, embedding, max(speaker_row, 0))
         spec = speaker_cfg_twin(msg, t, n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id, text_vocab=c.text_vocab,
                                 speaker_token_position=max(speaker_row, 0), condition_values=condition_values,
                                 condition_token_start=condition_token_start, condition_unknown=c.condition_n_buckets)
@@ -741,7 +741,7 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
 
 
 @dataclass
-class _TwinMsg:
+class TwinMsg:
     """The fields zonos3.speaker_cfg.speaker_cfg_twin reads from a request."""
 
     input_ids: torch.Tensor
@@ -772,7 +772,7 @@ class Sampling:
                    int(req.repetition_window), float(req.repetition_penalty), int(req.repetition_codebooks))
 
 
-class _Probe:
+class ProbeState:
     """The per-attempt probe state an observer reads and sets (sgl AlignProbe)."""
 
     def __init__(self, heads, text_start: int, text_len: int, mask=None):
@@ -789,9 +789,10 @@ class Attempt:
     eos_frame: int | None  # aligned EOS frame in generated rows
 
 
-def _sample(lm, logits, sampling: Sampling, history: torch.Tensor, total_generated: int, history_rows: int,
-            stop_id: int, generator: torch.Generator) -> torch.Tensor:
-    c = lm.config
+def sample_row(config, logits, sampling: Sampling, history: torch.Tensor, total_generated: int, history_rows: int,
+               stop_id: int, generator: torch.Generator) -> torch.Tensor:
+    """One sampled row; ``config`` supplies n_codebooks, codebook_size, codebook_sizes, audio_pad_id and text_vocab."""
+    c = config
     n_cb = c.n_codebooks
     device = logits.device
     window = max(int(sampling.repetition_window), 0)
@@ -835,7 +836,7 @@ def generate_rows(
     history_rows: int = 0,
     accents: AccentState | None = None,
     steer=None,
-    probe: _Probe | None = None,
+    probe: ProbeState | None = None,
     observer=None,
     on_row=None,
 ) -> Attempt:
@@ -871,7 +872,7 @@ def generate_rows(
         if twin is not None:
             logits = guided_logits(logits, outs[1].logits[-1].float(), cfg_scale)
         total_generated = len(rows)
-        token = _sample(lm, logits, sampling, history, total_generated, history_rows, stop_id, generator)
+        token = sample_row(lm.config, logits, sampling, history, total_generated, history_rows, stop_id, generator)
         if not has_audio_prefix and total_generated < n_cb - 1:  # cold-start delay triangle -> padding
             token[total_generated + 1 : n_cb] = pad
         if step > 0 and probe is not None and observer is not None:
@@ -948,7 +949,7 @@ def decode_rows(lm: Zonos3LM, assets: ReferenceAssets, rows: list, *, prefill_ro
     return audio[context * hop:]
 
 
-def _output_gain(codec: str, headroom_db: float | None) -> float:
+def output_gain(codec: str, headroom_db: float | None) -> float:
     if headroom_db is None:
         from zonos3.tokenizer.matched_codec import codec_names, decoder_headroom_db
 
@@ -956,7 +957,7 @@ def _output_gain(codec: str, headroom_db: float | None) -> float:
     return float(10.0 ** (-float(headroom_db) / 20.0))
 
 
-def _fade_out(samples: np.ndarray, fade_out_ms: float) -> np.ndarray:
+def fade_out(samples: np.ndarray, fade_out_ms: float) -> np.ndarray:
     if fade_out_ms <= 0 or not len(samples):
         return samples
     n = min(len(samples), int(SAMPLE_RATE * fade_out_ms / 1000.0))
@@ -980,7 +981,7 @@ class SynthResult:
     plan: PromptPlan | None = None
 
 
-def _steer_fn(plan: PromptPlan, follower: SpanFollower | None, base_delta=None):
+def steer_fn(plan: PromptPlan, follower: SpanFollower | None, base_delta=None):
     """Hidden delta of generated frame f: the request's constant delta plus the span deltas active at f (the follower's
     or the character-rate schedule's) -- TTSReq.steer_delta; None outside hidden mode."""
     if not plan.sources:
@@ -1028,16 +1029,16 @@ def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=N
     if plan.laci is None:
         probe = None
         if follower is not None:
-            probe = _Probe(assets.laci_heads[plan.language].heads, text_start, text_len)
+            probe = ProbeState(assets.laci_heads[plan.language].heads, text_start, text_len)
         attempt = generate_rows(lm, plan.cond, sampling=sampling, seed=plan.seed, max_tokens=plan.max_tokens,
                                 stop_id=c.eoa_id, twin=plan.twin, cfg_scale=plan.cfg_scale, accents=accents,
-                                steer=_steer_fn(plan, follower), probe=probe, observer=follower)
+                                steer=steer_fn(plan, follower), probe=probe, observer=follower)
         rows, eos_frame = attempt.rows, attempt.eos_frame
     else:
         rows, eos_frame, record = _laci(lm, plan, assets, sampling, accents, follower, text_start, text_len)
     pcm = decode_rows(lm, assets, rows, prefill_rows=plan.prefill_rows, eos_frame=eos_frame,
                       context_codes=plan.context_codes, device=device)
-    pcm = _fade_out(pcm * np.float32(_output_gain(c.audio_codec, req.headroom_db)), float(req.fade_out_ms))
+    pcm = fade_out(pcm * np.float32(output_gain(c.audio_codec, req.headroom_db)), float(req.fade_out_ms))
     return SynthResult(pcm.astype(np.float32), plan.seed, record, rows, eos_frame, plan)
 
 
@@ -1059,7 +1060,7 @@ def _laci(lm, plan: PromptPlan, assets, sampling, accents, follower, text_start,
     prompt = template[: len(template) - session.n_prefill]
     branch, seed, max_tokens, history_rows, delta = plan.cond, plan.seed, plan.max_tokens, 0, plan.hidden_delta
     while True:
-        probe = _Probe(session.heads.heads, text_start, text_len, mask=session.probe_mask())
+        probe = ProbeState(session.heads.heads, text_start, text_len, mask=session.probe_mask())
         state = {}
 
         def on_row(row, eos, finished):
@@ -1071,7 +1072,7 @@ def _laci(lm, plan: PromptPlan, assets, sampling, accents, follower, text_start,
                 session.drain()
 
         generate_rows(lm, branch, sampling=sampling, seed=seed, max_tokens=max_tokens, stop_id=c.eoa_id,
-                      history_rows=history_rows, accents=accents, steer=_steer_fn(plan, follower, delta),
+                      history_rows=history_rows, accents=accents, steer=steer_fn(plan, follower, delta),
                       probe=probe, observer=session, on_row=on_row)
         cont = state["continuation"]
         if cont is None:

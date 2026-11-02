@@ -6,7 +6,7 @@ import pytest
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 from pydantic import ValidationError  # noqa: E402
 from zonos3.tokenizer.matched_codec import codec_names  # noqa: E402
-from zonos3_sgl.server.schemas import GenerateRequest  # noqa: E402
+from zonos3.server.schemas import GenerateRequest  # noqa: E402
 
 MATCHED = SimpleNamespace(model_config=SimpleNamespace(audio_codec=sorted(codec_names())[0]))
 

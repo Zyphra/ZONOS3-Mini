@@ -1,6 +1,6 @@
 from zonos3_sgl.core import TTSSamplingParams as CoreTTSSamplingParams
 from zonos3_sgl.message.tts import TTSSamplingParams as MessageTTSSamplingParams
-from zonos3_sgl.server.schemas import EditRequest, GenerateRequest, SpeechRequest
+from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest
 
 EXPECTED_DEFAULTS = {
     "temperature": 0.75,

@@ -3,7 +3,7 @@ import json
 
 from fastapi import FastAPI, HTTPException
 
-from zonos3_sgl.server.keepalive import KeepaliveMiddleware
+from zonos3.server.keepalive import KeepaliveMiddleware
 
 
 def _app(interval: float = 0.02):

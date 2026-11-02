@@ -34,7 +34,7 @@ At most twice `--max-running-requests` takes are in flight, so studio requests i
 worker (`model/src/zonos3/workers/dub_align.py`, own venv) starts on the first call that needs it (transcribe / analyze /
 generate / lips) and again after it died; it shares the server's GPU.
 
-Voices and direction (`zonos3_sgl/dub/runtime.py`): `voice: {mode: "source"}` (default) clones the reference speaker from
+Voices and direction (`zonos3/dub/runtime.py`): `voice: {mode: "source"}` (default) clones the reference speaker from
 its own audio (raw reference prefix codes of the clip from the first source-voice segment, up to 20 s);
 `{mode: "studio", speaker_embedding_id, controls?}` is a studio library / saved voice in `speaker_mode=embedding` with
 Cast-bench controls (raw + hidden doses; the request's `X-TTS-Session-ID` reaches the session's saved voices). Each

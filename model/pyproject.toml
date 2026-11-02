@@ -29,11 +29,16 @@ dependencies = [
     # Vendored NeMo TTS text normalization (src/zonos3/vendor):
     # pynini matches WeTextProcessing's pin; sacremoses pulls regex/joblib/tqdm.
     # NOTE: the pt grammar miscompiles under pynini 2.1.5.
-    "pynini==2.1.6",
+    # Linux only (no macOS wheel): the MLX server runs normalization in a separate interpreter
+    # (--text-normalizer-python), as the ggml server does.
+    "pynini==2.1.6; sys_platform == 'linux'",
     "sacremoses>=0.1.1",
     "tqdm",
     # Gold pronunciation lexicon (LMDB) behind phonemize.
     "lmdb>=1.4",
+    # Request schemas and studio projects shared by the Python servers (zonos3.server).
+    "fastapi",
+    "pydantic>=2",
 ]
 
 [tool.setuptools]

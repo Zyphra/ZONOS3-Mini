@@ -1,8 +1,8 @@
-# Virtual uv workspace: the model package (zonos3), the mini-SGL server (zonos3-sgl), the GGUF tools and the API
-# conformance suite. The ggml server (servers/ggml) and the studio (studio/) build outside uv.
+# Virtual uv workspace: the model package (zonos3), the mini-SGL server (zonos3-sgl), the MLX server (zonos3-mlx), the
+# GGUF tools and the API conformance suite. The ggml server (servers/ggml) and the studio (studio/) build outside uv.
 
 [tool.uv.workspace]
-members = ["model", "servers/sgl", "tools", "api"]
+members = ["model", "servers/sgl", "servers/mlx", "tools", "api"]
 
 [tool.uv]
 # tilelang 0.1.14 declares apache-tvm-ffi>=0.1.11,<0.1.13; the qualified runtime runs it against 0.1.8.post2.
@@ -12,6 +12,7 @@ override-dependencies = ["apache-tvm-ffi==0.1.8.post2"]
 flashinfer-jit-cache = { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.5.3/flashinfer_jit_cache-0.5.3+cu128-cp39-abi3-manylinux_2_28_x86_64.whl" }
 zonos3 = { workspace = true }
 zonos3-sgl = { workspace = true }
+zonos3-mlx = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -31,7 +32,7 @@ phonemize = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["model/tests", "servers/sgl/tests", "tools/tests", "api/tests/test_spec.py"]
+testpaths = ["model/tests", "servers/sgl/tests", "servers/mlx/tests", "tools/tests", "api/tests/test_spec.py"]
 pythonpath = ["tools"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
@@ -41,6 +42,7 @@ addopts = [
     "--strict-config",
     "--cov=zonos3",
     "--cov=zonos3_sgl",
+    "--cov=zonos3_mlx",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]

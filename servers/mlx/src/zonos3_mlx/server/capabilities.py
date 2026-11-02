@@ -1,0 +1,210 @@
+"""GET /v2/capabilities, /v2/controls, /v2/health, /v1/models and POST /v2/phonemize (the sgl / ggml routes over the
+GGUF metadata: servers/ggml/src/server/capabilities.cpp)."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+from zonos3.server.schemas import PhonemizeRequest
+from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
+from zonos3.tts.steering import controls_document
+
+from zonos3_mlx.server import speakers
+from zonos3_mlx.server.state import ServerState
+
+TEXT_NORM_LANGUAGES = ("en_us", "en_gb", "fr_fr", "de", "es", "it", "pt_br", "ja", "cmn", "ko")
+EDIT_ALIGN_MAX_SECONDS = 150.0
+EDIT_MAX_SECONDS = EDIT_ALIGN_MAX_SECONDS
+
+
+def condition_tokens(state: ServerState) -> dict | None:
+    c = state.config
+    if c.condition_count == 0:
+        return None
+    names = list(c.condition_names)
+    return {"enabled": True, "names": names, "flags": {}, "count": c.condition_count, "n_buckets": c.condition_n_buckets,
+                "unknown_index": c.condition_n_buckets,
+                "edges": {n: [float(v) for v in c.condition_edges.get(n, ())] for n in names},
+                "units": {n: c.condition_units[n] for n in names if n in c.condition_units},
+                "layout": "[reference prefix | speaker row]" + "".join(f"[{n}]" for n in names) + " BOS text EOS"}
+
+
+def silence_prefill(state: ServerState) -> dict:
+    """sgl _silence_prefill_spec: the default length (ZONOS3_SILENCE_PREFILL_FRAMES) and whether it is on."""
+    hop = state.engine.decoder.hop
+    try:
+        frames = max(0, int(os.environ.get("ZONOS3_SILENCE_PREFILL_FRAMES", "3")))
+    except ValueError:
+        frames = 3
+    on = os.environ.get("ZONOS3_SILENCE_PREFILL_DEFAULT", "1").strip().lower() not in ("0", "false", "no", "off")
+    return {"available": True, "default_frames": frames, "default_on": on and frames > 0,
+                "default_seconds": round(frames * hop / 44100.0, 3), "frame_seconds": hop / 44100.0,
+                "codec": state.config.audio_codec,
+                "note": "codec-matched silence frames open the audio stream before the model starts (their audio is not "
+                     "emitted); a request without silence_prefill_frames gets the server default, "
+                     "silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length"}
+
+
+def decoder(state: ServerState) -> dict:
+    name = Path(state.engine.paths["dac"]).name
+    return {"kind": "istft_mr", "label": f"Multi-resolution iSTFT head ({name}); causal", "checkpoint": name,
+                "expect_step": None, "headroom_db": float(state.engine.decoder.headroom_db), "causal": True,
+                "codec": state.config.audio_codec}
+
+
+def emotion(state: ServerState) -> dict:
+    d = state.engine.emotion
+    if d is None:
+        return {"emotion_enabled": False, "emotion_names": [], "emotion_axes": [], "emotion_tiers": {}, "emotion_presets": {},
+                    "emotion_space": None, "emotion_calibrated": False}
+    return {"emotion_enabled": True, "emotion_names": d.emotion_names, "emotion_axes": d.axis_names, "emotion_tiers": d.tiers,
+                "emotion_presets": d.presets, "emotion_space": d.space,
+                "emotion_calibrated": state.engine.emotion_calibration is not None}
+
+
+def phonemes(state: ServerState) -> dict:
+    spec = state.config.text_tokenizer_spec
+    ph = None if not spec else spec.get("phonemes")
+    lex = state.lexicon
+    return {
+        "phoneme_tokens": None if ph is None else {"open_marker": ph["open_marker"], "close_marker": ph["close_marker"],
+                                                   "symbols": list(ph["symbols"])},
+        "phonemize_enabled": lex is not None,
+        "phonemize_languages": [] if lex is None else lex.server_languages,
+        "phonemize_guess_languages": [] if lex is None else lex.guess_languages,
+    }
+
+
+def edit_max_spans(state: ServerState) -> int:
+    from zonos3.tts.edit import edit_marker_rows
+
+    return edit_marker_rows(state.config.text_extra_tokens, state.config.text_tokenizer_spec or None)
+
+
+def model_supports_editing(state: ServerState) -> bool:
+    return state.config.span_end_id is not None and edit_max_spans(state) > 0
+
+
+def frame_rate(state: ServerState) -> float:
+    return 44100.0 / state.engine.decoder.hop
+
+
+def edit(state: ServerState) -> dict:
+    """Speech editing needs the checkpoint's edit rows, and MMS alignment (ZSA_ROOT) and the reference encoder."""
+    from zonos3.tts import edit_align
+
+    model = model_supports_editing(state)
+    return {"speech_editing": model and bool(edit_align.ZSA_ROOT) and state.engine.has_reference_encoder,
+                "edit_max_spans": edit_max_spans(state) if model else 0, "edit_frame_rate": frame_rate(state) if model else None,
+                "edit_max_seconds": EDIT_MAX_SECONDS, "edit_align_max_seconds": EDIT_ALIGN_MAX_SECONDS}
+
+
+def dub_rate_edges(state: ServerState) -> list[float]:
+    return [float(v) for v in state.config.condition_edges.get("speaking_rate", ())]
+
+
+def dub_available(state: ServerState) -> bool:
+    """A dub needs LACI alignment heads (--laci-heads) and the speaking-rate condition row its takes are planned in."""
+    return bool(state.engine.laci_heads) and bool(dub_rate_edges(state))
+
+
+def capabilities(state: ServerState) -> dict:
+    c, engine = state.config, state.engine
+    modes = speakers.checkpoint_modes(state)
+    embedding = c.speaker_embedding_dim > 0
+    cfg = bool(modes) and state.options.batch >= 2
+    accent_steering = engine.steering_accents()
+    caps = {
+        "text_tokenizer_spec": c.text_tokenizer_spec or None,
+        "text_normalization_enabled": engine.normalizer is not None,
+        "text_norm_languages": list(TEXT_NORM_LANGUAGES),
+        "accents": engine.accent_names(),
+        "accent_steering": accent_steering,
+        "speaker_enabled": bool(modes),
+        "speaker_conditioning_type": "raw_reference_prefix",
+        "speaker_embedding_dim": c.speaker_embedding_dim if embedding else None,
+        "speaker_embedding_codec": c.speaker_embedding_codec if embedding else None,
+        "n_codebooks": c.n_codebooks,
+        "codebook_sizes": list(c.codebook_sizes),
+        "audio_codec": c.audio_codec,
+        "max_tokens": engine.max_frames,
+        "stream_decode_modes": ["prefix", "whole"],
+        "stream_decode_default": state.options.stream_decode_default,
+        "silence_prefill": silence_prefill(state),
+        "tag_cfg": {"available": state.options.batch >= 2, "trained": bool(c.tag_cfg_trained),
+                    "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": 1.0, "max_scale": 4.0, "default_scale": 1.0},
+        "decode_context": {"available": True, "default_frames": 30, "max_frames": 450,
+                           "note": "decode the generated frames behind the last decode_context_frames of the "
+                                   "raw-reference prompt (their audio dropped), so the first generated frame is not the "
+                                   "decoder's position 0; no-op without a reference prompt"},
+        "speaker_modes": modes,
+        "speaker_mode_default": modes[0] if modes else None,
+        "decoder": decoder(state),
+        "condition_tokens": condition_tokens(state),
+        "speaker_audio_upload": bool(modes) and (engine.speaker_encoder is not None or engine.has_reference_encoder),
+        "speaker_cfg_supported": cfg,
+        "speaker_cfg_modes": modes if cfg else [],
+        "speaker_cfg_unconditional": "remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_"
+                                     "generated_history",
+        "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
+        "laci_languages": sorted(engine.laci_heads),
+        "dub": dub_available(state),
+        "speaker_embedding_upload": embedding,
+        "speaker_embedding_cache": bool(modes),
+        "speaker_embedding_blend": embedding,
+        "default_voices_enabled": state.options.default_voices_dir is not None,
+        "projects": state.projects.capabilities() if state.projects is not None else {"enabled": False},
+    }
+    caps.update(edit(state))
+    caps.update(emotion(state))
+    caps.update(phonemes(state))
+    return caps
+
+
+def router(state: ServerState) -> APIRouter:
+    r = APIRouter()
+
+    @r.get("/v2/health")
+    async def health():
+        return {"status": "ok"}
+
+    @r.get("/v1/models")
+    async def models():
+        return {"object": "list", "data": [{"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra",
+                                            "root": Path(state.options.model_path).name}]}
+
+    @r.get("/v2/capabilities")
+    async def get_capabilities():
+        return capabilities(state)
+
+    @r.get("/v2/controls")
+    async def controls():
+        bundle = state.engine.bundle
+        if bundle is None:
+            raise HTTPException(status_code=404, detail="This server has no steering bundle (place steer.gguf next to "
+                                                        "the backbone or pass --steer).")
+        return controls_document(bundle, speaker_embedding_dim=state.config.speaker_embedding_dim or None)
+
+    @r.post("/v2/phonemize")
+    async def phonemize(request: PhonemizeRequest):
+        """Gold-lexicon IPA for the words of a text; on a phoneme-token checkpoint a pronunciation with a symbol
+        outside its inventory is "unsupported" (no ``ipa``)."""
+        lexicon = state.lexicon
+        if lexicon is None:
+            raise HTTPException(status_code=404, detail="This server has no pronunciation lexicon.")
+        try:
+            result = await asyncio.to_thread(lexicon.phonemize, request.text, request.language, guess=request.guess)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        spec = state.config.text_tokenizer_spec
+        if spec and spec.get("phonemes") is not None:
+            symbols = set(spec["phonemes"]["symbols"])
+            for segment in result["segments"]:
+                if segment["ipa"] and not symbols.issuperset(segment["ipa"]):
+                    segment.update(ipa=None, status="unsupported")
+        return result
+
+    return r

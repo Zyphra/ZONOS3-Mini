@@ -7,7 +7,7 @@ import pytest
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 HTTPException = api_server.HTTPException
 from pydantic import ValidationError  # noqa: E402
-from zonos3_sgl.server.schemas import EditRequest, GenerateRequest, SpeechRequest  # noqa: E402
+from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest  # noqa: E402
 
 
 class _Frontend:

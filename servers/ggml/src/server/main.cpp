@@ -7,7 +7,7 @@
 //   speakers.*        default + session voices, speaker prompts of requests, /v2/speakers*
 //   generate.*        /v2/generate, /v1/audio/speech
 //   capabilities.*    /v2/capabilities, /v2/controls, /v2/health, /v1/models
-//   projects.*        /v2/projects*, /v2/media/* (port of zonos3_sgl/server/projects.py)
+//   projects.*        /v2/projects*, /v2/media/* (port of model/src/zonos3/server/projects.py)
 //   phonemize.*, edit.*, dub.*   their routes and capabilities
 //   workers.*, textnorm.*        JSON-lines helper processes (model/src/zonos3/workers/*.py)
 #include "compat.h"

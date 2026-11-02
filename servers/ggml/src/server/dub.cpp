@@ -1,4 +1,4 @@
-// Dubbing (/v2/dub/*): a port of zonos3_sgl/dub/runtime.py (DubRuntime) and the /v2/dub routes of
+// Dubbing (/v2/dub/*): a port of model/src/zonos3/dub/runtime.py (DubRuntime) and the /v2/dub routes of
 // zonos3_sgl/server/api_server.py over dub-plan (zonos3/dub/plan.py). The references and dubs live in two small LRU
 // stores; the alignment worker (<python-src>/zonos3/workers/dub_align.py in the .venv-dub-align interpreter: Qwen3-ASR,
 // Qwen3-ForcedAligner, SimAlign, AV-sync) is a JsonLinesWorker started on first use and again after it died; every
@@ -268,7 +268,7 @@ std::vector<double> rate_edges(const ServerState & s) {
     return out;
 }
 
-// zonos3_sgl/dub/runtime.py WorkerSettings.from_env: the alignment worker's interpreter, AV-sync home and models.
+// model/src/zonos3/dub/runtime.py WorkerSettings.from_env: the alignment worker's interpreter, AV-sync home and models.
 struct WorkerSettings {
     std::string python, avsync_home, device;
     std::string asr_model = "Qwen/Qwen3-ASR-1.7B";
