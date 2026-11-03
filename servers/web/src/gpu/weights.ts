@@ -47,7 +47,7 @@ export interface LoadProgress {
   fetched: number;
 }
 
-export const CACHE_NAME = 'zonos3-web-models-v2';
+export const CACHE_NAME = 'zonos3-web-models-v3';
 
 /** Deletes stale model caches (older exports, and web-zonos3's `zonos3-models-*`, reuse the same shard URLs) once
  *  per context. */

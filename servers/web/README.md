@@ -36,7 +36,8 @@ pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (o
 ```
 
 The studio's dev and preview servers serve `dist/` at `/web-engine` and `public/models/` at `/models`. The worker
-caches shards in Cache Storage (`zonos3-web-models-v2`); `?models=URL` loads them from elsewhere. Models that load
+caches shards in Cache Storage (`zonos3-web-models-v3`; the name changes whenever an export reuses shard URLs, so a
+visitor never mixes old and new shards); `?models=URL` loads them from elsewhere. Models that load
 together report as one readout (`engine.init(progress)`: backbone + zac; `engine.onEncoderProgress(cb)`: spk, or
 encoder + teacher on a clip voice's first use): `{models, loaded, total, fetched}` in tensor bytes, `total` known from
 the first readout (manifests are read first), at most every 100 ms; `fetched` counts the network bytes so a page can
