@@ -1,7 +1,9 @@
-"""Parity of src/dub-plan.cpp (via the dub-plan-replay binary) with model/src/zonos3/dub/plan.py.
+"""Parity of src/dub-plan.cpp (via the dub-plan-replay binary) with model/src/zonos3/dub/plan.py, and of
+src/align-text.cpp with zonos3.tts.align_text.
 
-Every case runs the same call through ``dub-plan-replay`` ({"fn", "args"} JSON on stdin) and through ``zonos3.dub.plan``;
-results must be equal: exactly for ints / bools / strings, floats within 1e-9 relative, wsola within 1e-5.
+Every case runs the same call through ``dub-plan-replay`` ({"fn", "args"} JSON on stdin) and through ``zonos3.dub.plan``
+(``align_tokens``: ``zonos3.tts.align_text``); results must be equal: exactly for ints / bools / strings, floats within
+1e-9 relative, wsola within 1e-5.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import numpy as np
 import pytest
 
 from zonos3.dub import plan as P
+from zonos3.tts.align_text import align_tokens
 
 EDGES = [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208]
 BELOW = [9.2, 8.4, 7.7]
@@ -70,6 +73,8 @@ _CONSTANTS = [
 
 
 def py_call(fn: str, a: dict):
+    if fn == "align_tokens":
+        return align_tokens(**a)
     if fn == "constants":
         out = {k: _jsonable(getattr(P, k)) for k in _CONSTANTS}
         out["UNSPACED"] = sorted(P.UNSPACED)
@@ -191,6 +196,7 @@ def text_cases():
     for text, lang in TEXTS:
         for lg in (lang, "zh", "en"):
             cases.append(("text_units", {"text": text, "lang": lg}))
+            cases.append(("align_tokens", {"text": text, "lang": lg}))
             units = P.text_units(text, lg)
             cases.append(("unit_bytes", {"text": text, "units": units}))
             if units:
@@ -376,6 +382,9 @@ def speech_cases(rng):
         ("speech_span", {"items": [], "audio": burst.tolist(), "sr": SR}),
         ("speech_span", {"items": [], "audio": zeros.tolist(), "sr": SR}),
         ("speech_span", {"items": [{"start": 0.4, "end": 0.4}], "audio": noise.tolist(), "sr": SR}),
+        ("speech_span", {"items": [{"start": 0.2, "end": 0.3, "placed": True}, {"start": 0.1, "end": 0.9, "placed": False}],
+                         "audio": zeros.tolist(), "sr": SR}),
+        ("speech_span", {"items": [{"start": 0.1, "end": 0.9, "placed": False}], "audio": burst.tolist(), "sr": SR}),
         ("speech_span", {"items": [], "audio": noise.tolist(), "sr": 16000}),
         ("speech_span", {"items": [], "audio": noise[:500].tolist(), "sr": SR}),
         ("speech_span", {"items": [], "audio": noise[:40].tolist(), "sr": 10}),

@@ -73,9 +73,10 @@ void usage(const char * a0) {
         "                      speaker embeddings (default default_voices; empty disables)\n"
         "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
         "                      model/src of the checkout holding the executable, else python/ beside it)\n"
-        "  --text-normalizer-python PY\n"
-        "                      enable text normalization: PY runs <python-src>/zonos3/workers/textnorm.py\n"
-        "                      (zonos3.tokenizer.textnorm, NeMo grammars) as a persistent worker\n"
+        "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
+        "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and the FuseAlign forced\n"
+        "                      aligner of speech editing and dubbing (fusealign.py: needs fusealign-hub installed),\n"
+        "                      each one persistent worker\n"
         "  --steer PATH        steering directions (steer.gguf) for request controls and /v2/controls\n"
         "  --emotion-directions PATH   emotion directions (emotion.gguf)\n"
         "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
@@ -148,7 +149,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         }
         else if (a == "--tts-default-voices-dir" && has_value) s.default_voice_dir = value(i);
         else if (a == "--python-src" && has_value) s.python_src = value(i);
-        else if (a == "--text-normalizer-python" && has_value) s.text_norm_python = value(i);
+        else if (a == "--worker-python" && has_value) s.worker_python = value(i);
         else if (a == "--studio-projects-dir" && has_value) projects_dir = value(i);
         else if (a == "--studio-dir" && has_value) s.studio_dir = value(i);
         else { usage(argv[0]); return 1; }
@@ -204,12 +205,15 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         return 1;
     }
     if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
-    if (!s.text_norm_python.empty()) {
-        if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py")) {
-            fprintf(stderr, "error: --text-normalizer-python needs the zonos3 package: pass --python-src DIR (DIR/zonos3/workers/textnorm.py)\n");
+    if (!s.worker_python.empty()) {
+        if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py") ||
+            !mp_file_exists(s.python_src + "/zonos3/workers/fusealign.py")) {
+            fprintf(stderr, "error: --worker-python needs the zonos3 package: pass --python-src DIR "
+                            "(DIR/zonos3/workers/textnorm.py, DIR/zonos3/workers/fusealign.py)\n");
             return 1;
         }
-        s.text_normalizer = std::make_unique<TextNormalizer>(s.text_norm_python, s.python_src);
+        s.text_normalizer = std::make_unique<TextNormalizer>(s.worker_python, s.python_src);
+        s.aligner = std::make_unique<FuseAligner>(s.worker_python, s.python_src);
     }
     if (!projects_dir.empty()) {
         try {
@@ -321,6 +325,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     stop_scheduler(s);   // stop the worker, reaper + DAC pool before returning
     stop_reference_reaper(s);
     if (s.text_normalizer) s.text_normalizer->close();
+    if (s.aligner) s.aligner->close();
     if (ctl) ctl->svr = nullptr;   // svr is about to go out of scope
     if (!bound) { fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port); return 1; }
     // listen_after_bind() returns true on a graceful stop() and false only if the accept loop died on a real error.

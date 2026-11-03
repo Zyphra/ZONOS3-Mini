@@ -128,7 +128,7 @@ class PhonemizeRequest(_Strict):
 # ----------------------------------------------------------------------------------------------------------- edit
 class EditTranscribeRequest(_Strict):
     audio_base64: str
-    # The audio's language (server code, as /v2/generate): picks the MMS-1B-all adapter.
+    # The audio's language (server code, as /v2/generate): picks the MMS-1B-all adapter and FuseAlign's tokenization.
     language: str = "en_us"
 
 
@@ -152,13 +152,13 @@ class EditRequest(_Strict):
     """Edit recorded speech so it says ``target_text``.
 
     Regions come from ``spans`` ([start, end] seconds) when given, otherwise from a word diff between
-    ``original_text`` (MMS recognition when omitted) and ``target_text`` over an MMS forced alignment of the audio.
+    ``original_text`` (MMS recognition when omitted) and ``target_text`` over a FuseAlign forced alignment of the audio.
     """
 
     audio_base64: str
     target_text: str
     original_text: str | None = None
-    # Word timings of original_text the caller checked or corrected (in order): used instead of the server's MMS
+    # Word timings of original_text the caller checked or corrected (in order): used instead of the server's FuseAlign
     # alignment for windowing and expected fill lengths, and returned as `words`.
     original_words: List[EditWordIn] | None = None
     spans: List[Annotated[List[float], Field(min_length=2, max_length=2)]] | None = None
@@ -194,7 +194,7 @@ class EditRequest(_Strict):
     context_seconds: float = Field(default=4.0, ge=0.0, le=10.0)
     # The span-end token is masked until a fill reaches min_fill_ratio x its expected length. 0 = off.
     min_fill_ratio: float = Field(default=0.7, ge=0.0, le=1.0)
-    # Transcribe the edited audio with MMS and report WER/CER against target_text.
+    # Transcribe the edited audio with MMS and report WER/CER against target_text (and its FuseAlign words).
     verify: bool = False
     # Tag CFG is not offered for edits: any value other than 1.0 is refused (400) rather than ignored.
     tag_cfg_scale: float = 1.0

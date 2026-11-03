@@ -168,6 +168,13 @@ json call(const std::string & fn, const json & a) {
         return words_json(edit_words(ws, a.at("word_tokens").get<Lists>(),
                                      a.at("original_tokens").get<std::vector<std::string>>(), a.at("duration").get<double>()));
     }
+    if (fn == "aligned_words") {
+        std::vector<WordIn> ws;
+        for (const auto & w : a.at("words"))
+            ws.push_back({w.at("word").get<std::string>(), w.at("start").get<double>(), w.at("end").get<double>(),
+                          w.at("presence").get<double>()});
+        return words_json(aligned_words(ws, a.at("word_tokens").get<Lists>()));
+    }
     if (fn == "mms_language") {
         const std::string lang = a.at("language").get<std::string>();
         const auto code = mms_language(lang);

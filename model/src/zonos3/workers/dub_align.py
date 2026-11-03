@@ -3,12 +3,12 @@
 
 Reads one JSON request per stdin line ({"id", "op", ...}) and answers each with one JSON line on stdout, in order, until
 stdin closes: {"id", "status": "ok", ...} or {"id", "status": "error", "error", "message", "invalid"} ("invalid": a
-ValueError, i.e. the input is at fault). Models load once, before the first read; AV-sync's on its first use.
+ValueError, i.e. the input is at fault). Models load once, before the first read; AV-sync's on its first use. Forced
+alignment is FuseAlign's (zonos3/workers/fusealign.py, in the server's interpreter).
 
 Ops:
-  ping                                        -> {"aligner_languages": [lowercase names] | null, "avsync": bool}
+  ping                                        -> {"avsync": bool}
   transcribe {audio, language|null}           -> {"text", "language"}                      (Qwen3-ASR)
-  align {items: [{audio, text, language}]}    -> {"results": [{"items": [{text,start,end}]}]}  (Qwen3-ForcedAligner)
   word_align {src: [str], tgt: [str]}         -> {"links": [[i, j]]}   (SimAlign mBERT, BPE level, itermax; windowed)
   lips_prepare {video, out}                   -> {"start", "end", "track_frames", "video_frames", "tracks"}  (AV-sync)
   lips_sync {lips, audio, out,                -> {"start", "end", "rate", "src_frames", "dp_cost",
@@ -26,8 +26,6 @@ import torch
 
 import dub_avsync
 from zonos3.dub import plan
-
-ALIGN_CHUNK = 32
 
 
 def read_audio(path):
@@ -71,7 +69,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--asr-model", default="Qwen/Qwen3-ASR-1.7B")
-    parser.add_argument("--aligner-model", default="Qwen/Qwen3-ForcedAligner-0.6B")
     parser.add_argument("--word-aligner-model", default="google-bert/bert-base-multilingual-cased")
     parser.add_argument("--avsync-home", default=None, help="AV-sync checkout with its models in data/")
     args = parser.parse_args()
@@ -87,8 +84,6 @@ def main():
     SentenceAligner = simalign.simalign.SentenceAligner
     asr = Qwen3ASRModel.from_pretrained(
         args.asr_model,
-        forced_aligner=args.aligner_model,
-        forced_aligner_kwargs=dict(dtype=torch.bfloat16, device_map=args.device),
         dtype=torch.bfloat16,
         device_map=args.device,
         max_inference_batch_size=32,
@@ -107,29 +102,10 @@ def main():
     def handle(req):
         op = req["op"]
         if op == "ping":
-            langs = asr.forced_aligner.get_supported_languages()
-            return {
-                "aligner_languages": None if langs is None else [x.lower() for x in langs],
-                "avsync": bool(args.avsync_home) and dub_avsync.models_present(args.avsync_home),
-            }
+            return {"avsync": bool(args.avsync_home) and dub_avsync.models_present(args.avsync_home)}
         if op == "transcribe":
             r = asr.transcribe(audio=read_audio(req["audio"]), language=req.get("language"))[0]
             return {"text": r.text, "language": r.language}
-        if op == "align":
-            items = req["items"]
-            results = []
-            for k in range(0, len(items), ALIGN_CHUNK):
-                chunk = items[k : k + ALIGN_CHUNK]
-                out = asr.forced_aligner.align(
-                    audio=[read_audio(it["audio"]) for it in chunk],
-                    text=[it["text"] for it in chunk],
-                    language=[it["language"] for it in chunk],
-                )
-                results.extend(
-                    {"items": [{"text": i.text, "start": float(i.start_time), "end": float(i.end_time)} for i in r.items]}
-                    for r in out
-                )
-            return {"results": results}
         if op == "word_align":
             return word_align(emb, SentenceAligner, req["src"], req["tgt"])
         if op == "lips_prepare":

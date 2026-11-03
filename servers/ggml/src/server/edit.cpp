@@ -9,6 +9,7 @@
 #include "server/util.h"
 #include "server/workers.h"
 
+#include "align-text.h"
 #include "zonos3-edit.h"
 #include "zonos3-markup.h"
 
@@ -27,7 +28,7 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 namespace E = zonos3_edit;
 
-// sgl _EDIT_ALIGN_MAX_SECONDS / _EDIT_MAX_SECONDS: the MMS alignment limit bounds every edit.
+// sgl _EDIT_ALIGN_MAX_SECONDS / _EDIT_MAX_SECONDS: the transcribe / align limit bounds every edit.
 static constexpr double EDIT_ALIGN_MAX_SECONDS = 150.0;
 static constexpr double EDIT_MAX_SECONDS = EDIT_ALIGN_MAX_SECONDS;
 static constexpr int EDIT_DECODE_MAX_SECONDS = 600;   // uploads are decoded this far, so the length check sees them
@@ -53,7 +54,7 @@ void require_editing(const ServerState & s) {
         fail(400, "The loaded checkpoint does not support speech editing (needs span_end_id and marker rows).");
 }
 
-// A scratch directory for the MMS worker's audio files, removed with its contents.
+// A scratch directory for the workers' audio files, removed with its contents.
 struct TempDir {
     fs::path path;
     TempDir() {
@@ -64,7 +65,7 @@ struct TempDir {
     std::string file(const std::string & name) const { return (path / name).string(); }
 };
 
-// sgl _write_edit_audio: decode the upload, check its length and store it as WAV for MMS.
+// sgl _write_edit_audio: decode the upload, check its length and store it as WAV for the workers.
 struct EditAudio { std::vector<float> pcm; std::string path; double duration = 0; };
 EditAudio write_edit_audio(const std::vector<uint8_t> & bytes, const TempDir & tmp, double max_seconds) {
     EditAudio a;
@@ -82,8 +83,9 @@ EditAudio write_edit_audio(const std::vector<uint8_t> & bytes, const TempDir & t
 
 // ------------------------------------------------------------------------------------------------------ MMS workers
 
-// MMS workers by worker language, least recently used first; at most ZONOS3_MMS_MAX_WORKERS (default 2) stay resident
-// (each holds MMS-1B-all on the GPU). A worker that failed is replaced on the next request (sgl _mms_worker).
+// MMS workers (ASR and zsa token normalization) by worker language, least recently used first; at most
+// ZONOS3_MMS_MAX_WORKERS (default 2) stay resident (each holds MMS-1B-all on the GPU). A worker that failed is replaced
+// on the next request (sgl _mms_worker).
 std::mutex mms_mtx;
 std::list<std::pair<std::string, std::shared_ptr<JsonLinesWorker>>> mms_workers;
 
@@ -128,29 +130,25 @@ void drop_mms_worker(const std::string & language, const std::shared_ptr<JsonLin
 }
 
 // sgl _mms_run: 503 when the worker cannot run, 400 when it answers an error.
-std::vector<json> mms_run(const ServerState & s, const std::vector<json> & requests, const std::string & language) {
-    std::vector<json> responses;
+json mms_one(const ServerState & s, const json & request, const std::string & language) {
+    json response;
     std::shared_ptr<JsonLinesWorker> worker;
     try {
         worker = mms_worker(s, language);
-        for (const json & r : requests) responses.push_back(worker->call(r));
+        response = worker->call(request);
     } catch (const WorkerError & e) {
         if (worker) drop_mms_worker(language, worker);
-        fail(503, std::string("MMS alignment is unavailable: ") + e.what());
+        fail(503, std::string("MMS is unavailable: ") + e.what());
     }
-    for (size_t i = 0; i < requests.size(); ++i)
-        if (responses[i].contains("error")) {
-            const json & err = responses[i]["error"];
-            fail(400, "MMS " + requests[i]["op"].get<std::string>() + " failed: " + (err.is_string() ? err.get<std::string>() : err.dump()));
-        }
-    return responses;
+    if (response.contains("error")) {
+        const json & err = response["error"];
+        fail(400, "MMS " + request["op"].get<std::string>() + " failed: " + (err.is_string() ? err.get<std::string>() : err.dump()));
+    }
+    return response;
 }
 
-json mms_one(const ServerState & s, const json & request, const std::string & language) {
-    return mms_run(s, {request}, language)[0];
-}
-
-// sgl _edit_mms_language: the MMS worker language of a request's `language` (400 for one MMS does not serve).
+// sgl _edit_mms_language: the Whisper-style worker language of a request's `language` (400 for one editing does not
+// serve).
 std::string edit_mms_language(const json & body) {
     const std::string language = resolve_language(body);
     const auto code = E::mms_language(language);
@@ -164,18 +162,50 @@ std::vector<std::vector<std::string>> token_lists(const json & j) {
     return out;
 }
 
-std::vector<E::AlignedWord> aligned_words(const json & response) {
-    std::vector<E::AlignedWord> out;
-    for (const auto & w : response.at("words")) {
-        E::AlignedWord a;
-        a.word = w.at("word").get<std::string>();
-        a.start = w.at("start").get<double>();
-        a.end = w.at("end").get<double>();
-        if (set(w, "confidence")) a.confidence = w["confidence"].get<double>();
-        a.tokens = w.at("tokens").get<std::vector<std::string>>();
-        out.push_back(std::move(a));
+// The FuseAlign words of `tokens` spoken in `audio` (503 when the worker is unavailable, 400 for input it rejects).
+std::vector<FuseAlignWord> fuse_align(const ServerState & s, const std::string & audio,
+                                      const std::vector<std::string> & tokens, const std::string & language) {
+    if (!s.aligner) fail(503, "FuseAlign alignment is unavailable: start the server with --worker-python");
+    try {
+        return s.aligner->align({{audio, tokens, language}})[0];
+    } catch (const FuseAlignError & e) {
+        fail(503, std::string("FuseAlign alignment is unavailable: ") + e.what());
+    } catch (const std::invalid_argument & e) {
+        fail(400, std::string("FuseAlign alignment failed: ") + e.what());
+    }
+}
+
+// sgl _edit_words: the edit's words of `text` spoken in `audio` (FuseAlign over align_tokens(text, language), each
+// word's zsa tokens from the MMS normalize; E::aligned_words), with the zsa tokens of `texts` from the same normalize
+// call, which runs concurrently with the alignment.
+struct EditWords { std::vector<std::vector<std::string>> normalized; std::vector<E::AlignedWord> words; };
+EditWords edit_words_of(const ServerState & s, const std::string & audio, const std::string & text,
+                        const std::string & language, const std::vector<std::string> & texts = {}) {
+    const std::vector<std::string> tokens = aligntext::align_tokens(text, language);
+    std::vector<std::string> sent = texts;
+    sent.insert(sent.end(), tokens.begin(), tokens.end());
+    auto normalize = std::async(std::launch::async, [&] {
+        return token_lists(mms_one(s, {{"id", "words"}, {"op", "normalize"}, {"normalize", sent}}, language).at("normalized"));
+    });
+    std::vector<FuseAlignWord> placed;
+    if (!tokens.empty()) placed = fuse_align(s, audio, tokens, language);
+    const auto lists = normalize.get();
+    if (lists.size() != sent.size()) fail(503, "MMS is unavailable: malformed normalize answer");
+    EditWords out;
+    out.normalized.assign(lists.begin(), lists.begin() + (std::ptrdiff_t) texts.size());
+    std::vector<E::WordIn> ws;
+    for (const auto & w : placed) ws.push_back({w.word, w.start, w.end, w.presence});
+    try {
+        out.words = E::aligned_words(ws, {lists.begin() + (std::ptrdiff_t) texts.size(), lists.end()});
+    } catch (const std::invalid_argument & e) {
+        bad(e);
     }
     return out;
+}
+
+std::vector<E::AlignedWord> words_of(const ServerState & s, const std::string & audio, const std::string & text,
+                                     const std::string & language) {
+    return edit_words_of(s, audio, text, language).words;
 }
 
 json public_words(const std::vector<E::AlignedWord> & words) {
@@ -327,12 +357,15 @@ std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & fr
 
 // ---------------------------------------------------------------------------------------------------- handlers
 
+// MMS recognizes the text; FuseAlign places its words.
 json handle_transcribe(ServerState & s, const json & body) {
     require_editing(s);
     TempDir tmp;
     const EditAudio audio = write_edit_audio(decode_b64_field(body, "audio_base64"), tmp, EDIT_ALIGN_MAX_SECONDS);
-    const json response = mms_one(s, {{"id", "original"}, {"op", "transcribe"}, {"audio", audio.path}}, edit_mms_language(body));
-    return {{"text", response.at("text")}, {"duration", audio.duration}, {"words", public_words(aligned_words(response))}};
+    const std::string language = edit_mms_language(body);
+    const json response = mms_one(s, {{"id", "original"}, {"op", "transcribe"}, {"audio", audio.path}}, language);
+    const std::string text = response.at("text").get<std::string>();
+    return {{"text", text}, {"duration", audio.duration}, {"words", public_words(words_of(s, audio.path, text, language))}};
 }
 
 json handle_align(ServerState & s, const json & body) {
@@ -341,9 +374,8 @@ json handle_align(ServerState & s, const json & body) {
     if (text.empty()) fail(400, "text is empty.");
     TempDir tmp;
     const EditAudio audio = write_edit_audio(decode_b64_field(body, "audio_base64"), tmp, EDIT_ALIGN_MAX_SECONDS);
-    const json response = mms_one(s, {{"id", "original"}, {"op", "align"}, {"audio", audio.path}, {"text", text}},
-                                  edit_mms_language(body));
-    return {{"text", text}, {"duration", audio.duration}, {"words", public_words(aligned_words(response))}};
+    return {{"text", text}, {"duration", audio.duration},
+            {"words", public_words(words_of(s, audio.path, text, edit_mms_language(body)))}};
 }
 
 // POST /v2/edit (sgl tts_edit): regenerate the edited regions of recorded speech; unedited codec frames are kept
@@ -358,7 +390,7 @@ json handle_edit(ServerState & s, const json & body) {
     const int K = (int) hp.n_codebooks;
     const double fr = frame_rate(s);
     // Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt text and
-    // never reach MMS (word diff, alignment, verify).
+    // never reach the workers (word diff, alignment, verify).
     const std::string target_text = E::canonical_markup(strip(body.at("target_text").get<std::string>()));
     const std::string plain_target_text = zonos3_strip_nonverbal_markup(target_text);
     const bool has_spans = set(body, "spans");
@@ -400,7 +432,7 @@ json handle_edit(ServerState & s, const json & body) {
     const int total_frames = (int) (codes.size() / K);
 
     // Longer clips are windowed and every fill gets a minimum length; both read word timings of the original (the
-    // caller's original_words, else an MMS alignment) and the target words' zsa tokens. Without original_text, a
+    // caller's original_words, else a FuseAlign alignment) and the target words' zsa tokens. Without original_text, a
     // short clip with explicit spans is not transcribed: its regions' own lengths are expected.
     const bool windowed = total_frames / fr > num(body, "max_context_seconds", 16.0);
     const std::vector<std::string> target_words = E::split_words(target_text);
@@ -421,7 +453,7 @@ json handle_edit(ServerState & s, const json & body) {
             const auto lists = token_lists(mms_one(s, {{"id", "original_words"}, {"op", "normalize"}, {"normalize", texts}},
                                                    mms_lang).at("normalized"));
             const size_t nt = target_norm.texts.size();
-            if (lists.size() != 1 + nt + missing.size()) fail(503, "MMS alignment is unavailable: malformed normalize answer");
+            if (lists.size() != 1 + nt + missing.size()) fail(503, "MMS is unavailable: malformed normalize answer");
             std::vector<E::WordIn> ws;
             std::vector<std::vector<std::string>> word_tokens;
             size_t m = 0;
@@ -438,13 +470,14 @@ json handle_edit(ServerState & s, const json & body) {
             words = E::edit_words(ws, word_tokens, lists[0], original.duration);
             normalized = target_norm.assemble({lists.begin() + 1, lists.begin() + 1 + nt});
         } else if (!has_spans || windowed || (min_fill_ratio > 0 && has_original_text)) {
-            json request = {{"id", "original"}, {"op", has_original_text ? "align" : "transcribe"},
-                            {"audio", original.path}, {"normalize", target_norm.texts}};
-            if (has_original_text) request["text"] = *original_text;
-            const json response = mms_one(s, request, mms_lang);
-            normalized = target_norm.assemble(token_lists(response.at("normalized")));
-            if (!has_original_text) original_text = response.at("text").get<std::string>();
-            words = aligned_words(response);
+            // the original's words (MMS recognizes the text when it is not given; FuseAlign places it) and the
+            // target's zsa tokens, from one normalize call
+            if (!has_original_text)
+                original_text = mms_one(s, {{"id", "original"}, {"op", "transcribe"}, {"audio", original.path}}, mms_lang)
+                                    .at("text").get<std::string>();
+            EditWords aligned = edit_words_of(s, original.path, *original_text, mms_lang, target_norm.texts);
+            normalized = target_norm.assemble(aligned.normalized);
+            words = std::move(aligned.words);
         }
     } catch (const std::invalid_argument & e) {
         bad(e);
@@ -561,24 +594,22 @@ json handle_edit(ServerState & s, const json & body) {
             const std::string edited_path = tmp.file("take" + std::to_string(k) + ".wav");
             if (!dac_write_wav(edited_path.c_str(), edited, sr)) fail(500, "cannot write a temporary audio file");
             const std::string id = "take" + std::to_string(k);
-            std::vector<json> aligned;
             if (!verify_reference) {
-                std::vector<json> requests{{{"id", id}, {"op", "transcribe"}, {"audio", edited_path}, {"reference", plain_target_text}}};
-                if (duration <= EDIT_ALIGN_MAX_SECONDS)
-                    requests.push_back({{"id", id + ":words"}, {"op", "align"}, {"audio", edited_path}, {"text", plain_target_text}});
-                auto responses = mms_run(s, requests, mms_lang);
-                const json & asr = responses[0];
+                // MMS scores the take against the target while FuseAlign places the target's words in it.
+                auto asr_call = std::async(std::launch::async, [&] {
+                    return mms_one(s, {{"id", id}, {"op", "transcribe"}, {"audio", edited_path}, {"reference", plain_target_text}},
+                                   mms_lang);
+                });
+                take_words = public_words(words_of(s, edited_path, plain_target_text, mms_lang));
+                const json asr = asr_call.get();
                 verify_json = {{"asr_text", asr.at("text")},
                                {"wer", asr.at("word_errors").get<double>() / std::max(1, asr.at("ref_words").get<int>())},
                                {"cer", asr.at("cer")}};
-                aligned.assign(responses.begin() + 1, responses.end());
             } else {
                 // Groups are wildcard words: any one recognized word matches; the take's words come from aligning the
                 // target with each group replaced by the word heard.
                 const json asr = mms_one(s, {{"id", id}, {"op", "transcribe"}, {"audio", edited_path}}, mms_lang);
-                std::vector<std::string> hyp;
-                for (const auto & w : asr.at("words")) for (const auto & t : w.at("tokens")) hyp.push_back(t.get<std::string>());
-                const E::Verify scored = E::wildcard_verify(*verify_reference, hyp);
+                const E::Verify scored = E::wildcard_verify(*verify_reference, asr.at("tokens").get<std::vector<std::string>>());
                 json groups = json::array();
                 std::vector<std::optional<std::string>> heard;
                 for (const auto & g : scored.groups) {
@@ -589,10 +620,8 @@ json handle_edit(ServerState & s, const json & body) {
                                {"wer", (double) scored.word_errors / std::max(1, scored.ref_words)},
                                {"cer", scored.cer}, {"groups", groups}};
                 const std::string heard_text = E::fill_groups(plain_target_text, heard);
-                if (!heard_text.empty() && duration <= EDIT_ALIGN_MAX_SECONDS)
-                    aligned = mms_run(s, {{{"id", id + ":words"}, {"op", "align"}, {"audio", edited_path}, {"text", heard_text}}}, mms_lang);
+                if (!heard_text.empty()) take_words = public_words(words_of(s, edited_path, heard_text, mms_lang));
             }
-            if (!aligned.empty()) take_words = public_words(aligned_words(aligned[0]));
         }
         const std::vector<uint8_t> wav = dac_wav_bytes(edited, sr);
         json edited_regions = json::array(), fill_seconds = json::array(), stopped_json = json::array();
@@ -630,10 +659,12 @@ json handle_edit(ServerState & s, const json & body) {
 
 }  // namespace
 
+// speech_editing: an edit checkpoint, ZSA_ROOT (MMS ASR and token normalization) and the FuseAlign worker
+// (--worker-python).
 json edit_capabilities(const ServerState & s) {
     const bool model = zonos3_supports_editing(s.model);
     const char * root = getenv("ZSA_ROOT");
-    return {{"speech_editing", model && root && *root}, {"edit_max_spans", model ? edit_max_spans(s) : 0},
+    return {{"speech_editing", model && root && *root && s.aligner}, {"edit_max_spans", model ? edit_max_spans(s) : 0},
             {"edit_frame_rate", model ? json(frame_rate(s)) : json()},
             {"edit_max_seconds", EDIT_MAX_SECONDS}, {"edit_align_max_seconds", EDIT_ALIGN_MAX_SECONDS}};
 }

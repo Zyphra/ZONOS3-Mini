@@ -16,7 +16,7 @@ const std::vector<std::string> & text_norm_languages();
 
 class TextNormalizer {
 public:
-    // python: the --text-normalizer-python interpreter; python_src: the directory holding the zonos3 package.
+    // python: the --worker-python interpreter; python_src: the directory holding the zonos3 package.
     TextNormalizer(std::string python, std::string python_src);
     // The normalized text; throws WorkerError when the worker fails twice or reports an error.
     std::string normalize(const std::string & text, const std::string & language);

@@ -668,7 +668,7 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
 
 // ── Speech editing ────────────────────────────────────────────────────────────────────────────────
 
-/** MMS greedy transcript + word timings of a clip (plain base64 WAV). */
+/** MMS greedy transcript + FuseAlign word timings of a clip (plain base64 WAV). */
 /** `language`: the clip's language (server code); it picks the MMS adapter (a new one loads on first use). */
 export function transcribe(audio_base64: string, language = 'en_us'): Promise<Alignment> {
   if (current().edit.fixture) return fixtureEdit.transcribe(audio_base64, language);

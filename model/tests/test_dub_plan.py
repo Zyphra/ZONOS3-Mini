@@ -213,6 +213,9 @@ def test_speech_span_aligner_and_energy_fallback():
     audio[int(0.3 * 44100) : int(0.6 * 44100)] = 0.5
     s, e = P.speech_span([], audio, 44100)
     assert s == pytest.approx(0.3, abs=0.02) and e == pytest.approx(0.6, abs=0.02)
+    unplaced = {"start": 0.0, "end": 0.95, "placed": False}  # FuseAlign's fallback times: not speech evidence
+    assert P.speech_span([unplaced, {"start": 0.4, "end": 0.5, "placed": True}], audio, 44100) == (0.4, 0.5)
+    assert P.speech_span([unplaced], audio, 44100) == (s, e)
     assert P.speech_span([], np.zeros(44100, dtype=np.float32), 44100) is None
 
 

@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
-"""Edit speech with automatic MMS word-diff regions or explicit second spans.
+"""Edit speech with automatic word-diff regions or explicit second spans.
 
 Clips longer than --max-context-seconds are edited on word-snapped windows around the regions
-(--context-seconds of unedited audio per side), planned over an MMS alignment, as /v2/edit does.
+(--context-seconds of unedited audio per side), planned over a FuseAlign alignment, as /v2/edit does.
+MMS (ZSA_ROOT) transcribes the original when --original-text is omitted and normalizes the words to zsa tokens.
 """
 import argparse
 import json
 import math
 from pathlib import Path
 import soundfile as sf
-from zonos3.tts.edit_align import run_mms, expect_ok, aligned_words, diff_spans, expected_fill_seconds, new_word_confidence, plan_edit_windows, seconds_to_spans, target_normalize_request
+from zonos3.tts.align_text import align_tokens
+from zonos3.tts.edit_align import FuseAlignWorker, run_mms, expect_ok, aligned_words, diff_spans, expected_fill_seconds, mms_language, new_word_confidence, plan_edit_windows, seconds_to_spans, target_normalize_request
 from zonos3_sgl.tts.llm import TTSLLM, TTSSamplingParams
 from zonos3.tokenizer.dual_reference import encode_dual_reference_file
+
+
+def words_of(aligner, audio, text, lang, normalize=()):
+    """FuseAlign words of ``text`` in ``audio`` with their zsa tokens, and the zsa tokens of the ``normalize`` texts."""
+    tokens = align_tokens(text, lang)
+    normalized = expect_ok(run_mms([dict(id='words', op='normalize', normalize=list(normalize) + tokens)], language=lang)[0])['normalized']
+    aligned = aligner.align([dict(audio=audio, tokens=tokens, language=lang)])[0] if tokens else []
+    return aligned_words(aligned, normalized[len(normalize):]), normalized[:len(normalize)]
 
 
 def main():
@@ -32,35 +42,34 @@ def main():
     p.add_argument('--verify', action='store_true')
     p.add_argument('--out', required=True)
     a = p.parse_args()
+    lang = mms_language(a.language)
+    aligner = FuseAlignWorker()
     duration = sf.info(a.audio).duration
     windowed = duration > a.max_context_seconds
     target_words = a.target_text.split()
-    original, new_indices, response = a.original_text, [], None
+    original, new_indices, words, normalized = a.original_text, [], None, None
     if not a.span or windowed or (a.min_fill_ratio > 0 and original):
         if duration > 150:
-            p.error('MMS alignment supports clips up to 150 s')
+            p.error('speech editing supports clips up to 150 s')
         target_texts, assemble = target_normalize_request(a.target_text)   # pronunciation groups are not normalized
-        request = dict(id='orig', op='align' if original else 'transcribe', audio=a.audio, normalize=target_texts)
-        if original:
-            request['text'] = original
-        response = expect_ok(run_mms([request])[0])
-        response['normalized'] = assemble(response['normalized'])
         if original is None:
-            original = response['text']
+            original = expect_ok(run_mms([dict(id='orig', op='transcribe', audio=a.audio)], language=lang)[0])['text']
             print('MMS original transcript: ' + original)
+        words, normalized = words_of(aligner, a.audio, original, lang, target_texts)
+        normalized = assemble(normalized)
     if a.span:
         spans = seconds_to_spans(a.span, math.ceil(duration * 15))
     else:
-        diff = diff_spans(aligned_words(response), response['normalized'][0], total_frames=math.ceil(duration * 15), margin_seconds=a.margin)
+        diff = diff_spans(words, normalized[0], total_frames=math.ceil(duration * 15), margin_seconds=a.margin)
         spans, new_indices = diff.spans, diff.new_target_tokens
     llm = TTSLLM(a.model_path, attention_backend='fa', cache_type='naive', max_running_req=2, cuda_graph_max_bs=2, memory_ratio=0.5)
     codes = encode_dual_reference_file(a.audio, max_seconds=600)
     windows = None
     if windowed:
-        windows = plan_edit_windows(spans, aligned_words(response), target_words, response['normalized'][1:], total_frames=len(codes),
+        windows = plan_edit_windows(spans, words, target_words, normalized[1:], total_frames=len(codes),
                                     context_seconds=a.context_seconds, target_text=a.target_text)
-    expected = ([length / 15 for _, length in spans] if response is None else
-                expected_fill_seconds(spans, aligned_words(response), target_words, response['normalized'][1:]))
+    expected = ([length / 15 for _, length in spans] if words is None else
+                expected_fill_seconds(spans, words, target_words, normalized[1:]))
     min_frames = [min(int(a.min_fill_ratio * seconds * 15), int(a.max_span_seconds * 15)) for seconds in expected]
     result = llm.edit(codes, a.target_text, spans, TTSSamplingParams(seed=a.seed, max_tokens=int(a.max_span_seconds * 15) + llm.n_codebooks + 1), language=a.language, text_normalization=not a.no_text_normalization, windows=windows, min_frames=min_frames)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
@@ -69,12 +78,12 @@ def main():
     if windows is not None:
         report['contexts'] = [[w.start / 15, w.end / 15] for w in windows]
     if a.verify:
-        requests = [dict(id='asr', op='transcribe', audio=a.out, reference=a.target_text), dict(id='edited', op='align', audio=a.out, text=a.target_text), dict(id='original', op='align', audio=a.audio, text=a.target_text)]
-        responses = [expect_ok(r) for r in run_mms(requests, device='cpu')]
-        asr = responses[0]
+        asr = expect_ok(run_mms([dict(id='asr', op='transcribe', audio=a.out, reference=a.target_text)], device='cpu', language=lang)[0])
         report.update(asr_text=asr['text'], cer=asr['cer'], wer=asr['word_errors'] / max(1, asr['ref_words']))
         if new_indices:
-            report.update(new_word_confidence_edited=new_word_confidence(aligned_words(responses[1]), new_indices), new_word_confidence_original=new_word_confidence(aligned_words(responses[2]), new_indices))
+            report.update(new_word_confidence_edited=new_word_confidence(words_of(aligner, a.out, a.target_text, lang)[0], new_indices),
+                          new_word_confidence_original=new_word_confidence(words_of(aligner, a.audio, a.target_text, lang)[0], new_indices))
+    aligner.close()
     print(json.dumps(report, indent=2))
 
 

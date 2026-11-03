@@ -1,7 +1,9 @@
-// dub-plan-replay: run one src/dub-plan.h function on a JSON request {"fn", "args"} read from stdin and print the
-// result as JSON (tuples and numpy arrays as nested lists). Errors print {"error": <Python exception class>,
-// "message": ...}. Parity against model/src/zonos3/dub/plan.py: servers/ggml/tests/parity/test_ggml_dub_plan.py.
+// dub-plan-replay: run one src/dub-plan.h function (or align-text.h align_tokens) on a JSON request {"fn", "args"} read
+// from stdin and print the result as JSON (tuples and numpy arrays as nested lists). Errors print {"error": <Python
+// exception class>, "message": ...}. Parity against model/src/zonos3/dub/plan.py and zonos3.tts.align_text:
+// servers/ggml/tests/parity/test_ggml_dub_plan.py.
 // Numbers may be given as "inf" / "-inf" / "nan" strings (JSON has no non-finite literals).
+#include "align-text.h"
 #include "dub-plan.h"
 
 #include "json.hpp"
@@ -41,7 +43,7 @@ std::vector<TextUnit> units_of(const json &j) {
 
 std::vector<TimedWord> words_of(const json &j) {
     std::vector<TimedWord> out;
-    for (const auto &w : j) out.push_back({num(w.at("start")), num(w.at("end"))});
+    for (const auto &w : j) out.push_back({num(w.at("start")), num(w.at("end")), w.value("placed", true)});
     return out;
 }
 
@@ -168,6 +170,7 @@ json run(const std::string &fn, const json &a) {
             out.push_back({{"text", u.text}, {"start", u.start}, {"end", u.end}});
         return out;
     }
+    if (fn == "align_tokens") return aligntext::align_tokens(a.at("text"), a.at("lang"));
     if (fn == "unit_bytes") return unit_bytes(a.at("text"), units_of(a.at("units")));
     if (fn == "break_after") return break_after(a.at("text"), units_of(a.at("units")));
     if (fn == "span_text") return span_text(a.at("text"), units_of(a.at("units")), a.at("a"), a.at("b"));

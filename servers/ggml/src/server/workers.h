@@ -1,6 +1,6 @@
 // A persistent child process speaking JSON lines: one request object per stdin line, one response object per stdout
-// line, in order (model/src/zonos3/workers/*.py). Used by text normalization, the MMS aligner (edit) and the dub
-// alignment worker.
+// line, in order (model/src/zonos3/workers/*.py). Used by text normalization, the FuseAlign forced aligner, the MMS
+// worker (edit ASR and token normalization) and the dub alignment worker.
 #pragma once
 
 #include "json.hpp"

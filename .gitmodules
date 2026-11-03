@@ -1,3 +1,6 @@
 [submodule "servers/ggml/ggml"]
 	path = servers/ggml/ggml
 	url = https://github.com/ggml-org/ggml
+[submodule "third_party/fusealign-multilingual"]
+	path = third_party/fusealign-multilingual
+	url = https://github.com/Zyphra/fusealign-multilingual.git

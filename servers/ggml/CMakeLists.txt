@@ -105,7 +105,7 @@ target_link_libraries(zonos3 PUBLIC zonos3-lmdb ${CMAKE_DL_LIBS})
 # --- end pronunciation lexicon ---
 
 # --- Dub planning (plan 7.12): port of model/src/zonos3/dub/plan.py ---
-target_sources(zonos3 PRIVATE src/dub-plan.cpp)
+target_sources(zonos3 PRIVATE src/dub-plan.cpp src/align-text.cpp)
 # --- end dub planning ---
 
 # --- LACI and span-follow (plan 7.8): ports of model/src/zonos3/tts/{laci,span_follow}.py ---
@@ -175,7 +175,7 @@ endif()
 
 # Everything of the server but main(): zonos3-server and the embedding zonos3-app share it.
 add_library(zonos3-server-core STATIC
-    src/server/http.cpp src/server/schema.cpp src/server/util.cpp src/server/workers.cpp src/server/textnorm.cpp
+    src/server/http.cpp src/server/schema.cpp src/server/util.cpp src/server/workers.cpp src/server/textnorm.cpp src/server/fusealign.cpp
     src/server/scheduler.cpp src/server/speakers.cpp src/server/generate.cpp src/server/capabilities.cpp
     src/server/projects.cpp src/server/phonemize.cpp src/server/edit.cpp src/server/dub.cpp)
 target_include_directories(zonos3-server-core PUBLIC src vendor ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -316,9 +316,10 @@ if (ZONOS3_APP)
             target_link_options(zonos3-app PRIVATE "/ENTRY:mainCRTStartup")
         endif()
     elseif (APPLE)
-        # Zonos3.app bundle: the studio (studio/dist of the repo), default voices, the zonos3 Python package of the
-        # helper workers (model/src/zonos3) and the icon ship inside Contents/Resources (app.cpp and the server
-        # resolve ../Resources/{studio,python} relative to the executable).
+        # Zonos3.app bundle: the studio (studio/dist of the repo), default voices, the Python packages of the helper
+        # workers (model/src/zonos3 and fusealign_hub of the third_party/fusealign-multilingual submodule) and the icon
+        # ship inside Contents/Resources (app.cpp and the server resolve ../Resources/{studio,python} relative to the
+        # executable).
         set(ZONOS3_APP_RESOURCES assets/app/zonos3.icns assets/app/zonos3.png)
         target_sources(zonos3-app PRIVATE ${ZONOS3_APP_RESOURCES})
         set_source_files_properties(${ZONOS3_APP_RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -334,6 +335,14 @@ if (ZONOS3_APP)
             get_filename_component(reldir ${rel} DIRECTORY)
             set_source_files_properties(${res} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/python/${reldir})
         endforeach()
+        set(ZONOS3_FUSEALIGN_SRC ${ZONOS3_REPO_ROOT}/third_party/fusealign-multilingual)
+        if (NOT EXISTS ${ZONOS3_FUSEALIGN_SRC}/fusealign_hub/__init__.py)
+            message(FATAL_ERROR "ZONOS3_APP bundles FuseAlign: git submodule update --init third_party/fusealign-multilingual")
+        endif()
+        file(GLOB_RECURSE ZONOS3_FUSEALIGN_RESOURCES ${ZONOS3_FUSEALIGN_SRC}/fusealign_hub/*.py)
+        target_sources(zonos3-app PRIVATE ${ZONOS3_FUSEALIGN_RESOURCES} ${ZONOS3_FUSEALIGN_SRC}/LICENSE)
+        set_source_files_properties(${ZONOS3_FUSEALIGN_RESOURCES} ${ZONOS3_FUSEALIGN_SRC}/LICENSE
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources/python/fusealign_hub)
         file(GLOB_RECURSE ZONOS3_STUDIO_RESOURCES ${ZONOS3_REPO_ROOT}/studio/dist/*)
         target_sources(zonos3-app PRIVATE ${ZONOS3_STUDIO_RESOURCES})
         foreach(res ${ZONOS3_STUDIO_RESOURCES})

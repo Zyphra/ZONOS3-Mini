@@ -15,6 +15,21 @@ from zonos3.dub import runtime as R
 EDGES = (10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208)
 
 
+class FakeAligner:
+    """The server's FuseAlign worker: every token at 0.1-0.9 s, placed."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+
+    def model(self) -> str:
+        return "Zyphra/fusealign/fake.safetensors"
+
+    def align(self, items):
+        self.items += items
+        return [[{"word": t, "start": 0.1, "end": 0.9, "presence": 1.0, "placed": True} for t in it["tokens"]]
+                for it in items]
+
+
 class Fake:
     def __init__(self, source_voice=True, studio_voices=True, rate_scales=None):
         self.requests: list[list[dict]] = []
@@ -24,11 +39,12 @@ class Fake:
                            studio_voices=studio_voices, source_voice=source_voice,
                            raw_controls=frozenset({"identity.gender"}), phoneme_groups=True,
                            rate_scales=rate_scales or {})
-        self.rt = R.DubRuntime(model, self.synthesize, self.encode_voice, R.WorkerSettings(python="/nonexistent"))
+        self.aligner = FakeAligner()
+        self.rt = R.DubRuntime(model, self.synthesize, self.encode_voice, self.aligner,
+                               R.WorkerSettings(python="/nonexistent"))
 
         async def call(op, **payload):
-            assert op == "align", op
-            return {"results": [{"items": [{"text": "w", "start": 0.1, "end": 0.9}]} for _ in payload["items"]]}
+            raise AssertionError(f"unexpected alignment-worker call {op}")
 
         self.rt._call = call
         sr = P.SAMPLE_RATE
@@ -226,12 +242,33 @@ def test_pronunciation_groups_read_as_ipa_and_count_letters():
     assert R.text_bytes(text) == round(len(b"Hi ") + 1.4 * 5 + 1)
 
 
-def test_edit_mms_language_maps_dub_languages_and_refuses_the_rest():
+def test_edit_worker_language_maps_dub_languages_and_refuses_the_rest():
     from zonos3.tts.edit_align import mms_language
 
     assert [mms_language(c) for c in ("en_us", "fr_fr", "pt_br", "cmn")] == ["en", "fr", "pt", "zh"]
-    with pytest.raises(ValueError, match="no MMS alignment"):
+    with pytest.raises(ValueError, match="does not serve language 'ar'"):
         mms_language("ar")
+
+
+def test_takes_and_reference_are_aligned_by_fusealign_tokens():
+    f = Fake()
+    f.generate(segments=[{"ref_start": 0.5, "ref_end": 1.5, "target_text": "Hi \ue000ʃɪvɑn\ue001 <laugh/>!", "bucket": None}])
+    assert f.aligner.items and all(it["tokens"] == ["Hi", "ʃɪvɑn", "!"] and it["language"] == "fr"
+                                   for it in f.aligner.items)
+
+    async def call(op, **payload):
+        assert op == "word_align", op
+        return {"links": [[0, 0]]}
+
+    f.rt._call = call
+    f.aligner.items.clear()
+    out = asyncio.run(f.rt.analyze({"ref_id": f.ref_id, "ref_text": "我们 去公园。", "ref_lang": "zh",
+                                    "target_text": "On y va.", "target_lang": "fr", "min_pause_s": 0.3}))
+    assert f.aligner.items[0]["tokens"] == ["我", "们", "去", "公", "园。"] and f.aligner.items[0]["language"] == "zh"
+    assert out["ref_words"][0] == {"word": "我", "start": 0.1, "end": 0.9}
+    caps = f.rt.capabilities()
+    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors"
+    assert [lang["code"] for lang in caps["ref_languages"]] == list(P.REF_LANGUAGES)
 
 
 @pytest.mark.parametrize("after,applied", [(0.15, True), (0.18, False)])

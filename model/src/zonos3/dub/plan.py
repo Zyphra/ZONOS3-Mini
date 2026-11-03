@@ -14,7 +14,7 @@ from typing import Mapping
 
 import numpy as np
 
-REF_LANGUAGES = {  # code -> Qwen3-ASR / ForcedAligner language name
+REF_LANGUAGES = {  # code (Whisper's, as FuseAlign takes it) -> Qwen3-ASR language name
     "en": "English",
     "fr": "French",
     "de": "German",
@@ -39,7 +39,7 @@ TARGET_LANGUAGES = {  # code -> (label, zonos3 TTS language for text normalizati
     "ko": ("Korean", "ko"),
 }
 UNSPACED = frozenset({"ja", "zh", "yue"})
-MAX_REF_SECONDS = 180.0  # qwen_asr MAX_FORCE_ALIGN_INPUT_SECONDS (one aligner forward)
+MAX_REF_SECONDS = 180.0  # the longest reference a dub takes
 MIN_REF_SECONDS = 0.5  # qwen_asr MIN_ASR_INPUT_SECONDS
 MAX_VIDEO_BYTES = 1 << 30
 DEFAULT_MIN_PAUSE_S = 0.30
@@ -300,7 +300,9 @@ def voice_prompt_span(segments, duration: float) -> tuple[float, float]:
 
 
 def speech_span(items: list[dict], audio: np.ndarray, sr: int) -> tuple[float, float] | None:
-    spans = [(it["start"], it["end"]) for it in items if it["end"] > it["start"]]
+    """First start to last end of the take's aligned words (FuseAlign's unplaced ones, ``placed`` false, only carry
+    fallback times and are skipped); without any, the span of the frames above a tenth of the peak RMS."""
+    spans = [(it["start"], it["end"]) for it in items if it.get("placed", True) and it["end"] > it["start"]]
     if spans:
         return min(s for s, _ in spans), max(e for _, e in spans)
     frame = max(1, int(0.02 * sr))

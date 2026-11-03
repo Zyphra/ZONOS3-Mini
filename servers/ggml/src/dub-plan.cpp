@@ -396,7 +396,7 @@ std::optional<std::pair<double, double>> speech_span(const std::vector<TimedWord
     bool any = false;
     double lo = 0.0, hi = 0.0;
     for (const auto &it : items) {
-        if (!(it.end > it.start)) continue;
+        if (!(it.placed && it.end > it.start)) continue;
         if (!any || it.start < lo) lo = it.start;
         if (!any || it.end > hi) hi = it.end;
         any = true;

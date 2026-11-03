@@ -168,6 +168,18 @@ def _cases() -> list[dict]:
     add("words-negative", "edit_words", words=[{"word": "a", "start": -0.5, "end": 0.5}], word_tokens=[["A"]],
         original_tokens=["A"], duration=1.0)
     add("words-empty", "edit_words", words=[], word_tokens=[], original_tokens=[], duration=1.0)
+    placed = [{"word": "Hello,", "start": 0.1, "end": 0.5, "presence": 0.97, "placed": True},
+              {"word": "—", "start": 0.5, "end": 0.5, "presence": 0.0, "placed": False},
+              {"word": "there", "start": 0.6, "end": 1.0, "presence": 0.4, "placed": True}]
+    add("aligned-ok", "aligned_words", words=placed, word_tokens=[["HELLO"], [], ["THERE"]])
+    add("aligned-empty", "aligned_words", words=[], word_tokens=[])
+    add("aligned-mismatch", "aligned_words", words=placed, word_tokens=[["HELLO"]])
+    overlapping = [{"word": "a", "start": 0.10, "end": 0.502, "presence": 0.9, "placed": True},
+                   {"word": ",", "start": 0.45, "end": 0.46, "presence": 0.0, "placed": False},
+                   {"word": "b", "start": 0.50, "end": 0.801, "presence": 0.8, "placed": True},
+                   {"word": "c", "start": 0.70, "end": 0.75, "presence": 0.7, "placed": True},
+                   {"word": "d", "start": 0.74, "end": 1.20, "presence": 0.6, "placed": True}]
+    add("aligned-overlap", "aligned_words", words=overlapping, word_tokens=[["A"], [], ["B"], ["C"], ["D"]])
     for lang in ("en_us", "cmn", "pt_br", "xx"):
         add(f"mms-{lang}", "mms_language", language=lang)
     add("split", "split_words", text=" a\u3000b\tc\u00a0 d\u200be ")
@@ -236,6 +248,8 @@ def py_call(fn: str, a: dict):
         return {"texts": texts, "assembled": assemble(a["normalized"])}
     if fn == "edit_words":
         return [_word_json(w) for w in A.edit_words(a["words"], a["word_tokens"], a["original_tokens"], duration=a["duration"])]
+    if fn == "aligned_words":
+        return [_word_json(w) for w in A.aligned_words(a["words"], a["word_tokens"])]
     if fn == "mms_language":
         return A.mms_language(a["language"])
     if fn == "split_words":

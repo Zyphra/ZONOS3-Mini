@@ -105,7 +105,7 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
     ggml_ids = tmp_path / "ggml.npy"
     run = subprocess.run(
         [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(ggml_ids),
-         "--text-normalizer-python", sys.executable, "--python-src", str(REPO / "model" / "src")],
+         "--worker-python", sys.executable, "--python-src", str(REPO / "model" / "src")],
         capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
 

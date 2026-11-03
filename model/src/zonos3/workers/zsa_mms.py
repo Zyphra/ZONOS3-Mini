@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""MMS alignment and greedy CTC recognition in the zsa environment.
+"""MMS greedy CTC recognition and zsa token normalization in the zsa environment (speech editing).
 
 Reads one JSON request per stdin line and answers each with one JSON line on
 stdout, in order, until stdin closes; the model loads once per process, with the
 MMS-1B-all adapter of ``--lang`` (a Whisper-style code, zsa's ``WHISPER_TO_MMS``).
+Forced alignment is FuseAlign's (zonos3/workers/fusealign.py).
+
+Ops (any request may add ``normalize: [str]`` -> ``normalized``: the zsa tokens of each string):
+  normalize {normalize}                    -> {"normalized": [[token]]}
+  transcribe {audio, reference?}           -> {"duration", "text", "tokens": zsa tokens of the text,
+                                               and with a reference "cer", "word_errors", "ref_words"}
+Errors answer {"id", "error": repr}.
 """
 import argparse
 import json
@@ -26,27 +33,22 @@ def word_errors(reference, hypothesis):
 
 
 def answer(aligner, request):
-    if request['op'] == 'normalize':  # zsa tokens of request['normalize'] only, no audio
-        return {'id': request['id'], 'normalized': [normalize(s).split() for s in request['normalize']]}
-    response = {'id': request['id'], 'duration': soundfile.info(request['audio']).duration}
-    if request['op'] == 'align':
-        words = aligner.align_words(request['audio'], request['text'])
-    elif request['op'] == 'transcribe':
-        text, words = aligner.transcribe(request['audio'])
-        response['text'] = text
+    response = {'id': request['id']}
+    if request['op'] == 'transcribe':
+        text, _ = aligner.transcribe(request['audio'])
+        response.update(duration=soundfile.info(request['audio']).duration, text=text, tokens=normalize(text).split())
         if 'reference' in request:
             ref = normalize(request['reference']).split()
-            response.update(cer=char_error_rate(request['reference'], text), word_errors=word_errors(ref, normalize(text).split()), ref_words=len(ref))
-    else:
+            response.update(cer=char_error_rate(request['reference'], text), word_errors=word_errors(ref, response['tokens']), ref_words=len(ref))
+    elif request['op'] != 'normalize':
         raise ValueError('Unknown MMS operation')
-    response['words'] = [dict(word=w.word, start=w.start, end=w.end, confidence=w.confidence, tokens=normalize(w.word).split()) for w in words]
     if 'normalize' in request:
         response['normalized'] = [normalize(s).split() for s in request['normalize']]
     return response
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--device', default='cuda:0' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--lang', default='en', help='Whisper-style language code (en, fr, zh, ...)')
     args = parser.parse_args()

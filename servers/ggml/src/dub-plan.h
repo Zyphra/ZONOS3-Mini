@@ -20,7 +20,7 @@ struct TargetLanguage {
     std::string tts;  // zonos3 TTS language for text normalization
 };
 
-// code -> Qwen3-ASR / ForcedAligner language name (dict order)
+// code (Whisper's, as FuseAlign takes it) -> Qwen3-ASR language name (dict order)
 inline const std::vector<std::pair<std::string, std::string>> REF_LANGUAGES = {
     {"en", "English"}, {"fr", "French"}, {"de", "German"}, {"es", "Spanish"}, {"it", "Italian"},
     {"pt", "Portuguese"}, {"ja", "Japanese"}, {"zh", "Chinese"}, {"ko", "Korean"}, {"ru", "Russian"},
@@ -32,7 +32,7 @@ inline const std::vector<TargetLanguage> TARGET_LANGUAGES = {
     {"ja", "Japanese", "ja"},   {"zh", "Chinese", "cmn"},  {"ko", "Korean", "ko"},
 };
 inline const std::array<const char *, 3> UNSPACED = {"ja", "zh", "yue"};
-constexpr double MAX_REF_SECONDS = 180.0;  // qwen_asr MAX_FORCE_ALIGN_INPUT_SECONDS (one aligner forward)
+constexpr double MAX_REF_SECONDS = 180.0;  // the longest reference a dub takes
 constexpr double MIN_REF_SECONDS = 0.5;    // qwen_asr MIN_ASR_INPUT_SECONDS
 constexpr int64_t MAX_VIDEO_BYTES = int64_t(1) << 30;
 constexpr double DEFAULT_MIN_PAUSE_S = 0.30;
@@ -86,6 +86,7 @@ std::string join_words(const std::vector<std::string> &words, const std::string 
 struct TimedWord {
     double start = 0.0;
     double end = 0.0;
+    bool placed = true;  // FuseAlign placed the word (false: its fallback times; speech_span ignores it)
 };
 using Range = std::pair<int, int>;  // half-open
 
@@ -119,6 +120,7 @@ std::vector<Candidate> candidate_plan(int bucket, const RateScale &scale, int64_
 std::vector<Candidate> pinned_candidate_plan(int bucket, int64_t seed, int segment_index);
 int max_tokens_for(double duration_s);
 std::pair<double, double> voice_prompt_span(const std::vector<RefSegment> &segments, double duration);
+// The span of the placed words with end > start, else the RMS-based speech extent of `audio`.
 std::optional<std::pair<double, double>> speech_span(const std::vector<TimedWord> &items, const float *audio,
                                                      size_t n_audio, int sr);
 

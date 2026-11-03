@@ -47,14 +47,17 @@ forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`ed
 
 ## Pipeline
 
-1. Qwen3-ForcedAligner times the reference words (or the caller's `ref_words` are used as they are: no ASR, no forced
-   alignment of the reference); the transcript is split into segments at pauses >= the threshold.
+1. FuseAlign (the server's forced-alignment worker, `model/src/zonos3/workers/fusealign.py`) times the reference words:
+   the whitespace words of the transcript, or in ja / zh / yue one per character or Latin run
+   (`zonos3.tts.align_text.align_tokens`); the caller's `ref_words` are used as they are (no ASR, no forced alignment of
+   the reference). The transcript is split into segments at pauses >= the threshold.
 2. SimAlign (mBERT, windowed beyond 510 wordpieces) word-aligns reference and target text; the alignment projects each
    reference segment onto a contiguous span of target words (`zonos3/dub/plan.py: project_segments`). Segment target
    texts stay editable.
 3. Per segment, candidates are synthesized in the neighbouring speaking-rate buckets (offsets 0, -1, +1, -2, +2; two
-   seeds each) under LACI; the take whose speech duration fits the reference best is kept and placed so its speech
-   starts at the reference segment start. An overrun pushes the next segment later (reported as `shift`).
+   seeds each) under LACI; FuseAlign times each take's words (its unplaced words do not count), and the take whose
+   speech duration fits the reference best is kept and placed so its speech starts at the reference segment start. An
+   overrun pushes the next segment later (reported as `shift`).
 
    LACI also holds each take to its segment's length: every take carries a `zonos3.tts.laci.DurationTarget`
    (server: `laci_target_frames` on the take's request; offline: `TTSLLM.generate(laci=True, laci_duration=...)`). When
@@ -134,7 +137,7 @@ forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`ed
 `[{index, label, rate, low, high, steered, languages, doses?}]`, nominal B/s midpoint and edges, the target languages
 that have the bucket, the tempo dose per language of a steered one), `lipsync`, `voice_modes`,
 `phoneme_groups`, limits, `enabled`; `/v2/capabilities` carries `dub`), `POST /v2/dub/ref?name=` (raw audio bytes, or a
-video whose first audio track is taken), `/v2/dub/transcribe {ref_id, ref_lang?}` (text, language and the ForcedAligner
+video whose first audio track is taken), `/v2/dub/transcribe {ref_id, ref_lang?}` (text, language and the FuseAlign
 `words`), `/v2/dub/analyze {ref_id, ref_text | ref_words, ref_lang, target_text, target_lang, min_pause_s}` (segments
 with `bucket_auto`), `/v2/dub/generate {ref_id, target_lang, seed, segments: [{ref_start, ref_end, target_text, bucket?,
 voice?, controls?}], voice?, lipsync}`, `/v2/dub/regenerate {dub_id, segment, target_text, seed, bucket, voice?, controls?,

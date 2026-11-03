@@ -3,7 +3,7 @@ export const LANG_LABEL: Record<string, string> = { en_us: 'US English', en_gb: 
 
 export const langLabel = (l: string) => LANG_LABEL[l] ?? l;
 
-/** Languages speech editing aligns and transcribes (an MMS-1B-all adapter each). */
+/** Languages speech editing aligns and transcribes (an MMS-1B-all adapter each for recognition; FuseAlign aligns). */
 export const EDIT_LANGUAGES = ['en_us', 'fr_fr', 'de', 'es', 'it', 'pt_br', 'ja', 'cmn', 'ko'];
 
 /** A dub target language (`/v2/dub/capabilities` code) as the server's language code. */

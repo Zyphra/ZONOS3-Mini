@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# One-time (re-runnable): venv of the dubbing alignment worker (Qwen3-ASR + Qwen3-ForcedAligner + SimAlign) and its
-# weights, plus AV-sync (lip-sync step, https://github.com/Ryu1845/AV-sync) at a pinned commit with its models.
+# One-time (re-runnable): venv of the dubbing alignment worker (Qwen3-ASR + SimAlign) and its weights, plus AV-sync
+# (lip-sync step, https://github.com/Ryu1845/AV-sync) at a pinned commit with its models. Forced alignment is FuseAlign's
+# (fusealign-hub, installed in the workspace by `uv sync`), not this venv's.
 set -euo pipefail
 DUB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="$DUB/.venv-dub-align"
@@ -11,7 +12,6 @@ uv pip install --python "$VENV/bin/python" torch==2.9.1 qwen-asr==0.0.6 simalign
 HF_HUB_OFFLINE=0 "$VENV/bin/python" - <<'PY'
 from huggingface_hub import snapshot_download
 print(snapshot_download("Qwen/Qwen3-ASR-1.7B"))
-print(snapshot_download("Qwen/Qwen3-ForcedAligner-0.6B"))
 print(snapshot_download("google-bert/bert-base-multilingual-cased",
                         allow_patterns=["config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json", "vocab.txt"]))
 PY

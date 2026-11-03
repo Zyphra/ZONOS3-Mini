@@ -1,8 +1,9 @@
 // Dubbing (/v2/dub/*): a port of model/src/zonos3/dub/runtime.py (DubRuntime) and the /v2/dub routes of
 // zonos3_sgl/server/api_server.py over dub-plan (zonos3/dub/plan.py). The references and dubs live in two small LRU
 // stores; the alignment worker (<python-src>/zonos3/workers/dub_align.py in the .venv-dub-align interpreter: Qwen3-ASR,
-// Qwen3-ForcedAligner, SimAlign, AV-sync) is a JsonLinesWorker started on first use and again after it died; every
-// take is a LACI /v2/generate request on the scheduler (plan_laci_take) with the take's duration target.
+// SimAlign, AV-sync) is a JsonLinesWorker started on first use and again after it died; word timings come from the
+// server's FuseAlign worker (server/fusealign.h); every take is a LACI /v2/generate request on the scheduler
+// (plan_laci_take) with the take's duration target.
 #include "compat.h"
 
 #include "server/dub.h"
@@ -16,6 +17,7 @@
 #include "server/util.h"
 #include "server/workers.h"
 
+#include "align-text.h"
 #include "audio-decode.h"
 #include "dub-plan.h"
 #include "zonos3-edit.h"
@@ -214,7 +216,7 @@ struct Ref {
 struct Take {
     std::vector<float> audio;
     double s0 = 0, s1 = 0;
-    json items;                     // aligned words [{text, start, end}]
+    json items;                     // FuseAlign words [{word, start, end}]
     int attempts = 0;
     json retries;                   // LACI retries by kind
 };
@@ -272,7 +274,6 @@ std::vector<double> rate_edges(const ServerState & s) {
 struct WorkerSettings {
     std::string python, avsync_home, device;
     std::string asr_model = "Qwen/Qwen3-ASR-1.7B";
-    std::string aligner_model = "Qwen/Qwen3-ForcedAligner-0.6B";
     std::string word_aligner_model = "google-bert/bert-base-multilingual-cased";
 
     static WorkerSettings from_env(const ServerState & s) {
@@ -442,7 +443,7 @@ public:
     AlignWorker(const ServerState & s, const WorkerSettings & w) {
         if (!w.installed()) throw AlignWorkerError("alignment interpreter not found: " + w.python + " (run tools/setup_dub_align_env.sh)");
         std::vector<std::string> argv{w.python, (fs::path(s.python_src) / "zonos3" / "workers" / "dub_align.py").string(),
-                                      "--device", w.device, "--asr-model", w.asr_model, "--aligner-model", w.aligner_model,
+                                      "--device", w.device, "--asr-model", w.asr_model,
                                       "--word-aligner-model", w.word_aligner_model};
         if (w.avsync_ready()) { argv.push_back("--avsync-home"); argv.push_back(w.avsync_home); }
         std::map<std::string, std::optional<std::string>> env{{"PYTHONPATH", s.python_src},
@@ -544,7 +545,6 @@ public:
         edges_ = rate_edges(s);
         n_buckets_ = (int) s.model.hp.n_cond_buckets;
         row_scale_.edges = edges_;
-        for (const auto & [c, n] : dubplan::REF_LANGUAGES) ref_languages_.emplace_back(c, n);
         if (s.steer_loaded)
             for (const auto & d : s.steer.dirs) if (!d.hidden) raw_controls_.insert(d.id);
         build_rate_scales();
@@ -562,15 +562,13 @@ public:
             if (std::find(laci.begin(), laci.end(), t.code) != laci.end())
                 target_languages.push_back({{"code", t.code}, {"label", t.label}, {"tts_language", t.tts}});
         json ref_languages = json::array();
-        {
-            std::lock_guard<std::mutex> lk(state_mtx_);
-            for (const auto & [c, n] : ref_languages_) ref_languages.push_back({{"code", c}, {"name", n}});
-        }
+        for (const auto & [c, n] : dubplan::REF_LANGUAGES) ref_languages.push_back({{"code", c}, {"name", n}});
         const bool running = running_;
+        const std::string aligner = aligner_model();   // starts the FuseAlign worker; "" when it cannot run
         json offsets = json::array();
         for (int o : dubplan::CANDIDATE_BUCKET_OFFSETS) offsets.push_back(o);
         return {
-            {"available", settings_.installed() && !laci.empty() && !edges_.empty()},
+            {"available", settings_.installed() && !aligner.empty() && !laci.empty() && !edges_.empty()},
             {"ref_languages", ref_languages},
             {"target_languages", target_languages},
             {"max_ref_seconds", dubplan::MAX_REF_SECONDS},
@@ -587,7 +585,7 @@ public:
             {"candidate_seeds", dubplan::CANDIDATE_SEEDS},
             {"model", fs::path(s_.model_path).filename().string()},
             {"asr_model", settings_.asr_model},
-            {"aligner_model", settings_.aligner_model},
+            {"aligner_model", aligner},
             {"word_aligner", settings_.word_aligner_model},
             {"align_worker", {{"installed", settings_.installed()}, {"running", running}}},
             {"lipsync", settings_.installed() && settings_.avsync_ready()},
@@ -623,16 +621,11 @@ public:
         std::string name = out.contains("language") && out["language"].is_string() ? out["language"].get<std::string>() : "";
         name = strip(name.substr(0, name.find(',')));
         std::optional<std::string> lang = ref_lang;
-        if (!lang) {
-            std::lock_guard<std::mutex> lk(state_mtx_);
-            for (const auto & [c, n] : ref_languages_) if (n == name) { lang = c; break; }
-        }
+        if (!lang)
+            for (const auto & [c, n] : dubplan::REF_LANGUAGES) if (n == name) { lang = c; break; }
         const std::string text = strip(out["text"].get<std::string>());
         json words = json::array();
-        if (lang && !text.empty()) {
-            const json items = align({{{"audio", wav}, {"text", text}, {"language", ref_language_name(*lang)}}})[0];
-            for (const auto & it : items) words.push_back({{"word", it["text"]}, {"start", it["start"]}, {"end", it["end"]}});
-        }
+        if (lang && !text.empty()) words = public_words(align({{wav, text, *lang}})[0]);
         return {{"text", text}, {"language", lang ? json(*lang) : json()}, {"language_name", name}, {"words", words}};
     }
 
@@ -683,10 +676,8 @@ public:
             TempDir tmp("dub-");
             const std::string wav = tmp.file("ref.wav");
             write_float_wav(wav, ref->audio, ref->sr);
-            const json aligned = align({{{"audio", wav}, {"text", ref_text}, {"language", ref_language_name(ref_lang)}}})[0];
-            if (aligned.empty()) value_error("the forced aligner returned no words; check the transcript and its language");
-            words = json::array();
-            for (const auto & it : aligned) words.push_back({{"word", it["text"]}, {"start", it["start"]}, {"end", it["end"]}});
+            words = public_words(align({{wav, ref_text, ref_lang}})[0]);
+            if (words.empty()) value_error("the forced aligner returned no words; check the transcript and its language");
         }
 
         const auto units = dubplan::text_units(target_text, target_lang);
@@ -867,10 +858,9 @@ private:
     // voice mode -> TTS language -> its scale with tempo-steered buckets (only languages that have some)
     std::map<std::string, std::map<std::string, dubplan::RateScale>> rate_scales_;
     std::mutex start_mtx_;                // serializes worker (re)starts
-    std::mutex state_mtx_;                // guards worker_ and ref_languages_
+    std::mutex state_mtx_;                // guards worker_
     std::shared_ptr<AlignWorker> worker_;
     std::atomic<bool> running_{false};    // the worker answered and has not failed since
-    std::vector<std::pair<std::string, std::string>> ref_languages_;   // narrowed to the aligner's on its first ping
 
     // sgl _dub_rate_scales: the steering bundle's rate_extension per voice mode (source voices only on its
     // reference_sides); none when it was measured against other row edges.
@@ -977,17 +967,7 @@ private:
             std::lock_guard<std::mutex> lk(state_mtx_);
             worker_ = w;
         }
-        const json ping = w->call("ping", json::object());
-        const json & langs = ping["aligner_languages"];
-        std::vector<std::pair<std::string, std::string>> narrowed;
-        for (const auto & [c, n] : dubplan::REF_LANGUAGES) {
-            if (!langs.is_null() && std::find(langs.begin(), langs.end(), json(lower_ascii(n))) == langs.end()) continue;
-            narrowed.emplace_back(c, n);
-        }
-        {
-            std::lock_guard<std::mutex> lk(state_mtx_);
-            ref_languages_ = std::move(narrowed);
-        }
+        w->call("ping", json::object());
         running_ = true;
         return w;
     }
@@ -1002,18 +982,44 @@ private:
         }
     }
 
-    // Forced alignment of [{audio, text, language name}] -> per item [{text, start, end}].
-    std::vector<json> align(const json & items) {
-        const json r = call("align", {{"items", items}});
+    // FuseAlign word timings of each (audio, text, Whisper-style REF_LANGUAGES code): the words of
+    // zonos3.tts.align_text.align_tokens, per item [{word, start, end, placed}].
+    struct AlignJob { std::string audio, text, lang; };
+    std::vector<json> align(const std::vector<AlignJob> & jobs) {
+        if (!s_.aligner) throw FuseAlignError("word timings need the FuseAlign worker: start the server with --worker-python");
+        std::vector<FuseAlignItem> items;
+        for (const auto & j : jobs) items.push_back({j.audio, aligntext::align_tokens(j.text, j.lang), j.lang});
         std::vector<json> out;
-        for (const auto & x : r["results"]) out.push_back(x["items"]);
+        for (const auto & words : s_.aligner->align(items)) {
+            json item = json::array();
+            for (const auto & w : words)
+                item.push_back({{"word", w.word}, {"start", w.start}, {"end", w.end}, {"placed", w.placed}});
+            out.push_back(std::move(item));
+        }
         return out;
     }
 
-    void check_ref_lang(const std::optional<std::string> & ref_lang) {
+    // The API's word records [{word, start, end}] of aligned words.
+    static json public_words(const json & aligned) {
+        json out = json::array();
+        for (const auto & w : aligned) out.push_back({{"word", w["word"]}, {"start", w["start"]}, {"end", w["end"]}});
+        return out;
+    }
+
+    // The FuseAlign checkpoint (the worker's ping; starts it); empty when the worker cannot run.
+    std::string aligner_model() {
+        if (!s_.aligner) return "";
+        try {
+            return s_.aligner->model();
+        } catch (const FuseAlignError & e) {
+            fprintf(stderr, "zonos3-server: %s\n", e.what());
+            return "";
+        }
+    }
+
+    static void check_ref_lang(const std::optional<std::string> & ref_lang) {
         if (!ref_lang) return;
-        std::lock_guard<std::mutex> lk(state_mtx_);
-        for (const auto & [c, n] : ref_languages_) if (c == *ref_lang) return;
+        for (const auto & [c, n] : dubplan::REF_LANGUAGES) if (c == *ref_lang) return;
         value_error("unsupported reference language: " + *ref_lang);
     }
 
@@ -1233,11 +1239,11 @@ private:
         std::map<size_t, json> aligned;
         {
             TempDir tmp("dub-");
-            json reqs = json::array();
+            std::vector<AlignJob> reqs;
             for (size_t i : valid) {
                 const std::string path = tmp.file("take" + std::to_string(i) + ".wav");
                 write_float_wav(path, takes[i].audio, dubplan::SAMPLE_RATE);
-                reqs.push_back({{"audio", path}, {"text", spoken_text(jobs[i].text)}, {"language", ref_language_name(dub.target_lang)}});
+                reqs.push_back({path, spoken_text(jobs[i].text), dub.target_lang});
             }
             if (!reqs.empty()) {
                 const auto res = align(reqs);
@@ -1248,7 +1254,8 @@ private:
         std::map<size_t, std::pair<double, double>> spans;
         for (size_t i : valid) {
             std::vector<dubplan::TimedWord> items;
-            for (const auto & it : aligned[i]) items.push_back({it["start"].get<double>(), it["end"].get<double>()});
+            for (const auto & it : aligned[i])
+                items.push_back({it["start"].get<double>(), it["end"].get<double>(), it["placed"].get<bool>()});
             const auto sp = dubplan::speech_span(items, takes[i].audio.data(), takes[i].audio.size(), dubplan::SAMPLE_RATE);
             if (sp && sp->second > sp->first) spans[i] = *sp;
         }
@@ -1379,7 +1386,7 @@ private:
                 e["lip_scale"] = e["lip_stretch"] = e["lip_squeeze"] = e["lip_warp"] = 1.0;
             }
             for (const auto & it : t.items)
-                words.push_back({{"word", it["text"]}, {"start", warp(p.speech_start + (it["start"].get<double>() - t.s0))},
+                words.push_back({{"word", it["word"]}, {"start", warp(p.speech_start + (it["start"].get<double>() - t.s0))},
                                  {"end", warp(p.speech_start + (it["end"].get<double>() - t.s0))}, {"segment", k}});
             start_err.push_back(std::fabs(p.start_error));
             end_err.push_back(std::fabs(p.end_error));
@@ -1478,8 +1485,8 @@ DubRuntime & runtime(ServerState & s) {
 // sgl _dub_ready.
 DubRuntime & dub_ready(ServerState & s) {
     if (!dub_available(s))
-        fail(400, "Dubbing is not enabled on this server: it needs --laci-heads and a checkpoint with a speaking-rate "
-                  "condition row");
+        fail(400, "Dubbing is not enabled on this server: it needs --laci-heads, a checkpoint with a speaking-rate "
+                  "condition row and --worker-python (the FuseAlign forced aligner)");
     return runtime(s);
 }
 
@@ -1492,6 +1499,8 @@ auto dub_call(F && f) -> decltype(f()) {
         throw;
     } catch (const UnknownId &) {
         fail(404, "unknown ref_id/dub_id; upload or generate again");
+    } catch (const FuseAlignError & e) {
+        fail(503, std::string("forced aligner: ") + e.what());
     } catch (const AlignWorkerError & e) {
         fail(503, std::string("alignment worker: ") + e.what());
     } catch (const std::invalid_argument & e) {
@@ -1536,7 +1545,8 @@ std::string download_stem(const std::string & name) {
 
 }  // namespace
 
-bool dub_available(const ServerState & s) { return !laci_languages(s).empty() && !rate_edges(s).empty(); }
+// sgl _dub_available, plus the FuseAlign worker (--worker-python) every dub's word timings need.
+bool dub_available(const ServerState & s) { return s.aligner && !laci_languages(s).empty() && !rate_edges(s).empty(); }
 
 json dub_capabilities(const ServerState & s) {
     json caps = runtime(const_cast<ServerState &>(s)).capabilities();

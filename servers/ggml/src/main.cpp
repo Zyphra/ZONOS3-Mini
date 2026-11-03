@@ -42,7 +42,7 @@ static void usage(const char * a0) {
         "  --validate <input_ids.npy> <out_dir> [--layers N]\n"
         "  --generate <input_ids.npy> <out.{npy,wav}>\n"
         "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
-        "  --request <req.json> --build-prompt <ids.npy> [--text-normalizer-python PY [--python-src DIR]] [--steer F]\n"
+        "  --request <req.json> --build-prompt <ids.npy> [--worker-python PY [--python-src DIR]] [--steer F]\n"
         "                      [--emotion-directions F] [--accent-adapters F] [--accent-directions F]\n"
         "                      (emotion.gguf / accents.gguf / accent-directions.gguf auto-detected next to the backbone)\n"
         "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
@@ -522,7 +522,7 @@ static int request_prompt_main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--build-prompt") && v) out = argv[++i];
         else if (!strcmp(argv[i], "--gpu")) s.use_gpu = true;
         else if (!strcmp(argv[i], "--cpu")) s.use_gpu = false;
-        else if (!strcmp(argv[i], "--text-normalizer-python") && v) s.text_norm_python = argv[++i];
+        else if (!strcmp(argv[i], "--worker-python") && v) s.worker_python = argv[++i];
         else if (!strcmp(argv[i], "--python-src") && v) s.python_src = argv[++i];
         else if (!strcmp(argv[i], "--spk-encoder") && v) spk_encoder = argv[++i];
         else if (!strcmp(argv[i], "--dac-encoder") && v) dac_encoder = argv[++i];
@@ -554,13 +554,13 @@ static int request_prompt_main(int argc, char ** argv) {
     if (s.emotion_directions_path.empty()) s.emotion_directions_path = mp_find_companion(path, "emotion.gguf");
     if (s.accent_adapters_path.empty()) s.accent_adapters_path = mp_find_companion(path, "accents.gguf");
     if (s.accent_directions_path.empty()) s.accent_directions_path = mp_find_companion(path, "accent-directions.gguf");
-    if (!s.text_norm_python.empty()) {
+    if (!s.worker_python.empty()) {
         if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
         if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py")) {
-            fprintf(stderr, "error: --text-normalizer-python needs --python-src DIR (DIR/zonos3/workers/textnorm.py)\n");
+            fprintf(stderr, "error: --worker-python needs --python-src DIR (DIR/zonos3/workers/textnorm.py)\n");
             return 1;
         }
-        s.text_normalizer = std::make_unique<zs::TextNormalizer>(s.text_norm_python, s.python_src);
+        s.text_normalizer = std::make_unique<zs::TextNormalizer>(s.worker_python, s.python_src);
     }
     if (!zonos3_model_load(s.model, path.c_str(), s.use_gpu)) return 1;
     s.model_path = path;

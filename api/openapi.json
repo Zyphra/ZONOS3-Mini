@@ -329,7 +329,7 @@
     "/v2/edit/transcribe": {
       "post": {
         "operationId": "editTranscribe",
-        "summary": "MMS transcript and word timings of the audio to edit",
+        "summary": "MMS transcript of the audio to edit and its FuseAlign word timings",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -371,7 +371,7 @@
     "/v2/edit/align": {
       "post": {
         "operationId": "editAlign",
-        "summary": "MMS forced alignment of the audio to a text",
+        "summary": "FuseAlign forced alignment of the audio to a text",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -414,7 +414,7 @@
       "post": {
         "operationId": "edit",
         "summary": "Edit recorded speech so it says target_text",
-        "description": "Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\n`original_text` (MMS recognition when omitted) and `target_text` over an MMS alignment. Each region is one\nspan-end-terminated generation; unedited codec frames are kept exactly.\n",
+        "description": "Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\n`original_text` (MMS recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\nspan-end-terminated generation; unedited codec frames are kept exactly.\n",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -580,7 +580,7 @@
     "/v2/dub/transcribe": {
       "post": {
         "operationId": "dubTranscribe",
-        "summary": "ASR transcript and word timings of the reference",
+        "summary": "Qwen3-ASR transcript of the reference and its FuseAlign word timings",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -1287,7 +1287,7 @@
         }
       },
       "Unavailable": {
-        "description": "A helper worker (MMS, the dub alignment worker) is unavailable.",
+        "description": "A helper worker (MMS, FuseAlign, the dub alignment worker) is unavailable.",
         "content": {
           "application/json": {
             "schema": {
@@ -3539,6 +3539,7 @@
         }
       },
       "EditWord": {
+        "description": "One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign\ninterval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous\nword is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its\nzsa-normalized tokens. Punctuation-only words are left out.\n",
         "type": "object",
         "required": [
           "word",
@@ -3584,7 +3585,7 @@
           "language": {
             "type": "string",
             "default": "en_us",
-            "description": "The audio's language (picks the MMS adapter)."
+            "description": "The audio's language (picks the MMS adapter and FuseAlign's tokenization)."
           }
         }
       },
@@ -4202,10 +4203,12 @@
             "type": "string"
           },
           "asr_model": {
-            "type": "string"
+            "type": "string",
+            "description": "The reference transcription model (Qwen3-ASR)."
           },
           "aligner_model": {
-            "type": "string"
+            "type": "string",
+            "description": "The forced aligner's checkpoint (FuseAlign: Zyphra/fusealign/<file> or a local path); empty when its worker cannot start."
           },
           "word_aligner": {
             "type": "string"

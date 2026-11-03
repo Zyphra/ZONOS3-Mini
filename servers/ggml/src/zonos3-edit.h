@@ -43,7 +43,8 @@ std::vector<int32_t> splice_edit(const std::vector<int32_t> & codes, int n_codeb
                                  const std::vector<std::vector<int32_t>> & fills);
 
 // ---------------------------------------------------------------------------------------------------- edit_align.py
-// Server language code -> MMS worker language (MMS_LANGUAGES); nullopt for a language MMS alignment does not serve.
+// Server language code -> the Whisper-style code of the edit's workers (MMS_LANGUAGES: the MMS adapter, FuseAlign's
+// tokenization and long-form anchoring); nullopt for a language speech editing does not serve.
 std::optional<std::string> mms_language(const std::string & language);
 std::string mms_language_error(const std::string & language);   // the ValueError message of mms_language
 
@@ -85,6 +86,11 @@ struct WordIn { std::string word; double start = 0, end = 0; std::optional<doubl
 std::vector<AlignedWord> edit_words(const std::vector<WordIn> & words,
                                     const std::vector<std::vector<std::string>> & word_tokens,
                                     const std::vector<std::string> & original_tokens, double duration);
+// aligned_words: FuseAlign's words (confidence = presence) with each word's zsa tokens; words without tokens
+// (punctuation only) are dropped, then each overlap of neighbours is split at its midpoint (in order). Throws when the
+// lists differ in length.
+std::vector<AlignedWord> aligned_words(const std::vector<WordIn> & words,
+                                       const std::vector<std::vector<std::string>> & word_tokens);
 
 struct EditWindow {
     int start = 0, end = 0;

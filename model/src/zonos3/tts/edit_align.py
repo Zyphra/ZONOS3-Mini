@@ -1,12 +1,15 @@
-"""MMS subprocess isolation and transcript-diff edit regions."""
+"""Speech-editing helpers: the MMS worker (zsa ASR and token normalization), the FuseAlign forced-alignment worker
+and transcript-diff edit regions."""
 from dataclasses import dataclass
 import difflib
+import importlib.util
 import json
 import math
 import os
 import re
 from pathlib import Path
 import subprocess
+import sys
 import threading
 
 from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
@@ -14,26 +17,29 @@ from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
 ZSA_ROOT = os.environ.get('ZSA_ROOT')
 ZSA_PYTHON = Path(os.environ.get('ZSA_PYTHON') or (Path(ZSA_ROOT) / '.venv/bin/python' if ZSA_ROOT else ''))
 WORKER = Path(__file__).resolve().parents[1] / 'workers' / 'zsa_mms.py'
+FUSEALIGN_WORKER = Path(__file__).resolve().parents[1] / 'workers' / 'fusealign.py'
 
 
-# Server language codes (normalized, as /v2/generate) -> the Whisper-style codes zsa maps to MMS-1B-all adapters
-# (WHISPER_TO_MMS); the dub target languages.
+# Server language codes (normalized, as /v2/generate) -> the Whisper-style codes of the edit's workers: zsa maps them
+# to MMS-1B-all adapters (WHISPER_TO_MMS), FuseAlign tokenizes by them (zonos3.tts.align_text) and anchors long
+# recordings with Whisper in them; the dub target languages.
 MMS_LANGUAGES = {'en_us': 'en', 'fr_fr': 'fr', 'de': 'de', 'es': 'es', 'it': 'it', 'pt_br': 'pt', 'ja': 'ja',
                  'cmn': 'zh', 'ko': 'ko'}
 
 
 def mms_language(language: str) -> str:
-    """The MMS worker language of a normalized server language code; ValueError for languages MMS alignment does
-    not serve."""
+    """The Whisper-style worker language of a normalized server language code; ValueError for languages speech
+    editing does not serve."""
     code = MMS_LANGUAGES.get(language)
     if code is None:
-        raise ValueError(f"Speech editing has no MMS alignment for language {language!r} "
+        raise ValueError(f"Speech editing does not serve language {language!r} "
                          f"(supported: {', '.join(MMS_LANGUAGES)}).")
     return code
 
 
 class MMSWorker:
-    """One MMS-1B-all process in the zsa interpreter with one language adapter; requests are answered in order.
+    """One MMS-1B-all process in the zsa interpreter with one language adapter (ASR and zsa token normalization);
+    requests are answered in order.
 
     The model loads once per worker, so a long-lived worker (the server's) pays
     the load only on its first request. ``run`` is thread-safe.
@@ -88,6 +94,89 @@ def expect_ok(resp):
     if 'error' in resp:
         raise RuntimeError(f"zsa {resp['id']}: {resp['error']}")
     return resp
+
+
+class FuseAlignError(RuntimeError):
+    """The FuseAlign worker is unavailable: it could not start, exited twice in a row, or failed without the input
+    being at fault (e.g. its checkpoint could not be loaded)."""
+
+
+def fusealign_installed() -> bool:
+    """Whether this interpreter, the FuseAlign worker's, has ``fusealign_hub`` (third_party/fusealign-multilingual)."""
+    return importlib.util.find_spec('fusealign_hub') is not None
+
+
+class FuseAlignWorker:
+    """The workers/fusealign.py process (this interpreter, ``PYTHONPATH`` = model/src): one per server, shared by
+    speech editing and dubbing. It starts on the first call and again after it exited; a call that meets an exited
+    worker (EOF) is retried once on a fresh one. Thread-safe: calls are serialized.
+
+    ``call`` raises ValueError when the worker reports the input at fault and FuseAlignError otherwise."""
+
+    def __init__(self, device: str | None = None, checkpoint: str | None = None, python: str = sys.executable):
+        self._command = ([python, str(FUSEALIGN_WORKER)] + (['--device', device] if device else [])
+                         + (['--checkpoint', checkpoint] if checkpoint else []))
+        self._process: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+        self._next_id = 0
+        self._model: str | None = None
+
+    @property
+    def alive(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    def _start(self) -> subprocess.Popen:
+        env = {k: v for k, v in os.environ.items() if k not in ('PYTHONPATH', 'VIRTUAL_ENV')}
+        env['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])  # model/src
+        env['PYTHONDONTWRITEBYTECODE'] = '1'
+        try:
+            return subprocess.Popen(self._command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                                    encoding='utf-8')
+        except OSError as exc:
+            raise FuseAlignError(f'cannot start the FuseAlign worker: {exc}') from exc
+
+    def call(self, op: str, **payload) -> dict:
+        with self._lock:
+            self._next_id += 1
+            line = json.dumps({'id': self._next_id, 'op': op, **payload}, ensure_ascii=False) + '\n'
+            for _ in range(2):
+                if not self.alive:
+                    self._process = self._start()
+                try:
+                    self._process.stdin.write(line)
+                    self._process.stdin.flush()
+                    reply = self._process.stdout.readline()
+                except (BrokenPipeError, OSError):
+                    reply = ''
+                if reply:
+                    break
+                code = self._process.wait()
+            else:
+                raise FuseAlignError(f'FuseAlign worker exited with code {code}')
+        response = json.loads(reply)
+        if response.get('status') != 'ok':
+            if response.get('invalid'):
+                raise ValueError(response.get('message') or response.get('error'))
+            raise FuseAlignError(response.get('error', 'unknown error'))
+        return response
+
+    def model(self) -> str:
+        """The checkpoint id the worker aligns with (its ``ping``)."""
+        if self._model is None:
+            self._model = self.call('ping')['model']
+        return self._model
+
+    def align(self, items: list[dict]) -> list[list[dict]]:
+        """``[{audio, tokens, language}]`` -> per item one ``{word, start, end, presence, placed}`` per token."""
+        return [r['words'] for r in self.call('align', items=items)['results']]
+
+    def close(self) -> None:
+        with self._lock:  # after any in-flight call
+            if self.alive:
+                self._process.stdin.close()
+            if self._process is not None:
+                self._process.wait()
+                self._process = None
 
 
 # Pronunciation groups (U+E000 IPA U+E001, phoneme-token checkpoints) in a target text. zsa's normalize
@@ -156,12 +245,24 @@ class AlignedWord:
     word: str
     start: float
     end: float
-    confidence: float
+    confidence: float | None
     tokens: list[str]
 
 
-def aligned_words(resp) -> list[AlignedWord]:
-    return [AlignedWord(**w) for w in expect_ok(resp)['words']]
+def aligned_words(words: list[dict], word_tokens: list[list[str]]) -> list[AlignedWord]:
+    """The edit's words of an alignment: FuseAlign's words (``FuseAlignWorker.align``, one per ``align_tokens``
+    token) with each word's zsa tokens (the MMS worker's normalize of the word) and FuseAlign's presence as the
+    confidence. A word without zsa tokens (punctuation only) carries nothing the edit reads and is dropped; an
+    unplaced word keeps FuseAlign's fallback times. FuseAlign does not repair order, so neighbours may overlap by a
+    few ms: an overlap is split at its midpoint, which keeps the words valid ``original_words`` (``edit_words``)."""
+    if len(words) != len(word_tokens):
+        raise ValueError("One token list is needed per aligned word.")
+    out = [AlignedWord(w['word'], float(w['start']), float(w['end']), float(w['presence']), list(tokens))
+           for w, tokens in zip(words, word_tokens) if tokens]
+    for previous, word in zip(out, out[1:]):
+        if word.start < previous.end:
+            previous.end = word.start = (previous.end + word.start) / 2
+    return out
 
 
 @dataclass
@@ -208,7 +309,7 @@ def diff_spans(words, target_tokens, *, total_frames, frame_rate=15.0, margin_se
 
 def edit_words(words, word_tokens, original_tokens, *, duration) -> list[AlignedWord]:
     """Caller-supplied word timings of the original (``{word, start, end, confidence?}`` in
-    order, e.g. corrected MMS words) as AlignedWords with ``word_tokens`` (zsa tokens per word).
+    order, e.g. corrected aligned words) as AlignedWords with ``word_tokens`` (zsa tokens per word).
     Raises ValueError unless the times are finite, each word has start < end, the words are
     ascending and non-overlapping inside [0, duration] and their tokens spell ``original_tokens``
     (the zsa tokens of the original text)."""
@@ -270,7 +371,7 @@ def whole_clip_window(spans, total_frames: int, target_text: str) -> EditWindow:
 
 
 class WordDiff:
-    """The original's MMS words (with zsa ``tokens``) against the target's whitespace words and
+    """The original's aligned words (with zsa ``tokens``) against the target's whitespace words and
     their zsa tokens, diffed over the tokens: maps original word ranges to target word ranges."""
 
     def __init__(self, words, target_words, target_word_tokens):
@@ -320,7 +421,7 @@ def plan_edit_windows(spans, words, target_words, target_word_tokens, *, total_f
                       context_seconds=4.0, target_text=None) -> list[EditWindow]:
     """Word-snapped context windows around edit regions of a long clip.
 
-    ``words`` are the MMS words of the original (with zsa ``tokens``); ``target_words`` the
+    ``words`` are the aligned words of the original (with zsa ``tokens``); ``target_words`` the
     whitespace words of the target text and ``target_word_tokens`` their zsa tokens. Each region
     takes the words within ``context_seconds`` of it; an edge inside a changed block of the
     original -> target token diff (or inside a target word) moves outward to the block edge, and
@@ -330,7 +431,7 @@ def plan_edit_windows(spans, words, target_words, target_word_tokens, *, total_f
     """
     n = len(words)
     if not n:
-        raise ValueError("MMS found no words in the audio, so the edit cannot be windowed.")
+        raise ValueError("The aligner found no words in the audio, so the edit cannot be windowed.")
     diff = WordDiff(words, target_words, target_word_tokens)
 
     def boundary(k):
@@ -461,6 +562,6 @@ def wildcard_verify(reference_tokens, hypothesis_tokens) -> dict:
 
 def fill_groups(text: str, heard) -> str:
     """``text`` with its pronunciation groups replaced, in order, by the words in ``heard``
-    (lower-cased; a group with nothing heard is dropped): plain text MMS can align."""
+    (lower-cased; a group with nothing heard is dropped): plain text the aligner can place."""
     heard = iter(heard)
     return " ".join(_GROUP_RE.sub(lambda _m: (next(heard) or "").lower(), text).split())

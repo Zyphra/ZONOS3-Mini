@@ -870,7 +870,7 @@ function Unavailable() {
     <div class="empty">
       <Icon name="globe" size={28} />
       <h2>This server can’t dub</h2>
-      <p>Dubbing needs the dub setup next to the studio server: the alignment worker (Qwen3-ASR, Qwen3-ForcedAligner, SimAlign) and, for lip-sync, AV-sync. Set it up once, then restart the server:</p>
+      <p>Dubbing needs the dub setup next to the studio server: the alignment worker (Qwen3-ASR, SimAlign) and, for lip-sync, AV-sync. Set it up once, then restart the server:</p>
       <pre class="mono">bash tools/setup_dub_align_env.sh</pre>
       <p class="muted small">{b.server || location.origin} does not serve dubbing (/v2/dub/capabilities: not enabled, or the alignment worker is not installed). Without a server, add ?api=offline to try the whole flow on the built-in fixture.</p>
     </div>

@@ -205,7 +205,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** MMS transcript and word timings of the audio to edit */
+        /** MMS transcript of the audio to edit and its FuseAlign word timings */
         post: operations["editTranscribe"];
         delete?: never;
         options?: never;
@@ -222,7 +222,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** MMS forced alignment of the audio to a text */
+        /** FuseAlign forced alignment of the audio to a text */
         post: operations["editAlign"];
         delete?: never;
         options?: never;
@@ -242,7 +242,7 @@ export interface paths {
         /**
          * Edit recorded speech so it says target_text
          * @description Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between
-         *     `original_text` (MMS recognition when omitted) and `target_text` over an MMS alignment. Each region is one
+         *     `original_text` (MMS recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one
          *     span-end-terminated generation; unedited codec frames are kept exactly.
          */
         post: operations["edit"];
@@ -312,7 +312,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** ASR transcript and word timings of the reference */
+        /** Qwen3-ASR transcript of the reference and its FuseAlign word timings */
         post: operations["dubTranscribe"];
         delete?: never;
         options?: never;
@@ -1302,6 +1302,12 @@ export interface components {
             /** @default null */
             confidence?: number | null;
         };
+        /**
+         * @description One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign
+         *     interval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous
+         *     word is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its
+         *     zsa-normalized tokens. Punctuation-only words are left out.
+         */
         EditWord: {
             word: string;
             start: number;
@@ -1312,7 +1318,7 @@ export interface components {
         EditTranscribeRequest: {
             audio_base64: string;
             /**
-             * @description The audio's language (picks the MMS adapter).
+             * @description The audio's language (picks the MMS adapter and FuseAlign's tokenization).
              * @default en_us
              */
             language?: string;
@@ -1494,7 +1500,9 @@ export interface components {
             candidate_bucket_offsets: number[];
             candidate_seeds: number;
             model: string;
+            /** @description The reference transcription model (Qwen3-ASR). */
             asr_model: string;
+            /** @description The forced aligner's checkpoint (FuseAlign: Zyphra/fusealign/<file> or a local path); empty when its worker cannot start. */
             aligner_model: string;
             word_aligner: string;
             align_worker: {
@@ -1879,7 +1887,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description A helper worker (MMS, the dub alignment worker) is unavailable. */
+        /** @description A helper worker (MMS, FuseAlign, the dub alignment worker) is unavailable. */
         Unavailable: {
             headers: {
                 [name: string]: unknown;

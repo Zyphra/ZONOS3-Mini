@@ -17,7 +17,7 @@ export interface Word {
   word: string;
   start: number;
   end: number;
-  /** MMS confidence; optional in the contract (null for caller-supplied timings). */
+  /** FuseAlign's presence probability; optional in the contract (null for caller-supplied timings). */
   confidence?: number | null;
   tokens: string[];
 }
@@ -58,7 +58,7 @@ export const isGroupToken = (t: string) => t.startsWith(OPEN);
 const TAG = '\ue002';
 /**
  * A nonverbal-tag token: part of the diff (a tag inserted between unchanged words plans a region there, so it is
- * rendered), never heard by speech recognition (the server keeps markers out of MMS).
+ * rendered), never heard by speech recognition (the server keeps markers out of MMS and FuseAlign).
  */
 export const isTagToken = (t: string) => t.startsWith(TAG);
 

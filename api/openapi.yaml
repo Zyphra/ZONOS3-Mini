@@ -224,7 +224,7 @@ paths:
   /v2/edit/transcribe:
     post:
       operationId: editTranscribe
-      summary: MMS transcript and word timings of the audio to edit
+      summary: MMS transcript of the audio to edit and its FuseAlign word timings
       parameters:
         - $ref: "#/components/parameters/Keepalive"
       requestBody:
@@ -245,7 +245,7 @@ paths:
   /v2/edit/align:
     post:
       operationId: editAlign
-      summary: MMS forced alignment of the audio to a text
+      summary: FuseAlign forced alignment of the audio to a text
       parameters:
         - $ref: "#/components/parameters/Keepalive"
       requestBody:
@@ -269,7 +269,7 @@ paths:
       summary: Edit recorded speech so it says target_text
       description: |
         Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between
-        `original_text` (MMS recognition when omitted) and `target_text` over an MMS alignment. Each region is one
+        `original_text` (MMS recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one
         span-end-terminated generation; unedited codec frames are kept exactly.
       parameters:
         - $ref: "#/components/parameters/Keepalive"
@@ -349,7 +349,7 @@ paths:
   /v2/dub/transcribe:
     post:
       operationId: dubTranscribe
-      summary: ASR transcript and word timings of the reference
+      summary: Qwen3-ASR transcript of the reference and its FuseAlign word timings
       parameters:
         - $ref: "#/components/parameters/Keepalive"
       requestBody:
@@ -703,7 +703,7 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
     Unavailable:
-      description: A helper worker (MMS, the dub alignment worker) is unavailable.
+      description: A helper worker (MMS, FuseAlign, the dub alignment worker) is unavailable.
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
@@ -1324,6 +1324,11 @@ components:
           default: null
         confidence: {type: [number, "null"], default: null}
     EditWord:
+      description: |
+        One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign
+        interval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous
+        word is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its
+        zsa-normalized tokens. Punctuation-only words are left out.
       type: object
       required: [word, start, end, confidence, tokens]
       properties:
@@ -1340,7 +1345,7 @@ components:
       required: [audio_base64]
       properties:
         audio_base64: {type: string}
-        language: {type: string, default: en_us, description: The audio's language (picks the MMS adapter).}
+        language: {type: string, default: en_us, description: The audio's language (picks the MMS adapter and FuseAlign's tokenization).}
     EditAlignRequest:
       type: object
       additionalProperties: false
@@ -1567,8 +1572,8 @@ components:
           items: {type: integer}
         candidate_seeds: {type: integer}
         model: {type: string}
-        asr_model: {type: string}
-        aligner_model: {type: string}
+        asr_model: {type: string, description: The reference transcription model (Qwen3-ASR).}
+        aligner_model: {type: string, description: "The forced aligner's checkpoint (FuseAlign: Zyphra/fusealign/<file> or a local path); empty when its worker cannot start."}
         word_aligner: {type: string}
         align_worker:
           type: object

@@ -35,7 +35,7 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 - `zonos3.server`: Pieces the Python servers share: request schemas, studio projects and the keepalive middleware.
 - `zonos3.reference`: The plain-PyTorch reference LM and synthesis (`python -m zonos3.reference`), the numerical oracle for every server.
 - `zonos3.registries`: Codec and speaker-encoder registries.
-- `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, MMS alignment, dub alignment).
+- `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, MMS recognition and token normalization, FuseAlign forced alignment, dub ASR / word alignment / lip-sync).
 
 `zonos3_sgl` (`servers/sgl/src/zonos3_sgl`):
 

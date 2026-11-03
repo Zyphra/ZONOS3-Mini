@@ -39,6 +39,8 @@ dependencies = [
     # Request schemas and studio projects shared by the Python servers (zonos3.server).
     "fastapi",
     "pydantic>=2",
+    # FuseAlign forced aligner (third_party/fusealign-multilingual) behind workers/fusealign.py.
+    "fusealign-hub",
 ]
 
 [tool.setuptools]

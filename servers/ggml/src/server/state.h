@@ -2,6 +2,7 @@
 #pragma once
 
 #include "server/scheduler.h"
+#include "server/fusealign.h"
 #include "server/textnorm.h"
 
 #include "dac-encoder.h"
@@ -81,8 +82,9 @@ struct ServerState {
     std::string studio_dir;
     std::string default_voice_dir = "default_voices";
     std::string python_src;                 // directory holding the zonos3 package (model/src or <exe>/python)
-    std::string text_norm_python;
-    std::unique_ptr<TextNormalizer> text_normalizer;   // set when --text-normalizer-python is given
+    std::string worker_python;              // --worker-python: interpreter of <python_src>/zonos3/workers
+    std::unique_ptr<TextNormalizer> text_normalizer;   // set when --worker-python is given
+    std::unique_ptr<FuseAligner> aligner;              // the FuseAlign forced aligner; set when --worker-python is given
     // Companions of later features (emotion.gguf, accents.gguf, accent-directions.gguf, --laci-heads LANG=PATH,
     // --tts-phoneme-lexicon DIR); recorded here so every module sees the configuration.
     std::string emotion_directions_path, accent_adapters_path, accent_directions_path, phoneme_lexicon_dir;

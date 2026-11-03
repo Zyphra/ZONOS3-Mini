@@ -260,7 +260,7 @@ std::optional<std::string> mms_language(const std::string & language) {
 std::string mms_language_error(const std::string & language) {
     std::vector<std::string> keys;
     for (const auto & kv : mms_languages()) keys.push_back(kv.first);
-    return "Speech editing has no MMS alignment for language " + repr(language) + " (supported: " + join(keys, ", ") + ").";
+    return "Speech editing does not serve language " + repr(language) + " (supported: " + join(keys, ", ") + ").";
 }
 
 std::vector<std::string> split_words(const std::string & text) {
@@ -531,6 +531,18 @@ std::vector<AlignedWord> edit_words(const std::vector<WordIn> & words,
     return out;
 }
 
+std::vector<AlignedWord> aligned_words(const std::vector<WordIn> & words,
+                                       const std::vector<std::vector<std::string>> & word_tokens) {
+    if (words.size() != word_tokens.size()) value_error("One token list is needed per aligned word.");
+    std::vector<AlignedWord> out;
+    for (size_t k = 0; k < words.size(); ++k)
+        if (!word_tokens[k].empty())
+            out.push_back({words[k].word, words[k].start, words[k].end, words[k].confidence, word_tokens[k]});
+    for (size_t k = 1; k < out.size(); ++k)   // neighbours may overlap by a few ms: split at the midpoint
+        if (out[k].start < out[k - 1].end) out[k - 1].end = out[k].start = (out[k - 1].end + out[k].start) / 2;
+    return out;
+}
+
 std::vector<Span> EditWindow::spans(const std::vector<Span> & all) const {
     std::vector<Span> out;
     for (int k : regions) out.push_back({all[k].start - start, all[k].length});
@@ -548,7 +560,7 @@ EditWindow whole_clip_window(const std::vector<Span> & spans, int total_frames, 
 
 namespace {
 
-// WordDiff: the original's MMS words against the target's whitespace words, diffed over their zsa tokens.
+// WordDiff: the original's aligned words against the target's whitespace words, diffed over their zsa tokens.
 struct WordDiff {
     const std::vector<AlignedWord> & words;
     std::vector<int> orig_start{0}, tgt_start{0};
@@ -601,7 +613,7 @@ std::vector<EditWindow> plan_edit_windows(const std::vector<Span> & spans, const
                                           int total_frames, double frame_rate, double context_seconds,
                                           const std::optional<std::string> & target_text) {
     const int n = (int) words.size();
-    if (!n) value_error("MMS found no words in the audio, so the edit cannot be windowed.");
+    if (!n) value_error("The aligner found no words in the audio, so the edit cannot be windowed.");
     const WordDiff diff(words, target_words, target_word_tokens);
     auto boundary = [&](int k) {
         if (k == 0) return 0;

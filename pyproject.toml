@@ -13,6 +13,7 @@ flashinfer-jit-cache = { url = "https://github.com/flashinfer-ai/flashinfer/rele
 zonos3 = { workspace = true }
 zonos3-sgl = { workspace = true }
 zonos3-mlx = { workspace = true }
+fusealign-hub = { path = "third_party/fusealign-multilingual", editable = true }
 
 [dependency-groups]
 dev = [

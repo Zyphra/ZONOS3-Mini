@@ -7597,7 +7597,7 @@
   },
   "expected": {
    "error": "ValueError",
-   "message": "MMS found no words in the audio, so the edit cannot be windowed."
+   "message": "The aligner found no words in the audio, so the edit cannot be windowed."
   }
  },
  {
@@ -8404,6 +8404,207 @@
   }
  },
  {
+  "name": "aligned-ok",
+  "fn": "aligned_words",
+  "args": {
+   "words": [
+    {
+     "word": "Hello,",
+     "start": 0.1,
+     "end": 0.5,
+     "presence": 0.97,
+     "placed": true
+    },
+    {
+     "word": "—",
+     "start": 0.5,
+     "end": 0.5,
+     "presence": 0.0,
+     "placed": false
+    },
+    {
+     "word": "there",
+     "start": 0.6,
+     "end": 1.0,
+     "presence": 0.4,
+     "placed": true
+    }
+   ],
+   "word_tokens": [
+    [
+     "HELLO"
+    ],
+    [],
+    [
+     "THERE"
+    ]
+   ]
+  },
+  "expected": [
+   {
+    "word": "Hello,",
+    "start": 0.1,
+    "end": 0.5,
+    "confidence": 0.97,
+    "tokens": [
+     "HELLO"
+    ]
+   },
+   {
+    "word": "there",
+    "start": 0.6,
+    "end": 1.0,
+    "confidence": 0.4,
+    "tokens": [
+     "THERE"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "aligned-empty",
+  "fn": "aligned_words",
+  "args": {
+   "words": [],
+   "word_tokens": []
+  },
+  "expected": []
+ },
+ {
+  "name": "aligned-mismatch",
+  "fn": "aligned_words",
+  "args": {
+   "words": [
+    {
+     "word": "Hello,",
+     "start": 0.1,
+     "end": 0.5,
+     "presence": 0.97,
+     "placed": true
+    },
+    {
+     "word": "—",
+     "start": 0.5,
+     "end": 0.5,
+     "presence": 0.0,
+     "placed": false
+    },
+    {
+     "word": "there",
+     "start": 0.6,
+     "end": 1.0,
+     "presence": 0.4,
+     "placed": true
+    }
+   ],
+   "word_tokens": [
+    [
+     "HELLO"
+    ]
+   ]
+  },
+  "expected": {
+   "error": "ValueError",
+   "message": "One token list is needed per aligned word."
+  }
+ },
+ {
+  "name": "aligned-overlap",
+  "fn": "aligned_words",
+  "args": {
+   "words": [
+    {
+     "word": "a",
+     "start": 0.1,
+     "end": 0.502,
+     "presence": 0.9,
+     "placed": true
+    },
+    {
+     "word": ",",
+     "start": 0.45,
+     "end": 0.46,
+     "presence": 0.0,
+     "placed": false
+    },
+    {
+     "word": "b",
+     "start": 0.5,
+     "end": 0.801,
+     "presence": 0.8,
+     "placed": true
+    },
+    {
+     "word": "c",
+     "start": 0.7,
+     "end": 0.75,
+     "presence": 0.7,
+     "placed": true
+    },
+    {
+     "word": "d",
+     "start": 0.74,
+     "end": 1.2,
+     "presence": 0.6,
+     "placed": true
+    }
+   ],
+   "word_tokens": [
+    [
+     "A"
+    ],
+    [],
+    [
+     "B"
+    ],
+    [
+     "C"
+    ],
+    [
+     "D"
+    ]
+   ]
+  },
+  "expected": [
+   {
+    "word": "a",
+    "start": 0.1,
+    "end": 0.501,
+    "confidence": 0.9,
+    "tokens": [
+     "A"
+    ]
+   },
+   {
+    "word": "b",
+    "start": 0.501,
+    "end": 0.7505,
+    "confidence": 0.8,
+    "tokens": [
+     "B"
+    ]
+   },
+   {
+    "word": "c",
+    "start": 0.7505,
+    "end": 0.745,
+    "confidence": 0.7,
+    "tokens": [
+     "C"
+    ]
+   },
+   {
+    "word": "d",
+    "start": 0.745,
+    "end": 1.2,
+    "confidence": 0.6,
+    "tokens": [
+     "D"
+    ]
+   }
+  ]
+ },
+ {
   "name": "mms-en_us",
   "fn": "mms_language",
   "args": {
@@ -8435,7 +8636,7 @@
   },
   "expected": {
    "error": "ValueError",
-   "message": "Speech editing has no MMS alignment for language 'xx' (supported: en_us, fr_fr, de, es, it, pt_br, ja, cmn, ko)."
+   "message": "Speech editing does not serve language 'xx' (supported: en_us, fr_fr, de, es, it, pt_br, ja, cmn, ko)."
   }
  },
  {

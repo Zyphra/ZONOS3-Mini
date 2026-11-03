@@ -129,7 +129,7 @@ const MISHEAR: Record<string, string> = { a: 'the', the: 'a', to: 'too', for: 'f
 /** The server's MMS adapters: one worker per language, loaded on first use (about half a minute). */
 const loaded = new Set<string>(['en_us']);
 async function mms(language: string, signal?: AbortSignal) {
-  if (!EDIT_LANGUAGES.includes(language)) throw new ApiError(400, `Speech editing does not support language '${language}' (MMS alignment serves ${EDIT_LANGUAGES.join(', ')}).`);
+  if (!EDIT_LANGUAGES.includes(language)) throw new ApiError(400, `Speech editing does not serve language '${language}' (supported: ${EDIT_LANGUAGES.join(', ')}).`);
   if (loaded.has(language)) return;
   await wait(2500, signal);
   loaded.add(language);

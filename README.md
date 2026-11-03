@@ -31,6 +31,10 @@ embedding.
 - Access to the Hugging Face repo [`Zyphra/ZONOS3_Mini_release_ckpts`](https://huggingface.co/Zyphra/ZONOS3_Mini_release_ckpts)
   (LM, codec and speaker encoder weights). While it is private, set `HF_TOKEN` or run `huggingface-cli login`.
   Weights are downloaded into the Hugging Face cache on first use (about 15 GB).
+- The FuseAlign forced aligner of speech editing and dubbing: the submodule `third_party/fusealign-multilingual`
+  ([Zyphra/fusealign-multilingual](https://github.com/Zyphra/fusealign-multilingual), package `fusealign-hub`,
+  Apache-2.0) and its checkpoint from the Hugging Face repo [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign)
+  (one 1.34 GB file, downloaded on the first alignment).
 
 ## Install
 
@@ -40,11 +44,12 @@ cd ZONOS3
 uv sync --locked --all-packages
 ```
 
-The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `api`). `--group phonemize` adds espeak-ng
-guesses for `POST /v2/phonemize` (GPL-3.0, opt-in); the `dev` group (installed by default) holds the test tools. In an
-existing checkout, `git submodule update --init servers/ggml/ggml` fetches ggml for the C++ server
-([servers/ggml/README.md](servers/ggml/README.md)). On macOS, `uv sync --locked --package zonos3-mlx` installs the
-MLX server.
+The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `api`); `uv sync` also installs the
+FuseAlign package `fusealign-hub` from the submodule `third_party/fusealign-multilingual` (editable). `--group
+phonemize` adds espeak-ng guesses for `POST /v2/phonemize` (GPL-3.0, opt-in); the `dev` group (installed by default)
+holds the test tools. In an existing checkout, `git submodule update --init third_party/fusealign-multilingual
+servers/ggml/ggml` fetches FuseAlign and ggml for the C++ server ([servers/ggml/README.md](servers/ggml/README.md)).
+On macOS, `uv sync --locked --package zonos3-mlx` installs the MLX server.
 
 ## Serve
 
@@ -158,12 +163,17 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
 
 ### Feature prerequisites
 
-- **Speech editing** needs an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`) and `ZSA_ROOT` pointing at a
+- **Speech editing** needs an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `ZSA_ROOT` pointing at a
   [z-speech-alignment](https://github.com/Zyphra/z-speech-alignment) checkout with its uv environment (`uv sync` in
-  it); `ZSA_PYTHON` overrides its interpreter.
+  it; MMS recognition and token normalization; `ZSA_PYTHON` overrides its interpreter) and FuseAlign (`fusealign-hub`
+  in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
 - **Phoneme input** and **nonverbal tags** need checkpoints merged with the phoneme / NV rows
   (`tools/add_text_extra_rows.py`) and `PHONEME_LEXICON=<lexicon dir>`.
-- **Dubbing** needs `tools/setup_dub_align_env.sh` once, then `DUB=1 servers/sgl/scripts/serve.sh`.
+- **Dubbing** needs `tools/setup_dub_align_env.sh` once (Qwen3-ASR, SimAlign, AV-sync) and FuseAlign (as for speech
+  editing), then `DUB=1 servers/sgl/scripts/serve.sh`.
+- **Forced alignment** (FuseAlign, speech editing and dubbing) runs in one worker process per server
+  (`model/src/zonos3/workers/fusealign.py`, the workspace interpreter), started on first use;
+  `ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0`, else CPU).
 - **Accent adapters** need `--accent-adapters <dir>`.
 
 Lingua training checkpoints are converted with `tools/convert_lingua_checkpoint.py`.

@@ -39,3 +39,13 @@ text of each third-party license is reproduced in the licenses/ directory.
    servers/mlx/src/zonos3_mlx/models/gdn_kernel.py are adapted from
    mlx_lm/models/gated_delta.py.
 ================================================================================
+3. FuseAlign (fusealign-multilingual)
+   https://github.com/Zyphra/fusealign-multilingual
+   Copyright (c) 2026 Zyphra, Inc.
+   SPDX-License-Identifier: Apache-2.0
+   Full license: licenses/fusealign-multilingual-Apache-2.0.txt
+
+   The forced aligner of speech editing and dubbing: the git submodule
+   third_party/fusealign-multilingual (Python package fusealign_hub), shipped
+   unmodified as python/fusealign_hub/ in the ggml server's release packages.
+================================================================================
