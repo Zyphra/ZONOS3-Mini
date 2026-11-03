@@ -9,83 +9,17 @@ import type { Rendered } from '../api';
 import * as player from '../audio/player';
 import { previewText } from '../audio/preview';
 import { base64ToBytes, bytesToBase64, parseWav } from '../lib/files';
-import { DEFAULT_SETTINGS, projectSettings, type ProjectSettings } from './app';
-import { designs, design, newDesign, type Design } from './design';
+import { projectSettings } from './app';
+import { designs, design, newDesign } from './design';
 import * as dub from './dub';
 import * as edit from './edit';
-import { cast, ownVoices, type OwnVoice, type Persona } from './library';
-import { MediaSink, prime, type MediaInfo } from './media';
+import { cast, ownVoices, type OwnVoice } from './library';
+import { MediaSink, prime } from './media';
 import { load } from './persist';
-import { newScene, renders, scene, scenes, type LineRender, type Scene } from './scene';
-import { lineBusy, lineError, newScript, script, scripts, takes, type Script, type Take } from './script';
-import { voiceOrigins, type Spot } from './who';
-
-export const SCHEMA = 1;
-
-/** A server voice the project created and the media that recreates it (WAV clip, or float32 embedding). */
-export interface VoiceRecord {
-  id: string;
-  label: string;
-  kind: 'clip' | 'embedding';
-  media: string;
-}
-
-type StoredAudio = Omit<Rendered, 'pcm' | 'sr'> & { media: string };
-type StoredTake = Omit<Take, 'audio'> & { audio: StoredAudio };
-type StoredVersion = Omit<edit.Version, 'pcm' | 'sr' | 'b64'> & { media: string };
-type StoredEditDoc = Omit<edit.Doc, 'versions'> & { versions: StoredVersion[] };
-type StoredSource = Omit<dub.DubSource, 'pcm' | 'sr' | 'video'> & { media: string; video: { media: string; name: string; type: string } | null };
-/** `dubId` is always '': the server's dub (its takes) is gone with its session. */
-type StoredTrack = Omit<dub.DubTrack, 'pcm' | 'sr'> & { media: string };
-type StoredDub = Omit<dub.DubDoc, 'source' | 'refId' | 'track' | 'tracks'> & { source: StoredSource | null; trackId: string | null; tracks: StoredTrack[] };
-
-/** What a project holds, for lists (the server's `GET /v2/projects` copies it from the document). */
-export interface ProjectSummary {
-  voices: number;
-  cast: number;
-  lines: number;
-  takes: number;
-  sceneLines: number;
-  versions: number;
-  dubTracks: number;
-  video: boolean;
-}
-
-export function summaryOf(doc: ProjectDoc): ProjectSummary {
-  return {
-    voices: doc.voices.length,
-    cast: doc.cast.personas.length,
-    lines: doc.direct.script.lines.length,
-    takes: Object.values(doc.direct.takes).reduce((n, t) => n + t.length, 0),
-    sceneLines: doc.scene.scene.lines.length,
-    versions: doc.edit.doc?.versions.length ?? 0,
-    dubTracks: doc.dub.tracks.length,
-    video: !!doc.dub.source?.video,
-  };
-}
-
-export interface ProjectDoc {
-  schema: number;
-  id: string;
-  name: string;
-  createdAt: number;
-  updatedAt: number;
-  settings: ProjectSettings;
-  voices: VoiceRecord[];
-  cast: { design: Design; personas: Persona[]; origins: Record<string, Spot>; previewText: string };
-  /** Takes by line id (lines of the script only). */
-  direct: { script: Script; takes: Record<string, StoredTake[]> };
-  /** The last render of each scene line, by line id. */
-  scene: { scene: Scene; renders: Record<string, { key: string; audio: StoredAudio }> };
-  edit: { doc: StoredEditDoc | null; clipLanguages: Record<string, string> };
-  dub: StoredDub;
-  /** Every media hash the document refers to (SHA-256 hex; the server checks they exist before it stores the document). */
-  media: Record<string, MediaInfo>;
-  /** Written on save for project lists. */
-  summary?: ProjectSummary;
-}
-
-export type ProjectHead = Pick<ProjectDoc, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+import { newScene, renders, scene, scenes, type LineRender } from './scene';
+import { lineBusy, lineError, newScript, script, scripts, takes, type Take } from './script';
+import { voiceOrigins } from './who';
+import { DEFAULT_SETTINGS, SCHEMA, summaryOf, type ProjectDoc, type ProjectHead, type ProjectSettings, type StoredAudio, type StoredDub, type StoredEditDoc, type StoredSource } from './projectSchema';
 
 /** The dub without its source (stored by the caller) and server ids. */
 function storedDub(d: dub.DubDoc, sink: MediaSink): StoredDub {
@@ -279,15 +213,4 @@ export function speakerUses(doc: ProjectDoc): Map<string, Set<string>> {
   doc.dub.segments.forEach((s) => voice(s.voice, 'dub segments'));
   doc.dub.source?.lines.forEach((l) => voice(l.voice, 'the dub'));
   return uses;
-}
-
-/**
- * Replace server voice ids everywhere in a document's JSON: ids are random tokens (`spk_…`, offline `local_…`),
- * so a whole-token match only hits them — as values, map keys (voice origins) and inside derived strings (the
- * requests of takes and render keys, dub voice keys), which keeps every take and render matching its line.
- */
-export function remapIds(json: string, map: Map<string, string>): string {
-  if (!map.size) return json;
-  const esc = [...map.keys()].map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  return json.replace(new RegExp(`(?<![\\w-])(${esc.join('|')})(?![\\w-])`, 'g'), (id) => map.get(id)!);
 }

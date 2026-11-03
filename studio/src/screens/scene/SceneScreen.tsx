@@ -8,7 +8,7 @@ import { Icon } from '../../components/Icon';
 import { isPronError, PronMarks, PronounceButton } from '../../components/Pron';
 import { Waveform } from '../../components/Waveform';
 import { clamp, uid } from '../../lib/math';
-import { activeHistory, act, backend, controlById, notify, primaryAction, spec } from '../../state/app';
+import { activeHistory, act, backend, controlById, notify, primaryAction, requestContext, spec } from '../../state/app';
 import { dubScene } from '../../state/dub';
 import { accentsOf, design } from '../../state/design';
 import type { History } from '../../state/history';
@@ -47,7 +47,7 @@ async function playSignature(p: Persona) {
   if (player.isPlaying(id)) return player.stop();
   signing.value = { ...signing.value, [p.id]: { busy: true, error: null } };
   try {
-    const r = await render(buildRequest(spec.value, p.design, p.signature || spec.value.ui.preview_text, PREVIEW_SEED));
+    const r = await render(buildRequest(spec.value, requestContext.value, p.design, p.signature || spec.value.ui.preview_text, PREVIEW_SEED));
     signing.value = { ...signing.value, [p.id]: { busy: false, error: null } };
     player.play(id, r.pcm, r.sr);
   } catch (e) {

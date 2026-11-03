@@ -14,13 +14,14 @@ import { previewText } from '../audio/preview';
 import { errorText } from '../audio/render';
 import { download, slug } from '../lib/files';
 import { uid } from '../lib/math';
-import { backend, notify, projectSettings, type ProjectSettings } from './app';
+import { backend, notify, projectSettings } from './app';
 import { baseSpeaker, design, designs, setMode } from './design';
 import * as dub from './dub';
 import * as edit from './edit';
 import { cast, ownVoices, refreshSpeakers, speakers, uploading, type OwnVoice } from './library';
 import { EMBEDDING_TYPE, MediaSink } from './media';
-import { emptyDoc, LEGACY_KEYS, legacyDoc, remapIds, restore, SCHEMA, snapshot, speakerUses, summaryOf, type ProjectDoc } from './projectDoc';
+import { emptyDoc, LEGACY_KEYS, legacyDoc, restore, snapshot, speakerUses } from './projectDoc';
+import { remapIds, SCHEMA, summaryOf, type ProjectDoc, type ProjectSettings } from './projectSchema';
 import { BrowserStore, matchesHash, metaOf, readdress, ServerStore, type ProjectMeta, type Store } from './projectStore';
 import { renders, scene } from './scene';
 import { script, takes } from './script';
@@ -336,7 +337,9 @@ export async function openLastProject(b: Backend) {
   }
   const last = localStorage.getItem(LAST);
   try {
-    let id = (projects.value.find((p) => p.id === last) ?? projects.value[0])?.id;
+    // `?project=<id>` (links from the MCP server) wins; an unknown id falls through to the last project.
+    const wanted = new URLSearchParams(location.search).get('project');
+    let id = (projects.value.find((p) => p.id === wanted) ?? projects.value.find((p) => p.id === last) ?? projects.value[0])?.id;
     if (!id) {
       id = await storeNew(legacyDoc({ id: uid(), name: 'My project' }));
       for (const k of LEGACY_KEYS) localStorage.removeItem(`zvs.${k}`);

@@ -5,7 +5,7 @@
  */
 import { computed, effect, signal, untracked } from '@preact/signals';
 import type { GenerateRequest, Rendered } from '../api';
-import { pronTokens, spec } from '../state/app';
+import { pronTokens, requestContext, spec } from '../state/app';
 import { pronProblem } from '../lib/pron';
 import { design } from '../state/design';
 import { load, persist } from '../state/persist';
@@ -131,8 +131,8 @@ export function startPreview() {
       });
       return;
     }
-    const a = buildRequest(s, d, text, PREVIEW_SEED);
-    const b = buildRequest(s, d, text, PREVIEW_SEED, { unsteered: true });
+    const a = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED);
+    const b = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED, { unsteered: true });
     untracked(() => schedule(a, b));
   });
 }
@@ -140,7 +140,7 @@ export function startPreview() {
 /** Force a fresh render of the current settings (after an error). */
 export function retry() {
   const d = design.value;
-  const req = buildRequest(spec.value, d, phrase.value, PREVIEW_SEED);
+  const req = buildRequest(spec.value, requestContext.value, d, phrase.value, PREVIEW_SEED);
   preview.value = { ...preview.value, key: '' };
   void run(req, requestKey(req));
 }

@@ -1,11 +1,10 @@
 /** Design (+ script extras) → POST /v2/generate body, per the contract. */
 import type { ControlSpan, ControlsSpec, Dose, GenerateRequest } from '../api';
 import { clamp } from '../lib/math';
-import { toSent, type Sent } from '../lib/pron';
+import { toSent, type PronTokens, type Sent } from '../lib/pron';
 import { hasTags } from '../lib/tags';
-import { backend, projectSettings } from './app';
+import { mixAt } from './atlas';
 import type { Design } from './design';
-import { accentsOf } from './design';
 import { controlDose, controlUsable, toDoses, type Values } from './engine';
 
 export const PREVIEW_SEED = 4321;
@@ -28,6 +27,29 @@ export interface RequestExtras {
   language?: string;
   /** The A/B reference: the same voice with no controls at all. */
   unsteered?: boolean;
+}
+
+/** What a request needs from the backend and the project besides the design (Studio: `requestContext`). */
+export interface RequestContext {
+  phonemeTokens: PronTokens | null;
+  tags: { min_scale: number; max_scale: number } | null;
+  tagStrength: number;
+}
+
+/** Keep spans attached to their words across an edit (common prefix / suffix diff). */
+export function remapSpans(spans: Span[], before: string, after: string): Span[] {
+  let p = 0;
+  while (p < before.length && p < after.length && before[p] === after[p]) p++;
+  let s = 0;
+  while (s < before.length - p && s < after.length - p && before[before.length - 1 - s] === after[after.length - 1 - s]) s++;
+  const oldEnd = before.length - s;
+  const newEnd = after.length - s;
+  const map = (pos: number, isEnd: boolean) => {
+    if (pos <= p) return pos;
+    if (pos >= oldEnd) return pos + (after.length - before.length);
+    return isEnd ? newEnd : p;
+  };
+  return spans.map((sp) => ({ ...sp, start: map(sp.start, false), end: map(sp.end, true) })).filter((sp) => sp.end > sp.start);
 }
 
 export function mergeValues(s: ControlsSpec, base: Values, extra: Values | undefined): Values {
@@ -67,9 +89,9 @@ export function controlSpans(s: ControlsSpec, spans: Span[] | undefined, d: Desi
   return out;
 }
 
-export function buildRequest(s: ControlsSpec, d: Design, text: string, seed: number, x: RequestExtras = {}): GenerateRequest {
+export function buildRequest(s: ControlsSpec, ctx: RequestContext, d: Design, text: string, seed: number, x: RequestExtras = {}): GenerateRequest {
   // Pronunciation groups go out as U+E000 IPA U+E001 on phoneme-token checkpoints; offsets follow the sent text.
-  const sent = toSent(text, backend.value?.pron.phoneme_tokens ?? null);
+  const sent = toSent(text, ctx.phonemeTokens);
   const req: GenerateRequest = {
     ...s.ui.request_defaults,
     text: sent.text,
@@ -80,13 +102,13 @@ export function buildRequest(s: ControlsSpec, d: Design, text: string, seed: num
   if (x.language && x.language !== 'en_us') req.language = x.language;
   if (x.unsteered) return req;
   // Tag guidance strengthens nonverbal tags; the server takes one guidance per request, so voice guidance is off.
-  const tags = backend.value?.tags;
-  const strength = projectSettings.value.tagStrength;
+  const tags = ctx.tags;
+  const strength = ctx.tagStrength;
   if (tags && strength > 1 && hasTags(text)) {
     req.tag_cfg_scale = Math.round(clamp(strength, Math.max(1, tags.min_scale), tags.max_scale) * 100) / 100;
     req.speaker_cfg_scale = 1;
   }
-  const controls = toDoses(s, mergeValues(s, d.values, x.extra), accentsOf(s, d), d.mode);
+  const controls = toDoses(s, mergeValues(s, d.values, x.extra), mixAt(d.pin, s.ui.accents), d.mode);
   if (Object.keys(controls).length) req.controls = controls;
   const spans = controlSpans(s, x.spans, d, text.length, sent.map);
   if (spans.length) {

@@ -1,22 +1,14 @@
 import { computed, signal } from '@preact/signals';
-import type { Backend, ControlSpec, ControlsSpec, SpeakerMode } from '../api';
+import type { Backend, ControlSpec, ControlsSpec } from '../api';
 import type { History } from './history';
+import { DEFAULT_SETTINGS, type ProjectSettings } from './projectSchema';
+import type { RequestContext } from './requests';
 
 export const backend = signal<Backend | null>(null);
 export const bootError = signal<string | null>(null);
 /** Boot-screen status while a backend loads (the in-browser server's model download). */
 export const bootProgress = signal<string | null>(null);
 
-/**
- * Settings of the open project: the language (Direct / Scene renders, Edit clips, pronunciation lookups), the
- * default voice mode, and the tag strength (tag guidance for lines with nonverbal tags; 1 = off).
- */
-export interface ProjectSettings {
-  language: string;
-  voiceMode: SpeakerMode;
-  tagStrength: number;
-}
-export const DEFAULT_SETTINGS: ProjectSettings = { language: 'en_us', voiceMode: 'embedding', tagStrength: 1.5 };
 export const projectSettings = signal<ProjectSettings>(DEFAULT_SETTINGS);
 
 /** The controls spec; only read after boot. */
@@ -24,6 +16,13 @@ export const spec = computed<ControlsSpec>(() => backend.value!.spec);
 
 /** The checkpoint's phoneme tokens (pronunciation input), or null. */
 export const pronTokens = computed(() => backend.value?.pron.phoneme_tokens ?? null);
+
+/** Backend and project inputs of every generate request (`buildRequest`). */
+export const requestContext = computed<RequestContext>(() => ({
+  phonemeTokens: pronTokens.value,
+  tags: backend.value?.tags ?? null,
+  tagStrength: projectSettings.value.tagStrength,
+}));
 
 export const controlById = computed(() => new Map<string, ControlSpec>(spec.value.ui.controls.map((c) => [c.id, c])));
 

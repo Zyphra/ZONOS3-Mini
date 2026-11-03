@@ -1,0 +1,4 @@
+node_modules
+dist
+# The repository ignores *.json; the package needs its manifest, lockfile and tsconfig.
+!*.json

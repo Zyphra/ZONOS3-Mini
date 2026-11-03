@@ -4,13 +4,13 @@ import { parseTags } from '../lib/tags';
 import type { GenerateRequest, Rendered } from '../api';
 import { errorText, isAbort, render } from '../audio/render';
 import { uid } from '../lib/math';
-import { projectSettings, pronTokens, spec } from './app';
+import { projectSettings, pronTokens, requestContext, spec } from './app';
 import { pronProblem } from '../lib/pron';
 import { design, type Design } from './design';
 import { durationFactor, type Values } from './engine';
 import { History } from './history';
 import { cast } from './library';
-import { buildRequest, PREVIEW_SEED, type Span } from './requests';
+import { buildRequest, PREVIEW_SEED, remapSpans, type Span } from './requests';
 
 /** Codec frame rate (frames per second) used to measure a take's frames per character. */
 const FPS = 15;
@@ -78,22 +78,6 @@ const update = (fn: (s: Script) => Script) => scripts.set(fn(script.value));
 const commit = (fn: (s: Script) => Script) => scripts.apply(fn(script.value));
 
 // ── Text editing ──────────────────────────────────────────────────────────────────────────────────
-
-/** Keep spans attached to their words across an edit (common prefix / suffix diff). */
-export function remapSpans(spans: Span[], before: string, after: string): Span[] {
-  let p = 0;
-  while (p < before.length && p < after.length && before[p] === after[p]) p++;
-  let s = 0;
-  while (s < before.length - p && s < after.length - p && before[before.length - 1 - s] === after[after.length - 1 - s]) s++;
-  const oldEnd = before.length - s;
-  const newEnd = after.length - s;
-  const map = (pos: number, isEnd: boolean) => {
-    if (pos <= p) return pos;
-    if (pos >= oldEnd) return pos + (after.length - before.length);
-    return isEnd ? newEnd : p;
-  };
-  return spans.map((sp) => ({ ...sp, start: map(sp.start, false), end: map(sp.end, true) })).filter((sp) => sp.end > sp.start);
-}
 
 export function setLineText(id: string, text: string) {
   commit((s) => ({
@@ -233,7 +217,7 @@ export function lineRequest(line: Line, seed: number): GenerateRequest {
   // this language (it has alignment heads for it), sent as the fallback otherwise.
   const reading = last?.audio.spanFollow === 'reading' && (last.request.language ?? 'en_us') === language;
   const spanRate = last && !reading ? measuredRate(last) : undefined;
-  return buildRequest(spec.value, voiceDesign.value, line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language });
+  return buildRequest(spec.value, requestContext.value, voiceDesign.value, line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language });
 }
 
 export async function renderLine(lineId: string) {

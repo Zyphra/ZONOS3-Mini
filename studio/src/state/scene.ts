@@ -3,7 +3,7 @@ import { computed, signal } from '@preact/signals';
 import type { GenerateRequest, Rendered } from '../api';
 import { cached, errorText, isAbort, render, requestKey } from '../audio/render';
 import { hash32, uid } from '../lib/math';
-import { projectSettings, pronTokens, spec } from './app';
+import { projectSettings, pronTokens, requestContext, spec } from './app';
 import { pronProblem } from '../lib/pron';
 import { History } from './history';
 import { cast, type Persona } from './library';
@@ -80,7 +80,7 @@ export const characterOf = (l: SceneLine): Persona | undefined => cast.value.fin
 export function sceneRequest(l: SceneLine): GenerateRequest | null {
   const p = characterOf(l);
   if (!p || !l.text.trim()) return null;
-  return buildRequest(spec.value, p.design, l.text, hash32(l.id) % 1_000_000, { extra: l.values, language: projectSettings.value.language });
+  return buildRequest(spec.value, requestContext.value, p.design, l.text, hash32(l.id) % 1_000_000, { extra: l.values, language: projectSettings.value.language });
 }
 
 export function lineState(l: SceneLine): LineRender | null {
