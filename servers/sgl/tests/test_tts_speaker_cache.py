@@ -6,7 +6,7 @@ import pytest
 np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
-from zonos3.server.schemas import SpeakerCreateRequest  # noqa: E402
+from zonos3.server.schemas import GenerateRequest, SpeakerCreateRequest  # noqa: E402
 
 
 class _DummyModelConfig:
@@ -99,7 +99,7 @@ def test_default_speaker_directory_lists_and_resolves_embedding(tmp_path):
     assert serialized["is_default"] is True and serialized["scope"] == "default"
     assert serialized["has_preview"] is False
     assert serialized["speaker_modes"] == ["embedding"] and serialized["embedding_dim"] == 3
-    assert serialized["emotion_disabled"] is False
+    assert serialized["disabled_controls"] == []
 
 
 def test_default_speaker_transcript_sidecar(tmp_path):
@@ -126,17 +126,20 @@ class _RawReferenceModelConfig:
     speaker_reference_prefix_enabled = True
     speaker_embedding_dim = 0
     residual_type = "full_attnres"
+    hidden_size = 4
 
 
 class _RawReferenceConfig:
     model_config = _RawReferenceModelConfig()
 
-    def __init__(self, default_voices_dir, directions_dir):
+    def __init__(self, default_voices_dir, steer_bundle):
         self.tts_default_voices_dir = str(default_voices_dir)
-        self.tts_emotion_directions_dir = str(directions_dir)
+        self.steer_bundle = str(steer_bundle)
 
 
-def _write_bank_directions(directory, hidden=4):
+def _write_bank_bundle(root, hidden=4):
+    """A steering bundle with one hidden-space set ``mood`` (bank source 4) and its calibration."""
+    directory = root / "moods"
     directory.mkdir(parents=True, exist_ok=True)
     np.save(directory / "sad.npy", np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32))
     (directory / "manifest.json").write_text(json.dumps({
@@ -146,61 +149,34 @@ def _write_bank_directions(directory, hidden=4):
     (directory / "calibration.json").write_text(json.dumps({
         "global_default": 2.0, "default": {"sad": 3.0}, "by_speaker": {"voice_a": {"sad": 0.0}},
     }))
+    (root / "bundle.json").write_text(json.dumps({"name": "t", "sets": {"mood": "moods"}, "ui": {"controls": []}}))
+    return root / "bundle.json"
 
 
 def test_raw_reference_model_steers_without_speaker_embedding(tmp_path):
-    """attnres_source directions apply to raw-reference checkpoints: the hidden
-    delta is produced with no embedding, calibrated per voice, and a dose-0 voice
-    reports the control as disabled."""
-    api_server._EMOTION_DIRECTIONS_CACHE.clear()
-    api_server._EMOTION_CALIBRATION_CACHE.clear()
-    directions_dir = tmp_path / "dirs"
-    _write_bank_directions(directions_dir)
-    config = _RawReferenceConfig(tmp_path / "voices", directions_dir)
+    """A hidden-space (attnres_source) bundle set steers raw-reference checkpoints: controls give a hidden delta
+    with no embedding at their raw dose (the set's calibration is exposed, not applied), and a voice the
+    calibration gives dose 0 lists the control in its disabled_controls."""
+    from types import SimpleNamespace
 
-    caps = api_server._emotion_capabilities(config)
-    assert caps["emotion_enabled"] is True
-    assert caps["emotion_space"] == "attnres_source"
-    assert caps["emotion_names"] == ["sad"]
+    api_server._STEER_BUNDLE_CACHE.clear()
+    config = _RawReferenceConfig(tmp_path / "voices", _write_bank_bundle(tmp_path))
 
-    emb, delta = api_server._apply_request_emotion(
-        config, None, speaker_id="voice_b", emotion_enabled=True,
-        sliders={"sad": -1.0}, valence=0.0, arousal=0.0, strength=1.0,
+    assert api_server._steering_sources(config) == (4,)
+    emb, delta, schedule, _ = api_server._apply_request_controls(
+        config, GenerateRequest(text="Hello.", controls={"mood.sad": -1.5}), None
     )
-    assert emb is None
-    assert torch.allclose(delta, torch.tensor([0.0, -3.0, 0.0, 0.0]))  # calibrated default dose 3
+    assert emb is None and schedule is None
+    assert torch.allclose(delta, torch.tensor([0.0, -1.5, 0.0, 0.0]))
 
-    _, raw = api_server._apply_request_emotion(
-        config, None, speaker_id="voice_b", emotion_enabled=True,
-        sliders={"sad": 1.0}, valence=0.0, arousal=0.0, strength=5.0, use_calibration=False,
-    )
-    assert torch.allclose(raw, torch.tensor([0.0, 5.0, 0.0, 0.0]))
+    def speaker(speaker_id):
+        entry = SimpleNamespace(speaker_id=speaker_id, label=speaker_id, source_type="audio", embedding=torch.empty(0),
+                                created_at=0.0, original_name=None, audio_bytes=b"clip")
+        return api_server._serialize_cached_speaker(config, entry)
 
-    _, disabled = api_server._apply_request_emotion(
-        config, None, speaker_id="voice_a", emotion_enabled=True,
-        sliders={"sad": 1.0}, valence=0.0, arousal=0.0, strength=1.0,
-    )
-    assert disabled is None  # dose 0 folds the slider to nothing
-    assert api_server._speaker_emotion_disabled(config, "voice_a") == ["sad"]
-
-
-def test_embedding_space_directions_stay_off_for_raw_reference_models(tmp_path):
-    api_server._EMOTION_DIRECTIONS_CACHE.clear()
-    api_server._EMOTION_CALIBRATION_CACHE.clear()
-    directions_dir = tmp_path / "proj"
-    directions_dir.mkdir()
-    np.save(directions_dir / "happy.npy", np.array([1.0, 0.0], dtype=np.float32))
-    (directions_dir / "manifest.json").write_text(json.dumps({
-        "dim": 2, "space": "proj",
-        "directions": {"happy": {"file": "happy.npy", "kind": "named", "norm": 1.0}},
-    }))
-    config = _RawReferenceConfig(tmp_path / "voices", directions_dir)
-    assert api_server._emotion_capabilities(config)["emotion_enabled"] is False
-    with pytest.raises(ValueError):
-        api_server._apply_request_emotion(
-            config, None, emotion_enabled=True, sliders={"happy": 1.0},
-            valence=0.0, arousal=0.0, strength=1.0,
-        )
+    assert speaker("voice_a")["disabled_controls"] == ["mood.sad"]
+    assert speaker("voice_b")["disabled_controls"] == []
+    api_server._STEER_BUNDLE_CACHE.clear()
 
 
 def test_raw_reference_checkpoints_resolve_voice_ids_to_reference_audio(tmp_path, monkeypatch):
@@ -293,128 +269,15 @@ def test_dual_path_checkpoints_cache_clips_and_embedding_files(monkeypatch):
     assert clip["embedding_dim"] == designed["embedding_dim"] == 3
 
 
+def test_accents_are_adapters_only(monkeypatch):
+    """`accent` picks an accent adapter; anything else is refused with the loaded adapter names."""
+    from types import SimpleNamespace
 
-class _AccentSteeringConfig:
-    model_config = _RawReferenceModelConfig()
-    accent_adapters = None
-
-    def __init__(self, directions_dir):
-        self.accent_directions = str(directions_dir)
-
-
-def test_steering_accent_folds_into_the_hidden_delta(tmp_path):
-    """--accent-directions accents resolve like adapters but become a hidden delta:
-    strength x the voice's calibrated dose x direction, added to the emotion delta;
-    a dose-0 voice gets none, the raw dose applies without calibration, and adapter
-    accents pass through."""
-    api_server._ACCENT_DIRECTIONS_CACHE.clear()
-    api_server._ACCENT_CALIBRATION_CACHE.clear()
-    directions_dir = tmp_path / "accents"
-    directions_dir.mkdir()
-    np.save(directions_dir / "cmn.npy", np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32))
-    (directions_dir / "manifest.json").write_text(json.dumps({
-        "dim": 4, "space": "attnres_source", "source_index": 19,
-        "directions": {"cmn": {"file": "cmn.npy", "kind": "named", "norm": 1.0}},
-    }))
-    (directions_dir / "calibration.json").write_text(json.dumps({
-        "global_default": 1.0, "default": {"cmn": 8.0}, "by_speaker": {"voice_a": {"cmn": 0.0}},
-    }))
-    config = _AccentSteeringConfig(directions_dir)
-
-    assert api_server._server_accents(config) == ["cmn"]
+    config = SimpleNamespace(accent_adapters=None)
+    assert api_server._resolve_tts_request_accent(config, None, 2.0) == (None, 1.0)
+    with pytest.raises(ValueError, match=r"^Unknown accent 'cmn'; loaded accents: none \(load accent adapters\)\.$"):
+        api_server._resolve_tts_request_accent(config, "cmn", 1.0)
+    monkeypatch.setattr(api_server, "_adapter_accents", lambda config: ["cmn", "spa"])
     assert api_server._resolve_tts_request_accent(config, "cmn", 0.5) == ("cmn", 0.5)
-    with pytest.raises(ValueError, match="Unknown accent"):
+    with pytest.raises(ValueError, match=r"^Unknown accent 'kor'; loaded accents: cmn, spa\.$"):
         api_server._resolve_tts_request_accent(config, "kor", 1.0)
-
-    emotion = torch.tensor([1.0, 0.0, 0.0, 0.0])
-    adapter, _, delta = api_server._apply_steering_accent(config, "cmn", 0.5, "voice_b", None, emotion)
-    assert adapter is None
-    assert torch.allclose(delta, torch.tensor([1.0, 0.0, 4.0, 0.0]))       # 0.5 x calibrated dose 8
-    _, _, alone = api_server._apply_steering_accent(config, "cmn", 0.5, "voice_b", None, None)
-    assert torch.allclose(alone, torch.tensor([0.0, 0.0, 4.0, 0.0]))
-    _, _, raw = api_server._apply_steering_accent(config, "cmn", 3.0, "voice_b", None, None, use_calibration=False)
-    assert torch.allclose(raw, torch.tensor([0.0, 0.0, 3.0, 0.0]))
-    assert api_server._apply_steering_accent(config, "cmn", 1.0, "voice_a", None, None) == (None, None, None)
-    assert api_server._apply_steering_accent(config, "spa", 1.0, "voice_b", None, emotion)[0] == "spa"
-
-
-class _SpeakerEmbeddingModelConfig:
-    speaker_enabled = True
-
-
-def test_raw_accent_moves_the_speaker_embedding(tmp_path):
-    """A raw (speaker-embedding) accent set shifts the request's embedding by strength x
-    direction, rescaled to the embedding's norm, and leaves the hidden delta alone; a
-    request without an embedding (speaker_mode=reference) is refused, not silently
-    unaccented."""
-    api_server._ACCENT_DIRECTIONS_CACHE.clear()
-    api_server._ACCENT_CALIBRATION_CACHE.clear()
-    root = tmp_path / "accents"
-    root.mkdir()
-    np.save(root / "hin.npy", np.array([0.0, 2.0, 0.0], dtype=np.float32))
-    (root / "manifest.json").write_text(json.dumps({
-        "dim": 3, "space": "raw", "directions": {"hin": {"file": "hin.npy", "kind": "named", "norm": 2.0}},
-    }))
-    config = _AccentSteeringConfig(root)
-    config.model_config = _SpeakerEmbeddingModelConfig()
-    emotion = torch.tensor([0.5, 0.0])
-
-    adapter, emb, delta = api_server._apply_steering_accent(
-        config, "hin", 1.5, "voice", torch.tensor([4.0, 0.0, 0.0]), emotion)
-    assert adapter is None
-    assert torch.allclose(emb, torch.tensor([4.0, 3.0, 0.0]) * (4.0 / 5.0))  # [4, 0, 0] + 1.5 x [0, 2, 0], norm 4
-    assert torch.equal(delta, emotion)
-    with pytest.raises(ValueError, match="speaker_mode=embedding"):
-        api_server._apply_steering_accent(config, "hin", 1.0, "voice", None, None)
-
-
-def test_axis_directions_are_accents_with_signed_strength(tmp_path):
-    """An accent set's axes (e.g. a tempo or conversational style) are request accents
-    like its named directions, listed and steerable both ways."""
-    api_server._ACCENT_DIRECTIONS_CACHE.clear()
-    api_server._ACCENT_CALIBRATION_CACHE.clear()
-    root = tmp_path / "styles"
-    root.mkdir()
-    np.save(root / "tempo.npy", np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32))
-    (root / "manifest.json").write_text(json.dumps({
-        "dim": 4, "space": "attnres_source", "source_index": 19,
-        "directions": {"tempo": {"file": "tempo.npy", "kind": "axis"}},
-    }))
-    config = _AccentSteeringConfig(root)
-
-    assert api_server._server_accents(config) == ["tempo"]
-    _, _, delta = api_server._apply_steering_accent(config, "tempo", -2.0, "voice", None, None)
-    assert torch.equal(delta, torch.tensor([0.0, -2.0, 0.0, 0.0]))
-
-
-
-def test_emotion_and_accent_on_different_sources_get_their_own_slots(tmp_path):
-    """Emotion directions on bank source 19 and accent directions on source 15: the
-    request delta is one slot per steered source in ascending source order (15, 19),
-    flattened, so the engine adds each set at its own source -- also when only one
-    of the two is requested."""
-    api_server._ACCENT_DIRECTIONS_CACHE.clear()
-    api_server._ACCENT_CALIBRATION_CACHE.clear()
-    api_server._EMOTION_DIRECTIONS_CACHE.clear()
-    for name, source, vector in (("accents", 15, [0.0, 0.0, 1.0, 0.0]), ("emotions", 19, [1.0, 0.0, 0.0, 0.0])):
-        root = tmp_path / name
-        root.mkdir()
-        np.save(root / "d.npy", np.array(vector, dtype=np.float32))
-        label = "cmn" if name == "accents" else "happy"
-        (root / "manifest.json").write_text(json.dumps({
-            "dim": 4, "space": "attnres_source", "source_index": source,
-            "directions": {label: {"file": "d.npy", "kind": "named", "norm": 1.0}},
-        }))
-    config = _AccentSteeringConfig(tmp_path / "accents")
-    config.tts_emotion_directions_dir = str(tmp_path / "emotions")
-
-    assert api_server._steering_sources(config) == (15, 19)
-    emotion = torch.tensor([0.0, 2.0, 0.0, 0.0])
-    _, _, both = api_server._apply_steering_accent(config, "cmn", 3.0, "voice", None, emotion)
-    assert torch.equal(both, torch.tensor([0.0, 0.0, 3.0, 0.0, 0.0, 2.0, 0.0, 0.0]))
-    _, _, emotion_only = api_server._apply_steering_accent(config, None, 1.0, "voice", None, emotion)
-    assert torch.equal(emotion_only, torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0]))
-    _, _, accent_only = api_server._apply_steering_accent(config, "cmn", 3.0, "voice", None, None)
-    assert torch.equal(accent_only, torch.tensor([0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
-    assert api_server._apply_steering_accent(config, None, 1.0, "voice", None, None) == (None, None, None)
-    api_server._EMOTION_DIRECTIONS_CACHE.clear()

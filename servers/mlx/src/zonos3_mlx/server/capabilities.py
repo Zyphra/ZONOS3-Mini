@@ -55,16 +55,6 @@ def decoder(state: ServerState) -> dict:
                 "codec": state.config.audio_codec}
 
 
-def emotion(state: ServerState) -> dict:
-    d = state.engine.emotion
-    if d is None:
-        return {"emotion_enabled": False, "emotion_names": [], "emotion_axes": [], "emotion_tiers": {}, "emotion_presets": {},
-                    "emotion_space": None, "emotion_calibrated": False}
-    return {"emotion_enabled": True, "emotion_names": d.emotion_names, "emotion_axes": d.axis_names, "emotion_tiers": d.tiers,
-                "emotion_presets": d.presets, "emotion_space": d.space,
-                "emotion_calibrated": state.engine.emotion_calibration is not None}
-
-
 def phonemes(state: ServerState) -> dict:
     spec = state.config.text_tokenizer_spec
     ph = None if not spec else spec.get("phonemes")
@@ -116,13 +106,11 @@ def capabilities(state: ServerState) -> dict:
     modes = speakers.checkpoint_modes(state)
     embedding = c.speaker_embedding_dim > 0
     cfg = bool(modes) and state.options.batch >= 2
-    accent_steering = engine.steering_accents()
     caps = {
         "text_tokenizer_spec": c.text_tokenizer_spec or None,
         "text_normalization_enabled": engine.normalizer is not None,
         "text_norm_languages": list(TEXT_NORM_LANGUAGES),
         "accents": engine.accent_names(),
-        "accent_steering": accent_steering,
         "speaker_enabled": bool(modes),
         "speaker_conditioning_type": "raw_reference_prefix",
         "speaker_embedding_dim": c.speaker_embedding_dim if embedding else None,
@@ -159,7 +147,6 @@ def capabilities(state: ServerState) -> dict:
         "projects": state.projects.capabilities() if state.projects is not None else {"enabled": False},
     }
     caps.update(edit(state))
-    caps.update(emotion(state))
     caps.update(phonemes(state))
     return caps
 

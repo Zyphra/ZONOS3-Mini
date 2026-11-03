@@ -47,9 +47,7 @@ def main(argv=None) -> int:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--dtype", choices=("f32", "bf16"), default="f32")
     parser.add_argument("--steer-bundle")
-    parser.add_argument("--emotion-dir")
     parser.add_argument("--accent-adapters")
-    parser.add_argument("--accent-directions")
     parser.add_argument("--laci-heads", action="append", default=[], metavar="LANG=PATH")
     parser.add_argument("--dump-prompt", metavar="IDS_NPY")
     args = parser.parse_args(argv)
@@ -69,8 +67,7 @@ def main(argv=None) -> int:
     device = torch.device(args.device)
     dtype = torch.float32 if args.dtype == "f32" else torch.bfloat16
     lm = Zonos3LM.load(args.model, device=device, dtype=dtype)
-    assets = ReferenceAssets.load(steer_bundle=args.steer_bundle, emotion_dir=args.emotion_dir,
-                                  accent_adapters=args.accent_adapters, accent_directions=args.accent_directions,
+    assets = ReferenceAssets.load(steer_bundle=args.steer_bundle, accent_adapters=args.accent_adapters,
                                   laci_heads=heads)
     if args.dump_prompt:
         plan = plan_prompt(lm, request, assets=assets, device=device)

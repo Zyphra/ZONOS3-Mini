@@ -69,18 +69,12 @@ from zonos3.tts.edit_align import (
     whole_clip_window,
     wildcard_verify,
 )
-from zonos3.tts.emotion import (
-    HIDDEN_SPACES,
-    EmotionCalibration,
-    EmotionDirections,
-    apply_emotion,
-    emotion_hidden_delta,
-)
+from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.steering import (
-    RAW_SPACE,
     SteeringBundle,
     check_controls,
     controls_document,
+    disabled_controls,
     load_bundle,
     resolve_controls,
 )
@@ -116,11 +110,6 @@ _SESSION_SPEAKER_CACHE: Dict[str, Dict[str, "CachedSpeakerReference"]] = {}
 _SESSION_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, "DefaultSpeakerReference"]] = {}
 _DEFAULT_SPEAKER_CACHE_LOCK = asyncio.Lock()
-# Loaded emotion directions, keyed by directory. Value is None when no directions
-# are available so we only attempt to load each directory once.
-_EMOTION_DIRECTIONS_CACHE: Dict[str, "EmotionDirections | None"] = {}
-# Loaded per-speaker emotion strength calibration, keyed by directory.
-_EMOTION_CALIBRATION_CACHE: Dict[str, "EmotionCalibration | None"] = {}
 # Speech editing: the longest clip transcribed (Qwen3-ASR) and aligned (FuseAlign) per request, and the clip limit.
 _EDIT_ALIGN_MAX_SECONDS = 150.0
 # A clip longer than max_context_seconds (at most 20 s) is edited on windows planned over its aligned
@@ -418,52 +407,15 @@ def _adapter_accents(config: ServerArgs) -> list[str]:
     return list_accent_adapters(config.accent_adapters)
 
 
-_ACCENT_DIRECTIONS_CACHE: Dict[str, "EmotionDirections"] = {}
-_ACCENT_CALIBRATION_CACHE: Dict[str, "EmotionCalibration | None"] = {}
-
-
-def _accent_directions(config: ServerArgs) -> "EmotionDirections | None":
-    """The --accent-directions set (loaded once): hidden-space (``attnres_source``)
-    steering, or speaker-embedding (``raw``) directions for speaker_mode=embedding."""
-    root = getattr(config, "accent_directions", None)
-    if not root:
-        return None
-    if root not in _ACCENT_DIRECTIONS_CACHE:
-        directions = EmotionDirections.load(root)
-        if directions is None or directions.space not in ("attnres_source", "raw"):
-            raise ValueError(f"--accent-directions {root}: needs an attnres_source or raw manifest.json")
-        if directions.space == "raw" and not _model_supports_speaker_embedding(config):
-            raise ValueError(f"--accent-directions {root}: raw (speaker-embedding) accents need a checkpoint "
-                             "that conditions on speaker embeddings")
-        clash = sorted(set(_accent_names(directions)) & set(_adapter_accents(config)))
-        if clash:
-            raise ValueError(f"accent names in both --accent-adapters and --accent-directions: {clash}")
-        _ACCENT_DIRECTIONS_CACHE[root] = directions
-        _ACCENT_CALIBRATION_CACHE[root] = EmotionCalibration.load(root)
-        logger.info("Loaded %s accent directions from %s (%s).", directions.space, root,
-                    ", ".join(_accent_names(directions)))
-    return _ACCENT_DIRECTIONS_CACHE[root]
-
-
-def _accent_names(directions: "EmotionDirections") -> list[str]:
-    """Every direction of an accent set is a request accent, named or axis (axes take signed strengths)."""
-    return directions.emotion_names + directions.axis_names
-
-
-def _server_accents(config: ServerArgs) -> list[str]:
-    steering = _accent_directions(config)
-    return _adapter_accents(config) + (_accent_names(steering) if steering is not None else [])
-
-
 def _resolve_tts_request_accent(
     config: ServerArgs, accent: str | None, strength: float
 ) -> tuple[str | None, float]:
-    """A request's accent (None = base model; an adapter or a steering direction) and its strength."""
+    """A request's accent adapter (None = base model) and its strength."""
     if accent is None or accent == "" or accent == "none":
         return None, 1.0
-    accents = _server_accents(config)
+    accents = _adapter_accents(config)
     if accent not in accents:
-        loaded = ", ".join(accents) or "none (start the server with --accent-adapters or --accent-directions)"
+        loaded = ", ".join(accents) or "none (load accent adapters)"
         raise ValueError(f"Unknown accent {accent!r}; loaded accents: {loaded}.")
     if not math.isfinite(strength):
         raise ValueError(f"accent_strength must be finite, got {strength!r}.")
@@ -471,18 +423,10 @@ def _resolve_tts_request_accent(
 
 
 def _steering_sources(config: ServerArgs) -> tuple[int, ...]:
-    """The Full AttnRes bank sources the engine steers, ascending (as Engine._init_steering)."""
-    sources = set()
-    emotion = _emotion_directions_for_model(config)
-    if emotion is not None and emotion.space == "attnres_source":
-        sources.add(int(emotion.source_index))
-    accent = _accent_directions(config)
-    if accent is not None and accent.space == "attnres_source":
-        sources.add(int(accent.source_index))
+    """The Full AttnRes bank sources the engine steers, ascending (as Engine._init_steering): the steering bundle's
+    hidden-space sources."""
     bundle = _steer_bundle(config)
-    if bundle is not None:
-        sources.update(bundle.hidden_sources)
-    return tuple(sorted(sources))
+    return tuple(sorted(bundle.hidden_sources)) if bundle is not None else ()
 
 
 _STEER_BUNDLE_CACHE: Dict[str, SteeringBundle] = {}
@@ -501,87 +445,24 @@ def _steer_bundle(config: ServerArgs) -> SteeringBundle | None:
     return _STEER_BUNDLE_CACHE[path]
 
 
-def _apply_steering_accent(
-    config: ServerArgs,
-    accent: str | None,
-    strength: float,
-    speaker_id: str | None,
-    speaker_embedding: torch.Tensor | None,
-    emotion_delta: torch.Tensor | None,
-    use_calibration: bool = True,
-) -> tuple[str | None, torch.Tensor | None, torch.Tensor | None]:
-    """Fold a steering accent into the request: (adapter accent or None, speaker embedding, delta).
-
-    The accent shift is ``strength * dose * direction`` with the voice's calibrated dose
-    (calibration.json of the accent directions; 1.0 without one, or the raw dose when
-    ``use_calibration`` is off, as for emotion sliders). A ``raw`` set moves the speaker
-    embedding (norm kept, as raw emotion directions), so it needs speaker_mode=embedding.
-    An ``attnres_source`` set goes into the hidden delta: with one steered bank source the
-    emotion and accent deltas sum; when the two sets steer different sources the result is
-    one hidden-size slot per source (``_steering_sources``), flattened, each delta in its
-    set's slot. Adapter accents pass through untouched."""
-    steering = _accent_directions(config)
-    if accent is None or steering is None or accent not in _accent_names(steering):
-        return accent, speaker_embedding, _layout_steering_delta(config, emotion_delta, None)
-    cal = _ACCENT_CALIBRATION_CACHE.get(str(config.accent_directions))
-    dose = cal.strength(speaker_id, accent) if (cal is not None and use_calibration) else 1.0
-    if not float(strength) or not float(dose):
-        return None, speaker_embedding, _layout_steering_delta(config, emotion_delta, None)
-    if steering.space == "raw":
-        if speaker_embedding is None:
-            raise ValueError(f"Accent {accent!r} is a speaker-embedding direction and needs speaker_mode=embedding.")
-        speaker_embedding = apply_emotion(
-            speaker_embedding, directions=steering, sliders={accent: float(strength) * float(dose)}, strict=True
-        )
-        return None, speaker_embedding, _layout_steering_delta(config, emotion_delta, None)
-    delta = (float(strength) * float(dose)) * (steering.named.get(accent, steering.axes.get(accent)))
-    return None, speaker_embedding, _layout_steering_delta(config, emotion_delta, delta)
-
-
-def _layout_steering_delta(
-    config: ServerArgs, emotion_delta: torch.Tensor | None, accent_delta: torch.Tensor | None
-) -> torch.Tensor | None:
-    if emotion_delta is None and accent_delta is None:
-        return None
-    sources = _steering_sources(config)
-    if len(sources) <= 1:
-        # One steered source (or a speaker-row emotion delta and no accent steering).
-        if emotion_delta is None:
-            return accent_delta
-        return emotion_delta if accent_delta is None else emotion_delta + accent_delta
-    hidden = (emotion_delta if emotion_delta is not None else accent_delta).numel()
-    out = torch.zeros(len(sources), hidden, dtype=torch.float32)
-    if emotion_delta is not None:
-        out[sources.index(int(_emotion_directions_for_model(config).source_index))] += emotion_delta
-    if accent_delta is not None:
-        out[sources.index(int(_accent_directions(config).source_index))] += accent_delta
-    return out.flatten()
-
-
 def _apply_request_controls(
     config: ServerArgs,
     req: GenerateRequest,
     speaker_embedding: torch.Tensor | None,
-    steering_delta: torch.Tensor | None,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, list[tuple[int, int]] | None]:
     """Fold a request's steering-bundle controls in: (speaker embedding, hidden delta, span schedule, each schedule
-    row's character range). The hidden delta adds to the emotion / accent steering delta (same per-source layout)."""
+    row's character range). The hidden delta has one hidden-size slot per steered source (``_steering_sources``)."""
     if not req.controls and not req.control_spans:
-        return speaker_embedding, steering_delta, None, None
+        return speaker_embedding, None, None, None
     bundle = _steer_bundle(config)
     if bundle is None:
         raise ValueError("This server has no steering bundle (start it with --steer-bundle); `controls` are unavailable.")
-    if req.emotion_enabled and (req.emotion_sliders or req.emotion_valence or req.emotion_arousal):
-        raise ValueError("`controls` and the emotion_* fields cannot be combined; send the emotion as controls.")
     resolved = resolve_controls(
         bundle, req.controls, [s.model_dump() for s in req.control_spans or []], text=req.text,
         speaker_embedding=speaker_embedding, sources=_steering_sources(config),
         hidden_size=int(config.model_config.hidden_size), frames_per_char=req.control_span_rate,
     )
-    delta = steering_delta
-    if resolved.hidden_delta is not None:
-        delta = resolved.hidden_delta if delta is None else delta + resolved.hidden_delta
-    return resolved.speaker_embedding, delta, resolved.schedule, resolved.span_chars
+    return resolved.speaker_embedding, resolved.hidden_delta, resolved.schedule, resolved.span_chars
 
 
 def _span_follow(
@@ -691,67 +572,6 @@ def _slerp_embeddings(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Ten
     return mixed.to(dtype=torch.float32, device="cpu").contiguous()
 
 
-def _emotion_directions_root(config: ServerArgs) -> Path | None:
-    raw = getattr(config, "tts_emotion_directions_dir", None)
-    if not raw:
-        return None
-    return Path(str(raw)).expanduser()
-
-
-def _get_emotion_directions(config: ServerArgs) -> "EmotionDirections | None":
-    """Load (and cache) the emotion directions for the configured directory."""
-    root = _emotion_directions_root(config)
-    if root is None:
-        return None
-    key = str(root)
-    if key not in _EMOTION_DIRECTIONS_CACHE:
-        try:
-            directions = EmotionDirections.load(root)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to load emotion directions from %s: %s", root, exc)
-            directions = None
-        if directions is None:
-            logger.info("No emotion directions found at %s; emotion control disabled.", root)
-        else:
-            logger.info(
-                "Loaded emotion directions from %s (emotions=%s, axes=%s).",
-                root, directions.emotion_names, directions.axis_names,
-            )
-        _EMOTION_DIRECTIONS_CACHE[key] = directions
-    return _EMOTION_DIRECTIONS_CACHE[key]
-
-
-def _get_emotion_calibration(config: ServerArgs) -> "EmotionCalibration | None":
-    """Load (and cache) the per-speaker strength calibration, if present."""
-    root = _emotion_directions_root(config)
-    if root is None:
-        return None
-    key = str(root)
-    if key not in _EMOTION_CALIBRATION_CACHE:
-        try:
-            cal = EmotionCalibration.load(root)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to load emotion calibration from %s: %s", root, exc)
-            cal = None
-        if cal is not None:
-            logger.info("Loaded emotion strength calibration for %d speakers from %s.",
-                        len(cal.by_speaker), root)
-        _EMOTION_CALIBRATION_CACHE[key] = cal
-    return _EMOTION_CALIBRATION_CACHE[key]
-
-
-def _emotion_directions_for_model(config: ServerArgs) -> "EmotionDirections | None":
-    """Directions the loaded model can consume: embedding/proj spaces need a
-    speaker embedding; ``attnres_source`` steers the Full AttnRes bank and works
-    for raw-reference checkpoints too."""
-    directions = _get_emotion_directions(config)
-    if directions is None or directions.is_empty():
-        return None
-    if directions.space == "attnres_source":
-        return directions if getattr(config.model_config, "residual_type", None) == "full_attnres" else None
-    return directions if _model_supports_speaker_embedding(config) else None
-
-
 def _get_phoneme_lexicon(config: ServerArgs) -> "PhonemeLexicon | None":
     """Open (and cache) the configured gold pronunciation lexicon."""
     path = getattr(config, "tts_phoneme_lexicon", None)
@@ -805,12 +625,12 @@ def _tag_cfg_capabilities(config: ServerArgs) -> dict:
 
 
 def _validate_tag_cfg(
-    config: ServerArgs, text: str, tag_cfg_scale: float, *, speaker_cfg_scale: float, emotion_cfg_scale: float
+    config: ServerArgs, text: str, tag_cfg_scale: float, *, speaker_cfg_scale: float, controls_cfg_scale: float
 ) -> None:
     """Tag CFG (tagged-vs-plain guidance on nonverbal markup) request rules; raises HTTP 400 when broken.
 
     1.0 is the unguided path (the schema bounds the scale to [1, 4]). Above it the text must carry recognized markup
-    whose removal changes it, and the guidance cannot be stacked with speaker or emotion CFG (one twin per request)."""
+    whose removal changes it, and the guidance cannot be stacked with speaker or controls CFG (one twin per request)."""
     def reject(detail: str) -> None:
         raise HTTPException(status_code=400, detail=detail)
 
@@ -824,85 +644,8 @@ def _validate_tag_cfg(
         )
     if float(speaker_cfg_scale) != 1.0:
         reject("tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.")
-    if float(emotion_cfg_scale) != 1.0:
-        reject("tag_cfg_scale above 1.0 cannot be combined with emotion_cfg_scale; set emotion_cfg_scale to 1.0.")
-
-
-
-def _apply_request_emotion(
-    config: ServerArgs,
-    speaker_embedding: torch.Tensor | None,
-    *,
-    speaker_id: str | None = None,
-    emotion_enabled: bool,
-    sliders: Dict[str, float] | None,
-    valence: float,
-    arousal: float,
-    strength: float,
-    use_calibration: bool = True,
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """Resolve emotion control into a (speaker_embedding, hidden_delta) pair.
-
-    For ``raw``/``lda`` directions the embedding itself is nudged and the hidden
-    delta is ``None``. For ``proj`` directions the embedding is left unchanged
-    and the returned hidden delta is added to the projected speaker vector
-    inside the model. For ``attnres_source`` directions no embedding is needed:
-    the hidden delta is added to the steered Full AttnRes bank source on every
-    generated frame. No-op when emotion is disabled / nothing requested.
-    ``use_calibration=False`` skips the per-speaker strength fold so
-    ``strength`` is the raw injection dose. Raises ValueError on bad input
-    (mapped to HTTP 400).
-    """
-    if not emotion_enabled:
-        return speaker_embedding, None
-    has_request = bool(sliders) or float(valence) != 0.0 or float(arousal) != 0.0
-    if not has_request:
-        return speaker_embedding, None
-    directions = _emotion_directions_for_model(config)
-    if directions is None:
-        raise ValueError(
-            "Emotion control requested but no emotion directions are configured for this model. "
-            "Start the server with --tts-emotion-directions-dir (this repo ships "
-            "steering/emotion_directions_mect60k_axes)."
-        )
-    if speaker_embedding is None and directions.space != "attnres_source":
-        return speaker_embedding, None
-    # Fold the per-speaker, per-emotion calibrated strength into the weights so a
-    # single global `strength` (user multiplier, default 1.0) drives all emotions
-    # at their voice-specific optimum. Skipped when the request opts out, in
-    # which case `strength` is the raw dose.
-    cal = _get_emotion_calibration(config)
-    if cal is not None and use_calibration:
-        sliders = {e: float(w) * cal.pole_strength(speaker_id, e, float(w))
-                   for e, w in (sliders or {}).items()}
-        valence = float(valence) * cal.pole_strength(speaker_id, "valence", float(valence))
-        arousal = float(arousal) * cal.pole_strength(speaker_id, "arousal", float(arousal))
-
-    if directions.space in HIDDEN_SPACES:
-        delta = emotion_hidden_delta(
-            directions, sliders=sliders, valence=valence, arousal=arousal,
-            strength=strength, strict=True,
-        )
-        return speaker_embedding, delta
-    emb = apply_emotion(
-        speaker_embedding,
-        directions=directions,
-        sliders=sliders,
-        valence=valence,
-        arousal=arousal,
-        strength=strength,
-        strict=True,
-    )
-    return emb, None
-
-
-def _speaker_emotion_disabled(config: ServerArgs, speaker_id: str) -> list[str]:
-    """Controls calibrated to dose 0 for this speaker (UI greys them out)."""
-    directions = _emotion_directions_for_model(config)
-    cal = _get_emotion_calibration(config) if directions is not None else None
-    if cal is None:
-        return []
-    return cal.disabled(speaker_id, directions.emotion_names + directions.axis_names)
+    if float(controls_cfg_scale) != 1.0:
+        reject("tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.")
 
 
 def _voice_speaker_modes(config: ServerArgs, source_type: str, has_embedding: bool = True) -> list[str]:
@@ -929,7 +672,7 @@ def _serialize_cached_speaker(config: ServerArgs, entry: CachedSpeakerReference)
         "speaker_modes": modes,
         "embedding_dim": dim if "embedding" in modes else None,
         "transcript": None,
-        "emotion_disabled": bool(_speaker_emotion_disabled(config, entry.speaker_id)),
+        "disabled_controls": disabled_controls(_steer_bundle(config), entry.speaker_id),
     }
 
 
@@ -949,7 +692,7 @@ def _serialize_default_speaker(
         "speaker_modes": modes,
         "embedding_dim": expected_dim if "embedding" in modes else None,
         "transcript": entry.transcript,
-        "emotion_disabled": bool(_speaker_emotion_disabled(config, entry.speaker_id)),
+        "disabled_controls": disabled_controls(_steer_bundle(config), entry.speaker_id),
     }
 
 
@@ -1463,7 +1206,7 @@ async def _resolve_speaker_reference_audio(
     return _decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
 
 
-def _check_laci_request(config, laci: bool, language: str, speaker_cfg_scale: float, emotion_cfg_scale: float,
+def _check_laci_request(config, laci: bool, language: str, speaker_cfg_scale: float, controls_cfg_scale: float,
                         duration_target: bool = False, adjust_rate: bool = True, tag_cfg_scale: float = 1.0) -> None:
     """HTTP 400 unless a laci=true request meets LACI's constraints (zonos3.tts.laci): heads for its language, no CFG,
     and for a duration target that moves the speaking-rate bucket the naive cache (the scheduler refuses the rest)."""
@@ -1476,8 +1219,8 @@ def _check_laci_request(config, laci: bool, language: str, speaker_cfg_scale: fl
         raise HTTPException(status_code=400, detail="LACI is not enabled on this server (start it with --laci-heads LANG=PATH)")
     if language not in heads:
         raise HTTPException(status_code=400, detail=f"No LACI alignment heads for language {language!r} (configured: {', '.join(sorted(heads))})")
-    if float(speaker_cfg_scale) != 1.0 or float(emotion_cfg_scale) != 1.0:
-        raise HTTPException(status_code=400, detail="LACI needs speaker_cfg_scale = emotion_cfg_scale = 1")
+    if float(speaker_cfg_scale) != 1.0 or float(controls_cfg_scale) != 1.0:
+        raise HTTPException(status_code=400, detail="LACI needs speaker_cfg_scale = controls_cfg_scale = 1")
     if float(tag_cfg_scale) != 1.0:
         raise HTTPException(status_code=400, detail="LACI needs tag_cfg_scale = 1")
     if duration_target and adjust_rate and getattr(config, "cache_type", "naive") != "naive":
@@ -1741,14 +1484,12 @@ async def _resolve_request_speaker_conditioning(
     req: GenerateRequest,
     session_id: str | None,
     speaker_mode: str | None,
-) -> tuple[bytes | None, torch.Tensor | None, torch.Tensor | None]:
-    """(reference audio, speaker embedding, hidden emotion delta) for a request.
+) -> tuple[bytes | None, torch.Tensor | None]:
+    """(reference audio, speaker embedding) for a request.
 
     ``speaker_mode`` (from ``_resolve_speaker_mode``) picks the conditioning
     path: "reference" takes a waveform (upload, default voice or session clip)
-    and no embedding, "embedding" the reverse. Emotion control is resolved for
-    both: hidden-space (``attnres_source``) directions steer the model directly,
-    embedding-space directions need the embedding.
+    and no embedding, "embedding" the reverse.
     """
     if speaker_mode == "reference":
         speaker_reference_audio = await _resolve_speaker_reference_audio(
@@ -1775,18 +1516,7 @@ async def _resolve_request_speaker_conditioning(
             speaker_blend_embedding_id_b=req.speaker_blend_embedding_id_b,
             speaker_blend_t=req.speaker_blend_t,
         )
-    speaker_embedding, speaker_emotion_delta = _apply_request_emotion(
-        config,
-        speaker_embedding,
-        speaker_id=req.speaker_embedding_id,
-        emotion_enabled=req.emotion_enabled,
-        sliders=req.emotion_sliders,
-        valence=req.emotion_valence,
-        arousal=req.emotion_arousal,
-        strength=req.emotion_strength,
-        use_calibration=req.emotion_calibrated,
-    )
-    return speaker_reference_audio, speaker_embedding, speaker_emotion_delta
+    return speaker_reference_audio, speaker_embedding
 
 
 # The speaker input fields a SpeechRequest `voice` cannot be combined with.
@@ -1835,12 +1565,12 @@ async def _tts_generate_msg(
     ``laci_target_frames`` / ``laci_adjust_rate``: the LACI duration target of a dub take (needs req.laci)."""
     _validate_tag_cfg(
         state.config, req.text, req.tag_cfg_scale,
-        speaker_cfg_scale=req.speaker_cfg_scale, emotion_cfg_scale=req.emotion_cfg_scale,
+        speaker_cfg_scale=req.speaker_cfg_scale, controls_cfg_scale=req.controls_cfg_scale,
     )
     speaker_mode = _resolve_speaker_mode(state.config, req.speaker_mode)
     condition_ids = _resolve_condition_buckets(state.config, req.condition_buckets, req.condition_values)
     try:
-        speaker_reference_audio, speaker_embedding, speaker_emotion_delta = (
+        speaker_reference_audio, speaker_embedding = (
             await _resolve_request_speaker_conditioning(state.config, req, session_id, speaker_mode)
         )
     except ValueError as exc:
@@ -1854,12 +1584,8 @@ async def _tts_generate_msg(
         accent, accent_strength = _resolve_tts_request_accent(
             state.config, req.accent, req.accent_strength
         )
-        accent, speaker_embedding, speaker_emotion_delta = _apply_steering_accent(
-            state.config, accent, accent_strength, req.speaker_embedding_id, speaker_embedding,
-            speaker_emotion_delta, use_calibration=req.emotion_calibrated,
-        )
-        speaker_embedding, speaker_emotion_delta, steer_schedule, span_chars = _apply_request_controls(
-            state.config, req, speaker_embedding, speaker_emotion_delta
+        speaker_embedding, steering_delta, steer_schedule, span_chars = _apply_request_controls(
+            state.config, req, speaker_embedding
         )
         follow_chars, follow_gate = _span_follow(state.config, req, language, span_chars)
     except ValueError as exc:
@@ -1870,10 +1596,10 @@ async def _tts_generate_msg(
         has_embedding = speaker_mode == "embedding" and speaker_embedding is not None
         if not (has_reference or has_embedding):
             raise HTTPException(status_code=400, detail="Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or speaker_mode=embedding with a clip or an embedding")
-        if req.emotion_cfg_scale != 1.0:
-            raise HTTPException(status_code=400, detail="Speaker and emotion CFG cannot be combined")
+        if req.controls_cfg_scale != 1.0:
+            raise HTTPException(status_code=400, detail="Speaker and controls CFG cannot be combined")
     _validate_phoneme_groups(state.config, req.text)
-    _check_laci_request(state.config, req.laci, language, req.speaker_cfg_scale, req.emotion_cfg_scale,
+    _check_laci_request(state.config, req.laci, language, req.speaker_cfg_scale, req.controls_cfg_scale,
                         duration_target=laci_target_frames is not None, adjust_rate=laci_adjust_rate,
                         tag_cfg_scale=req.tag_cfg_scale)
     return TTSTokenizeMsg(
@@ -1894,7 +1620,7 @@ async def _tts_generate_msg(
             repetition_penalty=req.repetition_penalty,
             repetition_codebooks=req.repetition_codebooks,
             seed=req.seed if req.seed is not None else secrets.randbelow(2**31),
-            emotion_cfg_scale=req.emotion_cfg_scale,
+            controls_cfg_scale=req.controls_cfg_scale,
             speaker_cfg_scale=req.speaker_cfg_scale,
             tag_cfg_scale=req.tag_cfg_scale,
             stream_decode=stream_decode,
@@ -1902,7 +1628,7 @@ async def _tts_generate_msg(
         speaker_embedding=speaker_embedding,
         speaker_reference_audio=speaker_reference_audio,
         speaker_reference_codes=reference_codes,
-        speaker_emotion_delta=speaker_emotion_delta,
+        steering_delta=steering_delta,
         condition_buckets=condition_ids,
         accent=accent,
         accent_strength=accent_strength,
@@ -2171,10 +1897,7 @@ async def tts_capabilities():
         "text_tokenizer_spec": _text_tokenizer_spec(str(state.config.model_path)),
         "text_normalization_enabled": normalization_enabled(),
         "text_norm_languages": list(SERVER_TO_NEMO_LANG),
-        "accents": _server_accents(state.config),
-        # the subset served as hidden-space steering directions (--accent-directions)
-        "accent_steering": (_accent_names(_accent_directions(state.config))
-                            if _accent_directions(state.config) is not None else []),
+        "accents": _adapter_accents(state.config),
         "speaker_enabled": _model_supports_speaker(state.config),
         "speaker_conditioning_type": (
             "raw_reference_prefix"
@@ -2210,7 +1933,7 @@ async def tts_capabilities():
         "speaker_cfg_modes": _speaker_modes(state.config),      # both paths: the twin drops the reference prefix or the speaker row
         "speaker_cfg_unconditional": "remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_generated_history",
         "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
-        # LACI (laci=true): languages with alignment heads (--laci-heads); needs speaker / emotion CFG 1
+        # LACI (laci=true): languages with alignment heads (--laci-heads); needs speaker / controls CFG 1
         "laci_languages": sorted(getattr(state.config, "laci_heads", None) or {}),
         # the studio's Dub screen (/v2/dub/*, /v2/dub/capabilities): LACI heads and a speaking-rate condition row
         "dub": _dub_available(state.config),
@@ -2228,7 +1951,6 @@ async def tts_capabilities():
         ),
         "edit_max_seconds": _EDIT_MAX_SECONDS,
         "edit_align_max_seconds": _EDIT_ALIGN_MAX_SECONDS,
-        **_emotion_capabilities(state.config),
         **_phoneme_capabilities(state.config),
         # server-side studio projects (/v2/projects, /v2/media; --studio-projects-dir)
         "projects": (store.capabilities() if (store := _project_store()) is not None else {"enabled": False}),
@@ -2288,30 +2010,6 @@ def _decoder_capability(config: ServerArgs) -> dict | None:
         return dict(decoder_info(codec), codec=codec)
     except Exception as exc:  # noqa: BLE001
         return dict(codec=codec, error=str(exc))
-
-
-def _emotion_capabilities(config: ServerArgs) -> dict:
-    """Report which emotion sliders/axes/presets the loaded model exposes."""
-    directions = _emotion_directions_for_model(config)
-    if directions is None:
-        return {
-            "emotion_enabled": False,
-            "emotion_names": [],
-            "emotion_axes": [],
-            "emotion_tiers": {},
-            "emotion_presets": {},
-            "emotion_space": None,
-            "emotion_calibrated": False,
-        }
-    return {
-        "emotion_enabled": True,
-        "emotion_names": directions.emotion_names,
-        "emotion_axes": directions.axis_names,
-        "emotion_tiers": directions.tiers,
-        "emotion_presets": directions.presets,
-        "emotion_space": directions.space,
-        "emotion_calibrated": _get_emotion_calibration(config) is not None,
-    }
 
 
 # =============================================================================
@@ -2684,7 +2382,7 @@ async def tts_edit(req: EditRequest):
                             edit_spans=window_spans,
                             edit_fills=list(window_fills),
                             speaker_embedding=region_embedding,
-                            speaker_emotion_delta=region_delta,
+                            steering_delta=region_delta,
                             condition_buckets=condition_ids,
                         ),
                     )
@@ -2892,7 +2590,7 @@ def _dub_take_rate_steering(config: ServerArgs, msg: TTSTokenizeMsg, job: dict) 
         return
     bundle = _steer_bundle(config)
     sources, hidden = _steering_sources(config), int(config.model_config.hidden_size)
-    base = msg.speaker_emotion_delta
+    base = msg.steering_delta
 
     def delta(b: int) -> torch.Tensor | None:
         if b not in scale.doses:
@@ -2903,7 +2601,7 @@ def _dub_take_rate_steering(config: ServerArgs, msg: TTSTokenizeMsg, job: dict) 
 
     bucket = int(job["bucket"])
     deltas = [delta(b) for b in range(scale.first, scale.last + 1)]
-    msg.speaker_emotion_delta = deltas[bucket - scale.first]
+    msg.steering_delta = deltas[bucket - scale.first]
     msg.laci_rate_edges, msg.laci_rate_first, msg.laci_rate_bucket = list(scale.edges), scale.first, bucket
     msg.laci_rate_deltas = deltas
 

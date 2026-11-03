@@ -31,8 +31,7 @@ def prompt(*, reference_frames=0, speaker=False, condition=3, text=(5, 6, 7, 8))
 
 def msg(ids, *, prefix=0, embedding=False, position=-1):
     return SimpleNamespace(input_ids=ids, speaker_reference_prefix_length=prefix,
-                           speaker_embedding=torch.ones(192) if embedding else None, speaker_token_position=position,
-                           speaker_emotion_delta=None)
+                           speaker_embedding=torch.ones(192) if embedding else None, speaker_token_position=position)
 
 
 def test_reference_twin_drops_the_prefix_and_shifts_the_rows_back():

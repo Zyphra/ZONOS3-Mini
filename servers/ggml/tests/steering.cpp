@@ -1,7 +1,10 @@
-// Steering: steer.gguf loader, control resolution math, per-frame hidden delta and decode-graph injection.
+// Steering: steer.gguf loader (incl. set calibrations), control resolution math, per-frame hidden delta and
+// decode-graph injection.
 #include "zonos3.h"
 #include "zonos3-steer.h"
 #include "model-paths.h"
+#include "ggml.h"
+#include "gguf.h"
 
 #include <cmath>
 #include <cstdio>
@@ -33,6 +36,46 @@ static void test_loader(const zonos3_model & model, const std::string & steer_pa
     CHECK(b.dirs[0].vec.size() == 192 && b.dirs[2].vec.size() == 32, "loader: vector dims");
     CHECK(b.timing.count("style.tempo") && b.timing["style.tempo"].size() == 3, "loader: timing table");
     CHECK(!zonos3_steer_controls_json(b, 192).empty(), "loader: controls json");
+
+    // Set calibrations (scripts/make-dummy-steer.py): who has none; style and mood disable a control of VOICE.
+    const std::string voice = "default_19139adcad9351f1";
+    CHECK(!b.sets[0].calibration && b.sets[1].calibration && b.sets[2].calibration, "calibration: per-set presence");
+    const zonos3_steer_calibration & mood = *b.sets[2].calibration;
+    CHECK(mood.strength("", "valence") == 1.5 && mood.strength(voice, "valence") == 1.5 &&
+          mood.strength("x", "other") == 1.25, "calibration: default / global_default lookup");
+    CHECK(b.sets[1].calibration->strength(voice, "whisper") == 0.0, "calibration: by_speaker lookup");
+    CHECK((zonos3_steer_disabled_controls(b, voice) == std::vector<std::string>{"style.whisper", "mood.valence-"}),
+          "calibration: disabled_controls of the calibrated voice");
+    CHECK(zonos3_steer_disabled_controls(b, "spk_other").empty() && zonos3_steer_disabled_controls(b, "").empty(),
+          "calibration: no disabled_controls for other voices");
+    const std::string doc = zonos3_steer_controls_json(b, 192);
+    CHECK(contains(doc, "\"who\":{\"space\":\"raw\",\"modes\":[\"embedding\"]}"), "controls json: no calibration for who");
+    CHECK(contains(doc, "\"source_index\":3,\"calibration\":{\"default\":{\"tempo\":0.5},\"by_speaker\":"
+                        "{\"default_19139adcad9351f1\":{\"whisper\":0.0}},\"global_default\":1.0}}"),
+          "controls json: style calibration document");
+    CHECK(contains(doc, "\"source_index\":5,\"calibration\":{\"default\":{\"valence\":1.5},\"by_speaker\":"
+                        "{\"default_19139adcad9351f1\":{\"valence-\":0.0}},\"global_default\":1.25}}"),
+          "controls json: mood calibration document");
+
+    // Obsolete schema: a steer.gguf without zonos3_steer.set.calibrations is refused.
+    {
+        ggml_context * data = nullptr;
+        gguf_context * g = gguf_init_from_file(steer_path.c_str(), {false, &data});
+        CHECK(g, "loader: reread dummy-steer.gguf");
+        gguf_context * out = gguf_init_empty();
+        gguf_set_kv(out, g);
+        CHECK(gguf_remove_key(out, "zonos3_steer.set.calibrations") >= 0, "loader: strip calibrations key");
+        for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) gguf_add_tensor(out, ggml_get_tensor(data, gguf_get_tensor_name(g, i)));
+        const std::string old = "steering-no-calibrations.tmp.gguf";   // the test's working directory
+        CHECK(gguf_write_to_file(out, old.c_str(), false), "loader: write stripped steer file");
+        gguf_free(out);
+        gguf_free(g);
+        ggml_free(data);
+        zonos3_steer_bundle stale;
+        const bool loaded = zonos3_steer_load(stale, old.c_str(), model, err);
+        std::remove(old.c_str());
+        CHECK(!loaded && contains(err, "missing or mistyped zonos3_steer.* metadata"), "loader: missing set.calibrations refused");
+    }
     zonos3_steer_bundle bad;
     CHECK(!zonos3_steer_load(bad, backbone_path.c_str(), model, err), "loader: backbone is not a steer file");
     CHECK(contains(err, "not a valid zonos3 steering GGUF"), "loader: invalid-file message");

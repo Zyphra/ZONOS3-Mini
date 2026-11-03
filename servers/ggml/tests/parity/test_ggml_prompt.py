@@ -1,6 +1,7 @@
 """Prompt parity: ``zonos3-cli --request req.json --build-prompt ids.npy`` (the ggml server's request resolver) against
 ``python -m zonos3.reference --request req.json --dump-prompt ids.npy`` for every request of
-model/tests/fixtures/prompt_requests.json whose ``requires`` the loaded backbone meets.
+model/tests/fixtures/prompt_requests.json whose ``requires`` the loaded backbone meets. Both sides load the steering
+bundle ``steering/studio_bundle_mect60k.json`` (ggml: its ``convert_gguf.py steer`` GGUF) for the ``controls`` entries.
 
 Rows (and a CFG twin's rows) must be identical; the ``.cond.json`` sidecars equal, speaker embeddings within 1e-6.
 
@@ -37,12 +38,12 @@ BACKBONES = {
                  os.environ.get("ZONOS3_PHONEME_MODEL",
                                 "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k")),
 }
-EMOTION_DIR = REPO / "steering" / "emotion_directions_mect60k_axes"
+BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
 
 
 @pytest.fixture(scope="module", params=list(BACKBONES))
-def reference(request):
+def reference(request, tmp_path_factory):
     gguf, model = BACKBONES[request.param]
     if not gguf.is_file():
         pytest.skip(f"{request.param}: no backbone GGUF at {gguf}")
@@ -54,8 +55,15 @@ def reference(request):
     from zonos3.reference.synth import ReferenceAssets
 
     lm = Zonos3LM.load(model, device=torch.device("cpu"), dtype=torch.float32)
-    assets = ReferenceAssets.load(emotion_dir=str(EMOTION_DIR) if EMOTION_DIR.is_dir() else None)
-    return gguf, lm, assets
+    steer = None
+    if BUNDLE.is_file():
+        sys.path.insert(0, str(REPO / "tools"))
+        import convert_gguf
+
+        steer = tmp_path_factory.mktemp("steer") / "steer.gguf"
+        convert_gguf.main(["steer", str(BUNDLE), "-o", str(steer)])
+    assets = ReferenceAssets.load(steer_bundle=str(BUNDLE) if steer is not None else None)
+    return gguf, lm, assets, steer
 
 
 def _caps(lm, assets) -> set[str]:
@@ -65,8 +73,8 @@ def _caps(lm, assets) -> set[str]:
     spec = prompt_builder(lm).config.text_tokenizer_spec
     if spec is not None and spec.get("phonemes") is not None:
         caps.add("phoneme_tokens")
-    if assets.emotion_directions is not None:
-        caps.add("emotion")
+    if assets.steer_bundle is not None:
+        caps.add("controls")
     return caps
 
 
@@ -90,7 +98,7 @@ def _assert_same(ggml_ids: Path, ref_ids: Path, what: str) -> None:
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=[e["name"] for e in ENTRIES])
 def test_prompt_parity(entry, reference, ggml_build, tmp_path):
-    gguf, lm, assets = reference
+    gguf, lm, assets, steer = reference
     missing = set(entry["requires"]) - _caps(lm, assets)
     if missing:
         pytest.skip(f"the loaded model / assets lack {sorted(missing)}")
@@ -103,8 +111,9 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
     if not exe.exists():
         pytest.fail(f"{exe} is not built")
     ggml_ids = tmp_path / "ggml.npy"
+    steer_flags = ["--steer", str(steer)] if steer is not None else []
     run = subprocess.run(
-        [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(ggml_ids),
+        [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(ggml_ids), *steer_flags,
          "--worker-python", sys.executable, "--python-src", str(REPO / "model" / "src")],
         capture_output=True, text=True)
     assert run.returncode == 0, run.stderr

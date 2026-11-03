@@ -73,9 +73,7 @@ embedding, then speak with it; see [studio/README.md](studio/README.md#lite-ui))
 | --- | --- |
 | `SERVE_MODEL` | Checkpoint directory or `hf://` location (`--model-path`); default the release LM |
 | `SERVE_VOICES` | Default-voice directory (`--tts-default-voices-dir`); default `default_voices/` |
-| `EMOTION_SERVE_DIRECTIONS` | Emotion direction set; default `steering/emotion_directions_mect60k_axes` |
-| `ACCENT_SERVE_DIRECTIONS` | Accent direction set (`--accent-directions`), e.g. `steering/accent_directions_mect60k` |
-| `STEER_BUNDLE` | Steering bundle (`--steer-bundle`) behind the studio's controls: `steering/studio_bundle_mect60k.json` |
+| `STEER_BUNDLE` | Steering bundle (`--steer-bundle`) behind every steering control (emotion axes, styles, accent directions, …); default `steering/studio_bundle_mect60k.json`, empty serves no controls |
 | `PHONEME_LEXICON` | Gold pronunciation lexicon directory (`--tts-phoneme-lexicon`) for `POST /v2/phonemize` |
 | `ZONOS3_STUDIO_PROJECTS` | Shared studio project store (`--studio-projects-dir`); empty (default) keeps projects in the browser |
 | `LACI_HEADS` | `"lang=path ..."` LACI alignment heads (`--laci-heads`) |
@@ -107,7 +105,7 @@ curl -X POST http://127.0.0.1:1919/v1/audio/speech -H 'Content-Type: application
 
 `stream: true` returns the audio progressively (prefix re-decode of the causal decoder); `"format": "wav"` returns a
 buffered 16-bit WAV instead of raw PCM (with `stream: false`). Open `http://127.0.0.1:1919/` for the Zonos Voice
-Studio (start the server with `STEER_BUNDLE=steering/studio_bundle_mect60k.json` for its steering controls). The API
+Studio (its steering controls come from the default `STEER_BUNDLE`). The API
 guide is [docs/api.md](docs/api.md); the schemas are in [api/openapi.yaml](api/openapi.yaml).
 
 ## Offline Python API
@@ -156,7 +154,7 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
 | --- | --- |
 | HTTP API (`/v2/generate`, `/v1/audio/speech`, `/v2/phonemize`, …) | [docs/api.md](docs/api.md), [api/openapi.yaml](api/openapi.yaml) |
 | Raw-reference and embedding voice cloning, speaker CFG, condition rows | [docs/guide.md](docs/guide.md) |
-| Emotion, mood, style and voice-quality steering; accent directions and adapters | [docs/guide.md](docs/guide.md) |
+| Steering controls (emotion axes, moods, styles, voice quality, accent directions) and accent adapters | [docs/guide.md](docs/guide.md) |
 | Speech editing | [docs/guide.md](docs/guide.md) |
 | Pronunciation input (phoneme tokens) and nonverbal tags with tag CFG | [docs/guide.md](docs/guide.md) |
 | Zonos Voice Studio, server projects, dubbing | [docs/guide.md](docs/guide.md), [studio/README.md](studio/README.md) |

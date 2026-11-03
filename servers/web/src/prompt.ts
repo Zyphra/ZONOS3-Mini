@@ -21,7 +21,7 @@ export interface ModelHp {
 
 /** Conditioning rows: speakerRow/conditionRow are absolute prompt rows (-1 = none). */
 export interface Conditioning {
-  speakerRow: number; speaker: Float32Array | null; conditionRow: number; buckets: number[]; speakerDelta: Float32Array | null;
+  speakerRow: number; speaker: Float32Array | null; conditionRow: number; buckets: number[];
 }
 
 /** ids is row-major [nRows][11]. */
@@ -113,7 +113,7 @@ export function buildPrompt(
     cond: {
       speakerRow: spk ? 0 : -1,
       speaker: spk ? Float32Array.from(spk.subarray(0, model.speakerDim)) : null,
-      conditionRow: speakerRows, buckets, speakerDelta: null,
+      conditionRow: speakerRows, buckets,
     },
   };
 }
@@ -128,7 +128,7 @@ export function buildCfgTwin(p: Prompt, nBuckets: number): Prompt {
     prefillFrames: p.prefillFrames,
     cond: {
       speakerRow: -1, speaker: null, conditionRow: p.cond.conditionRow - p.speakerRows,
-      buckets: new Array<number>(p.cond.buckets.length).fill(nBuckets), speakerDelta: null,
+      buckets: new Array<number>(p.cond.buckets.length).fill(nBuckets),
     },
   };
 }

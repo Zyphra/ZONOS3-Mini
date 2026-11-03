@@ -10,8 +10,8 @@ the studio reads from ``/v2/controls``::
 
 Set directories are relative to the bundle file. A request's ``controls`` maps
 ``<set>.<direction>`` to a raw dose. Directions of ``raw`` sets move the speaker
-embedding (their deltas summed, the result rescaled to the embedding's norm, as one
-raw emotion direction does); ``attnres_source`` directions add to their Full
+embedding (their deltas summed, the result rescaled to the embedding's norm);
+``attnres_source`` directions add to their Full
 AttnRes bank source on every generated frame. ``control_spans`` apply hidden
 directions to the frames generated while a character range of the text is spoken:
 frames are placed by character position at ``frames_per_char`` (the client's
@@ -30,11 +30,9 @@ from typing import Dict, List, Mapping, Sequence
 import numpy as np
 import torch
 
-from .emotion import EmotionDirections
+from .directions import HIDDEN_SPACE, RAW_SPACE, DirectionSet
 from .markup import nonverbal_marker_spans
 
-HIDDEN_SPACE = "attnres_source"
-RAW_SPACE = "raw"
 RAMP_FRAMES = 3                # 0.2 s at 15 frames per second
 DEFAULT_FRAMES_PER_CHAR = 1.0  # release LM, embedding mode, unsteered (15 fps, ~15 characters per second)
 
@@ -70,7 +68,7 @@ class RateExtension:
 class SteeringBundle:
     name: str
     path: Path
-    sets: Dict[str, EmotionDirections]
+    sets: Dict[str, DirectionSet]
     directions: Dict[str, Direction]
     timing: Dict[str, List[List[float]]] = field(default_factory=dict)
     ui: dict = field(default_factory=dict)
@@ -89,18 +87,16 @@ class SteeringBundle:
 def load_bundle(path: str | Path) -> SteeringBundle:
     path = Path(path).expanduser()
     spec = json.loads(path.read_text())
-    sets: Dict[str, EmotionDirections] = {}
+    sets: Dict[str, DirectionSet] = {}
     directions: Dict[str, Direction] = {}
     raw_dims = set()
     for set_name, rel in spec["sets"].items():
         if "." in set_name:
             raise ValueError(f"{path}: set name {set_name!r} must not contain '.'")
         directory = (path.parent / rel).resolve()
-        loaded = EmotionDirections.load(directory)
+        loaded = DirectionSet.load(directory)
         if loaded is None or loaded.is_empty():
             raise ValueError(f"{path}: set {set_name!r} has no directions at {directory}")
-        if loaded.space not in (RAW_SPACE, HIDDEN_SPACE):
-            raise ValueError(f"{path}: set {set_name!r} is {loaded.space!r}; bundles take raw or attnres_source sets")
         if loaded.space == RAW_SPACE:
             raw_dims.add(int(loaded.dim))
         sets[set_name] = loaded
@@ -267,12 +263,15 @@ def schedule_delta(schedule: torch.Tensor | None, frame: int) -> torch.Tensor | 
 
 
 def controls_document(bundle: SteeringBundle, *, speaker_embedding_dim: int | None) -> dict:
-    """The /v2/controls payload: sets, directions (raw vectors included for client-side geometry) and UI metadata."""
+    """The /v2/controls payload: sets (with their calibration), directions (raw vectors included for client-side
+    geometry) and UI metadata."""
     sets = {}
     for name, d in bundle.sets.items():
         entry = {"space": d.space, "modes": ["embedding"] if d.space == RAW_SPACE else ["embedding", "reference"]}
         if d.space == HIDDEN_SPACE:
             entry["source_index"] = int(d.source_index)
+        if d.calibration is not None:
+            entry["calibration"] = d.calibration.document()
         sets[name] = entry
     directions = {}
     for did, d in bundle.directions.items():
@@ -283,3 +282,12 @@ def controls_document(bundle: SteeringBundle, *, speaker_embedding_dim: int | No
         directions[did] = entry
     return {"bundle": bundle.name, "embedding_dim": speaker_embedding_dim, "sets": sets, "directions": directions,
             "timing": bundle.timing, "ui": bundle.ui}
+
+
+def disabled_controls(bundle: SteeringBundle | None, speaker_id: str | None) -> list[str]:
+    """Control ids a set calibration gives this speaker dose 0 (a speaker object's ``disabled_controls``):
+    ``<set>.<name>``, or ``<set>.<name>-`` when only the negative pole is disabled; bundle direction order."""
+    if bundle is None:
+        return []
+    return [f"{name}.{c}" for name, d in bundle.sets.items() if d.calibration is not None
+            for c in d.calibration.disabled(speaker_id, d.names)]

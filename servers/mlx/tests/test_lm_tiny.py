@@ -144,9 +144,8 @@ def test_speaker_and_condition_rows(tiny):
     _, ref, mlx = tiny
     g = torch.Generator().manual_seed(12)
     speaker = {TEXT_LEN: torch.randn(8, generator=g)}
-    proj = {TEXT_LEN: torch.randn(64, generator=g) * 0.3}
     conditions = {TEXT_LEN + 1: 1, TEXT_LEN + 2: 3}
-    pairs, _ = run_both(ref, mlx, speaker_rows=speaker, proj_deltas=proj, condition_rows=conditions)
+    pairs, _ = run_both(ref, mlx, speaker_rows=speaker, condition_rows=conditions)
     assert_logits(pairs)
 
 

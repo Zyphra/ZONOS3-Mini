@@ -641,25 +641,11 @@ export interface components {
              * @default null
              */
             speaker_blend_t?: number | null;
-            /** @default false */
-            emotion_enabled?: boolean;
-            /** @default null */
-            emotion_sliders?: {
-                [key: string]: number;
-            } | null;
-            /** @default 0 */
-            emotion_valence?: number;
-            /** @default 0 */
-            emotion_arousal?: number;
-            /** @default 1 */
-            emotion_strength?: number;
-            /** @default true */
-            emotion_calibrated?: boolean;
             /**
-             * @description Guidance on the emotion injection (1 = off).
+             * @description Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).
              * @default 1
              */
-            emotion_cfg_scale?: number;
+            controls_cfg_scale?: number;
             /**
              * @description Reference CFG: uncond + scale * (cond - uncond) (1 = off).
              * @default 1
@@ -802,25 +788,11 @@ export interface components {
              * @default null
              */
             speaker_blend_t?: number | null;
-            /** @default false */
-            emotion_enabled?: boolean;
-            /** @default null */
-            emotion_sliders?: {
-                [key: string]: number;
-            } | null;
-            /** @default 0 */
-            emotion_valence?: number;
-            /** @default 0 */
-            emotion_arousal?: number;
-            /** @default 1 */
-            emotion_strength?: number;
-            /** @default true */
-            emotion_calibrated?: boolean;
             /**
-             * @description Guidance on the emotion injection (1 = off).
+             * @description Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).
              * @default 1
              */
-            emotion_cfg_scale?: number;
+            controls_cfg_scale?: number;
             /**
              * @description Reference CFG: uncond + scale * (cond - uncond) (1 = off).
              * @default 1
@@ -972,25 +944,11 @@ export interface components {
              * @default null
              */
             speaker_blend_t?: number | null;
-            /** @default false */
-            emotion_enabled?: boolean;
-            /** @default null */
-            emotion_sliders?: {
-                [key: string]: number;
-            } | null;
-            /** @default 0 */
-            emotion_valence?: number;
-            /** @default 0 */
-            emotion_arousal?: number;
-            /** @default 1 */
-            emotion_strength?: number;
-            /** @default true */
-            emotion_calibrated?: boolean;
             /**
-             * @description Guidance on the emotion injection (1 = off).
+             * @description Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).
              * @default 1
              */
-            emotion_cfg_scale?: number;
+            controls_cfg_scale?: number;
             /**
              * @description Reference CFG: uncond + scale * (cond - uncond) (1 = off).
              * @default 1
@@ -1063,8 +1021,8 @@ export interface components {
             speaker_modes: ("embedding" | "reference")[];
             embedding_dim: number | null;
             transcript: string | null;
-            /** @description Whether the emotion calibration disables any emotion for this voice. */
-            emotion_disabled: boolean;
+            /** @description Control ids (`<set>.<direction>`, or `<set>.<direction>-` for the negative pole alone) whose set calibration gives this voice dose 0 (the UI greys them out). */
+            disabled_controls: string[];
         };
         SpeakerList: {
             speakers: components["schemas"]["Speaker"][];
@@ -1178,10 +1136,8 @@ export interface components {
             text_tokenizer_spec: components["schemas"]["TextTokenizerSpec"] | null;
             text_normalization_enabled: boolean;
             text_norm_languages: string[];
-            /** @description Accent adapters and accent directions a request can pick with `accent`. */
+            /** @description Accent adapters a request can pick with `accent`. */
             accents: string[];
-            /** @description The subset of `accents` served as hidden-space steering directions. */
-            accent_steering: string[];
             speaker_enabled: boolean;
             /** @enum {string} */
             speaker_conditioning_type: "raw_reference_prefix" | "embedding" | "none";
@@ -1220,20 +1176,6 @@ export interface components {
             edit_frame_rate: number | null;
             edit_max_seconds: number;
             edit_align_max_seconds: number;
-            emotion_enabled: boolean;
-            emotion_names: string[];
-            emotion_axes: string[];
-            emotion_tiers: {
-                [key: string]: string;
-            };
-            emotion_presets: {
-                [key: string]: {
-                    [key: string]: number;
-                };
-            };
-            /** @enum {unknown} */
-            emotion_space: "raw" | "lda" | "proj" | "attnres_source" | null;
-            emotion_calibrated: boolean;
             phoneme_tokens: components["schemas"]["PhonemeTokens"];
             phonemize_enabled: boolean;
             phonemize_languages: string[];
@@ -1245,6 +1187,21 @@ export interface components {
             modes: ("embedding" | "reference")[];
             /** @description The Full AttnRes bank source a hidden-space set steers. */
             source_index?: number;
+            calibration?: components["schemas"]["ControlCalibration"];
+        };
+        /** @description The set's calibration.json: per-direction doses chosen offline, keyed by direction name (a `<name>-` key: the negative pole's own dose). Controls stay raw doses; a client scales its sliders by these. Absent when the set has no calibration. */
+        ControlCalibration: {
+            default: {
+                [key: string]: number;
+            };
+            /** @description Per speaker id overrides of `default`; dose 0 disables the direction for that voice. */
+            by_speaker: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** @description The dose of a direction neither `by_speaker` nor `default` names. */
+            global_default: number;
         };
         ControlDirection: {
             set: string;

@@ -277,7 +277,7 @@ static bool laci_resume(const ServerState & s, zonos3_batch_ctx & bc, ReqJob & j
         for (int k = 0; k < W; ++k) ids[(size_t) (base + r) * W + k] = (float) stream[r][k];
     zonos3_conditioning cond = job.prompt.cond;
     if (c.condition_values) cond.buckets.assign(c.condition_values->begin(), c.condition_values->end());
-    if (c.swap_delta) job.gr.steering.hidden = c.speaker_emotion_delta ? *c.speaker_emotion_delta : std::vector<float>{};
+    if (c.swap_delta) job.gr.steering.hidden = c.steering_delta ? *c.steering_delta : std::vector<float>{};
     zonos3_slot & slot = job.slot;
     slot.done = false;
     slot.step = 0;
@@ -333,7 +333,7 @@ static void worker_loop(ServerState & s) {
     };
     zonos3_batch_features features;
     features.probe_max_text = s.probe_max_text;   // LACI / span-follow probes (0 without --laci-heads)
-    if (!zonos3_batch_init(bc, s.model, B, s.context_capacity, s.steer_sources, features))
+    if (!zonos3_batch_init(bc, s.model, B, s.context_capacity, s.steer.sources, features))
         return fail_start("batch init failed");
     if (!warmup_backbone(bc)) return fail_start("backbone warmup failed");
     std::vector<std::shared_ptr<ReqJob>> slot_job(B);
@@ -346,7 +346,7 @@ static void worker_loop(ServerState & s) {
             std::shared_ptr<ReqJob> job;
             { std::lock_guard<std::mutex> lk(s.sched_mtx); if (!s.incoming.empty()) job = s.incoming.front(); }
             if (!job) break;
-            // A CFG job (speaker / tag / emotion) needs two slots (conditional + twin); the FIFO head waits for them.
+            // A CFG job (speaker / tag / controls) needs two slots (conditional + twin); the FIFO head waits for them.
             const bool cfg = job->gr.cfg_scale != 1.0f;
             int primary = -1, twin = -1;
             for (int i = 0; i < B; ++i) {
@@ -383,7 +383,7 @@ static void worker_loop(ServerState & s) {
                 job->twin_slot.index = twin; job->twin_slot.active = true;
                 job->twin_slot.n_past = job->twin.n_rows;
                 job->twin_slot.prefill = job->prompt.prefill_frames;
-                // The speaker / tag twin shares the hidden delta (not the speaker row); the emotion twin runs unsteered.
+                // The speaker / tag twin shares the hidden delta (not the speaker row); the controls twin runs unsteered.
                 if (job->gr.twin_steered) job->twin_slot.steer = job->gr.steering.hidden;
                 job->twin_slot.accent = job->gr.accent;   // the accent adapter applies to both branches
                 job->twin_slot.accent_strength = job->gr.accent_strength;

@@ -20,8 +20,8 @@ def unconditional_prompt(msg, *, n_codebooks: int, audio_pad_id: int, input_ids:
     reference path) or the reserved speaker row at position 0 (embedding path; `input_ids` / `speaker_token_position`
     are the scheduler's final prompt when it added the row itself)."""
     tokens = msg.input_ids if input_ids is None else input_ids
-    # An emotion delta rides along: hidden-space (attnres_source) deltas steer both branches (the scheduler copies
-    # them to the twin); a speaker-row (proj) delta has no row to act on in the twin.
+    # A controls delta rides along: hidden-space (attnres_source) deltas steer both branches (the scheduler copies
+    # them to the twin).
     if len(tokens) == 0:
         raise ValueError('Speaker CFG requires a text-ending target prompt')
     # text / condition / speaker rows are all-pad audio rows; rows after the text may be a prefilled audio opening

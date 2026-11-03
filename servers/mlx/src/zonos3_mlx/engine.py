@@ -1,11 +1,10 @@
 """The MLX server's models, companions and request planning.
 
 ``Engine`` owns the loaded networks (LM, codec decoder, speaker encoder, the lazily loaded reference encoder) and the
-companion request logic (steering bundle, emotion and accent directions with their calibrations, accent adapters, LACI
-heads, the text normalizer). ``plan_request`` turns a v2 GenerateRequest plus its pre-resolved speaker inputs into the
-``zonos3.reference.synth.PromptPlan`` the scheduler runs: a port of ``zonos3.reference.synth.plan_prompt`` with the
-sgl server's request rules (api_server ``_tts_generate_msg``, ``_apply_request_emotion``, ``_apply_steering_accent``,
-``_apply_request_controls``, ``_span_follow``) and the tokenizer worker's prompt layout.
+companion request logic (steering bundle, accent adapters, LACI heads, the text normalizer). ``plan_request`` turns a
+v2 GenerateRequest plus its pre-resolved speaker inputs into the ``zonos3.reference.synth.PromptPlan`` the scheduler
+runs: a port of ``zonos3.reference.synth.plan_prompt`` with the sgl server's request rules (api_server
+``_tts_generate_msg``, ``_apply_request_controls``, ``_span_follow``) and the tokenizer worker's prompt layout.
 """
 
 from __future__ import annotations
@@ -33,18 +32,11 @@ from zonos3.reference.synth import (
     validate_tag_cfg,
 )
 from zonos3.speaker_cfg import speaker_cfg_twin
-from zonos3.tts.emotion import (
-    HIDDEN_SPACES,
-    EmotionCalibration,
-    EmotionDirections,
-    apply_emotion,
-    emotion_hidden_delta,
-)
 from zonos3.tts.laci import LaciHeads
 from zonos3.tts.markup import strip_nonverbal_markup
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
-from zonos3.tts.steering import HIDDEN_SPACE, RAW_SPACE, SteeringBundle, resolve_controls
+from zonos3.tts.steering import SteeringBundle, resolve_controls
 
 from zonos3_mlx import companions
 from zonos3_mlx.models.codec_decoder import CodecDecoder
@@ -55,8 +47,7 @@ MAX_SILENCE_PREFILL_FRAMES = 30
 MAX_REFERENCE_FRAMES = int(os.environ.get("ZONOS3_MAX_REFERENCE_FRAMES", "900"))
 COMPANIONS = {
     "dac": "dac.gguf", "spk_encoder": "spk-encoder.gguf", "dac_encoder": "dac-encoder.gguf",
-    "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "emotion_directions": "emotion.gguf",
-    "accent_adapters": "accents.gguf", "accent_directions": "accent-directions.gguf",
+    "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "accent_adapters": "accents.gguf",
 }
 
 
@@ -162,25 +153,7 @@ class Engine:
 
             self.speaker_encoder = SpeakerEncoder.load(paths["spk_encoder"])
         self.bundle: SteeringBundle | None = companions.load_steer(paths["steer"]) if paths.get("steer") else None
-        self.emotion: EmotionDirections | None = None
-        self.emotion_calibration: EmotionCalibration | None = None
-        if paths.get("emotion_directions"):
-            emotion, calibration = companions.load_directions(paths["emotion_directions"])
-            if not emotion.is_empty():
-                self.emotion, self.emotion_calibration = emotion, calibration
-        self.accent_directions: EmotionDirections | None = None
-        self.accent_calibration: EmotionCalibration | None = None
-        if paths.get("accent_directions"):
-            directions, calibration = companions.load_directions(paths["accent_directions"])
-            if directions.space not in (HIDDEN_SPACE, RAW_SPACE):
-                raise ValueError(f"{paths['accent_directions']}: accent directions need an attnres_source or raw set")
-            self.accent_directions, self.accent_calibration = directions, calibration
         self.accents = companions.AccentBank.load(paths["accent_adapters"]) if paths.get("accent_adapters") else None
-        clash = sorted(set(self.adapter_accents()) & set(self.steering_accents()))
-        if clash:
-            raise ValueError(f"accent names in both the accent adapters and the accent directions: {clash}")
-        if self.emotion is not None and self.emotion.space == "proj" and self.steering_sources():
-            raise ValueError("hidden-space steering cannot be combined with proj-space emotion directions")
         self.laci_heads = {lang: LaciHeads.load(path) for lang, path in (laci_heads or {}).items()}
         self.laci_paths = dict(laci_heads or {})
         for lang, heads in self.laci_heads.items():
@@ -212,24 +185,11 @@ class Engine:
     def prompt_builder(self) -> TTSPromptBuilder:
         return self._builder
 
-    def adapter_accents(self) -> list[str]:
+    def accent_names(self) -> list[str]:
         return [] if self.accents is None else list(self.accents.names)
 
-    def steering_accents(self) -> list[str]:
-        d = self.accent_directions
-        return [] if d is None else d.emotion_names + d.axis_names
-
-    def accent_names(self) -> list[str]:
-        return self.adapter_accents() + self.steering_accents()
-
     def steering_sources(self) -> tuple[int, ...]:
-        sources = set()
-        for directions in (self.emotion, self.accent_directions):
-            if directions is not None and directions.space == HIDDEN_SPACE:
-                sources.add(int(directions.source_index))
-        if self.bundle is not None:
-            sources.update(self.bundle.hidden_sources)
-        return tuple(sorted(sources))
+        return () if self.bundle is None else tuple(self.bundle.hidden_sources)
 
     @property
     def has_reference_encoder(self) -> bool:
@@ -276,80 +236,17 @@ class Engine:
 # ----------------------------------------------------------------------------------------------------- planning
 
 
-def apply_request_emotion(engine: Engine, embedding, *, speaker_id, enabled, sliders, valence, arousal, strength,
-                          calibrated):
-    """(speaker embedding, hidden delta) of the emotion fields (sgl ``_apply_request_emotion``)."""
-    if not enabled:
-        return embedding, None
-    valence, arousal = float(valence), float(arousal)
-    if not (bool(sliders) or valence != 0.0 or arousal != 0.0):
-        return embedding, None
-    directions = engine.emotion
-    if directions is None:
-        raise ValueError("Emotion control requested but no emotion directions are configured for this model. "
-                         "Place emotion.gguf next to the backbone or pass --emotion-directions.")
-    if embedding is None and directions.space != HIDDEN_SPACE:
-        return embedding, None
-    cal = engine.emotion_calibration
-    if cal is not None and calibrated:
-        sliders = {e: float(w) * cal.pole_strength(speaker_id, e, float(w)) for e, w in (sliders or {}).items()}
-        valence = valence * cal.pole_strength(speaker_id, "valence", valence)
-        arousal = arousal * cal.pole_strength(speaker_id, "arousal", arousal)
-    if directions.space in HIDDEN_SPACES:
-        return embedding, emotion_hidden_delta(directions, sliders=sliders, valence=valence, arousal=arousal,
-                                               strength=strength, strict=True)
-    return apply_emotion(embedding, directions=directions, sliders=sliders, valence=valence, arousal=arousal,
-                         strength=strength, strict=True), None
-
-
-def layout_steering_delta(engine: Engine, emotion_delta, accent_delta):
-    """The emotion / accent deltas in the per-source layout of ``steering_sources`` (sgl ``_layout_steering_delta``)."""
-    if emotion_delta is None and accent_delta is None:
-        return None
-    sources = engine.steering_sources()
-    if len(sources) <= 1:
-        if emotion_delta is None:
-            return accent_delta
-        return emotion_delta if accent_delta is None else emotion_delta + accent_delta
-    hidden = (emotion_delta if emotion_delta is not None else accent_delta).numel()
-    out = torch.zeros(len(sources), hidden, dtype=torch.float32)
-    if emotion_delta is not None:
-        out[sources.index(int(engine.emotion.source_index))] += emotion_delta
-    if accent_delta is not None:
-        out[sources.index(int(engine.accent_directions.source_index))] += accent_delta
-    return out.flatten()
-
-
 def resolve_accent(engine: Engine, accent, strength):
-    """(accent or None, strength) of a request (sgl ``_resolve_tts_request_accent``)."""
+    """(accent adapter or None, strength) of a request (sgl ``_resolve_tts_request_accent``)."""
     if accent is None or accent == "" or accent == "none":
         return None, 1.0
     names = engine.accent_names()
     if accent not in names:
-        loaded = ", ".join(names) or "none (place accents.gguf or accent-directions.gguf next to the backbone)"
+        loaded = ", ".join(names) or "none (load accent adapters)"
         raise ValueError(f"Unknown accent {accent!r}; loaded accents: {loaded}.")
     if not math.isfinite(float(strength)):
         raise ValueError(f"accent_strength must be finite, got {strength!r}.")
     return accent, float(strength)
-
-
-def apply_steering_accent(engine: Engine, accent, strength, speaker_id, embedding, emotion_delta, calibrated):
-    """(adapter accent or None, speaker embedding, delta) (sgl ``_apply_steering_accent``)."""
-    steering = engine.accent_directions
-    if accent is None or steering is None or accent not in engine.steering_accents():
-        return accent, embedding, layout_steering_delta(engine, emotion_delta, None)
-    cal = engine.accent_calibration
-    dose = cal.strength(speaker_id, accent) if (cal is not None and calibrated) else 1.0
-    if not float(strength) or not float(dose):
-        return None, embedding, layout_steering_delta(engine, emotion_delta, None)
-    if steering.space == RAW_SPACE:
-        if embedding is None:
-            raise ValueError(f"Accent {accent!r} is a speaker-embedding direction and needs speaker_mode=embedding.")
-        embedding = apply_emotion(embedding, directions=steering, sliders={accent: float(strength) * float(dose)},
-                                  strict=True)
-        return None, embedding, layout_steering_delta(engine, emotion_delta, None)
-    vec = steering.named.get(accent, steering.axes.get(accent))
-    return None, embedding, layout_steering_delta(engine, emotion_delta, (float(strength) * float(dose)) * vec)
 
 
 @dataclass
@@ -376,10 +273,9 @@ class EditLayout:
 
 @dataclass
 class Plan(PromptPlan):
-    """The reference PromptPlan plus the server-side fields: the request's speaker key (calibration), its LACI take
-    (dub), and its edit layout (speech editing, codes-only)."""
+    """The reference PromptPlan plus the server-side fields: its LACI take (dub) and its edit layout (speech editing,
+    codes-only)."""
 
-    speaker_id: str | None = None
     laci_take: LaciTake | None = None
     edit: EditLayout | None = None
     follow_language: str | None = None
@@ -393,38 +289,28 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
     c = engine.config
     req = parse_request(request)
     validate_tag_cfg(req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale,
-                     emotion_cfg_scale=req.emotion_cfg_scale)
+                     controls_cfg_scale=req.controls_cfg_scale)
     condition_values = resolve_condition_buckets(c, req.condition_buckets, req.condition_values)
     mode = speaker.mode if speaker is not None else "reference"
     embedding = None if speaker is None else speaker.embedding
     reference_codes = None if speaker is None else speaker.reference_codes
-    speaker_id = req.speaker_embedding_id
-    embedding, delta = apply_request_emotion(
-        engine, embedding, speaker_id=speaker_id, enabled=req.emotion_enabled, sliders=req.emotion_sliders,
-        valence=req.emotion_valence, arousal=req.emotion_arousal, strength=req.emotion_strength,
-        calibrated=req.emotion_calibrated)
     language = normalize_language(req.language)
     if req.max_tokens is not None and int(req.max_tokens) <= 0:
         raise ValueError("max_tokens must be positive.")
     max_tokens = engine.max_frames if req.max_tokens is None else min(int(req.max_tokens), engine.max_frames)
     accent, accent_strength = resolve_accent(engine, req.accent, req.accent_strength)
-    accent, embedding, delta = apply_steering_accent(engine, accent, accent_strength, speaker_id, embedding, delta,
-                                                     req.emotion_calibrated)
     sources = engine.steering_sources()
-    schedule = span_chars = None
+    delta = schedule = span_chars = None
     if req.controls or req.control_spans:
         bundle = engine.bundle
         if bundle is None:
             raise ValueError("This server has no steering bundle (place steer.gguf next to the backbone or pass "
                              "--steer); `controls` are unavailable.")
-        if req.emotion_enabled and (req.emotion_sliders or req.emotion_valence or req.emotion_arousal):
-            raise ValueError("`controls` and the emotion_* fields cannot be combined; send the emotion as controls.")
         resolved = resolve_controls(bundle, req.controls, list(req.control_spans or []), text=req.text,
                                     speaker_embedding=embedding, sources=sources, hidden_size=c.dim,
                                     frames_per_char=req.control_span_rate)
         embedding, schedule, span_chars = resolved.speaker_embedding, resolved.schedule, resolved.span_chars
-        if resolved.hidden_delta is not None:
-            delta = resolved.hidden_delta if delta is None else delta + resolved.hidden_delta
+        delta = resolved.hidden_delta
     if hidden_delta is not None:
         delta = hidden_delta if delta is None else delta + hidden_delta
     follow_chars = follow_gate = None
@@ -439,8 +325,8 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
         if not (has_reference or has_embedding):
             raise ValueError("Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, "
                              "or speaker_mode=embedding with a clip or an embedding")
-        if req.emotion_cfg_scale != 1.0:
-            raise ValueError("Speaker and emotion CFG cannot be combined")
+        if req.controls_cfg_scale != 1.0:
+            raise ValueError("Speaker and controls CFG cannot be combined")
     builder = engine.prompt_builder()
     validate_phoneme_groups(builder.config.text_tokenizer_spec, req.text)
     if req.laci:
@@ -449,8 +335,8 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
         if language not in engine.laci_heads:
             raise ValueError(f"No LACI alignment heads for language {language!r} (configured: "
                              f"{', '.join(sorted(engine.laci_heads))})")
-        if float(req.speaker_cfg_scale) != 1.0 or float(req.emotion_cfg_scale) != 1.0:
-            raise ValueError("LACI needs speaker_cfg_scale = emotion_cfg_scale = 1")
+        if float(req.speaker_cfg_scale) != 1.0 or float(req.controls_cfg_scale) != 1.0:
+            raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = 1")
         if float(req.tag_cfg_scale) != 1.0:
             raise ValueError("LACI needs tag_cfg_scale = 1")
     elif laci_take is not None:
@@ -509,16 +395,15 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
         plain_ids = torch.cat((t[:lead], plain_rows.to(t.dtype)), dim=0)
 
     # ---- CFG twin (the scheduler's _schedule_prefill)
-    hidden = bool(sources)
     tag_cfg = float(req.tag_cfg_scale) > 1.0
-    emotion_cfg = delta is not None and embedding is not None and float(req.emotion_cfg_scale) != 1.0
+    controls_cfg = delta is not None and embedding is not None and float(req.controls_cfg_scale) != 1.0
     speaker_cfg = float(req.speaker_cfg_scale) != 1.0
-    if speaker_cfg and emotion_cfg:
-        raise ValueError("Speaker and emotion CFG cannot be combined")
-    if tag_cfg and (speaker_cfg or float(req.emotion_cfg_scale) != 1.0):
-        raise ValueError("Tag CFG cannot be combined with speaker or emotion CFG")
+    if speaker_cfg and controls_cfg:
+        raise ValueError("Speaker and controls CFG cannot be combined")
+    if tag_cfg and (speaker_cfg or float(req.controls_cfg_scale) != 1.0):
+        raise ValueError("Tag CFG cannot be combined with speaker or controls CFG")
     cond = Branch(t.to(torch.int32), embedding, speaker_row if embedding is not None else -1,
-                  None if hidden else delta, condition_values, condition_token_start, steered=True)
+                  condition_values=condition_values, condition_token_start=condition_token_start)
     twin = None
     cfg_kind, cfg_scale = None, 1.0
     if speaker_cfg:
@@ -526,15 +411,15 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
         spec = speaker_cfg_twin(msg, t, n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id, text_vocab=c.text_vocab,
                                 speaker_token_position=max(speaker_row, 0), condition_values=condition_values,
                                 condition_token_start=condition_token_start, condition_unknown=c.condition_n_buckets)
-        twin = Branch(spec.input_ids.to(torch.int32), None, -1, None, spec.condition_values,
-                      spec.condition_token_start, steered=True)
+        twin = Branch(spec.input_ids.to(torch.int32), condition_values=spec.condition_values,
+                      condition_token_start=spec.condition_token_start)
         cfg_kind, cfg_scale = "speaker", float(req.speaker_cfg_scale)
     elif tag_cfg:
         twin = replace(cond, input_ids=plain_ids.to(torch.int32))
         cfg_kind, cfg_scale = "tag", float(req.tag_cfg_scale)
-    elif emotion_cfg:
-        twin = replace(cond, proj_delta=None, steered=False)
-        cfg_kind, cfg_scale = "emotion", float(req.emotion_cfg_scale)
+    elif controls_cfg:
+        twin = replace(cond, steered=False)
+        cfg_kind, cfg_scale = "controls", float(req.controls_cfg_scale)
     prompt_len = max(len(cond.input_ids), len(twin.input_ids)) if twin is not None else len(cond.input_ids)
     if prompt_len >= c.max_seqlen:
         raise ValueError(f"TTS input len {prompt_len} exceeds {c.max_seqlen}")
@@ -544,9 +429,9 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
         request=req, text=text, language=language, cond=cond, twin=twin, cfg_kind=cfg_kind, cfg_scale=cfg_scale,
         reference_prefix_length=reference_prefix_length,
         prefill_rows=None if silence is None else silence.to(torch.int32),
-        context_codes=context_codes, sources=sources, hidden_delta=delta if hidden else None, schedule=schedule,
+        context_codes=context_codes, sources=sources, hidden_delta=delta, schedule=schedule,
         follow_tokens=follow_tokens, follow_gate=follow_gate,
         accent=None if accent is None else (accent, accent_strength), max_tokens=max_tokens, seed=seed,
-        laci=language if req.laci else None, speaker_id=speaker_id, laci_take=laci_take, edit=edit,
+        laci=language if req.laci else None, laci_take=laci_take, edit=edit,
         follow_language=language if follow_tokens is not None else None,
     )

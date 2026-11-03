@@ -34,7 +34,6 @@ static inline void mp_print_missing_hint(const char * name, const std::string & 
                           label == "ssl-teacher.gguf" ? "ssl-teacher" :
                           label == "spk-encoder.gguf" ? "speaker-encoder" :
                           label == "steer.gguf" ? "steer" :
-                          label == "emotion.gguf" || label == "accent-directions.gguf" ? "directions" :
                           label == "accents.gguf" ? "accents" :
                           "lm";
     fprintf(stderr, "error: %s not found (tried: %s)\n"

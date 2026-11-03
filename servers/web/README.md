@@ -8,8 +8,8 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 | --- | --- |
 | `/v2/generate` (streamed / buffered, pcm / wav), `/v1/audio/speech` | speech editing, dubbing (`/v2/dub/capabilities` answers `enabled: false`) |
 | voices: default voices (shipped codes), session uploads (reference encoder + MECT speaker encoder), embedding files, slerp blends | phonemize, text normalization |
-| `/v2/controls` steering, emotion and accent directions, condition rows | server projects (the studio keeps projects in the browser) |
-| speaker, tag and emotion CFG; LACI and span-follow reading | |
+| `/v2/controls` steering-bundle controls (with set calibrations), condition rows | server projects (the studio keeps projects in the browser) |
+| speaker, tag and controls CFG; LACI and span-follow reading | accent adapters (`accents` is empty) |
 | capabilities, health, models | |
 
 ## Layout
@@ -19,7 +19,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 | `src/client.ts` | Main-thread facade (`dist/engine.js`): `engine.init`, `localFetch`; decodes audio the worker cannot (default voices, `speaker_audio_base64`) |
 | `src/worker.ts` | The worker: loads models and companions, warms up, serves requests one at a time |
 | `src/api/` | The routes (port of `servers/ggml/src/server/`): `router`, `generate` (resolve + one-request scheduler), `speakers`, `capabilities`, `validate` (spec validation, FastAPI 422 shape) |
-| `src/request/` | Pure ports of the ggml request logic: steering bundle, emotion / accent directions, markup, LACI, span follow |
+| `src/request/` | Pure ports of the ggml request logic: steering bundle, markup, LACI, span follow |
 | `src/backbone.ts`, `dac.ts`, `istft.ts`, `speaker.ts`, `encoder.ts`, `ssl.ts`, `rvq.ts` | The networks on WebGPU (`src/gpu/kernels/*.wgsl`) and their host parts |
 | `scripts/export_web_models.py` | GGUF → sharded web format (`zonos3-web-v1`), voices, companions, LACI heads |
 | `harness/` | Headless-Chrome harness: `server.mjs` (HTTP front for conformance), `parity.mjs` (WebGPU parity checks) |

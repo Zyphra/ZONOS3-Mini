@@ -107,18 +107,18 @@ class TTSReq:
     decode_context_codes: torch.Tensor | None = None
     prefill_rows: torch.Tensor | None = None
     context_sent: bool = False               # set once the detokenizer got them (first emitted row)
-    # Optional emotion delta added to the projected speaker hidden vector
-    # (post speaker_projection); 1D CPU float32 tensor of shape (hidden_size,).
-    speaker_emotion_delta: torch.Tensor | None = None
+    # Hidden-space steering delta of the request's controls, added on every generated frame: one hidden-size slot per
+    # steered Full AttnRes bank source, flattened; 1D CPU float32 tensor.
+    steering_delta: torch.Tensor | None = None
     # Span steering (zonos3.tts.steering): [K, 3 + delta] rows of (start frame, end frame, ramp frames, delta in the
-    # speaker_emotion_delta layout), added on the generated frames they cover.
+    # steering_delta layout), added on the generated frames they cover.
     steer_schedule: torch.Tensor | None = None
     # Span steering by reading position (zonos3.tts.span_follow.SpanFollower; the speaker-CFG twin shares its
     # request's): replaces the schedule's frame placement of the same span deltas.
     span_follower: "SpanFollower | None" = None
     # Classifier-free guidance. On the conditional request, cfg_scale != 1.0 and
     # cfg_twin points at its paired twin request with its own prompt and cache:
-    # emotion CFG drops the emotion delta, speaker CFG the speaker conditioning,
+    # controls CFG drops the steering delta and schedule, speaker CFG the speaker conditioning,
     # tag CFG the nonverbal markup in the text. is_cfg_uncond marks the twin
     # (internal, emits no output). guided = twin + cfg_scale*(cond - twin).
     cfg_scale: float = 1.0
@@ -155,15 +155,15 @@ class TTSReq:
                 )
             self.speaker_embedding = emb.to(dtype=torch.float32, device="cpu")
 
-        if self.speaker_emotion_delta is not None:
-            d = self.speaker_emotion_delta
+        if self.steering_delta is not None:
+            d = self.steering_delta
             if d.dim() == 2 and d.shape[0] == 1:
                 d = d.squeeze(0)
             if d.dim() != 1:
                 raise ValueError(
-                    f"speaker_emotion_delta must be 1D or (1, D), got shape {tuple(d.shape)}"
+                    f"steering_delta must be 1D or (1, D), got shape {tuple(d.shape)}"
                 )
-            self.speaker_emotion_delta = d.to(dtype=torch.float32, device="cpu")
+            self.steering_delta = d.to(dtype=torch.float32, device="cpu")
 
         if self.steer_schedule is not None:
             s = self.steer_schedule
@@ -190,14 +190,14 @@ class TTSReq:
         if self.span_follower is not None:
             span = self.span_follower.delta(frame)
         elif self.steer_schedule is None:
-            return self.speaker_emotion_delta
+            return self.steering_delta
         else:
             from zonos3.tts.steering import schedule_delta
 
             span = schedule_delta(self.steer_schedule, frame)
         if span is None:
-            return self.speaker_emotion_delta
-        return span if self.speaker_emotion_delta is None else self.speaker_emotion_delta + span
+            return self.steering_delta
+        return span if self.steering_delta is None else self.steering_delta + span
 
     @property
     def remain_len(self) -> int:
@@ -286,9 +286,6 @@ class TTSBatch:
     # Optional per-batch speaker conditioning data (set by TTS scheduler).
     speaker_emb_values: torch.Tensor | None = field(default=None, init=False)
     speaker_token_positions: torch.Tensor | None = field(default=None, init=False)
-    # Optional post-projection hidden-space emotion deltas, aligned with
-    # speaker_emb_values / speaker_token_positions.
-    speaker_emotion_delta_values: torch.Tensor | None = field(default=None, init=False)
     # Condition rows inside this extend span, per table: (bucket ids, packed positions) or None (set by the scheduler).
     condition_rows: list | None = field(default=None, init=False)
     # Per-token accent slots / strengths (set by the scheduler when adapters are

@@ -78,6 +78,6 @@ export function fixtureSpeakers(spec: ControlsSpec): Speaker[] {
     speaker_modes: ['embedding', 'reference'],
     embedding_dim: spec.embedding_dim,
     transcript: null,
-    emotion_disabled: false,
+    disabled_controls: [],
   }));
 }

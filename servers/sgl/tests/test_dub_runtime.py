@@ -343,16 +343,16 @@ def test_server_take_on_an_extended_scale_carries_its_bucket_and_deltas(monkeypa
     assert A._dub_take_request({**job, "bucket": 5, "rate_scale": None}).condition_buckets == {"speaking_rate": 5}
     for adjust in (True, False):
         base = torch.ones(4)
-        msg = TTSTokenizeMsg(uid=1, text="Oui.", sampling_params=TTSSamplingParams(), speaker_emotion_delta=base,
+        msg = TTSTokenizeMsg(uid=1, text="Oui.", sampling_params=TTSSamplingParams(), steering_delta=base,
                              laci_adjust_rate=adjust)
         A._dub_take_rate_steering(config, msg, {**job, "bucket": -1})
         assert (msg.laci_rate_first, msg.laci_rate_bucket, msg.laci_rate_edges) == (-1, -1, list(FR_SCALE.edges))
-        assert torch.allclose(msg.speaker_emotion_delta, torch.full((4,), 1 - 0.99))
+        assert torch.allclose(msg.steering_delta, torch.full((4,), 1 - 0.99))
         assert len(msg.laci_rate_deltas) == 13 and msg.laci_rate_deltas[1 + 5] is base  # row buckets: own delta only
         assert torch.allclose(msg.laci_rate_deltas[1 + 11], torch.full((4,), 1 + 1.93))
     row_only = TTSTokenizeMsg(uid=2, text="Oui.", sampling_params=TTSSamplingParams())
     A._dub_take_rate_steering(config, row_only, {**job, "bucket": 5, "rate_scale": None})
-    assert row_only.laci_rate_edges is None and row_only.speaker_emotion_delta is None
+    assert row_only.laci_rate_edges is None and row_only.steering_delta is None
 
 
 def test_transcribe_uses_the_asr_worker_and_detects_the_language():

@@ -65,20 +65,14 @@ class GenerationOptions(_Strict):
     speaker_blend_embedding_id_a: str | None = None
     speaker_blend_embedding_id_b: str | None = None
     speaker_blend_t: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
-    emotion_enabled: bool = False
-    emotion_sliders: Dict[str, float] | None = None
-    emotion_valence: float = 0.0
-    emotion_arousal: float = 0.0
-    emotion_strength: float = 1.0
-    # Use the per-speaker calibrated dose for each slider; false makes emotion_strength the raw dose.
-    emotion_calibrated: bool = True
-    # Guidance on the emotion injection through a no-emotion twin (1 = off).
-    emotion_cfg_scale: float = 1.0
+    # Guidance on the hidden-space delta of controls / control_spans through a twin without it (1 = off; needs
+    # speaker_mode=embedding).
+    controls_cfg_scale: float = 1.0
     # Reference CFG: uncond + scale * (cond - uncond) (1 = off).
     speaker_cfg_scale: float = Field(default=1.0, ge=0.0, allow_inf_nan=False)
-    # Tagged-vs-plain guidance on nonverbal markup (1 = off; above 1 needs markup and speaker / emotion CFG at 1).
+    # Tagged-vs-plain guidance on nonverbal markup (1 = off; above 1 needs markup and speaker / controls CFG at 1).
     tag_cfg_scale: float = Field(default=1.0, ge=1.0, le=4.0)
-    # An accent adapter or accent direction of GET /v2/capabilities "accents" (None = the base model).
+    # An accent adapter of GET /v2/capabilities "accents" (None = the base model).
     accent: str | None = None
     accent_strength: float = 1.0
     # Steering-bundle controls "<set>.<direction>" -> dose (GET /v2/controls).

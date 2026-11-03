@@ -1,4 +1,4 @@
-"""tools/convert_gguf.py on tiny random inputs: lm (Zonos3LM -> GGUF through LM_NAMES), directions, accents."""
+"""tools/convert_gguf.py on tiny random inputs: lm (Zonos3LM -> GGUF through LM_NAMES), steer, accents."""
 from __future__ import annotations
 
 import json
@@ -171,20 +171,28 @@ def test_lm_rejects_qat_outtype_without_bake(tmp_path):
                            "-o", str(tmp_path / "x.gguf")])
 
 
-def test_directions(tmp_path):
-    root = tmp_path / "dirs"
-    root.mkdir()
+def test_steer(tmp_path):
     rng = np.random.default_rng(0)
-    vectors = {name: rng.standard_normal(16).astype(np.float32) for name in ("happy", "sad", "valence")}
-    for name, vec in vectors.items():
-        np.save(root / f"{name}.npy", vec)
-    (root / "manifest.json").write_text(json.dumps({
-        "dim": 16, "space": "attnres_source", "source_index": 7,
-        "directions": {"happy": {"file": "happy.npy", "tier": "strong"}, "sad": {"file": "sad.npy"},
-                       "valence": {"file": "valence.npy", "kind": "axis"}}}))
-    (root / "calibration.json").write_text('{"default": {"happy": 1.5}}')
-    out = tmp_path / "emotion.gguf"
-    convert_gguf.main(["directions", str(root), "-o", str(out)])
+    vectors = {}
+    for set_name, dim, space, entries in (
+            ("mood", 16, "attnres_source", {"happy": {}, "valence": {"kind": "axis"}}),
+            ("pitch", 8, "raw", {"pitch": {"kind": "axis"}})):
+        root = tmp_path / set_name
+        root.mkdir()
+        for name in entries:
+            vectors[f"{set_name}.{name}"] = rng.standard_normal(dim).astype(np.float32)
+            np.save(root / f"{name}.npy", vectors[f"{set_name}.{name}"])
+        manifest = {"dim": dim, "space": space,
+                    "directions": {name: {"file": f"{name}.npy", **entry} for name, entry in entries.items()}}
+        if space == "attnres_source":
+            manifest["source_index"] = 7
+        (root / "manifest.json").write_text(json.dumps(manifest))
+    calibration = '{"default": {"happy": 1.5}, "by_speaker": {"spk": {"valence-": 0}}}'
+    (tmp_path / "mood" / "calibration.json").write_text(calibration)
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps({"name": "tiny", "sets": {"mood": "mood", "pitch": "pitch"}}))
+    out = tmp_path / "steer.gguf"
+    convert_gguf.main(["steer", str(bundle), "-o", str(out)])
     reader = GGUFReader(out)
     fields = reader.fields
 
@@ -192,15 +200,16 @@ def test_directions(tmp_path):
         field = fields[key]
         return [bytes(field.parts[i]).decode() for i in field.data]
 
-    assert strings("zonos3_directions.names") == ["happy", "sad"]
-    assert strings("zonos3_directions.axes") == ["valence"]
-    assert strings("zonos3_directions.space") == ["attnres_source"]
-    assert int(fields["zonos3_directions.source_index"].parts[-1][0]) == 7
-    assert json.loads(strings("zonos3_directions.calibration")[0]) == {"default": {"happy": 1.5}}
-    assert json.loads(strings("zonos3_directions.tiers")[0]) == {"happy": "strong"}
-    assert [t.name for t in reader.tensors] == ["dir.named.0", "dir.named.1", "dir.axis.0"]
-    for tensor, name in zip(reader.tensors, ("happy", "sad", "valence")):
-        np.testing.assert_array_equal(np.asarray(tensor.data), vectors[name])
+    assert strings("zonos3_steer.set.names") == ["mood", "pitch"]
+    assert strings("zonos3_steer.set.spaces") == ["attnres_source", "raw"]
+    sources = fields["zonos3_steer.set.sources"]
+    assert [int(sources.parts[i][0]) for i in sources.data] == [7, -1]
+    assert strings("zonos3_steer.set.calibrations") == [calibration, ""]
+    assert strings("zonos3_steer.direction.ids") == ["mood.happy", "mood.valence", "pitch.pitch"]
+    assert strings("zonos3_steer.direction.kinds") == ["named", "axis", "axis"]
+    assert [t.name for t in reader.tensors] == ["steer.dir.0", "steer.dir.1", "steer.dir.2"]
+    for tensor, did in zip(reader.tensors, ("mood.happy", "mood.valence", "pitch.pitch")):
+        np.testing.assert_array_equal(np.asarray(tensor.data), vectors[did])
 
 
 def test_accents(tmp_path):

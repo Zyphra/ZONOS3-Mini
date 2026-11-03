@@ -146,8 +146,10 @@ if ! command -v curl >/dev/null 2>&1; then echo "== server: skipped (no curl) ==
 echo "== server ($SRV) =="
 PORT="${ZONOS3_TEST_PORT:-19187}"
 BASE="http://127.0.0.1:$PORT"
+# default voice ci.npy = the speaker embedding fixture; dummy-steer.gguf's set calibrations disable two controls for it
+mkdir -p "$WORK/voices" && cp tests/fixtures/speaker-embedding.npy "$WORK/voices/ci.npy"
 "$SRV" "$MODEL" --dac "$DAC" --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
-  --studio-projects-dir "$WORK/projects" >"$WORK/srv.log" 2>&1 &
+  --studio-projects-dir "$WORK/projects" --tts-default-voices-dir "$WORK/voices" >"$WORK/srv.log" 2>&1 &
 SRV_PID=$!
 
 up=0
@@ -214,14 +216,30 @@ code="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/v2/generate" \
 pass "speaker CFG without a speaker prompt -> 400"
 
 # steering: controls document, request controls/spans, errors, speaker embedding, studio
-curl -fsS "$BASE/v2/controls" | grep -q '"style.tempo"' || fail "/v2/controls missing style.tempo"
-pass "/v2/controls"
+controls="$(curl -fsS "$BASE/v2/controls")"
+echo "$controls" | grep -q '"style.tempo"' || fail "/v2/controls missing style.tempo"
+echo "$controls" | grep -q '"mood":{"space":"attnres_source","modes":\["embedding","reference"\],"source_index":5,"calibration":{"default":{"valence":1.5},' \
+  || fail "/v2/controls missing the mood set calibration"
+pass "/v2/controls (+ set calibrations)"
+curl -fsS "$BASE/v2/speakers" | grep -o '{[^{}]*"id":"default_19139adcad9351f1"[^{}]*}' \
+  | grep -q '"disabled_controls":\["style.whisper","mood.valence-"\]' \
+  || fail "/v2/speakers: the calibrated default voice must list its disabled_controls"
+pass "/v2/speakers disabled_controls"
 curl -fsS -D "$WORK/steer.h" "$BASE/v2/generate" \
   -d "{\"text\":\"ci steer\",\"stream\":false,\"format\":\"wav\",\"seed\":1,\"max_tokens\":16,\"speaker_mode\":\"embedding\",\"speaker_embedding_base64\":\"$EMB_B64\",\"speaker_cfg_scale\":1.5,\"controls\":{\"who.gender\":1,\"style.tempo\":-1},\"control_spans\":[{\"start\":0,\"end\":2,\"controls\":{\"mood.valence\":2}}]}" \
   -o "$WORK/steer-srv.wav" || fail "/v2/generate (controls + spans) request failed"
 is_riff "$WORK/steer-srv.wav" || fail "/v2/generate (controls) did not return a RIFF WAV"
 grep -qi '^x-control-span-follow: rate' "$WORK/steer.h" || fail "control_spans must answer X-Control-Span-Follow: rate"
 pass "/v2/generate controls + control_spans -> WAV"
+# controls CFG: the twin is the same prompt without the hidden delta (needs an embedding speaker)
+curl -fsS "$BASE/v2/generate" \
+  -d "{\"text\":\"ci controls cfg\",\"stream\":false,\"format\":\"wav\",\"seed\":1,\"max_tokens\":16,\"speaker_mode\":\"embedding\",\"speaker_embedding_base64\":\"$EMB_B64\",\"controls\":{\"mood.valence\":2},\"controls_cfg_scale\":2.0}" \
+  -o "$WORK/ccfg.wav" || fail "/v2/generate (controls_cfg_scale) request failed"
+is_riff "$WORK/ccfg.wav" || fail "/v2/generate (controls_cfg_scale) did not return a RIFF WAV"
+pass "/v2/generate controls + controls_cfg_scale -> WAV"
+body="$(curl -sS -w '\n%{http_code}' "$BASE/v2/generate" -d '{"text":"x","emotion_enabled":true}')"
+[ "${body##*$'\n'}" = 422 ] || fail "the removed emotion_* fields must be a 422"
+pass "removed emotion_enabled -> 422"
 body="$(curl -sS -w '\n%{http_code}' "$BASE/v2/generate" -d '{"text":"x","controls":{"nope.x":1}}')"
 [ "${body##*$'\n'}" = 400 ] && echo "$body" | grep -q "Unknown control" || fail "unknown control must be a 400 'Unknown control'"
 pass "unknown control -> 400"

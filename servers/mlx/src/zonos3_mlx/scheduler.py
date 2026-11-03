@@ -187,7 +187,7 @@ class Scheduler:
             if steer is not None:
                 hidden = steer(frame)
         return self.engine.lm.forward(
-            ids, state, speaker_rows=branch.speaker_rows(), proj_deltas=branch.proj_deltas(),
+            ids, state, speaker_rows=branch.speaker_rows(),
             condition_rows=branch.condition_rows(), hidden_deltas=hidden, accents=a.accents,
             probe=a.probe.spec() if with_probe and a.probe is not None else None)
 
@@ -319,10 +319,7 @@ class Scheduler:
                          condition_values=cont.condition_values if cont.condition_values is not None
                          else branch.condition_values)
         if cont.swap_delta:
-            if a.job.plan.sources:
-                a.delta = cont.speaker_emotion_delta
-            else:
-                branch = replace(branch, proj_delta=cont.speaker_emotion_delta)
+            a.delta = cont.steering_delta
         c = self.config
         a.branches = [(branch, LMState())]
         a.generator = torch.Generator().manual_seed(int(cont.seed if cont.seed is not None else a.job.plan.seed))

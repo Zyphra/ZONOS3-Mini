@@ -7,7 +7,6 @@
 !tests/fixtures/*.gguf
 *.npy
 !tests/fixtures/*.npy
-!emotion_directions/*.npy
 *.npz
 *.wav
 # python

@@ -303,42 +303,18 @@ class Engine:
 
     # ------------------------------------------------------------------ hidden-space steering
     def _init_steering(self, config: EngineConfig) -> None:
-        """Enable Full AttnRes bank steering when the served emotion directions, accent
-        directions or steering-bundle sets live in ``attnres_source`` space. Each set steers
-        its own bank source (one slot per distinct source; deltas sum when sets share one).
-        The row buffer is static so the decode CUDA graphs can capture the adds; it is
-        refilled from each decode batch's requests. Speaker-embedding (``raw``) directions
-        change the request's embedding in the API server and need nothing here."""
-        from zonos3.tts.emotion import EmotionDirections
-        from zonos3.tts.steering import HIDDEN_SPACE, load_bundle
+        """Enable Full AttnRes bank steering when steering-bundle sets live in ``attnres_source``
+        space. Each set steers its own bank source (one slot per distinct source; deltas sum when
+        sets share one). The row buffer is static so the decode CUDA graphs can capture the adds;
+        it is refilled from each decode batch's requests. Speaker-embedding (``raw``) sets change
+        the request's embedding in the API server and need nothing here."""
+        from zonos3.tts.directions import HIDDEN_SPACE, DirectionSet
+        from zonos3.tts.steering import load_bundle
 
         self._steer_rows_dirty = False
         self.model.steer_sources = ()
         self.model.steer_rows = None
-        accent_root = getattr(config, "accent_directions", None)
-        accent = EmotionDirections.load(accent_root) if accent_root else None
-        if accent_root and accent is None:
-            raise ValueError(f"--accent-directions {accent_root}: no manifest.json")
-        if accent is not None and accent.space not in ("attnres_source", "raw"):
-            raise ValueError(f"--accent-directions {accent_root}: space must be attnres_source or raw, got {accent.space!r}")
-        steering: dict[str, EmotionDirections] = {}
-        if accent is not None and accent.space == "attnres_source":
-            steering[f"accent ({accent_root})"] = accent
-        root = getattr(config, "tts_emotion_directions_dir", None)
-        directions = None
-        if root:
-            try:
-                directions = EmotionDirections.load(root)
-            except (OSError, ValueError, KeyError) as exc:
-                logger.warning_rank0("Emotion directions at %s not loadable in the engine: %s", root, exc)
-        if directions is not None and directions.space == "attnres_source":
-            steering = {f"emotion ({root})": directions, **steering}
-        elif directions is not None and directions.space == "proj" and steering:
-            # The request's one delta field would carry a speaker-row (proj) emotion
-            # delta and a generated-row accent delta at once.
-            raise ValueError(
-                f"hidden-space accent steering cannot be served with proj-space emotion directions ({root})"
-            )
+        steering: dict[str, DirectionSet] = {}
         bundle_path = getattr(config, "steer_bundle", None)
         if bundle_path:
             bundle = load_bundle(bundle_path)

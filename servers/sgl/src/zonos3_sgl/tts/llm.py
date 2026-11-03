@@ -595,7 +595,7 @@ class TTSLLM(TTSScheduler):
             audio_prefill_history: Per prompt, how many trailing prefill rows count as repetition-penalty history.
             laci: LACI (zonos3.tts.laci), one flag for all prompts or one per prompt: the scheduler guards those
                 generations against skips / hallucinations / truncation with the alignment-head spec of ``language``
-                (``laci_heads`` of the TTSLLM config); speaker / emotion CFG must be 1.
+                (``laci_heads`` of the TTSLLM config); speaker / controls CFG must be 1.
             laci_duration: per LACI prompt, a ``zonos3.tts.laci.DurationTarget`` (or None) its take's length is held
                 to: a miss regenerates the take in the speaking-rate bucket the measured duration asks for
                 (``adjust_rate``; needs ``cache_type="naive"``) or is only recorded.

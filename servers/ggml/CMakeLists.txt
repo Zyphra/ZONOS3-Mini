@@ -112,8 +112,8 @@ target_sources(zonos3 PRIVATE src/dub-plan.cpp src/align-text.cpp)
 target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp)
 # --- end LACI and span-follow ---
 
-# --- Graph features (plan 7.5/7.6/7.8): accent adapters, emotion directions; the alignment probe lives in the graph ---
-target_sources(zonos3 PRIVATE src/zonos3-accent.cpp src/zonos3-emotion.cpp)
+# --- Graph features (plan 7.5/7.6/7.8): accent adapters; the alignment probe lives in the graph ---
+target_sources(zonos3 PRIVATE src/zonos3-accent.cpp)
 # --- end graph features ---
 
 # --- Speech editing (plan 7.11): port of model/src/zonos3/tts/edit.py, the edit_align.py planning and textmatch.py ---
@@ -228,16 +228,14 @@ if (BUILD_TESTING)
     endif()
 endif()
 
-# --- Graph features (plan 7.5/7.6/7.8): CPU invariants of the alignment probe, accent adapters and emotion directions;
-#     also the emotion parity driver of tests/parity/test_ggml_graph.py. Fixtures: scripts/make-dummy-{accents,directions}.py ---
+# --- Graph features (plan 7.5/7.6/7.8): CPU invariants of the alignment probe and accent adapters.
+#     Fixtures: scripts/make-dummy-accents.py ---
 if (BUILD_TESTING)
     add_executable(graph-features tests/graph-features.cpp)
     target_link_libraries(graph-features PRIVATE zonos3)
-    target_include_directories(graph-features PRIVATE vendor)
     add_test(NAME graph-features COMMAND graph-features --selftest
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zonos3.gguf
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-accents.gguf
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-emotion.gguf)
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-accents.gguf)
     set_tests_properties(graph-features PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
 endif()
 # --- end graph features tests ---

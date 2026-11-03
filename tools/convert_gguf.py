@@ -9,10 +9,9 @@
     $T ssl-teacher RELEASE/autoencoder/teacher -o ssl-teacher.gguf
     $T speaker-encoder RELEASE/speaker_encoders/ownmect_s2/ckpt_0037.pth -o spk-encoder.gguf
     $T steer steering/studio_bundle_mect60k.json -o steer.gguf
-    $T directions steering/emotion_directions_mect60k_axes -o emotion.gguf
     $T accents ACCENT_ADAPTER_DIR -o accents.gguf
 
-The server finds `emotion.gguf`, `accent-directions.gguf` and `accents.gguf` beside the backbone GGUF.
+The server finds `steer.gguf` and `accents.gguf` beside the backbone GGUF.
 Every subcommand loads its weights into the module that runs them (zonos3.reference.lm.Zonos3LM, ISTFTCodec,
 MossCodec, transformers' Wav2Vec2BertModel, MECTFbankSpeakerEmbedding) with a strict load, so an unknown or missing
 checkpoint tensor is an error; `--help` on a subcommand describes its GGUF layout.
@@ -1318,8 +1317,9 @@ def cmd_speaker_encoder(args, parser):
 STEER_DOC = """Pack a steering bundle (`studio_bundle_*.json`, zonos3.tts.steering.load_bundle) into one steer.gguf.
 
 The bundle JSON lists direction sets (`{"sets": {name: relative-dir}, "timing": {...}, "ui": {...},
-"rate_extension": {...}}`); each set directory holds a `manifest.json` and one `.npy` per direction. Raw sets move the
-192-d speaker embedding; `attnres_source` sets add to one Full AttnRes bank source of the decoder.
+"rate_extension": {...}}`); each set directory holds a `manifest.json`, one `.npy` per direction and optionally a
+`calibration.json`. Raw sets move the 192-d speaker embedding; `attnres_source` sets add to one Full AttnRes bank
+source of the decoder.
 
 GGUF layout (read by servers/ggml/src/zonos3-steer.cpp):
   general.architecture = "zonos3_steer", general.name
@@ -1328,6 +1328,7 @@ GGUF layout (read by servers/ggml/src/zonos3-steer.cpp):
   zonos3_steer.hidden_size             u32, hidden-set dim (0 without hidden sets)
   zonos3_steer.set.{names,spaces}      [str] bundle order; "raw" | "attnres_source"
   zonos3_steer.set.sources             [i32] bank source index, -1 for raw sets
+  zonos3_steer.set.calibrations        [str] per set, its calibration.json text, or "" without one
   zonos3_steer.direction.{ids,kinds}   [str] Python order (per set: named, then axes); "named" | "axis"
   zonos3_steer.timing                  str, JSON {direction id: [[dose, duration factor], ...]}
   zonos3_steer.ui                      str, JSON (key order preserved)
@@ -1349,12 +1350,14 @@ def cmd_steer(args, parser):
     if not isinstance(spec.get("timing", {}), dict):
         raise SystemExit("error: 'timing' must be an object")
     bundle = load_bundle(bundle_path)
-    set_names, set_spaces, set_sources, ids, kinds, vectors, summary = [], [], [], [], [], [], []
+    set_names, set_spaces, set_sources, set_calibrations, ids, kinds, vectors, summary = [], [], [], [], [], [], [], []
     hidden_dims = set()
     for set_name, directions in bundle.sets.items():
         set_names.append(set_name)
         set_spaces.append(directions.space)
         set_sources.append(int(directions.source_index) if directions.space == HIDDEN_SPACE else -1)
+        calibration = (bundle_path.parent / spec["sets"][set_name]).resolve() / "calibration.json"
+        set_calibrations.append(calibration.read_text() if calibration.is_file() else "")
         if directions.space == HIDDEN_SPACE:
             hidden_dims.add(int(directions.dim))
         for kind, group in (("named", directions.named), ("axis", directions.axes)):
@@ -1384,6 +1387,7 @@ def cmd_steer(args, parser):
     w.add_array(f"{STEER_ARCH}.set.names", set_names)
     w.add_array(f"{STEER_ARCH}.set.spaces", set_spaces)
     w.add_array(f"{STEER_ARCH}.set.sources", set_sources)
+    w.add_array(f"{STEER_ARCH}.set.calibrations", set_calibrations)
     w.add_array(f"{STEER_ARCH}.direction.ids", ids)
     w.add_array(f"{STEER_ARCH}.direction.kinds", kinds)
     w.add_string(f"{STEER_ARCH}.timing", json.dumps(bundle.timing))
@@ -1396,63 +1400,6 @@ def cmd_steer(args, parser):
         print(f"{set_name} {space} {source} {n}")
     n_raw = sum(n for _, sp, _, n in summary if sp == RAW_SPACE)
     print(f"wrote {args.out}: {len(set_names)} sets, {len(ids)} directions ({n_raw} raw, {len(ids) - n_raw} hidden)")
-
-
-# ===================================================================================================== directions
-
-DIRECTIONS_DOC = """Pack one direction set (zonos3.tts.emotion.EmotionDirections.load: emotion directions, accent
-directions) into a zonos3_directions GGUF, e.g. emotion.gguf / accent-directions.gguf beside the backbone.
-
-  zonos3_directions.space          str: raw | lda | proj | attnres_source
-  zonos3_directions.source_index   i32, Full AttnRes bank source (-1 when the space has none)
-  zonos3_directions.dim            u32, direction length
-  zonos3_directions.input_dim      u32, speaker-embedding dim fed to the model
-  zonos3_directions.names          [str] named directions, manifest order
-  zonos3_directions.axes           [str] axis directions (valence, arousal, kind "axis"), manifest order
-  zonos3_directions.calibration    str, calibration.json text, or "" without one
-  zonos3_directions.tiers          str, JSON {name: tier} ("{}" without tiers)
-  zonos3_directions.presets        str, JSON {preset: {control: weight}} ("{}" without presets)
-  zonos3_directions.ref_base_norm  f32, NaN without one
-  dir.named.<i>, dir.axis.<i>      F32 [dim], i = index in names / axes
-  dir.lda.{weight,bias,pinv}       F32 [lda_dim, input_dim] / [lda_dim] / [input_dim, lda_dim] (space lda only)"""
-
-DIR_ARCH = "zonos3_directions"
-
-
-def cmd_directions(args, parser):
-    from zonos3.tts.emotion import CALIBRATION_NAME, EmotionDirections
-
-    directory = Path(args.directory)
-    directions = EmotionDirections.load(directory)
-    if directions is None or directions.is_empty():
-        raise SystemExit(f"error: no directions (manifest.json) at {directory}")
-    calibration = directory / CALIBRATION_NAME
-    w = GGUFWriter(str(args.out), DIR_ARCH)
-    w.add_name(f"zonos3 directions {directory.name}")
-    w.add_string(f"{DIR_ARCH}.space", directions.space)
-    w.add_int32(f"{DIR_ARCH}.source_index", -1 if directions.source_index is None else int(directions.source_index))
-    w.add_uint32(f"{DIR_ARCH}.dim", int(directions.dim))
-    w.add_uint32(f"{DIR_ARCH}.input_dim", directions.expected_input_dim)
-    w.add_array(f"{DIR_ARCH}.names", directions.emotion_names)
-    w.add_array(f"{DIR_ARCH}.axes", directions.axis_names)
-    w.add_string(f"{DIR_ARCH}.calibration", calibration.read_text() if calibration.is_file() else "")
-    w.add_string(f"{DIR_ARCH}.tiers", json.dumps(directions.tiers, ensure_ascii=False))
-    w.add_string(f"{DIR_ARCH}.presets", json.dumps(directions.presets, ensure_ascii=False))
-    w.add_float32(f"{DIR_ARCH}.ref_base_norm",
-                  float("nan") if directions.ref_base_norm is None else float(directions.ref_base_norm))
-    tensors = [(f"dir.named.{i}", v) for i, v in enumerate(directions.named.values())]
-    tensors += [(f"dir.axis.{i}", v) for i, v in enumerate(directions.axes.values())]
-    if directions.space == "lda":
-        tensors += [("dir.lda.weight", directions.lda_weight), ("dir.lda.bias", directions.lda_bias),
-                    ("dir.lda.pinv", directions.lda_pinv)]
-    for name, tensor in tensors:
-        value = np.ascontiguousarray(tensor.numpy(), dtype=np.float32)
-        if not np.isfinite(value).all():
-            raise SystemExit(f"error: {name} has non-finite values")
-        w.add_tensor(name, value)
-    _finish(w)
-    print(f"wrote {args.out}: {directions.space} directions, {len(directions.named)} named, "
-          f"{len(directions.axes)} axes, dim {directions.dim}")
 
 
 # ===================================================================================================== accents
@@ -1578,10 +1525,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = command("steer", STEER_DOC, cmd_steer)
     p.add_argument("bundle", type=Path)
-    p.add_argument("-o", "--out", type=Path, required=True)
-
-    p = command("directions", DIRECTIONS_DOC, cmd_directions)
-    p.add_argument("directory", type=Path, help="direction set directory (manifest.json)")
     p.add_argument("-o", "--out", type=Path, required=True)
 
     p = command("accents", ACCENTS_DOC, cmd_accents)

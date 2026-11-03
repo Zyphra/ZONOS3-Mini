@@ -29,6 +29,7 @@ from zonos3.reference.synth import (
 )
 from zonos3.server.schemas import EditAlignRequest, EditRequest, EditTranscribeRequest
 from zonos3.tts import edit_align, textmatch
+from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
     GROUP_OPEN,
@@ -45,7 +46,7 @@ from zonos3.tts.edit_align import (
     wildcard_verify,
 )
 from zonos3.tts.markup import strip_nonverbal_markup
-from zonos3.tts.steering import RAW_SPACE, check_controls, resolve_controls
+from zonos3.tts.steering import check_controls, resolve_controls
 
 from zonos3_mlx.audio_io import decode_pcm
 from zonos3_mlx.engine import EditLayout, ResolvedSpeaker, plan_request

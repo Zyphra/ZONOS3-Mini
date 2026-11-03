@@ -19,8 +19,8 @@ Voice Studio.
 | `POST /v1/audio/speech` | OpenAI-compatible speech (`SpeechRequest`) |
 | `POST /v2/generate` | Native TTS (`GenerateRequest`), streaming or buffered |
 | `GET /v2/capabilities` | Feature flags of the loaded checkpoint and server |
-| `GET /v2/controls` | The steering bundle's controls document (404 without `--steer-bundle`) |
-| `GET\|POST /v2/speakers` | Default voices plus the session's cached voices; cache a clip or an embedding |
+| `GET /v2/controls` | The steering bundle's controls document, each set's `calibration` included (404 without `--steer-bundle`) |
+| `GET\|POST /v2/speakers` | Default voices plus the session's cached voices (each with its `disabled_controls`); cache a clip or an embedding |
 | `GET /v2/speakers/{id}/preview`, `/embedding` | A voice's audio; its speaker embedding |
 | `POST /v2/phonemize` | Gold-lexicon IPA for the words of a text (404 without a lexicon) |
 | `POST /v2/edit/transcribe`, `/v2/edit/align`, `/v2/edit` | Speech editing ([guide](guide.md#speech-editing)) |
@@ -76,9 +76,9 @@ CORS allows every origin and exposes the response headers above.
 | `speaker_cfg_scale` | `1.0` | Reference CFG (1 = off) |
 | `condition_buckets` / `condition_values` | `null` | Condition rows (`loudness`, `fmax`, `speaking_rate`) by bucket or raw value |
 | `silence_prefill_frames` | `null` | Codec-matched silence frames prefilled before the audio (0 = off) |
-| `emotion_*` | off | Emotion sliders / axes / CFG ([guide](guide.md#emotion-control)) |
-| `accent`, `accent_strength` | `null`, `1.0` | Accent adapter or direction from `/v2/capabilities` `accents` |
-| `controls`, `control_spans`, `control_span_*` | `null` | Steering-bundle controls, whole-utterance or over character spans ([guide](guide.md#zonos-voice-studio)) |
+| `accent`, `accent_strength` | `null`, `1.0` | Accent adapter from `/v2/capabilities` `accents` |
+| `controls`, `control_spans`, `control_span_*` | `null` | Steering-bundle controls, whole-utterance or over character spans ([guide](guide.md#steering-controls)) |
+| `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |
 | `tag_cfg_scale` | `1.0` | Nonverbal-tag guidance, 1–4 ([guide](guide.md#nonverbal-markup-and-tag-cfg)) |
 | `laci` | `false` | Alignment-guarded decoding ([features](features.md#laci-alignment-guarded-decoding)) |
 | `headroom_db`, `fade_out_ms`, `decode_context` | registry, `0`, `false` | Output gain, tail fade, decoding behind the reference context |

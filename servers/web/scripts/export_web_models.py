@@ -7,8 +7,7 @@ in the low half). q8/q4 tensors store their int8 quants (or nibbles) contiguousl
 block scales.
 
 Besides the models the export writes voices/ (default voices with their shipped reference codes), companions/ (the
-steering, emotion and accent GGUFs, parsed directly by the worker) and laci/ (alignment heads and their language
-index).
+steering bundle steer.gguf, parsed directly by the worker) and laci/ (alignment heads and their language index).
 """
 import argparse
 import hashlib
@@ -573,15 +572,18 @@ def export_voices(voices, out):
 
 # --------------------------------------------------------------------------- companions and LACI heads
 
-COMPANIONS = ("steer.gguf", "emotion.gguf", "accent-directions.gguf")
+COMPANIONS = ("steer.gguf",)
 LACI_EN = "zonos3_mini_mect60k_heads.json"
 LACI_ZH = "zonos3_mini_mect60k_heads_zh.json"
 LACI_LANGS = ("en_us", "en_gb", "fr_fr", "de", "es", "it", "pt_br", "ja", "ko")
 
 
 def export_companions(models, out):
+    """The companion GGUFs as is (the worker parses them); a stale companions/ is replaced."""
     cdir = os.path.join(out, "companions")
-    os.makedirs(cdir, exist_ok=True)
+    if os.path.isdir(cdir):
+        shutil.rmtree(cdir)
+    os.makedirs(cdir)
     for fn in COMPANIONS:
         shutil.copyfile(os.path.join(models, fn), os.path.join(cdir, fn))
     print(f"companions: {', '.join(COMPANIONS)}")

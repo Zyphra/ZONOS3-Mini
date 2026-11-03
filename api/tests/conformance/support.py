@@ -21,7 +21,7 @@ _REGISTRY = Registry().with_resource(_SPEC_URI, Resource.from_contents(SPEC, def
 TEXT = "Hello there, this is a short test."
 MAX_TOKENS = 90
 SAMPLES_PER_FRAME = 2940
-# Request fields of the legacy checkpoints that v2 dropped.
+# Request fields v2 dropped: the legacy checkpoints' rows and the emotion sliders (now steering-bundle controls).
 LEGACY_FIELDS = {
     "prepend_silence": True,
     "speaking_rate_enabled": True,
@@ -34,6 +34,13 @@ LEGACY_FIELDS = {
     "clean_speaker_background": True,
     "accurate_mode": True,
     "speaker_wav_base64": "UklGRg==",
+    "emotion_enabled": True,
+    "emotion_sliders": {"valence": 0.5},
+    "emotion_valence": 0.5,
+    "emotion_arousal": 0.5,
+    "emotion_strength": 1.0,
+    "emotion_calibrated": True,
+    "emotion_cfg_scale": 1.5,
 }
 
 

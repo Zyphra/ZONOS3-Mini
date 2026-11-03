@@ -1,18 +1,76 @@
 // Steering directions (steer.gguf): port of servers/ggml/src/zonos3-steer.cpp. Raw-space controls move the speaker
 // embedding, hidden-space controls add to Full AttnRes bank sources of generated frames.
 //
-// Types: SteerDirection {id, set, name, axis, hidden, source, vec}, SteerSet {name, hidden, source},
-// RateExtension, SteerBundle {name, speakerDim, hiddenSize, sets, dirs, timing (id -> [dose, factor][], id-sorted),
-// timingJson, uiJson, index, sources, rateExtension}, ControlSpan {start, end, controls}, SteerSpan
-// {start, end, ramp, delta, charStart, charEnd}, Steering (resolved request: hidden [K*D] | null, spans, deltaAt).
-// Errors are thrown as Error with the C++ message. Controls iterate in key order like std::map.
+// Types: Calibration (a set's calibration.json: per-speaker doses), SteerDirection {id, set, name, axis, hidden,
+// source, vec}, SteerSet {name, hidden, source, calibration}, RateExtension, SteerBundle {name, speakerDim, hiddenSize,
+// sets, dirs, timing (id -> [dose, factor][], id-sorted), timingJson, uiJson, index, sources, rateExtension},
+// ControlSpan {start, end, controls}, SteerSpan {start, end, ramp, delta, charStart, charEnd}, Steering (resolved
+// request: hidden [K*D] | null, spans, deltaAt). Errors are thrown as Error with the C++ message. Controls iterate in
+// key order like std::map.
 import { GGUF_TYPE, type Gguf } from '../gguf';
 
 export const STEER_RAMP_FRAMES = 3;
 export const STEER_FRAMES_PER_CHAR = 1.0;
 
+/** A set's calibration.json (zonos3.tts.directions.Calibration): doses keyed by direction name, `<name>-` = the
+ *  negative pole's own dose. Exposed in /v2/controls and speakers' disabled_controls; never applied to controls. */
+export class Calibration {
+  bySpeaker = new Map<string, Map<string, number>>();
+  defaults = new Map<string, number>();
+  globalDefault = 1.0;
+
+  private lookup(speaker: string, key: string): number | undefined {
+    if (speaker) {
+      const e = this.bySpeaker.get(speaker)?.get(key);
+      if (e !== undefined) return e;
+    }
+    return this.defaults.get(key);
+  }
+  strength(speaker: string, name: string): number {
+    return this.lookup(speaker, name) ?? this.globalDefault;
+  }
+  /** The names whose dose is 0 for `speaker`; a negative pole disabled on its own is listed as `<name>-`. */
+  disabled(speaker: string, names: string[]): string[] {
+    const out: string[] = [];
+    for (const n of names) {
+      if (this.strength(speaker, n) === 0) out.push(n);
+      else if (this.lookup(speaker, n + '-') === 0) out.push(n + '-');
+    }
+    return out;
+  }
+  /** The /v2/controls ControlCalibration object. */
+  document(): unknown {
+    const by: Record<string, Record<string, number>> = {};
+    for (const [sp, m] of this.bySpeaker) by[sp] = Object.fromEntries(m);
+    return { default: Object.fromEntries(this.defaults), by_speaker: by, global_default: this.globalDefault };
+  }
+  static parse(jsonText: string): Calibration {
+    const out = new Calibration();
+    const isNumObj = (v: unknown): v is Record<string, number> =>
+      isObj(v) && Object.values(v).every((x) => typeof x === 'number');
+    const data: unknown = JSON.parse(jsonText);
+    if (!isObj(data)) throw new Error('calibration is not an object');
+    if (data.by_speaker !== undefined) {
+      if (!isObj(data.by_speaker)) throw new Error('by_speaker is not an object');
+      for (const [sp, doses] of Object.entries(data.by_speaker)) {
+        if (!isNumObj(doses)) throw new Error(`by_speaker.${sp} is not a {name: dose} object`);
+        out.bySpeaker.set(sp, new Map(Object.entries(doses)));
+      }
+    }
+    if (data.default !== undefined) {
+      if (!isNumObj(data.default)) throw new Error('default is not a {name: dose} object');
+      out.defaults = new Map(Object.entries(data.default));
+    }
+    if (data.global_default !== undefined) {
+      if (typeof data.global_default !== 'number') throw new Error('global_default is not a number');
+      out.globalDefault = data.global_default;
+    }
+    return out;
+  }
+}
+
 export interface SteerDirection { id: string; set: string; name: string; axis: boolean; hidden: boolean; source: number; vec: Float32Array }
-export interface SteerSet { name: string; hidden: boolean; source: number }
+export interface SteerSet { name: string; hidden: boolean; source: number; calibration: Calibration | null }
 export interface RateExtension {
   direction: string; rowEdges: number[]; below: number[]; above: number[];
   doses: Map<string, Map<number, number>>; referenceSides: string[];
@@ -102,12 +160,14 @@ export function loadSteer(g: Gguf, model: SteerModel, path = 'steer.gguf'): Stee
   const name = getStr('zonos3_steer.name'), speakerDim = getU32('zonos3_steer.speaker_dim');
   const hiddenSize = getU32('zonos3_steer.hidden_size');
   const setNames = getStrs('zonos3_steer.set.names'), setSpaces = getStrs('zonos3_steer.set.spaces');
+  const setCalibrations = getStrs('zonos3_steer.set.calibrations');
   const ids = getStrs('zonos3_steer.direction.ids'), kinds = getStrs('zonos3_steer.direction.kinds');
   const timingJson = getStr('zonos3_steer.timing'), uiJson = getStr('zonos3_steer.ui');
-  if (name === null || speakerDim === null || hiddenSize === null || !setNames || !setSpaces || !ids || !kinds ||
-      timingJson === null || uiJson === null) throw invalid('missing or mistyped zonos3_steer.* metadata');
+  if (name === null || speakerDim === null || hiddenSize === null || !setNames || !setSpaces || !setCalibrations ||
+      !ids || !kinds || timingJson === null || uiJson === null) throw invalid('missing or mistyped zonos3_steer.* metadata');
   if (setNames.length === 0 || setNames.length !== setSpaces.length || setNames.length !== setSources.length ||
-      ids.length === 0 || ids.length !== kinds.length || g.tensors.size !== ids.length)
+      setNames.length !== setCalibrations.length || ids.length === 0 || ids.length !== kinds.length ||
+      g.tensors.size !== ids.length)
     throw invalid('inconsistent metadata array sizes');
 
   const b: SteerBundle = {
@@ -117,7 +177,7 @@ export function loadSteer(g: Gguf, model: SteerModel, path = 'steer.gguf'): Stee
   const setIndex = new Map<string, number>();
   let anyRaw = false, anyHidden = false;
   for (let i = 0; i < setNames.length; i++) {
-    const s: SteerSet = { name: setNames[i], hidden: false, source: -1 };
+    const s: SteerSet = { name: setNames[i], hidden: false, source: -1, calibration: null };
     if (s.name === '' || s.name.includes('.') || setIndex.has(s.name)) throw invalid(`bad set name '${s.name}'`);
     if (setSpaces[i] === 'attnres_source') {
       s.hidden = true;
@@ -128,6 +188,13 @@ export function loadSteer(g: Gguf, model: SteerModel, path = 'steer.gguf'): Stee
       anyRaw = true;
     } else {
       throw invalid(`set '${s.name}' has unknown space '${setSpaces[i]}'`);
+    }
+    if (setCalibrations[i]) {
+      try {
+        s.calibration = Calibration.parse(setCalibrations[i]);
+      } catch (e) {
+        throw invalid(`set '${s.name}' has a bad calibration: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
     setIndex.set(s.name, b.sets.length);
     b.sets.push(s);
@@ -232,6 +299,7 @@ export function controlsDocument(b: SteerBundle, speakerDim: number): unknown {
       modes: s.hidden ? ['embedding', 'reference'] : ['embedding'],
     };
     if (s.hidden) e.source_index = s.source;
+    if (s.calibration) e.calibration = s.calibration.document();
     sets[s.name] = e;
   }
   const dirs: Record<string, unknown> = {};
@@ -248,6 +316,19 @@ export function controlsDocument(b: SteerBundle, speakerDim: number): unknown {
     bundle: b.name, embedding_dim: speakerDim, sets, directions: dirs,
     timing: JSON.parse(b.timingJson), ui: JSON.parse(b.uiJson),
   };
+}
+
+/** steering.disabled_controls: per calibrated set, in direction order, the control ids (`<set>.<name>` or
+ *  `<set>.<name>-`) whose calibrated dose for `speakerId` is 0; [] without a bundle. */
+export function disabledControls(b: SteerBundle | null, speakerId: string): string[] {
+  if (!b) return [];
+  const out: string[] = [];
+  for (const s of b.sets) {
+    if (!s.calibration) continue;
+    const names = b.dirs.filter((d) => d.set === s.name).map((d) => d.name);
+    for (const n of s.calibration.disabled(speakerId, names)) out.push(`${s.name}.${n}`);
+  }
+  return out;
 }
 
 export function steerDurationFactor(b: SteerBundle, doses: Map<string, number>): number {

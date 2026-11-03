@@ -193,8 +193,8 @@ static json run_laci(const json & t) {
                                    {"seed", cont->seed ? json(*cont->seed) : json(nullptr)},
                                    {"max_tokens", cont->max_tokens}, {"condition_values", cv},
                                    {"swap_delta", cont->swap_delta},
-                                   {"speaker_emotion_delta", cont->speaker_emotion_delta
-                                                                 ? json(*cont->speaker_emotion_delta) : json(nullptr)},
+                                   {"steering_delta", cont->steering_delta
+                                                                 ? json(*cont->steering_delta) : json(nullptr)},
                                    {"probe_mask", mask_json(s.probe_mask())}};
         } else {
             rec["continuation"] = nullptr;

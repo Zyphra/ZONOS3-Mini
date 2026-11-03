@@ -21,6 +21,7 @@ from fastapi.responses import Response
 from zonos3.reference.synth import decode_base64_blob, load_embedding_vector, resolve_speaker_mode
 from zonos3.server.schemas import SpeakerCreateRequest
 from zonos3.tts.audio import _transcode_audio_bytes_to_wav
+from zonos3.tts.steering import disabled_controls
 
 from zonos3_mlx.audio_io import decode_pcm
 from zonos3_mlx.engine import MAX_REFERENCE_FRAMES, ResolvedSpeaker
@@ -79,11 +80,6 @@ def voice_modes(state: ServerState, voice: Voice) -> list[str]:
     return out
 
 
-def emotion_disabled(state: ServerState, speaker_id: str) -> bool:
-    e, cal = state.engine.emotion, state.engine.emotion_calibration
-    return bool(e is not None and cal is not None and cal.disabled(speaker_id, e.emotion_names + e.axis_names))
-
-
 def serialize(state: ServerState, voice: Voice) -> dict:
     modes = voice_modes(state, voice)
     dim = state.config.speaker_embedding_dim
@@ -93,7 +89,7 @@ def serialize(state: ServerState, voice: Voice) -> dict:
         "original_name": voice.original_name, "created_at": voice.created_at,
         "has_preview": voice.source_type == "audio" and (voice.is_default or bool(voice.audio_bytes)),
         "speaker_modes": modes, "embedding_dim": dim if dim > 0 else None, "transcript": voice.transcript,
-        "emotion_disabled": emotion_disabled(state, voice.speaker_id),
+        "disabled_controls": disabled_controls(state.engine.bundle, voice.speaker_id),
     }
 
 
