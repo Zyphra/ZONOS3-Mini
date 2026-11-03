@@ -1,25 +1,25 @@
-"""Companion GGUFs -> the Python request-logic objects: emotion / accent directions, the steering bundle, accent adapters.
+"""Companion GGUFs -> the Python request-logic objects: the steering bundle (direction sets + calibrations), accent
+adapters.
 
-Layouts are those ``tools/convert_gguf.py`` writes (``steer``, ``directions``, ``accents``); the rebuilt dataclasses are
-the ones zonos3.tts.emotion / zonos3.tts.steering load from directories, so every request path stays in zonos3.tts.
+Layouts are those ``tools/convert_gguf.py`` writes (``steer``, ``accents``); the rebuilt dataclasses are the ones
+zonos3.tts.directions / zonos3.tts.steering load from directories, so every request path stays in zonos3.tts.
 """
 
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
 import torch
-from zonos3.tts.emotion import EmotionCalibration, EmotionDirections
-from zonos3.tts.steering import HIDDEN_SPACE, Direction, RateExtension, SteeringBundle
+from zonos3.tts.directions import HIDDEN_SPACE, SPACES, Calibration, DirectionSet
+from zonos3.tts.steering import Direction, RateExtension, SteeringBundle
 
 from zonos3_mlx.gguf_io import GGUFFile
 
-DIR_ARCH, STEER_ARCH, ACC_ARCH = "zonos3_directions", "zonos3_steer", "zonos3_accents"
+STEER_ARCH, ACC_ARCH = "zonos3_steer", "zonos3_accents"
 
 
 def _expect(f: GGUFFile, arch: str) -> None:
@@ -31,42 +31,16 @@ def _vector(f: GGUFFile, name: str) -> torch.Tensor:
     return torch.from_numpy(np.array(f.array(name), dtype=np.float32).reshape(-1))
 
 
-def _calibration(text: str) -> EmotionCalibration | None:
+def _calibration(text: str) -> Calibration | None:
+    """A set's calibration.json text (``zonos3_steer.set.calibrations``; "" without one)."""
     if not text:
         return None
     data = json.loads(text)
-    return EmotionCalibration(
+    return Calibration(
         by_speaker={k: {e: float(v) for e, v in d.items()} for k, d in data.get("by_speaker", {}).items()},
         default={e: float(v) for e, v in data.get("default", {}).items()},
         global_default=float(data.get("global_default", 1.0)),
     )
-
-
-def load_directions(path: str | Path) -> tuple[EmotionDirections, EmotionCalibration | None]:
-    """A ``zonos3_directions`` GGUF (emotion.gguf, accent-directions.gguf) and its calibration."""
-    f = GGUFFile(path)
-    _expect(f, DIR_ARCH)
-    k = lambda key: f"{DIR_ARCH}.{key}"  # noqa: E731
-    space = f.meta(k("space"))
-    source = int(f.meta(k("source_index")))
-    names, axes = list(f.meta(k("names"), [])), list(f.meta(k("axes"), []))
-    ref = float(f.meta(k("ref_base_norm")))
-    lda = {}
-    if space == "lda":
-        lda = {f"lda_{p}": torch.from_numpy(f.array(f"dir.lda.{p}").astype(np.float32)) for p in ("weight", "bias", "pinv")}
-    directions = EmotionDirections(
-        dim=int(f.meta(k("dim"))),
-        named={n: _vector(f, f"dir.named.{i}") for i, n in enumerate(names)},
-        axes={n: _vector(f, f"dir.axis.{i}") for i, n in enumerate(axes)},
-        tiers={str(a): str(b) for a, b in json.loads(f.meta(k("tiers"), "{}")).items()},
-        presets={str(p): {c: float(w) for c, w in v.items()} for p, v in json.loads(f.meta(k("presets"), "{}")).items()},
-        ref_base_norm=None if math.isnan(ref) else ref,
-        space=space,
-        source_index=None if source < 0 else source,
-        input_dim=int(f.meta(k("input_dim"))),
-        **lda,
-    )
-    return directions, _calibration(f.meta(k("calibration"), ""))
 
 
 def load_steer(path: str | Path) -> SteeringBundle:
@@ -76,17 +50,23 @@ def load_steer(path: str | Path) -> SteeringBundle:
     k = lambda key: f"{STEER_ARCH}.{key}"  # noqa: E731
     set_names, spaces = f.meta(k("set.names")), f.meta(k("set.spaces"))
     sources = [int(v) for v in f.meta(k("set.sources"))]
+    calibrations = f.meta(k("set.calibrations"))
+    if len(calibrations) != len(set_names):
+        raise ValueError(f"{path}: {len(calibrations)} set calibrations for {len(set_names)} sets")
     ids, kinds = f.meta(k("direction.ids")), f.meta(k("direction.kinds"))
     groups: dict[str, dict[str, dict[str, torch.Tensor]]] = {s: {"named": {}, "axis": {}} for s in set_names}
     for i, (did, kind) in enumerate(zip(ids, kinds)):
         set_name, _, name = did.partition(".")
         groups[set_name][kind][name] = _vector(f, f"steer.dir.{i}")
     sets, directions = {}, {}
-    for set_name, space, source in zip(set_names, spaces, sources):
+    for set_name, space, source, calibration in zip(set_names, spaces, sources, calibrations):
+        if space not in SPACES:
+            raise ValueError(f"{path}: set {set_name!r} is {space!r}; bundles take raw or attnres_source sets")
         named, axes = groups[set_name]["named"], groups[set_name]["axis"]
         dim = int(next(iter({**named, **axes}.values())).numel())
-        sets[set_name] = EmotionDirections(dim=dim, named=named, axes=axes, space=space,
-                                           source_index=source if space == HIDDEN_SPACE else None)
+        sets[set_name] = DirectionSet(dim=dim, named=named, axes=axes, space=space,
+                                      source_index=source if space == HIDDEN_SPACE else None,
+                                      calibration=_calibration(calibration))
         for name, vec in {**named, **axes}.items():
             did = f"{set_name}.{name}"
             directions[did] = Direction(did, set_name, name, space, vec, source if space == HIDDEN_SPACE else None)

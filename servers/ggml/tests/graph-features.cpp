@@ -1,29 +1,18 @@
-// Graph features: alignment probe (readout + masked heads), accent adapters, emotion directions.
+// Graph features: alignment probe (readout + masked heads), accent adapters.
 //
-//   graph-features --selftest <dummy-zonos3.gguf> <dummy-accents.gguf> <dummy-emotion.gguf> [--gpu]
-//       Invariants of the three features (ctest on CPU; --gpu runs them on the F16-KV / FlashAttention profile).
-//   graph-features --emotion <directions.gguf> --request <request.json>
-//       Prints {"embedding": [...]|null, "hidden": [...]|null} (or {"error": msg}) for one apply_emotion /
-//       emotion_hidden_delta request, the parity driver of tests/parity/test_ggml_graph.py. Request keys: base (float
-//       list), sliders ([[name, weight], ...] in order), valence, arousal, strength, preserve_norm, strict, speaker,
-//       calibrated (fold calibration.json first, as the sgl server's calibrated mode).
+//   graph-features --selftest <dummy-zonos3.gguf> <dummy-accents.gguf> [--gpu]
+//       Invariants of both features (ctest on CPU; --gpu runs them on the F16-KV / FlashAttention profile).
 #include "zonos3.h"
 #include "zonos3-accent.h"
-#include "zonos3-emotion.h"
-#include "json.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <functional>
 #include <random>
-#include <sstream>
 #include <string>
 #include <vector>
-
-using nlohmann::json;
 
 #define CHECK(cond, label) do { if (!(cond)) { fprintf(stderr, "FAIL: %s (%s:%d)\n", label, __FILE__, __LINE__); exit(1); } } while (0)
 
@@ -207,92 +196,14 @@ void test_probe(const zonos3_model & model, const zonos3_prompt & prompt, const 
     printf("probe: ok\n");
 }
 
-void test_emotion(const zonos3_model & model, const std::string & path, const zonos3_prompt & base_prompt) {
-    zonos3_directions d;
-    std::string err;
-    CHECK(zonos3_directions_load(d, path.c_str(), err), err.c_str());
-    CHECK(d.space == "raw" && d.dim == 192 && d.names.size() == 3 && d.axes.size() == 2 && d.calibrated, "emotion: loader");
-    CHECK(d.calibration.strength("default_0123456789abcdef", "happy") == 0.0 && d.calibration.strength("", "angry") == 2.0 &&
-          d.calibration.strength("x", "sad") == 1.25, "emotion: calibration lookup");
-    CHECK(d.calibration.pole_strength("default_0123456789abcdef", "valence", -1.0) == 0.25 &&
-          d.calibration.pole_strength("default_0123456789abcdef", "valence", 1.0) == 1.25, "emotion: pole strength");
-    const auto off = d.calibration.disabled("default_0123456789abcdef", d.controls());
-    CHECK(off.size() == 1 && off[0] == "happy", "emotion: disabled controls");
-
-    std::vector<float> base(192);
-    for (int i = 0; i < 192; ++i) base[i] = std::sin(0.1 * i) + 0.5f;
-    std::vector<float> out;
-    CHECK(zonos3_emotion_apply(d, base, {{"sad", 0.5}, {"angry", -1.0}}, 0.25, 0.0, 1.5, true, true, out, err), err.c_str());
-    double nb = 0, no = 0, dot = 0;
-    for (int i = 0; i < 192; ++i) {
-        const double want = base[i] + 1.5 * (0.5 * d.named[1][i] - 1.0 * d.named[2][i] + 0.25 * d.axis[0][i]);
-        nb += (double) base[i] * base[i]; no += (double) out[i] * out[i]; dot += want * out[i];
-    }
-    CHECK(std::fabs(std::sqrt(no) - std::sqrt(nb)) < 1e-4, "emotion: norm preserved");
-    double nw = 0;
-    for (int i = 0; i < 192; ++i) {
-        const double want = base[i] + 1.5 * (0.5 * d.named[1][i] - 1.0 * d.named[2][i] + 0.25 * d.axis[0][i]);
-        nw += want * want;
-    }
-    CHECK(dot / (std::sqrt(nw) * std::sqrt(no)) > 1.0 - 1e-9, "emotion: direction of the raw move");
-    CHECK(!zonos3_emotion_apply(d, base, {{"joy", 1.0}}, 0, 0, 1, true, true, out, err) &&
-          err.rfind("Unknown emotion direction 'joy'. Available: ['happy', 'sad', 'angry', 'valence', 'arousal'].", 0) == 0,
-          "emotion: strict unknown name");
-    CHECK(zonos3_emotion_apply(d, base, {{"joy", 1.0}}, 0, 0, 1, true, false, out, err) && out == base, "emotion: lenient skip");
-
-    // Hidden spaces: proj deltas join the speaker row, attnres_source deltas a bank source.
-    zonos3_directions h = d;
-    h.space = "proj";
-    std::vector<float> delta;
-    CHECK(zonos3_emotion_hidden_delta(h, {{"happy", 1.0}}, 0, 0, 2.0, true, delta, err) && delta.size() == 192, "emotion: hidden delta");
-    CHECK(zonos3_emotion_apply(h, base, {{"happy", 1.0}}, 0, 0, 2.0, true, true, out, err) && out == base, "emotion: hidden apply is a no-op");
-    zonos3_prompt_options opt;
-    std::vector<float> spk(model.hp.speaker_dim, 0.1f);
-    opt.speaker_embedding = spk.data();
-    zonos3_prompt p;
-    CHECK(zonos3_build_prompt(model, "Hello there.", opt, p), "emotion: speaker prompt");
-    std::vector<float> ids(p.ids.begin(), p.ids.end()), a, b;
-    CHECK(zonos3_logits(model, ids.data(), p.n_rows, p.cond, a), "emotion: plain logits");
-    zonos3_conditioning c = p.cond;
-    c.speaker_delta.assign(model.hp.n_embd, 0.0f);
-    CHECK(zonos3_logits(model, ids.data(), p.n_rows, c, b) && max_abs_diff(a, b) == 0.0, "emotion: zero proj delta is exact");
-    for (uint32_t i = 0; i < model.hp.n_embd; ++i) c.speaker_delta[i] = 0.05f * std::cos((float) i);
-    CHECK(zonos3_logits(model, ids.data(), p.n_rows, c, b) && max_abs_diff(a, b) > 1e-5, "emotion: proj delta moves the logits");
-    c.speaker_row = -1;
-    CHECK(!zonos3_logits(model, ids.data(), p.n_rows, c, b), "emotion: proj delta needs a speaker row");
-
-    std::vector<float> layout;
-    std::vector<float> hid(model.hp.n_embd, 0.02f);
-    CHECK(zonos3_steer_add_delta({1, 3}, (int) model.hp.n_embd, 3, hid, layout) && layout.size() == 2 * model.hp.n_embd &&
-          layout[0] == 0.0f && layout[model.hp.n_embd] == 0.02f, "emotion: steering layout");
-    CHECK(!zonos3_steer_add_delta({1, 3}, (int) model.hp.n_embd, 2, hid, layout), "emotion: unknown source refused");
-    // Accent steering on a direction set: raw moves the embedding (calibrated dose), hidden scales the direction.
-    std::vector<float> moved = base, hv;
-    CHECK(zonos3_accent_steering(d, "angry", 0.5, "", true, &moved, hv, err) && hv.empty() && moved != base,
-          "emotion: raw accent steering");
-    CHECK(zonos3_emotion_apply(d, base, {{"angry", 0.5 * 2.0}}, 0, 0, 1, true, true, out, err) && out == moved,
-          "emotion: raw accent steering == apply_emotion at strength * dose");
-    CHECK(!zonos3_accent_steering(d, "angry", 0.5, "", true, nullptr, hv, err), "emotion: raw accent steering needs an embedding");
-    moved = base;
-    CHECK(zonos3_accent_steering(d, "happy", 1.0, "default_0123456789abcdef", true, &moved, hv, err) && moved == base,
-          "emotion: a zero dose disables accent steering");
-    CHECK(zonos3_accent_steering(h, "sad", 2.0, "", false, nullptr, hv, err) && hv.size() == 192 && hv[5] == 2.0f * h.named[1][5],
-          "emotion: hidden accent steering");
-    const auto rows = random_rows(model, 3);
-    const auto plain_run = decode(model, base_prompt, rows, 1, [](zonos3_slot &) {}, {}, {1, 3});
-    const auto steered = decode(model, base_prompt, rows, 1, [](zonos3_slot &) {}, {}, {1, 3}, layout);
-    CHECK(trace_diff(plain_run[0], steered[0]) > 1e-6, "emotion: attnres_source delta steers decode");
-    printf("emotion: ok\n");
-}
-
-int selftest(const char * model_path, const char * accents_path, const char * emotion_path, bool gpu) {
+int selftest(const char * model_path, const char * accents_path, bool gpu) {
     zonos3_model model;
     CHECK(zonos3_model_load(model, model_path, gpu), "load backbone");
     zonos3_accents bank;
     std::string err;
     CHECK(zonos3_accents_load(bank, accents_path, model, err), err.c_str());
     zonos3_accents wrong;
-    CHECK(!zonos3_accents_load(wrong, emotion_path, model, err), "accents: a directions file is refused");
+    CHECK(!zonos3_accents_load(wrong, model_path, model, err), "accents: a backbone file is refused");
     model.accents = &bank;
     zonos3_prompt_options opt;
     zonos3_prompt prompt;
@@ -300,7 +211,6 @@ int selftest(const char * model_path, const char * accents_path, const char * em
     const auto rows = random_rows(model, 5);
     test_accents(model, prompt, rows);
     test_probe(model, prompt, rows);
-    test_emotion(model, emotion_path, prompt);
     model.accents = nullptr;
     zonos3_accents_free(bank);
     zonos3_model_free(model);
@@ -308,47 +218,11 @@ int selftest(const char * model_path, const char * accents_path, const char * em
     return 0;
 }
 
-int emotion_request(const char * path, const char * request_path) {
-    zonos3_directions d;
-    std::string err;
-    json out;
-    if (!zonos3_directions_load(d, path, err)) {
-        out["error"] = err;
-        printf("%s\n", out.dump().c_str());
-        return 1;
-    }
-    std::ifstream in(request_path);
-    std::stringstream ss;
-    ss << in.rdbuf();
-    const json req = json::parse(ss.str());
-    zonos3_emotion_sliders sliders;
-    for (const auto & s : req.value("sliders", json::array())) sliders.emplace_back(s.at(0).get<std::string>(), s.at(1).get<double>());
-    double valence = req.value("valence", 0.0), arousal = req.value("arousal", 0.0);
-    if (req.value("calibrated", false)) zonos3_emotion_calibrate(d, req.value("speaker", std::string()), sliders, valence, arousal);
-    const double strength = req.value("strength", 1.0);
-    const bool strict = req.value("strict", false), preserve = req.value("preserve_norm", true);
-    std::vector<float> base = req.value("base", std::vector<float>{}), emb, hidden;
-    out["embedding"] = nullptr;
-    out["hidden"] = nullptr;
-    if (!zonos3_emotion_hidden_delta(d, sliders, valence, arousal, strength, strict, hidden, err) ||
-        (!d.hidden() && !base.empty() &&
-         !zonos3_emotion_apply(d, base, sliders, valence, arousal, strength, preserve, strict, emb, err))) {
-        out = json{{"error", err}};
-    } else {
-        if (!d.hidden() && !base.empty()) out["embedding"] = emb;
-        if (!hidden.empty()) out["hidden"] = hidden;
-    }
-    printf("%s\n", out.dump(-1, ' ', false, json::error_handler_t::replace).c_str());
-    return 0;
-}
-
 }  // namespace
 
 int main(int argc, char ** argv) {
-    if (argc == 5 && !strcmp(argv[1], "--selftest")) return selftest(argv[2], argv[3], argv[4], false);
-    if (argc == 6 && !strcmp(argv[1], "--selftest") && !strcmp(argv[5], "--gpu")) return selftest(argv[2], argv[3], argv[4], true);
-    if (argc == 5 && !strcmp(argv[1], "--emotion") && !strcmp(argv[3], "--request")) return emotion_request(argv[2], argv[4]);
-    fprintf(stderr, "usage: %s --selftest <model.gguf> <accents.gguf> <emotion.gguf> [--gpu]\n"
-                    "       %s --emotion <directions.gguf> --request <request.json>\n", argv[0], argv[0]);
+    if (argc == 4 && !strcmp(argv[1], "--selftest")) return selftest(argv[2], argv[3], false);
+    if (argc == 5 && !strcmp(argv[1], "--selftest") && !strcmp(argv[4], "--gpu")) return selftest(argv[2], argv[3], true);
+    fprintf(stderr, "usage: %s --selftest <model.gguf> <accents.gguf> [--gpu]\n", argv[0]);
     return 2;
 }

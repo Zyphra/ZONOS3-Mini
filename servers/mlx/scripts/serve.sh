@@ -1,7 +1,7 @@
 #!/bin/bash
 # MLX ZONOS3 server on 127.0.0.1:1919 (Apple Silicon). Extra flags are appended.
 # Serves the GGUF files of hf://Zyphra/ZONOS3_Mini_GGUF (the ggml server's) from MODELS_DIR, with the voices in
-# default_voices/. Companions (dac, spk-encoder, dac-encoder, ssl-teacher, steer, emotion, accent files) are picked up
+# default_voices/. Companions (dac, spk-encoder, dac-encoder, ssl-teacher, steer, accents) are picked up
 # next to the backbone. Overrides:
 #   MODELS_DIR                  directory holding the GGUFs (default servers/ggml/models)
 #   SERVE_MODEL                 backbone GGUF (default $MODELS_DIR/zonos3-qat.gguf)

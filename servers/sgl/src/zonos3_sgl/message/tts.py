@@ -29,15 +29,15 @@ class TTSSamplingParams:
     # The stop token is masked until the generation has min_frames aligned frames (an edit
     # fill's lower bound; 0 = off).
     min_frames: int = 0
-    # Emotion classifier-free guidance scale. 1.0 disables guidance. Otherwise
+    # Controls classifier-free guidance scale. 1.0 disables guidance. Otherwise
     # the scheduler runs a paired unconditional twin (same prompt + speaker but
-    # no emotion delta) and combines logits: guided = uncond + scale*(cond-uncond),
-    # amplifying the injected emotion in output space.
-    emotion_cfg_scale: float = 1.0
+    # no hidden steering delta / schedule) and combines logits: guided = uncond + scale*(cond-uncond),
+    # amplifying the hidden-space controls in output space.
+    controls_cfg_scale: float = 1.0
     speaker_cfg_scale: float = 1.0
     # Tagged-versus-plain classifier-free guidance on nonverbal markup (1.0 = off, the unguided path). Above 1.0 the
     # scheduler runs a twin on the same prompt with the markup stripped from its text and combines raw logits:
-    # guided = plain + scale * (tagged - plain). Exclusive with emotion and speaker CFG.
+    # guided = plain + scale * (tagged - plain). Exclusive with controls and speaker CFG.
     tag_cfg_scale: float = 1.0
     # Progressive decode for the matched long-context codecs: "prefix" streams
     # prefix re-decodes (causal decoder, -45 dB vs the whole decode) and the
@@ -94,11 +94,10 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     speaker_reference_codes: torch.Tensor | None = None
     # Token position in the prompt sequence where speaker embedding is injected.
     speaker_token_position: int = -1
-    # Optional emotion delta added to the *projected* speaker hidden vector
-    # (post speaker_projection), shape: (hidden_size,). Used by space="proj"
-    # emotion directions to inject in the model's hidden space.
-    speaker_emotion_delta: torch.Tensor | None = None
-    # Span steering [K, 3 + delta] (zonos3.tts.steering.resolve_controls), same layout as speaker_emotion_delta.
+    # Hidden-space steering delta of the request's controls (zonos3.tts.steering.resolve_controls): one hidden-size
+    # slot per steered Full AttnRes bank source (the engine's steer_sources), flattened, added on every generated frame.
+    steering_delta: torch.Tensor | None = None
+    # Span steering [K, 3 + delta] (zonos3.tts.steering.resolve_controls), same layout as steering_delta.
     steer_schedule: torch.Tensor | None = None
     # Span steering that follows the reading position (zonos3.tts.span_follow; control_span_follow "reading"): the
     # character range [start, end) of ``text`` of every steer_schedule row and the gate's [lead, lag] in text tokens.
@@ -128,7 +127,7 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     laci_adjust_rate: bool = True
     # LACI over an extended speaking-rate scale (zonos3.tts.laci.RateBuckets; a dub take whose scale has tempo-steered
     # buckets, README "Extended speaking-rate buckets"): the scale's edges and first bucket, the take's bucket on it,
-    # and the request's speaker_emotion_delta in every bucket of the scale (the take's own steering, plus the bucket's
+    # and the request's steering_delta in every bucket of the scale (the take's own steering, plus the bucket's
     # tempo dose in a steered one), which a retake in another bucket switches to. None: the checkpoint's row buckets.
     laci_rate_edges: List[float] | None = None
     laci_rate_first: int = 0
@@ -214,9 +213,8 @@ class TTSUserMsg(BaseTTSBackendMsg):
     speaker_embedding: torch.Tensor | None = None
     # Token position in the prompt sequence where speaker embedding is injected.
     speaker_token_position: int = -1
-    # Optional emotion delta added to the projected speaker hidden vector
-    # (post speaker_projection), shape: (hidden_size,).
-    speaker_emotion_delta: torch.Tensor | None = None
+    # Hidden-space steering delta (see TTSTokenizeMsg).
+    steering_delta: torch.Tensor | None = None
     # Span steering schedule (see TTSTokenizeMsg).
     steer_schedule: torch.Tensor | None = None
     # Span steering that follows the reading position (zonos3.tts.span_follow): the probe's head-spec key (the

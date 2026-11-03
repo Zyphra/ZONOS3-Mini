@@ -46,7 +46,66 @@ double interp(const std::vector<std::pair<double, double>> & t, double x) {
     return a.second + (b.second - a.second) * ((x - a.first) / (b.first - a.first));
 }
 
+bool lookup(const zonos3_steer_calibration & c, const std::string & speaker, const std::string & key, double & out) {
+    if (!speaker.empty()) {
+        const auto s = c.by_speaker.find(speaker);
+        if (s != c.by_speaker.end()) {
+            const auto e = s->second.find(key);
+            if (e != s->second.end()) { out = e->second; return true; }
+        }
+    }
+    const auto e = c.defaults.find(key);
+    if (e != c.defaults.end()) { out = e->second; return true; }
+    return false;
+}
+
 } // namespace
+
+double zonos3_steer_calibration::strength(const std::string & speaker, const std::string & name) const {
+    double s;
+    return lookup(*this, speaker, name, s) ? s : global_default;
+}
+
+std::vector<std::string> zonos3_steer_calibration::disabled(const std::string & speaker,
+                                                            const std::vector<std::string> & names) const {
+    std::vector<std::string> out;
+    for (const auto & n : names) {
+        double s;
+        if (strength(speaker, n) == 0.0) out.push_back(n);
+        else if (lookup(*this, speaker, n + "-", s) && s == 0.0) out.push_back(n + "-");
+    }
+    return out;
+}
+
+bool zonos3_steer_calibration::parse(const std::string & json_text, zonos3_steer_calibration & out, std::string & err) {
+    out = zonos3_steer_calibration();
+    try {
+        const ojson data = ojson::parse(json_text);
+        ojson defaults = ojson::object(), by_speaker = ojson::object();
+        if (data.contains("by_speaker"))
+            for (const auto & sp : data.at("by_speaker").items()) {
+                by_speaker[sp.key()] = ojson::object();
+                for (const auto & e : sp.value().items()) {
+                    const double v = e.value().get<double>();
+                    out.by_speaker[sp.key()][e.key()] = v;
+                    by_speaker[sp.key()][e.key()] = v;
+                }
+            }
+        if (data.contains("default"))
+            for (const auto & e : data.at("default").items()) {
+                const double v = e.value().get<double>();
+                out.defaults[e.key()] = v;
+                defaults[e.key()] = v;
+            }
+        out.global_default = data.contains("global_default") ? data.at("global_default").get<double>() : 1.0;
+        out.document_json = ojson{{"default", defaults}, {"by_speaker", by_speaker},
+                                  {"global_default", out.global_default}}.dump();
+    } catch (const std::exception & e) {
+        err = std::string("invalid calibration: ") + e.what();
+        return false;
+    }
+    return true;
+}
 
 bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_model & model, std::string & err) {
     b = zonos3_steer_bundle{};
@@ -82,7 +141,7 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
         return true;
     };
 
-    std::vector<std::string> set_names, set_spaces, ids, kinds;
+    std::vector<std::string> set_names, set_spaces, set_calibrations, ids, kinds;
     std::vector<int32_t> set_sources;
     {
         int64_t i;
@@ -94,12 +153,14 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
     if (!get_str("zonos3_steer.name", b.name) || !get_u32("zonos3_steer.speaker_dim", b.speaker_dim) ||
         !get_u32("zonos3_steer.hidden_size", b.hidden_size) ||
         !get_strs("zonos3_steer.set.names", set_names) || !get_strs("zonos3_steer.set.spaces", set_spaces) ||
+        !get_strs("zonos3_steer.set.calibrations", set_calibrations) ||
         !get_strs("zonos3_steer.direction.ids", ids) || !get_strs("zonos3_steer.direction.kinds", kinds) ||
         !get_str("zonos3_steer.timing", b.timing_json) || !get_str("zonos3_steer.ui", b.ui_json)) {
         err = invalid(path, "missing or mistyped zonos3_steer.* metadata");
         return false;
     }
     if (set_names.empty() || set_names.size() != set_spaces.size() || set_names.size() != set_sources.size() ||
+        set_names.size() != set_calibrations.size() ||
         ids.empty() || ids.size() != kinds.size() || (size_t) gguf_get_n_tensors(g) != ids.size()) {
         err = invalid(path, "inconsistent metadata array sizes");
         return false;
@@ -125,8 +186,17 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
             err = invalid(path, "set '" + s.name + "' has unknown space '" + set_spaces[i] + "'");
             return false;
         }
+        if (!set_calibrations[i].empty()) {
+            zonos3_steer_calibration c;
+            std::string why;
+            if (!zonos3_steer_calibration::parse(set_calibrations[i], c, why)) {
+                err = invalid(path, "set '" + s.name + "': " + why);
+                return false;
+            }
+            s.calibration = std::move(c);
+        }
         set_index[s.name] = b.sets.size();
-        b.sets.push_back(s);
+        b.sets.push_back(std::move(s));
     }
     if ((any_raw && b.speaker_dim == 0) || (any_hidden && b.hidden_size == 0)) {
         err = invalid(path, "a set space has no dimension");
@@ -232,6 +302,17 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
     return true;
 }
 
+std::vector<std::string> zonos3_steer_disabled_controls(const zonos3_steer_bundle & b, const std::string & speaker) {
+    std::vector<std::string> out;
+    for (const auto & s : b.sets) {
+        if (!s.calibration) continue;
+        std::vector<std::string> names;
+        for (const auto & d : b.dirs) if (d.set == s.name) names.push_back(d.name);
+        for (const auto & n : s.calibration->disabled(speaker, names)) out.push_back(s.name + "." + n);
+    }
+    return out;
+}
+
 std::string zonos3_steer_controls_json(const zonos3_steer_bundle & b, int embedding_dim) {
     ojson doc;
     doc["bundle"] = b.name;
@@ -242,6 +323,7 @@ std::string zonos3_steer_controls_json(const zonos3_steer_bundle & b, int embedd
         e["space"] = s.hidden ? "attnres_source" : "raw";
         e["modes"] = s.hidden ? ojson::array({"embedding", "reference"}) : ojson::array({"embedding"});
         if (s.hidden) e["source_index"] = s.source;
+        if (s.calibration) e["calibration"] = ojson::parse(s.calibration->document_json);
         sets[s.name] = std::move(e);
     }
     doc["sets"] = std::move(sets);

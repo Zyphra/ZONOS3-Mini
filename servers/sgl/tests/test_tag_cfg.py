@@ -303,7 +303,7 @@ def _user(monkeypatch, tmp_path, scale=2.0, **kwargs):
 
 def test_prefill_runs_a_plain_twin_with_identical_conditioning(monkeypatch, tmp_path):
     monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self: self)
-    user = _user(monkeypatch, tmp_path, speaker_emotion_delta=None)
+    user = _user(monkeypatch, tmp_path, steering_delta=None)
     s = _scheduler(max_seq_len=len(user.input_ids) + 2 + 6)
     s._process_one_msg(user)
     batch = s._schedule_prefill()
@@ -369,7 +369,7 @@ def test_tag_cfg_needs_free_slots_for_both_branches(monkeypatch, tmp_path):
     assert s._schedule_prefill() is None and len(s.waiting_reqs) == 1
 
 
-@pytest.mark.parametrize("field", ["speaker_cfg_scale", "emotion_cfg_scale"])
+@pytest.mark.parametrize("field", ["speaker_cfg_scale", "controls_cfg_scale"])
 def test_scheduler_refuses_stacked_guidance(monkeypatch, tmp_path, field):
     monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self: self)
     user = _user(monkeypatch, tmp_path)
@@ -409,16 +409,34 @@ def test_plain_twin_text_keeps_pronunciation_groups():
 
 
 def test_tag_cfg_twin_carries_the_same_steering(monkeypatch, tmp_path):
-    """The twin differs in its text rows only: emotion delta, span schedule and accent steer both branches."""
+    """The twin differs in its text rows only: steering delta, span schedule and accent steer both branches."""
     monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self: self)
     delta, schedule = torch.ones(4), torch.tensor([[0.0, 5.0, 3.0, 1.0, 1.0, 1.0, 1.0]])
-    user = _user(monkeypatch, tmp_path, speaker_emotion_delta=delta, steer_schedule=schedule)
+    user = _user(monkeypatch, tmp_path, steering_delta=delta, steer_schedule=schedule)
     s = _scheduler()
     s._process_one_msg(user)
     tagged, plain = s._schedule_prefill().reqs
-    assert plain.is_cfg_uncond and torch.equal(plain.speaker_emotion_delta, delta)
+    assert plain.is_cfg_uncond and torch.equal(plain.steering_delta, delta)
     assert plain.steer_schedule is tagged.steer_schedule is not None
     assert plain.accent_slot == tagged.accent_slot and plain.accent_scale == tagged.accent_scale
+
+
+def test_controls_cfg_twin_drops_the_steering_only(monkeypatch, tmp_path):
+    """controls_cfg_scale != 1 with a hidden steering delta and a speaker embedding: the twin is the same prompt and
+    speaker without the steering delta / schedule, guided at the controls scale."""
+    monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self: self)
+    delta, schedule = torch.ones(4), torch.tensor([[0.0, 5.0, 3.0, 1.0, 1.0, 1.0, 1.0]])
+    params = TTSSamplingParams(controls_cfg_scale=1.5, max_tokens=20)
+    user = _user(monkeypatch, tmp_path, scale=1.0, text="Hello there.", sampling_params=params,
+                 steering_delta=delta, steer_schedule=schedule)
+    s = _scheduler()
+    s._process_one_msg(user)
+    steered, twin = s._schedule_prefill().reqs
+    assert steered.cfg_twin is twin and twin.is_cfg_uncond and steered.cfg_scale == 1.5
+    assert torch.equal(steered.input_ids, twin.input_ids)
+    assert torch.equal(steered.speaker_embedding, twin.speaker_embedding)
+    assert torch.equal(steered.steering_delta, delta) and steered.steer_schedule is not None
+    assert twin.steering_delta is None and twin.steer_schedule is None
 
 
 def test_rate_schedule_gives_markers_no_time(tmp_path):

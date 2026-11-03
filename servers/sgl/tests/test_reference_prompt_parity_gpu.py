@@ -30,7 +30,7 @@ pytestmark = [
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURES = REPO / "model" / "tests" / "fixtures" / "prompt_requests.json"
-EMOTION_DIR = REPO / "steering" / "emotion_directions_mect60k_axes"
+STEER_BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
 
 
@@ -50,7 +50,7 @@ def reference():
     with torch.device("meta"):
         lm = Zonos3LM(Zonos3LMConfig.from_params(json.loads((root / "params.json").read_text())))
     lm.root = root
-    return lm, ReferenceAssets.load(emotion_dir=EMOTION_DIR if (EMOTION_DIR / "manifest.json").is_file() else None)
+    return lm, ReferenceAssets.load(steer_bundle=STEER_BUNDLE if STEER_BUNDLE.is_file() else None)
 
 
 def _capabilities(lm, assets) -> set[str]:
@@ -60,14 +60,15 @@ def _capabilities(lm, assets) -> set[str]:
     caps = {"tag_cfg"}  # every checkpoint serves tag CFG (api_server _tag_cfg_capabilities)
     if spec is not None and spec.get("phonemes") is not None:
         caps.add("phoneme_tokens")
-    if assets.emotion_directions is not None:
-        caps.add("emotion")
+    if assets.steer_bundle is not None:
+        caps.add("controls")
     return caps
 
 
 def _sgl_reqs(tts, request: dict):
     """The scheduler's TTSReq (and CFG twin) for a v2 request on the sgl path."""
     from zonos3.tokenizer.textnorm import collapse_line_breaks
+    from zonos3.server.schemas import GenerateRequest
     from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
     from zonos3_sgl.server import api_server as api
     from zonos3_sgl.tokenizer.server import (
@@ -79,26 +80,21 @@ def _sgl_reqs(tts, request: dict):
 
     model_config = tts.engine.model_config
     config = SimpleNamespace(model_config=model_config, model_path=MODEL, max_seq_len=tts.engine.max_seq_len,
-                             tts_emotion_directions_dir=str(EMOTION_DIR), accent_directions=None, steer_bundle=None,
+                             steer_bundle=str(STEER_BUNDLE) if STEER_BUNDLE.is_file() else None,
                              accent_adapters=None, laci_heads={})
-    r = {"language": "en_us", "speaker_mode": None, "emotion_enabled": False, "emotion_sliders": None,
-         "emotion_valence": 0.0, "emotion_arousal": 0.0, "emotion_strength": 1.0, "emotion_calibrated": True,
-         "speaker_cfg_scale": 1.0, "emotion_cfg_scale": 1.0, "tag_cfg_scale": 1.0, **request}
-    # api_server: speaker mode, condition rows, speaker embedding, emotion
+    r = {"language": "en_us", "speaker_mode": None,
+         "speaker_cfg_scale": 1.0, "controls_cfg_scale": 1.0, "tag_cfg_scale": 1.0, **request}
+    # api_server: speaker mode, condition rows, speaker embedding, controls
     mode = api._resolve_speaker_mode(config, r["speaker_mode"])
     condition_ids = api._resolve_condition_buckets(config, r.get("condition_buckets"), r.get("condition_values"))
     embedding = None
     if mode == "embedding" and r.get("speaker_embedding_base64"):
         embedding = api._compute_speaker_embedding_from_file(
             r["speaker_embedding_base64"], int(model_config.speaker_embedding_dim), r.get("speaker_embedding_name"))
-    embedding, delta = api._apply_request_emotion(
-        config, embedding, speaker_id=None, emotion_enabled=r["emotion_enabled"], sliders=r["emotion_sliders"],
-        valence=r["emotion_valence"], arousal=r["emotion_arousal"], strength=r["emotion_strength"],
-        use_calibration=r["emotion_calibrated"])
-    delta = api._layout_steering_delta(config, delta, None)
+    embedding, delta, schedule, _ = api._apply_request_controls(config, GenerateRequest(**request), embedding)
     # tokenizer worker
     sampling = TTSSamplingParams(seed=r.get("seed"), speaker_cfg_scale=r["speaker_cfg_scale"],
-                                 emotion_cfg_scale=r["emotion_cfg_scale"], tag_cfg_scale=r["tag_cfg_scale"])
+                                 controls_cfg_scale=r["controls_cfg_scale"], tag_cfg_scale=r["tag_cfg_scale"])
     msg = SimpleNamespace(sampling_params=sampling, edit_codes=None,
                           silence_prefill_frames=r.get("silence_prefill_frames"))
     vocoder = TTSVocoderManager(n_codebooks=tts.n_codebooks, audio_pad_id=tts.audio_pad_id,
@@ -127,7 +123,7 @@ def _sgl_reqs(tts, request: dict):
         uid=10_000 + len(tts.waiting_reqs), input_ids=t,
         plain_input_ids=None if plain is None else _plain_twin_prompt(t, text_rows, plain),
         speaker_reference_prefix_length=prefix_length, sampling_params=sampling, speaker_embedding=embedding,
-        speaker_token_position=position, speaker_emotion_delta=delta, condition_values=condition_ids,
+        speaker_token_position=position, steering_delta=delta, steer_schedule=schedule, condition_values=condition_ids,
         condition_token_start=prefix_length + (1 if embedding is not None else 0), prefill_rows=prefill,
     )
     tts.waiting_reqs.append(user)
@@ -164,7 +160,7 @@ def test_prompt_plan_matches_sgl(tts, reference, entry):
         assert req.speaker_token_position == cond.speaker_row
     assert req.condition_values == cond.condition_values
     assert req.condition_token_start == cond.condition_token_start
-    _same_vector(req.speaker_emotion_delta, plan.hidden_delta if plan.sources else cond.proj_delta)
+    _same_vector(req.steering_delta, plan.hidden_delta)
     _same_vector(prefill, plan.prefill_rows)
     twin = req.cfg_twin
     assert (twin is None) == (plan.twin is None)
@@ -174,5 +170,5 @@ def test_prompt_plan_matches_sgl(tts, reference, entry):
         _same_vector(twin.speaker_embedding, plan.twin.speaker_embedding)
         assert twin.condition_values == plan.twin.condition_values
         assert twin.condition_token_start == plan.twin.condition_token_start
-        steered = twin.speaker_emotion_delta is not None or twin.steer_schedule is not None
+        steered = twin.steering_delta is not None or twin.steer_schedule is not None
         assert steered == (plan.twin.steered and (plan.hidden_delta is not None or plan.schedule is not None))

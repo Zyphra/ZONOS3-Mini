@@ -4,13 +4,11 @@
     `Zonos3LM.forward(probe=ProbeSpec)` teacher-forced on the rows ggml generated: identical argmax per step, centroid
     within 1e-3, plus the logits (the masked heads' recomputed attention feeds the following layers);
 (b) accent adapters (`--accents/--accent/--dump-logits`) against `zonos3.reference.accents.AccentState`: cos >= 0.9999
-    on the prompt's last row and on every decode step;
-(c) emotion directions (`graph-features --emotion`) against zonos3.tts.emotion.apply_emotion / emotion_hidden_delta
-    with the sgl server's calibrated weight fold: equal within 1e-6, raw and attnres_source sets.
+    on the prompt's last row and on every decode step.
 
 The tiny backbone is a random Zonos3LM with the dimensions the ggml loader indexes into (10 x 4096 codebooks, the
 8196-token SuperBPE vocabulary, 128-wide GDN heads) and global layers 3 and 7, converted with `tools/convert_gguf.py lm`.
-Accent adapters and direction sets go through `convert_gguf.py accents|directions` as well.
+Accent adapters go through `convert_gguf.py accents` as well.
 
     uv run --package zonos3-tools pytest servers/ggml/tests/parity/test_ggml_graph.py --ggml-build servers/ggml/build
 """
@@ -35,7 +33,6 @@ from gguf import GGUFReader  # noqa: E402
 from zonos3.models.accent_format import FORMAT_EXPERTS, load_adapter  # noqa: E402
 from zonos3.reference.accents import AccentState  # noqa: E402
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig  # noqa: E402
-from zonos3.tts.emotion import EmotionCalibration, EmotionDirections, apply_emotion, emotion_hidden_delta  # noqa: E402
 
 CODEC = "tiny_codec"
 TEXT_LEN = 14  # BOS + 12 tokens + EOS
@@ -209,82 +206,3 @@ def test_accent_logits(tiny, ggml_build, tmp_path):
     assert cosine(ref_logits[0], plain_logits[0]) < 0.99999, "the adapter barely moves the logits"
     for step, (got, want) in enumerate(zip(logits, ref_logits)):
         assert cosine(got, want) >= 0.9999, f"row {step}: cos {cosine(got, want)}"
-
-
-# ------------------------------------------------------------------------------------------------- (c) emotion
-
-
-def make_directions(tmp_path: Path, space: str, dim: int, source_index: int = -1) -> tuple[Path, Path]:
-    """(manifest dir, convert_gguf GGUF) of a random direction set; the dummy writer's GGUF must load identically."""
-    manifest, dummy = tmp_path / f"{space}-dir", tmp_path / f"{space}-dummy.gguf"
-    cmd = [sys.executable, str(GGML / "scripts" / "make-dummy-directions.py"), "-o", str(dummy),
-           "--manifest-dir", str(manifest), "--space", space, "--dim", str(dim)]
-    if source_index >= 0:
-        cmd += ["--source-index", str(source_index)]
-    subprocess.run(cmd, check=True, capture_output=True)
-    converted = tmp_path / f"{space}.gguf"
-    convert_gguf.main(["directions", str(manifest), "-o", str(converted)])
-    return manifest, converted
-
-
-def python_emotion(directions, calibration, request: dict) -> dict:
-    """sgl _apply_request_emotion's math on one request (strict, optional calibrated fold)."""
-    sliders = dict(request.get("sliders", []))
-    valence, arousal = request.get("valence", 0.0), request.get("arousal", 0.0)
-    speaker = request.get("speaker") or None
-    if request.get("calibrated") and calibration is not None:
-        sliders = {e: float(w) * calibration.pole_strength(speaker, e, float(w)) for e, w in sliders.items()}
-        valence = float(valence) * calibration.pole_strength(speaker, "valence", float(valence))
-        arousal = float(arousal) * calibration.pole_strength(speaker, "arousal", float(arousal))
-    kwargs = dict(sliders=sliders, valence=valence, arousal=arousal, strength=request.get("strength", 1.0),
-                  strict=request.get("strict", False))
-    try:
-        hidden = emotion_hidden_delta(directions, **kwargs)
-        embedding = None
-        if directions.space not in ("proj", "attnres_source") and request.get("base"):
-            embedding = apply_emotion(torch.tensor(request["base"], dtype=torch.float32), directions=directions,
-                                      preserve_norm=request.get("preserve_norm", True), **kwargs)
-    except ValueError as exc:
-        return {"error": str(exc)}
-    return {"embedding": None if embedding is None else embedding.tolist(),
-            "hidden": None if hidden is None else hidden.tolist()}
-
-
-REQUESTS = [
-    {"sliders": [["happy", 0.7], ["angry", -0.4]], "valence": 0.3, "strength": 1.3},
-    {"sliders": [["sad", 1.0]], "arousal": -0.6, "strength": 0.5, "preserve_norm": False},
-    {"sliders": [["happy", 1.0], ["sad", 0.5]], "valence": -0.8, "arousal": 0.4, "calibrated": True,
-     "speaker": "default_0123456789abcdef"},
-    {"sliders": [["angry", 0.9]], "valence": 0.6, "calibrated": True, "speaker": "unknown_voice"},
-    {"sliders": [["happy", 0.0]], "strength": 2.0},
-    {"sliders": [["joy", 1.0]], "strict": True},
-    {"sliders": [["joy", 1.0], ["sad", 0.2]], "strict": False},
-]
-
-
-@pytest.mark.parametrize("space,dim,source", [("raw", 192, -1), ("attnres_source", 64, 5)])
-def test_emotion_delta(ggml_build, tmp_path, space, dim, source):
-    manifest, converted = make_directions(tmp_path, space, dim, source)
-    directions = EmotionDirections.load(manifest)
-    calibration = EmotionCalibration.load(manifest)
-    base = (np.sin(np.arange(dim) * 0.37) + 0.2).astype(np.float32).tolist()
-    exe = ggml_build / "graph-features"
-    for i, request in enumerate(REQUESTS):
-        request = {**request, "base": base, "strict": request.get("strict", True)}
-        path = tmp_path / f"request{i}.json"
-        path.write_text(json.dumps(request))
-        results = []
-        for gguf in (converted, tmp_path / f"{space}-dummy.gguf"):
-            out = subprocess.run([str(exe), "--emotion", str(gguf), "--request", str(path)],
-                                 capture_output=True, text=True, check=True)
-            results.append(json.loads(out.stdout))
-        assert results[0] == results[1], "convert_gguf and make-dummy-directions GGUFs disagree"
-        got, want = results[0], python_emotion(directions, calibration, request)
-        if "error" in want:
-            assert got.get("error") == want["error"], f"request {i}"
-            continue
-        assert "error" not in got, got.get("error")
-        for key in ("embedding", "hidden"):
-            assert (got[key] is None) == (want[key] is None), f"request {i}: {key}"
-            if want[key] is not None:
-                np.testing.assert_allclose(got[key], want[key], rtol=0, atol=1e-6, err_msg=f"request {i}: {key}")

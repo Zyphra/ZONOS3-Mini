@@ -16,7 +16,7 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(caps.json()).toMatchObject({
       speaker_modes: ['reference', 'embedding'], speaker_cfg_supported: true, dub: false, speech_editing: false,
       projects: { enabled: false }, laci_languages: ['cmn', 'de', 'en_gb', 'en_us', 'es', 'fr_fr', 'it', 'ja', 'ko', 'pt_br'],
-      emotion_enabled: true, accents: ['hin'],
+      accents: [],
     });
     const dub = await call(api, 'GET', '/v2/dub/capabilities');
     expect(dub.status).toBe(200);
@@ -24,10 +24,14 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(dub.json()).toMatchObject({ enabled: false, available: false });
   });
 
-  it('controls document validates', async () => {
+  it('controls document validates and carries set calibrations', async () => {
     const r = await call(stubApi().api, 'GET', '/v2/controls');
     expect(r.status).toBe(200);
     expect(validate('ControlsDocument', r.json())).toEqual([]);
+    const sets = r.json<{ sets: Record<string, { calibration?: unknown; source_index?: number }> }>().sets;
+    expect(sets.accent_hidden).toMatchObject({ space: 'attnres_source', source_index: 15 });
+    expect(sets.accent_hidden.calibration).toBeUndefined();
+    expect(sets.mood.calibration).toMatchObject({ by_speaker: {}, global_default: 4 });
   });
 
   it('unknown paths and unknown fields', async () => {
@@ -43,7 +47,8 @@ describe.skipIf(!haveModels)('engine api', () => {
     const json = await call(api, 'POST', '/v2/generate', '{"text":');
     expect(json.status).toBe(422);
     expect(json.json<Detail>().detail[0]).toMatchObject({ msg: 'JSON decode error', type: 'json_invalid' });
-    for (const fields of [{ headroom_db: 25 }, { seed: -1 }, { seed: 2 ** 32 }, { format: 'mp3' }, { text: 5 }, { speaker_blend_t: 2 }]) {
+    for (const fields of [{ headroom_db: 25 }, { seed: -1 }, { seed: 2 ** 32 }, { format: 'mp3' }, { text: 5 }, { speaker_blend_t: 2 },
+      { emotion_cfg_scale: 1.5 }, { emotion_enabled: true }]) {
       const r = await call(api, 'POST', '/v2/generate', { text: 'x', ...fields });
       expect(r.status, JSON.stringify(fields)).toBe(422);
     }
@@ -98,10 +103,12 @@ describe.skipIf(!haveModels)('engine api', () => {
       [{ speaker_mode: 'embedding', speaker_embedding_base64: b64('not npy') }, 'Speaker embedding file must be a valid .npy or .npz file saved without pickle.'],
       [{ speaker_mode: 'x' }, ''],
       [{ tag_cfg_scale: 2 }, 'tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags <laugh/>, <breath/>, <sigh/>, <cough/>, <panting/>, <shouting/>, <crying/> or the same names as span tags (<shouting>...</shouting>).'],
-      [{ laci: true, language: 'en_us', speaker_embedding_id: id, speaker_cfg_scale: 1.5 }, 'LACI needs speaker_cfg_scale = emotion_cfg_scale = 1'],
+      [{ laci: true, language: 'en_us', speaker_embedding_id: id, speaker_cfg_scale: 1.5 }, 'LACI needs speaker_cfg_scale = controls_cfg_scale = 1'],
+      [{ tag_cfg_scale: 2, text: 'Hi <laugh/>.', controls_cfg_scale: 1.5 }, 'tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.'],
+      [{ speaker_mode: 'embedding', speaker_embedding_id: id, speaker_cfg_scale: 1.5, controls_cfg_scale: 1.5 }, 'Speaker and controls CFG cannot be combined'],
       [{ language: 'xx' }, "Unsupported language code: 'xx'. Supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko."],
       [{ controls: { 'nope.nothing': 1 } }, "Unknown control 'nope.nothing'; see /v2/controls."],
-      [{ accent: 'zzz' }, "Unknown accent 'zzz'; loaded accents: hin."],
+      [{ accent: 'zzz' }, "Unknown accent 'zzz'; loaded accents: none (load accent adapters)."],
       [{ max_tokens: 0 }, 'max_tokens must be positive.'],
     ];
     for (const [fields, detail] of cases) {
@@ -122,7 +129,7 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(created.status).toBe(200);
     const sp = created.json<{ id: string }>();
     expect(validate('Speaker', sp)).toEqual([]);
-    expect(sp).toMatchObject({ label: 'mine', scope: 'session', speaker_modes: ['reference', 'embedding'], has_preview: true });
+    expect(sp).toMatchObject({ label: 'mine', scope: 'session', speaker_modes: ['reference', 'embedding'], has_preview: true, disabled_controls: [] });
     const mine = (await call(api, 'GET', '/v2/speakers', undefined, SESSION)).json<SpeakerList>();
     expect(validate('SpeakerList', mine)).toEqual([]);
     expect(mine.speakers.map((s: { id: string }) => s.id)).toContain(sp.id);
@@ -151,6 +158,24 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(twin.slot).toBe(1);
     expect(twin.rows).toBe(cond.rows - 1);
     expect(twin.cond.buckets).toEqual([10, 10, 10]);
+  });
+
+  it('controls CFG runs the same prompt as an unsteered twin', async () => {
+    const { api, engine, backbone } = stubApi();
+    const doc = (await call(api, 'GET', '/v2/controls')).json<{ directions: Record<string, { vector?: unknown }> }>();
+    const hidden = Object.entries(doc.directions).filter(([, v]) => !('vector' in v)).map(([k]) => k);
+    const r = await call(api, 'POST', '/v2/generate', {
+      text: 'Hi.', stream: false, speaker_mode: 'embedding', speaker_embedding_id: engine.voices[0].id,
+      controls: { [hidden[0]]: 0.5 }, controls_cfg_scale: 1.5,
+    });
+    expect(r.status).toBe(200);
+    const [cond, twin] = backbone.prefills;
+    expect(twin.slot).toBe(1);
+    expect(twin.rows).toBe(cond.rows);
+    expect(twin.cond.speakerRow).toBe(0);
+    expect(backbone.steered.every(s => s !== null)).toBe(true);
+    expect(backbone.twinSteered.length).toBeGreaterThan(0);
+    expect(backbone.twinSteered.every(s => s === null)).toBe(true);
   });
 
   it('hidden controls steer decode steps; spans follow the rate schedule', async () => {

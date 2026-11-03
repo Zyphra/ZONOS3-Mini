@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import os
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -26,9 +27,12 @@ def pytest_addoption(parser):
 def pytest_collection_modifyitems(config, items):
     if config.getoption("--base-url"):
         return
+    # the hook sees every collected item of the session: skip only this suite's live-server tests
+    here = Path(__file__).resolve().parent
     skip = pytest.mark.skip(reason="set --base-url or ZONOS3_API_URL")
     for item in items:
-        item.add_marker(skip)
+        if here in Path(str(item.path)).resolve().parents:
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

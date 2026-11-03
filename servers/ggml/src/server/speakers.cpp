@@ -64,9 +64,8 @@ static json speaker_json(const ServerState & s, const Speaker & sp) {
         {"speaker_modes", voice_modes(s, sp)},
         {"embedding_dim", s.model.hp.speaker_dim > 0 ? json(s.model.hp.speaker_dim) : json(nullptr)},
         {"transcript", opt(sp.transcript)},
-        // sgl _speaker_emotion_disabled: some emotion is calibrated to dose 0 for this voice.
-        {"emotion_disabled", s.emotion && s.emotion->calibrated &&
-                                 !s.emotion->calibration.disabled(sp.id, s.emotion->controls()).empty()},
+        // steering.disabled_controls: the bundle controls calibrated to dose 0 for this voice.
+        {"disabled_controls", s.steer_loaded ? zonos3_steer_disabled_controls(s.steer, sp.id) : std::vector<std::string>{}},
     };
 }
 

@@ -1162,7 +1162,7 @@ class Zonos3ForCausalLM(BaseOP):
         )
 
         self._attnres_states: dict = {}
-        # Hidden-space steering (emotion, accent) for Full AttnRes checkpoints: the
+        # Hidden-space steering (steering-bundle attnres_source sets) for Full AttnRes checkpoints: the
         # engine sets ``steer_sources`` (steered bank indices, ascending) and owns
         # ``steer_rows`` ([max decode rows, len(steer_sources), hidden], model dtype),
         # refilled per decode batch with each request's delta (zeros when none);
@@ -1231,13 +1231,6 @@ class Zonos3ForCausalLM(BaseOP):
                 projected_speaker = self.speaker_projection.forward(
                     speaker_emb_values.to(dtype=self.speaker_projection.weight.dtype)
                 )
-                # Optional emotion control injected directly in the model's hidden
-                # space, after the speaker projection (space="proj" directions).
-                emotion_delta = getattr(batch, "speaker_emotion_delta_values", None)
-                if emotion_delta is not None:
-                    projected_speaker = projected_speaker + emotion_delta.to(
-                        dtype=projected_speaker.dtype
-                    )
                 x = x.index_copy(0, speaker_token_positions, projected_speaker.to(dtype=x.dtype))
 
         # Condition rows: replace the all-pad rows' embeddings by the bucket tables (training: index_copy before

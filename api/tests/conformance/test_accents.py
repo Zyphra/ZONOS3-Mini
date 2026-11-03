@@ -1,4 +1,4 @@
-"""Accent adapters and accent directions."""
+"""Accent adapters."""
 
 from __future__ import annotations
 

@@ -81,7 +81,7 @@ function runLaci(t: J): J {
     rec.continuation = cont && {
       n_rows: cont.nRows, history_rows: cont.historyRows, seed: cont.seed, max_tokens: cont.maxTokens,
       condition_values: cont.conditionValues, swap_delta: cont.swapDelta,
-      speaker_emotion_delta: cont.speakerEmotionDelta ? Array.from(cont.speakerEmotionDelta) : null,
+      steering_delta: cont.steeringDelta ? Array.from(cont.steeringDelta) : null,
       probe_mask: maskJson(s.probeMask()),
     };
     out.push(rec);

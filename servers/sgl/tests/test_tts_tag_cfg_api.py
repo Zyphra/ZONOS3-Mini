@@ -83,11 +83,11 @@ def test_guidance_needs_recognized_markup(frontend, endpoint, text):
 
 
 @ENDPOINTS
-def test_guidance_does_not_stack_with_speaker_or_emotion_cfg(frontend, endpoint):
+def test_guidance_does_not_stack_with_speaker_or_controls_cfg(frontend, endpoint):
     detail = _refused(frontend, endpoint, "Say <laugh/> hello", tag_cfg_scale=2.0, speaker_cfg_scale=1.5)
     assert "speaker_cfg_scale" in detail
-    detail = _refused(frontend, endpoint, "Say <laugh/> hello", tag_cfg_scale=2.0, emotion_cfg_scale=1.25)
-    assert "emotion_cfg_scale" in detail
+    detail = _refused(frontend, endpoint, "Say <laugh/> hello", tag_cfg_scale=2.0, controls_cfg_scale=1.25)
+    assert detail == "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0."
 
 
 @ENDPOINTS

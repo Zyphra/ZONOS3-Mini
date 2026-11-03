@@ -29,9 +29,8 @@ export function laciLanguages(e: Engine): string[] {
   return [...e.laci.keys()].sort();
 }
 
-export function serverAccents(e: Engine): string[] {
-  return e.accentDirections ? e.accentDirections.controls() : [];
-}
+/** Accent adapters a request can pick with `accent` (`accents.gguf`): the web export ships none. */
+export const ACCENT_ADAPTERS: string[] = [];
 
 function conditionTokens(e: Engine): unknown {
   const hp = e.hp;
@@ -49,20 +48,6 @@ function conditionTokens(e: Engine): unknown {
   };
 }
 
-function emotionCapabilities(e: Engine): Record<string, unknown> {
-  const d = e.emotion;
-  if (!d) {
-    return {
-      emotion_enabled: false, emotion_names: [], emotion_axes: [], emotion_tiers: {}, emotion_presets: {},
-      emotion_space: null, emotion_calibrated: false,
-    };
-  }
-  return {
-    emotion_enabled: true, emotion_names: d.names, emotion_axes: d.axes, emotion_tiers: JSON.parse(d.tiersJson),
-    emotion_presets: JSON.parse(d.presetsJson), emotion_space: d.space, emotion_calibrated: d.calibrated,
-  };
-}
-
 export function capabilities(e: Engine, speakerModes: string[]): Record<string, unknown> {
   const hp = e.hp;
   const embedding = hp.speakerDim > 0;
@@ -72,8 +57,7 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     text_tokenizer_spec: JSON.parse(hp.textTokenizerSpec),
     text_normalization_enabled: false,
     text_norm_languages: TEXT_NORM_LANGUAGES,
-    accents: serverAccents(e),
-    accent_steering: e.accentDirections ? e.accentDirections.controls() : [],
+    accents: ACCENT_ADAPTERS,
     speaker_enabled: speakerModes.length > 0,
     speaker_conditioning_type: 'raw_reference_prefix',
     speaker_embedding_dim: embedding ? hp.speakerDim : null,
@@ -125,7 +109,6 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     edit_frame_rate: null,
     edit_max_seconds: EDIT_ALIGN_MAX_SECONDS,
     edit_align_max_seconds: EDIT_ALIGN_MAX_SECONDS,
-    ...emotionCapabilities(e),
     phoneme_tokens: null,
     phonemize_enabled: false,
     phonemize_languages: [],

@@ -5,6 +5,7 @@
   "pitch": "pitch_mect60k",
   "accents_en": "english_accents_mect60k",
   "accents_l1": "speaker_accents_mect60k",
+  "accent_hidden": "accent_directions_mect60k",
   "mandarin": "mandarin_mect60k",
   "mandarin_hidden": "mandarin_hidden_mect60k",
   "texture": "voice_quality_mect60k",

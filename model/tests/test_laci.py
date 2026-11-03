@@ -630,7 +630,7 @@ class DurationSessionTest(unittest.TestCase):
         self.assertEqual((s.failures[-1]["kind"], s.failures[-1]["retry_bucket"]), ("pace_fast", -2))
         self.assertEqual(cont.condition_values, [10, 10, 10])  # steered: the rate row unknown
         self.assertTrue(cont.swap_delta)
-        self.assertTrue(torch.equal(cont.speaker_emotion_delta, torch.full((4,), -2.0)))
+        self.assertTrue(torch.equal(cont.steering_delta, torch.full((4,), -2.0)))
         run_attempt(s, self.READING + [TEXT_LEN - 1] * 60)
         cont = s.finish_attempt()  # still fast, nothing slower left on the scale: only recorded
         self.assertIsNone(cont)
@@ -643,7 +643,7 @@ class DurationSessionTest(unittest.TestCase):
         self.assertGreaterEqual(s.rate_bucket, 0)
         self.assertEqual(cont.condition_values[2], s.rate_bucket)
         self.assertTrue(cont.swap_delta)
-        self.assertIsNone(cont.speaker_emotion_delta)
+        self.assertIsNone(cont.steering_delta)
         # truncation at the row's slowest bucket goes one slower: into the steered bucket below
         early = [p for _, p in reading(0, 30, start_row=0)]
         s = paced_session(target=400, bucket=0, rates=EXT, rate_deltas=deltas)
@@ -651,7 +651,7 @@ class DurationSessionTest(unittest.TestCase):
         cont = s.finish_attempt()
         self.assertEqual((s.failures[-1]["kind"], s.failures[-1]["retry_bucket"]), ("truncation", -1))
         self.assertEqual(cont.condition_values[2], 10)
-        self.assertTrue(torch.equal(cont.speaker_emotion_delta, torch.full((4,), -1.0)))
+        self.assertTrue(torch.equal(cont.steering_delta, torch.full((4,), -1.0)))
         with self.assertRaises(ValueError):
             paced_session(target=400, bucket=0, rates=EXT, rate_deltas=deltas[:-1])
 

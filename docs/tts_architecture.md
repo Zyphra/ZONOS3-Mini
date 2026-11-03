@@ -303,7 +303,7 @@ Key `ServerArgs` fields (in `zonos3_sgl/server/args.py`):
 | `tts_audio_codec` | `opus_dual_3n_600k_sched600k_r4096_step600000` | Matched codec, taken from the checkpoint's `audio_codec` |
 | `tts_default_voices_dir` | `None` | Optional folder of audio or `.npy`/`.npz` embedding files listed as default voices in `GET /v2/speakers` and the studio's speaker picker (`servers/sgl/scripts/serve.sh`: `default_voices/`) |
 | `studio_dir` | `<repo>/studio/dist` | Studio build served at `/` |
-| `tts_emotion_directions_dir` | `steering/emotion_directions_mect60k_axes` | Emotion direction set; sliders auto-enable when present, an empty string disables |
+| `steer_bundle` | `None` | Steering bundle JSON behind `controls` / `control_spans` and `GET /v2/controls` (`servers/sgl/scripts/serve.sh`: `steering/studio_bundle_mect60k.json`) |
 
 Model-level config is loaded from checkpoint via `cached_load_checkpoint_config()` (`zonos3/utils/hf.py`) and `ModelConfig.from_checkpoint_config()` in `zonos3/models/config.py`. Key fields: `n_codebooks`, `codebook_size`, `text_vocab`, `eoa_id`, `audio_pad_id`, `loss_softcap`, `moe_n_experts`, `moe_start_from_layer`, `moe_router_dim`.
 

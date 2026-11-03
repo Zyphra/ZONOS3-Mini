@@ -336,7 +336,7 @@ def tokenize_worker(
                             sampling_params=msg.sampling_params,
                             speaker_embedding=msg.speaker_embedding,
                             speaker_token_position=speaker_token_position,
-                            speaker_emotion_delta=msg.speaker_emotion_delta,
+                            steering_delta=msg.steering_delta,
                             steer_schedule=msg.steer_schedule,
                             steer_follow=msg.language if follow_tokens is not None else None,
                             steer_follow_tokens=follow_tokens,

@@ -11,7 +11,6 @@
 #include "spk-encoder.h"
 #include "ssl-encoder.h"
 #include "zonos3-accent.h"
-#include "zonos3-emotion.h"
 #include "zonos3-steer.h"
 #include "zonos3.h"
 
@@ -64,7 +63,7 @@ struct ServerState {
     std::chrono::steady_clock::time_point reference_last_use;   // guarded by reference_compute_mtx
     std::string steer_path;
     bool steer_loaded = false;
-    zonos3_steer_bundle steer;
+    zonos3_steer_bundle steer;              // its hidden sources (steer.sources) are the batch's steered bank sources
     // Silence prefill (sgl _silence_prefill_spec): ZONOS3_SILENCE_PREFILL_FRAMES (default 3) frames for a request
     // without silence_prefill_frames, unless ZONOS3_SILENCE_PREFILL_DEFAULT is 0/false/no/off.
     int silence_prefill_frames = ZONOS3_DEFAULT_SILENCE_PREFILL;
@@ -88,16 +87,10 @@ struct ServerState {
     std::unique_ptr<FuseAligner> aligner;              // the FuseAlign forced aligner; set when --worker-python is given
     bool fusealign_installed = false;                  // the --worker-python interpreter has fusealign_hub
     std::unique_ptr<AsrWorker> asr;                    // Qwen3-ASR (edit and dub); set when <python_src> has asr.py
-    // Companions of later features (emotion.gguf, accents.gguf, accent-directions.gguf, --laci-heads LANG=PATH,
-    // --tts-phoneme-lexicon DIR); recorded here so every module sees the configuration.
-    std::string emotion_directions_path, accent_adapters_path, accent_directions_path, phoneme_lexicon_dir;
-    // Emotion directions the backbone can consume (sgl _emotion_directions_for_model); null = emotion control off.
-    std::shared_ptr<zonos3_directions> emotion;
-    std::shared_ptr<zonos3_directions> accent_directions;   // --accent-directions (attnres_source or raw)
+    // Companions of later features (accents.gguf, --laci-heads LANG=PATH, --tts-phoneme-lexicon DIR); recorded here
+    // so every module sees the configuration.
+    std::string accent_adapters_path, phoneme_lexicon_dir;
     std::shared_ptr<zonos3_accents> accent_adapters;         // --accent-adapters, attached as model.accents
-    // Full AttnRes bank sources that take a hidden delta (sgl _steering_sources: emotion + accent directions + the
-    // steering bundle's hidden sets), ascending: the layout of every request's zonos3_steering.
-    std::vector<int> steer_sources;
     std::shared_ptr<zonos3_phoneme_lexicon> phoneme_lexicon;   // --tts-phoneme-lexicon, opened at startup (phonemize.cpp)
     std::map<std::string, std::string> laci_heads;   // --laci-heads: language -> heads JSON path
     // LACI / span-follow alignment heads by language (zonos3_laci::LaciHeads::load of laci_heads, checked against the

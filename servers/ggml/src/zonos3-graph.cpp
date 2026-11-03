@@ -71,7 +71,6 @@ struct gctx {
     bool ovr_speaker = false; // table has a speaker column (column 1; condition columns follow)
     std::vector<int> steer_sources;           // decode only: bank sources that take a delta input
     std::vector<ggml_tensor *> steer;         // [D, n] input per entry of steer_sources
-    ggml_tensor * ovr_delta = nullptr;        // [D, 1] projected-speaker delta (cond.speaker_delta)
     std::shared_ptr<zonos3_feature_io> io;    // optional feature inputs (accent adapters, alignment probe)
     ggml_tensor * probe_acc = nullptr;        // running probe readout over the global layers
     std::vector<ggml_tensor *> extra_outputs; // feature outputs outside the logits' ancestry
@@ -513,12 +512,6 @@ ggml_tensor * build_graph(gctx & g, int n_layer_limit) {
             g.ovr_spk = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t) hp.speaker_dim, 1);
             ggml_set_input(g.ovr_spk);
             ggml_tensor * projected = ggml_add(ctx, matmul(ctx, m.speaker_proj_w, g.ovr_spk), m.speaker_proj_b);
-            if (!g.cond->speaker_delta.empty()) {
-                // proj-space emotion: the delta adds to the projected speaker vector (sgl _forward_model).
-                g.ovr_delta = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, 1);
-                ggml_set_input(g.ovr_delta);
-                projected = ggml_add(ctx, projected, g.ovr_delta);
-            }
             table = ggml_concat(ctx, table, projected, 1);
         }
         g.ovr_bkt = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t) hp.n_cond);
@@ -744,7 +737,6 @@ static void set_graph_inputs(gctx & g, const float * ids) {
         ggml_backend_tensor_set(g.ovr_keep, keep.data(), 0, keep.size() * sizeof(float));
         ggml_backend_tensor_set(g.ovr_sel, sel.data(), 0, sel.size() * sizeof(int32_t));
         if (g.ovr_spk) ggml_backend_tensor_set(g.ovr_spk, c.speaker.data(), 0, c.speaker.size() * sizeof(float));
-        if (g.ovr_delta) ggml_backend_tensor_set(g.ovr_delta, c.speaker_delta.data(), 0, c.speaker_delta.size() * sizeof(float));
         ggml_backend_tensor_set(g.ovr_bkt, c.buckets.data(), 0, c.buckets.size() * sizeof(int32_t));
     }
     if (!g.decode && g.io && g.io->accent)
@@ -752,16 +744,8 @@ static void set_graph_inputs(gctx & g, const float * ids) {
             g.n, {g.cond->accent, g.cond->accent_strength}));
 }
 
-// The optional conditioning features (speaker-row delta, accent adapter).
+// The optional conditioning feature (accent adapter).
 static bool features_ok(const zonos3_model & m, const zonos3_conditioning & c) {
-    if (!c.speaker_delta.empty()) {
-        if (c.speaker_row < 0 || c.speaker_delta.size() != m.hp.n_embd) {
-            fprintf(stderr, "zonos3: a speaker-row delta needs a speaker row and %u values\n", m.hp.n_embd); return false;
-        }
-        for (float v : c.speaker_delta) if (!std::isfinite(v)) {
-            fprintf(stderr, "zonos3: speaker-row delta contains a non-finite value\n"); return false;
-        }
-    }
     if (c.accent >= 0 && (!m.accents || c.accent >= m.accents->n || !std::isfinite(c.accent_strength))) {
         fprintf(stderr, "zonos3: accent adapter %d is not loaded (or its strength is not finite)\n", c.accent);
         return false;

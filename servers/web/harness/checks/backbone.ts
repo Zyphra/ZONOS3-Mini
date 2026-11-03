@@ -7,7 +7,7 @@ import type { Conditioning } from '../../src/prompt';
 import { argmax, cosine, maxAbs, type Check, type Ctx } from './util';
 
 const W = 11;
-/** Steering sources of the shipped companions (steer.gguf hidden sets, emotion, accent directions). */
+/** Steering sources of the shipped steer.gguf (its hidden sets). */
 const STEER_SOURCES = [15, 19];
 
 interface CondJson { speaker_row: number; condition_row: number; condition_buckets: number[]; speaker_embedding: number[] }
@@ -33,7 +33,7 @@ function load(ctx: Ctx): Promise<Fixture> {
     const cj = JSON.parse(new TextDecoder().decode(await ctx.golden('ids.cond.json'))) as CondJson;
     const cond: Conditioning = {
       speakerRow: cj.speaker_row, speaker: Float32Array.from(cj.speaker_embedding), conditionRow: cj.condition_row,
-      buckets: cj.condition_buckets, speakerDelta: null,
+      buckets: cj.condition_buckets,
     };
     const heads = (await fetchJson<{ heads: { layer: number; head: number }[] }>(new URL('laci/zonos3_mini_mect60k_heads.json', ctx.base).href)).heads;
     const span = locateTextSpan(ids);
@@ -139,7 +139,7 @@ export const checks: Record<string, Check> = {
     const ref = await decode(f);
     // (a) slot 1 holds the CFG twin (speaker row dropped, unknown buckets) and steps interleaved with slot 0.
     const twinIds = f.ids.slice(W);
-    const twinCond: Conditioning = { speakerRow: -1, speaker: null, conditionRow: 0, buckets: [10, 10, 10], speakerDelta: null };
+    const twinCond: Conditioning = { speakerRow: -1, speaker: null, conditionRow: 0, buckets: [10, 10, 10] };
     await f.bb.prefill(0, f.ids, f.cond);
     const tw = await f.bb.prefill(1, twinIds, twinCond);
     const n = 8;

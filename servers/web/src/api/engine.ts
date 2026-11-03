@@ -2,7 +2,6 @@
 import type { Backbone, ProbeInput } from '../backbone';
 import type { Conditioning, ModelHp } from '../prompt';
 import type { LaciHeads } from '../request/laci';
-import type { Directions } from '../request/directions';
 import type { SteerBundle } from '../request/steer';
 import type { Tokenizer } from '../tokenizer';
 
@@ -38,9 +37,6 @@ export interface Engine {
   tokenizer: Tokenizer;
   steer: SteerBundle | null;               // companions/steer.gguf
   controlsDoc: unknown;                    // GET /v2/controls body (null without steer)
-  emotion: Directions | null;              // companions/emotion.gguf
-  accentDirections: Directions | null;     // companions/accent-directions.gguf
-  steerSources: number[];                  // sorted unique hidden-steering bank sources (sgl _steering_sources)
   laci: Map<string, LaciHeads>;            // language -> alignment heads (laci/index.json)
   voices: DefaultVoice[];
   headroomDb: number;                      // dac meta headroom_db

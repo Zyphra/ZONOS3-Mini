@@ -214,6 +214,6 @@ def test_guards(tts):
     with pytest.raises(ValueError):
         tts.generate(TEXTS[:1], _params(), decode_audio=False, audio_prefill_history=[3])  # more than the prefill rows
     with pytest.raises(ValueError, match="LACI needs speaker_cfg_scale"):
-        tts.generate(TEXTS[:1], _params(emotion_cfg_scale=2.0), decode_audio=False, laci=True)  # no CFG twin
+        tts.generate(TEXTS[:1], _params(controls_cfg_scale=2.0), decode_audio=False, laci=True)  # no CFG twin
     with pytest.raises(ValueError, match="no LACI alignment heads"):
         tts.generate(TEXTS[:1], _params(), decode_audio=False, language="es", laci=True)

@@ -2,9 +2,14 @@
 """Emit the tiny steering bundle GGUF used by CI next to tests/fixtures/dummy-zonos3.gguf.
 
 Matches the dummy backbone: n_embd 32, 4 layers (Full AttnRes sources 0..8), speaker_dim 192.
-  who   raw  (192)   axes gender, age
-  style hidden src 3 (32)  named whisper, axis tempo
-  mood  hidden src 5 (32)  axis valence
+  who   raw  (192)   axes gender, age                      no calibration
+  style hidden src 3 (32)  named whisper, axis tempo      calibration.json (whisper off for VOICE)
+  mood  hidden src 5 (32)  axis valence                   calibration.json (valence- off for VOICE)
+VOICE is the default-voice id of a `ci.npy` speaker embedding ("default_" + sha1("ci.npy")[:16]), so
+tests/readme-commands.sh sees disabled_controls ["style.whisper", "mood.valence-"] for it.
+
+Usage:  PYTHONPATH=model/src:tools python servers/ggml/scripts/make-dummy-steer.py \
+            -o servers/ggml/tests/fixtures/dummy-steer.gguf
 """
 from __future__ import annotations
 
@@ -17,6 +22,11 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+VOICE = "default_19139adcad9351f1"
+CALIBRATIONS = {
+    "style": {"by_speaker": {VOICE: {"whisper": 0.0}}, "default": {"tempo": 0.5}, "global_default": 1.0},
+    "mood": {"by_speaker": {VOICE: {"valence-": 0.0}}, "default": {"valence": 1.5}, "global_default": 1.25},
+}
 
 UI = {
     "groups": [{"id": "who", "label": "Who", "hue": "c1"}, {"id": "delivery", "label": "Delivery", "hue": "c5"},
@@ -66,6 +76,8 @@ def main():
                 np.save(d / f"{dname}.npy", (rng.standard_normal(dim) * scale).astype(np.float32))
                 manifest["directions"][dname] = {"file": f"{dname}.npy", **({"kind": kind} if kind else {})}
             (d / "manifest.json").write_text(json.dumps(manifest))
+            if name in CALIBRATIONS:
+                (d / "calibration.json").write_text(json.dumps(CALIBRATIONS[name]))
             sets[name] = name
 
         make_set("who", "raw", 192, 0.5, [("gender", "axis"), ("age", "axis")])

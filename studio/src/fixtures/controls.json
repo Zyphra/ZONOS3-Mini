@@ -26,6 +26,14 @@
     "embedding"
    ]
   },
+  "accent_hidden": {
+   "space": "attnres_source",
+   "modes": [
+    "embedding",
+    "reference"
+   ],
+   "source_index": 15
+  },
   "mandarin": {
    "space": "raw",
    "modes": [
@@ -82,7 +90,20 @@
     "embedding",
     "reference"
    ],
-   "source_index": 19
+   "source_index": 19,
+   "calibration": {
+    "default": {
+     "valence": 4.0,
+     "arousal": 4.0,
+     "dominance": 4.0,
+     "loudness": 2.0,
+     "tempo": 4.0,
+     "clarity": 2.0,
+     "articulation": 4.0
+    },
+    "by_speaker": {},
+    "global_default": 4.0
+   }
   },
   "emotions": {
    "space": "attnres_source",
@@ -3693,6 +3714,12 @@
     0.014915,
     0.208916
    ]
+  },
+  "accent_hidden.hin": {
+   "set": "accent_hidden",
+   "space": "attnres_source",
+   "kind": "named",
+   "norm": 0.13439911603927612
   },
   "mandarin.cmn": {
    "set": "mandarin",

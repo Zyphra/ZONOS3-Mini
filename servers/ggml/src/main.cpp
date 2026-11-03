@@ -43,10 +43,9 @@ static void usage(const char * a0) {
         "  --generate <input_ids.npy> <out.{npy,wav}>\n"
         "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
         "  --request <req.json> --build-prompt <ids.npy> [--worker-python PY [--python-src DIR]] [--steer F]\n"
-        "                      [--emotion-directions F] [--accent-adapters F] [--accent-directions F]\n"
-        "                      (emotion.gguf / accents.gguf / accent-directions.gguf auto-detected next to the backbone)\n"
+        "                      [--accent-adapters F] (accents.gguf auto-detected next to the backbone)\n"
         "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
-        "      ids.twin.npy + ids.twin.cond.json for a speaker / tag / emotion CFG twin); no generation\n"
+        "      ids.twin.npy + ids.twin.cond.json for a speaker / tag / controls CFG twin); no generation\n"
         "  --batch-test <t1|t2|...> | --decode-bench <text> [--slots N]\n"
         "  --clone <ref_audio> | --reference-codes <codes.npy> | --speaker-embedding <emb.npy>\n"
         "      mutually exclusive speaker sources; reference codes are ordinary [T,10], IDs 0..4095;\n"
@@ -528,9 +527,7 @@ static int request_prompt_main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--dac-encoder") && v) dac_encoder = argv[++i];
         else if (!strcmp(argv[i], "--ssl-teacher") && v) ssl_teacher = argv[++i];
         else if (!strcmp(argv[i], "--steer") && v) steer_path = argv[++i];
-        else if (!strcmp(argv[i], "--emotion-directions") && v) s.emotion_directions_path = argv[++i];
         else if (!strcmp(argv[i], "--accent-adapters") && v) s.accent_adapters_path = argv[++i];
-        else if (!strcmp(argv[i], "--accent-directions") && v) s.accent_directions_path = argv[++i];
         else { usage(argv[0]); return 1; }
     }
     if (request_path.empty() || out.empty()) {
@@ -550,10 +547,8 @@ static int request_prompt_main(int argc, char ** argv) {
     s.spk_path = spk_encoder.empty() ? mp_find_companion(path, "spk-encoder.gguf") : spk_encoder;
     s.encoder_path = dac_encoder.empty() ? mp_find_companion(path, "dac-encoder.gguf") : dac_encoder;
     s.teacher_path = ssl_teacher.empty() ? mp_find_companion(path, "ssl-teacher.gguf") : ssl_teacher;
-    // The server's companions next to the backbone (emotion.gguf, accents.gguf, accent-directions.gguf).
-    if (s.emotion_directions_path.empty()) s.emotion_directions_path = mp_find_companion(path, "emotion.gguf");
+    // The server's accent adapters next to the backbone (accents.gguf).
     if (s.accent_adapters_path.empty()) s.accent_adapters_path = mp_find_companion(path, "accents.gguf");
-    if (s.accent_directions_path.empty()) s.accent_directions_path = mp_find_companion(path, "accent-directions.gguf");
     if (!s.worker_python.empty()) {
         if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
         if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py")) {
@@ -571,7 +566,7 @@ static int request_prompt_main(int argc, char ** argv) {
         s.steer_path = steer_path;
         s.steer_loaded = true;
     }
-    if (!zs::load_emotion_accents(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    if (!zs::load_accent_adapters(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     zs::GeneratePlan plan;
     try {
         plan = zs::plan_generate(s, body, std::nullopt);

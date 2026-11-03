@@ -1,12 +1,14 @@
-// Steering, directions, markup, LACI detector and span follower against the ggml fixtures and shipped companions.
+// Steering, markup, LACI detector and span follower against the ggml fixtures and the shipped steer.gguf.
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseGguf } from '../../src/gguf';
-import { accentSteering, addHiddenDelta, applyEmotion, calibrate, combine, hiddenDelta, loadDirections } from '../../src/request/directions';
 import { defaultLaciConfig, Detector } from '../../src/request/laci';
 import { hasNonverbalMarkup, nonverbalMarkerSpans, stripNonverbalMarkup } from '../../src/request/markup';
 import { SpanFollower } from '../../src/request/spanFollow';
-import { controlsDocument, loadSteer, resolveControls, steerIndex, Steering, textChars, type SteerBundle } from '../../src/request/steer';
+import {
+  Calibration, controlsDocument, disabledControls, loadSteer, resolveControls, steerIndex, Steering, textChars,
+  type SteerBundle,
+} from '../../src/request/steer';
 
 const FIX = new URL('../../../ggml/tests/fixtures/', import.meta.url);
 const MODELS = new URL('../../../ggml/models/', import.meta.url);
@@ -25,8 +27,16 @@ describe('steer', () => {
     const doc = controlsDocument(b, 192) as Record<string, any>;
     expect(Object.keys(doc)).toEqual(['bundle', 'embedding_dim', 'sets', 'directions', 'timing', 'ui']);
     expect(Object.keys(doc.sets)).toEqual(['who', 'style', 'mood']);
-    expect(doc.sets.style).toEqual({ space: 'attnres_source', modes: ['embedding', 'reference'], source_index: 3 });
+    expect(doc.sets.style).toEqual({
+      space: 'attnres_source', modes: ['embedding', 'reference'], source_index: 3,
+      calibration: { default: { tempo: 0.5 }, by_speaker: { default_19139adcad9351f1: { whisper: 0 } }, global_default: 1 },
+    });
     expect(doc.sets.who).toEqual({ space: 'raw', modes: ['embedding'] });
+    expect(doc.sets.mood.calibration).toEqual({
+      default: { valence: 1.5 }, by_speaker: { default_19139adcad9351f1: { 'valence-': 0 } }, global_default: 1.25,
+    });
+    expect(disabledControls(b, 'default_19139adcad9351f1')).toEqual(['style.whisper', 'mood.valence-']);
+    expect(disabledControls(b, 'someone_else')).toEqual([]);
     expect(Object.keys(doc.directions)).toEqual(g.kv.get('zonos3_steer.direction.ids'));
     expect(Object.keys(doc.directions['who.gender'])).toEqual(['set', 'space', 'kind', 'norm', 'vector']);
     expect(Object.keys(doc.directions['style.whisper'])).toEqual(['set', 'space', 'kind', 'norm']);
@@ -35,19 +45,28 @@ describe('steer', () => {
     expect(doc.timing).toEqual(JSON.parse(g.kv.get('zonos3_steer.timing') as string));
     expect(() => loadSteer(g, { nEmbd: 64, nLayer: 4, speakerDim: 192 }))
       .toThrow('steering hidden directions have 32 values; the backbone hidden size is 64');
-    expect(() => loadSteer(gguf(new URL('dummy-emotion.gguf', FIX)), { nEmbd: 32, nLayer: 4, speakerDim: 192 }))
-      .toThrow('not a valid zonos3 steering GGUF');
+    const noCalibrations = { ...g, kv: new Map(g.kv), types: new Map(g.types) };
+    noCalibrations.kv.delete('zonos3_steer.set.calibrations');
+    noCalibrations.types.delete('zonos3_steer.set.calibrations');
+    expect(() => loadSteer(noCalibrations, { nEmbd: 32, nLayer: 4, speakerDim: 192 }))
+      .toThrow("'steer.gguf' is not a valid zonos3 steering GGUF (missing or mistyped zonos3_steer.* metadata)");
+    const notSteer = { ...g, kv: new Map(g.kv), types: new Map(g.types) };
+    notSteer.kv.set('general.architecture', 'zonos3_directions');
+    expect(() => loadSteer(notSteer, { nEmbd: 32, nLayer: 4, speakerDim: 192 })).toThrow('not a valid zonos3 steering GGUF');
   });
 
   it.skipIf(!existsSync(new URL('steer.gguf', MODELS)))('loads the shipped steer.gguf', () => {
     const b = loadSteer(gguf(new URL('steer.gguf', MODELS)), { nEmbd: 1024, nLayer: 11, speakerDim: 192 });
     expect(b.sets.map((s) => (s.hidden ? `${s.name}(${s.source})` : s.name))).toEqual([
-      'identity', 'pitch', 'accents_en', 'accents_l1', 'mandarin', 'mandarin_hidden(15)', 'texture', 'room',
-      'delivery(19)', 'expressive(19)', 'disfluency(19)', 'mood(19)', 'emotions(19)']);
+      'identity', 'pitch', 'accents_en', 'accents_l1', 'accent_hidden(15)', 'mandarin', 'mandarin_hidden(15)', 'texture',
+      'room', 'delivery(19)', 'expressive(19)', 'disfluency(19)', 'mood(19)', 'emotions(19)']);
     expect(b.sources).toEqual([15, 19]);
     expect(b.rateExtension?.direction).toBe('delivery.tempo');
     const doc = controlsDocument(b, 192) as Record<string, any>;
     expect(doc.ui.request_defaults).toEqual({ speaker_mode: 'embedding', speaker_cfg_scale: 1.5, topk: 40, stream_decode: 'prefix' });
+    expect(Object.entries(doc.sets).filter(([, s]: [string, any]) => s.calibration).map(([k]) => k)).toEqual(['mood']);
+    expect(doc.sets.mood.calibration).toMatchObject({ by_speaker: {}, global_default: 4 });
+    expect(disabledControls(b, 'default_0123456789abcdef')).toEqual([]);
   });
 
   // steering.cpp test_resolve on the same in-memory bundle
@@ -56,8 +75,8 @@ describe('steer', () => {
       ({ id: `${set}.${name}`, set, name, axis: false, hidden, source, vec: Float32Array.from(v) });
     const b: SteerBundle = {
       name: 'mem', speakerDim: 3, hiddenSize: 2,
-      sets: [{ name: 'who', hidden: false, source: -1 }, { name: 'accent', hidden: false, source: -1 },
-        { name: 'deep', hidden: true, source: 15 }, { name: 'style', hidden: true, source: 19 }],
+      sets: [{ name: 'who', hidden: false, source: -1, calibration: null }, { name: 'accent', hidden: false, source: -1, calibration: null },
+        { name: 'deep', hidden: true, source: 15, calibration: null }, { name: 'style', hidden: true, source: 19, calibration: null }],
       dirs: [dir('who', 'gender', false, -1, [0, 2, 0]), dir('accent', 'british', false, -1, [0, 0, 1]),
         dir('deep', 'cmn', true, 15, [0, 3]), dir('style', 'whisper', true, 19, [1, 0]), dir('style', 'tempo', true, 19, [-1, 1])],
       timing: new Map([['style.tempo', [[-1, 2], [0, 1], [1, 0.5]]]]), timingJson: '{}', uiJson: '{}',
@@ -106,47 +125,26 @@ describe('steer', () => {
     r.deltaAt(23, o); expect(o.v).toBeNull();
     expect(textChars('héllo😀')).toBe(6);
   });
-});
 
-describe('directions', () => {
-  const d = loadDirections(gguf(new URL('dummy-emotion.gguf', FIX)));
-  it('loads dummy-emotion.gguf', () => {
-    expect(d.space).toBe('raw');
-    expect(d.names).toEqual(['happy', 'sad', 'angry']);
-    expect(d.axes).toEqual(['valence', 'arousal']);
-    expect(d.calibrated).toBe(true);
-    expect(d.refBaseNorm).toBe(9.5);
-  });
-  it('combine / applyEmotion keep the base norm', () => {
-    const base = Float32Array.from({ length: 192 }, (_, i) => Math.sin(i + 1));
-    const { delta, requested } = combine(d, [['sad', 0.7]], 0.3, 0, true);
-    expect(requested).toBe(true);
-    expect(delta[5]).toBeCloseTo(0.7 * d.named[1][5] + 0.3 * d.axis[0][5], 5);
-    const out = applyEmotion(d, base, [['sad', 0.7]], 0.3, 0, 1, true, true);
-    expect(Math.abs(norm(out) - norm(base))).toBeLessThan(1e-6 * norm(base) + 1e-6);
-    expect(out).not.toEqual(base);
-    expect(() => combine(d, [['nope', 1]], 0, 0, true)).toThrow("Unknown emotion direction 'nope'. Available: ['happy', 'sad', 'angry', 'valence', 'arousal'].");
-    expect(hiddenDelta(d, [['sad', 1]], 0, 0, 1, true)).toBeNull();
-  });
-  it('calibration', () => {
-    const s: [string, number][] = [['happy', 1], ['sad', 1]];
-    const va = { valence: -1, arousal: 0 };
-    calibrate(d, 'default_0123456789abcdef', s, va);
-    expect(s).toEqual([['happy', 0], ['sad', 1.5]]);
-    expect(va.valence).toBe(-0.25);
-  });
-  it.skipIf(!existsSync(new URL('emotion.gguf', MODELS)))('shipped emotion / accent directions are hidden', () => {
-    const e = loadDirections(gguf(new URL('emotion.gguf', MODELS)));
-    expect([e.space, e.sourceIndex, e.axes.length]).toEqual(['attnres_source', 19, 7]);
-    const h = hiddenDelta(e, [], 1, 0, 2, true)!;
-    expect(h[0]).toBe(Math.fround(2 * e.axis[0][0]));
-    const a = loadDirections(gguf(new URL('accent-directions.gguf', MODELS)));
-    expect([a.sourceIndex, a.names]).toEqual([15, ['hin']]);
-    const hv = accentSteering(a, 'hin', 1, '', true, null)!;
-    const layout = addHiddenDelta([15, 19], 1024, 15, hv, null)!;
-    expect(layout[3]).toBe(hv[3]);
-    expect(layout[1024 + 3]).toBe(0);
-    expect(addHiddenDelta([19], 1024, 15, hv, null)).toBeNull();
+  it('calibration: document and disabled controls', () => {
+    const c = Calibration.parse(JSON.stringify({
+      default: { whisper: 2, 'tempo-': 0.5 }, by_speaker: { spk: { whisper: 0, 'tempo-': 0 } }, global_default: 1.5,
+    }));
+    expect(c.strength('spk', 'whisper')).toBe(0);
+    expect(c.strength('other', 'whisper')).toBe(2);
+    expect(c.strength('', 'tempo')).toBe(1.5);
+    expect(c.document()).toEqual({
+      default: { whisper: 2, 'tempo-': 0.5 }, by_speaker: { spk: { whisper: 0, 'tempo-': 0 } }, global_default: 1.5,
+    });
+    expect(() => Calibration.parse('{"default": {"x": "1"}}')).toThrow('default is not a {name: dose} object');
+    const b = mem();
+    b.sets[3].calibration = c;
+    expect(disabledControls(b, 'spk')).toEqual(['style.whisper', 'style.tempo-']);
+    expect(disabledControls(b, 'other')).toEqual([]);
+    expect(disabledControls(null, 'spk')).toEqual([]);
+    const doc = controlsDocument(b, 3) as Record<string, any>;
+    expect(Object.keys(doc.sets.style)).toEqual(['space', 'modes', 'source_index', 'calibration']);
+    expect(doc.sets.deep.calibration).toBeUndefined();
   });
 });
 
