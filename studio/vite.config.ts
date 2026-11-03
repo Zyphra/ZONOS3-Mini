@@ -1,3 +1,5 @@
+import { readdirSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { defineConfig, loadEnv, type Connect, type Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import sirv from 'sirv';
@@ -22,6 +24,30 @@ function webEngine(): Plugin {
   };
 }
 
+/**
+ * `emptyOutDir`, minus the committed `dist/web-engine/`: that engine build comes from `pnpm build:web`, not from
+ * this build, so a plain `pnpm build` keeps it.
+ */
+function cleanOutDir(keep: string[]): Plugin {
+  let outDir = '';
+  return {
+    name: 'zonos3-clean-out-dir',
+    apply: 'build',
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir);
+    },
+    buildStart() {
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(outDir);
+      } catch {
+        return; // no dist yet
+      }
+      for (const entry of entries) if (!keep.includes(entry)) rmSync(join(outDir, entry), { recursive: true, force: true });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const target = process.env.ZONOS_SERVER || env.ZONOS_SERVER;
@@ -30,11 +56,13 @@ export default defineConfig(({ mode }) => {
     : undefined;
   return {
     base: '/',
-    plugins: [preact(), webEngine()],
+    plugins: [preact(), webEngine(), cleanOutDir(['web-engine'])],
     build: {
       outDir: 'dist',
-      emptyOutDir: true,
+      emptyOutDir: false,
       target: 'es2022',
+      // Two pages: the full studio at / and the lite voice-cloning page at /lite.html.
+      rolldownOptions: { input: { index: resolve(import.meta.dirname, 'index.html'), lite: resolve(import.meta.dirname, 'lite.html') } },
     },
     server: { proxy },
     preview: { proxy },

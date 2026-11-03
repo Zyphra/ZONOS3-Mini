@@ -42,12 +42,38 @@ browser has WebGPU and the site serves the in-browser engine at `/web-engine/eng
 `../servers/web`) or **offline** (no server and no engine: fixture voices and a client-side babbling synthesizer that
 applies every control). Force one with `?api=live|fixture|offline|web` (`?engine=URL` points at another engine
 build); point a build at another server with `?server=https://…` (CORS is open). Every request goes through one
-transport (`fetch`, or the engine's `localFetch` on the web backend). `pnpm dev` / `pnpm preview` serve the engine
+transport (`fetch`, or the engine's `localFetch` on the web backend; `src/lib/web-engine.ts`, shared with the lite
+page). `pnpm dev` / `pnpm preview` serve the engine
 (`../servers/web/dist`, `pnpm --dir ../servers/web build`) at `/web-engine` and its models
 (`../servers/web/public/models`, `pnpm --dir ../servers/web export`) at `/models`; `pnpm build:web` (after `build`)
-copies the engine into `dist/web-engine/` for a deployment.
+copies the engine into `dist/web-engine/` for a deployment (`pnpm build` empties `dist/` except `web-engine/`).
 Speech editing follows `/v2/capabilities.speech_editing` on a live server and runs on the client-side fixture
 offline; `?edit=fixture` forces the fixture, `?edit=0` a checkpoint that cannot edit.
+
+## Lite UI
+
+`lite.html` + `src/lite/` are a second Vite entry, built by the same `pnpm build` into `dist/lite.html`: a
+one-job page for voice cloning from a speaker embedding, served by every server at `/lite.html`. It is plain
+TypeScript and DOM with its own small stylesheet (light/dark from `prefers-color-scheme`), no Preact and no studio
+CSS or fonts (about 12 kB gzipped in all); it shares only the generated `src/api/schema.ts` types, `openapi-fetch`,
+`src/lib/files.ts` and `src/lib/web-engine.ts`. It runs on an HTTP server or on the in-browser server exactly as the
+studio does (`src/lib/web-engine.ts` is the studio's own engine loader and transport): `?api=web` forces the
+in-browser server, `?api=live` the HTTP server, and `auto` (the default) takes the in-browser server when no ZONOS
+server answers `GET /v2/capabilities` and the browser has WebGPU and the site serves the engine (`?engine=URL`,
+default `/web-engine/engine.js`, loaded at run time and never bundled; `?models=URL` is the engine's own). Every
+request, the raw preview and generate ones included, goes through that one transport. While the engine loads its
+models the page shows a progress line (`Loading backbone … 42%`) with the form inert, then an **In-browser** badge;
+the speaker encoder it loads on a clip voice's first use (generate or embedding download) shows on the same line.
+On load it reads `GET /v2/capabilities` and, when `speaker_modes` lacks `embedding`, says the server cannot clone
+from an embedding and disables the form.
+A voice comes from a default voice of `GET /v2/speakers` (those whose `speaker_modes` include `embedding`), an
+uploaded or recorded clip (a recording is sent as a 16-bit WAV) or a saved `.npy`/`.npz` embedding (both
+`POST /v2/speakers`); the chosen voice offers its preview (`has_preview`) and **Download embedding**
+(`GET /v2/speakers/{id}/embedding` saved as a float32 `.npy`, which loads back as an embedding file). Generate posts
+`/v2/generate` with `speaker_mode: "embedding"`, `stream: true`, `format: "pcm"`, plays the float32 PCM through
+WebAudio as it streams, then offers the WAV (built in the browser) and shows `X-Seed`; errors show the server's
+`detail` (the 422 list as `field: message`). `?server=https://…` points it at another server; `X-TTS-Session-ID` is
+random per tab (sessionStorage), so the voices a tab adds are its own.
 
 ## Projects
 

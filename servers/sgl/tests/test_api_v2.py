@@ -120,6 +120,21 @@ def test_removed_paths_are_404(client, method, path):
     assert r.status_code == 404 and isinstance(r.json()["detail"], str)
 
 
+def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path):
+    studio = tmp_path / "studio"
+    (studio / "assets").mkdir(parents=True)
+    (studio / "index.html").write_text('<div id="app"></div>')
+    (studio / "lite.html").write_text('<div id="app"></div>')
+    (studio / "assets" / "index-abc.js").write_text("export {}")
+    for path in ("/", "/lite.html"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
+        assert r.headers["cache-control"] == "no-store, max-age=0", path
+    r = client.get("/assets/index-abc.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert client.get("/nope.html").status_code == 404
+
+
 def test_generate_streams_pcm_with_the_drawn_seed(client, frontend):
     r = client.post("/v2/generate", json={"text": "hi"})
     assert r.status_code == 200 and r.headers["x-audio-format"] == "float32"

@@ -71,6 +71,21 @@ def wav_b64(seconds: float = 2.0) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path, monkeypatch):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text('<div id="app"></div>')
+    (tmp_path / "lite.html").write_text('<div id="app"></div>')
+    (tmp_path / "assets" / "index-abc.js").write_text("export {}")
+    monkeypatch.setattr(client.app.state.zonos3.options, "studio_dir", tmp_path)
+    for path in ("/", "/lite.html"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
+        assert r.headers["cache-control"] == "no-store, max-age=0", path
+    r = client.get("/assets/index-abc.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert client.get("/nope.html").status_code == 404
+
+
 def test_prefix_stream_is_the_whole_decode_without_the_silence_prefill(client):
     """A streamed request (prefix re-decode) carries the same audio as the buffered one; the buffered whole decode
     also emits the re-decoded silence-prefill frames (3 by default) in front."""

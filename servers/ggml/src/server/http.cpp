@@ -244,7 +244,10 @@ void install_studio(httplib::Server & svr, const std::string & studio_dir) {
         std::string body;
         if (ec || rel.empty() || *rel.begin() == ".." || !fs::is_regular_file(target, ec) || !read_file(target, body))
             return send_error(res, 404, "Not Found");
-        res.set_header("Cache-Control", "public, max-age=31536000, immutable");
+        // Pages are no-store (a rebuild's new hashed assets are picked up at once); every other file is immutable.
+        const std::string name = target.filename().string();
+        const bool page = name.size() >= 5 && name.compare(name.size() - 5, 5, ".html") == 0;
+        res.set_header("Cache-Control", page ? "no-store, max-age=0" : "public, max-age=31536000, immutable");
         res.set_content(body, httplib::detail::find_content_type(target.string(), {}, "application/octet-stream"));
     };
     auto not_found = [](const httplib::Request &, httplib::Response & res) { send_error(res, 404, "Not Found"); };

@@ -66,6 +66,8 @@ The first start JIT-compiles kernels and builds the text-normalization grammar c
 On Apple Silicon, `servers/mlx/scripts/serve.sh` serves the GGUF files of `Zyphra/ZONOS3_Mini_GGUF` on the same port
 with the same variables. Without any server, the studio runs ZONOS3 in the browser on WebGPU (`?api=web`; models from
 the GGUF files, see [servers/web/README.md](servers/web/README.md)).
+Every server also serves a lightweight voice-cloning page at `/lite.html` (pick, upload, record or load a voice
+embedding, then speak with it; see [studio/README.md](studio/README.md#lite-ui)).
 
 | Variable | Effect |
 | --- | --- |

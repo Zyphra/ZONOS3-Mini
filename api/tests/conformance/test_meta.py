@@ -46,21 +46,47 @@ def index(client):
     return r
 
 
-def test_root_serves_the_studio(index, api_token):
-    assert index.headers["content-type"].startswith("text/html")
-    assert '<div id="app">' in index.text
+@pytest.fixture(scope="module")
+def lite(client):
+    r = client.get("/lite.html")
+    if r.status_code == 404:
+        pytest.skip("this studio build has no lite.html")
+    assert r.status_code == 200, r.text[:300]
+    return r
+
+
+def _assert_page(page, api_token):
+    """A studio page is HTML that the browser never stores (a rebuild changes its hashed asset names)."""
+    assert page.headers["content-type"].startswith("text/html")
     if not api_token:  # the access middleware forces no-store on every non-media response
-        assert "no-store" in index.headers.get("cache-control", "")
+        assert "no-store" in page.headers.get("cache-control", "")
 
 
-def test_studio_assets_are_immutable(client, index, api_token):
-    assets = re.findall(r'(?:src|href)="(/[^"]+)"', index.text)
+def _assert_assets_immutable(client, page, api_token):
+    assets = re.findall(r'(?:src|href)="(/[^"]+)"', page.text)
     assert assets
     for path in assets:
         r = client.get(path)
         assert r.status_code == 200, path
         if not api_token:
             assert "immutable" in r.headers.get("cache-control", ""), path
+
+
+def test_root_serves_the_studio(index, api_token):
+    _assert_page(index, api_token)
+    assert '<div id="app">' in index.text
+
+
+def test_studio_assets_are_immutable(client, index, api_token):
+    _assert_assets_immutable(client, index, api_token)
+
+
+def test_lite_page_is_not_stored(lite, api_token):
+    _assert_page(lite, api_token)
+
+
+def test_lite_assets_are_immutable(client, lite, api_token):
+    _assert_assets_immutable(client, lite, api_token)
 
 
 @pytest.mark.parametrize(

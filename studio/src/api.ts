@@ -26,6 +26,7 @@ import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
 import { encodeNpy, encodeWav, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
+import { selectWebEngine, startWebEngine, transport, usingWebEngine, webEngineAvailable } from './lib/web-engine';
 import { bootProgress } from './state/app';
 
 // ── Contract types ────────────────────────────────────────────────────────────────────────────────
@@ -240,17 +241,8 @@ const params = new URLSearchParams(location.search);
 const forced = (params.get('api') || import.meta.env.VITE_ZONOS_API || 'auto') as BackendKind | 'auto';
 const server = (params.get('server') || import.meta.env.VITE_ZONOS_SERVER_URL || '').replace(/\/+$/, '');
 
-/** The in-browser server's module (servers/web dist/engine.js). */
-interface WebEngine {
-  init(progress: (p: { model: string; loaded: number; total: number }) => void, opts?: { base?: string; cache?: boolean }): Promise<void>;
-}
-const engineUrl = params.get('engine') || import.meta.env.VITE_ZONOS_WEB_ENGINE || '/web-engine/engine.js';
-interface WebEngineModule { engine: WebEngine; localFetch: typeof fetch }
-let webEngine: Promise<WebEngineModule> | null = null;
-const loadWebEngine = (): Promise<WebEngineModule> => (webEngine ??= import(/* @vite-ignore */ engineUrl));
-let useWeb = forced === 'web';
-/** Every request goes through here: the in-browser server once the web backend is picked, else the network. */
-const transport: typeof fetch = (input, init) => (useWeb ? loadWebEngine().then((m) => m.localFetch(input, init)) : fetch(input, init));
+if (forced === 'web') selectWebEngine();
+
 export const SAMPLE_RATE = 44100;
 
 function sessionId(): string {
@@ -458,9 +450,7 @@ function projectCaps(c: Schemas['ProjectsCapability'] | undefined): ProjectCaps 
 
 /** The in-browser server: load the engine and its models (progress on the boot screen), then serve from this tab. */
 async function startWeb(make: (kind: BackendKind, spec: ControlsSpec) => Promise<Backend>): Promise<Backend> {
-  useWeb = true;
-  const { engine } = await loadWebEngine();
-  await engine.init((p) => (bootProgress.value = `Loading ${p.model} … ${Math.round((100 * p.loaded) / Math.max(1, p.total))}%`));
+  await startWebEngine((text) => (bootProgress.value = text));
   bootProgress.value = null;
   return make('web', await getControls());
 }
@@ -481,7 +471,7 @@ export async function connect(): Promise<Backend> {
     if (err instanceof ApiError && err.status === 404) return make('fixture', fixture);
     if (forced === 'fixture') return make('fixture', fixture);
     // Nothing (or not a ZONOS server) answered: the in-browser server when this browser and site can run it.
-    if (forced === 'auto' && 'gpu' in navigator && (await fetch(engineUrl, { method: 'HEAD' }).then((r) => r.ok, () => false)))
+    if (forced === 'auto' && (await webEngineAvailable()))
       return startWeb(make);
     // Else run on the client-side fixture.
     return make('offline', fixture);
@@ -737,7 +727,7 @@ const dubFixture = () => !!current().dub?.fixture;
 
 /** POST raw bytes with upload progress (fetch has none); JSON back, errors as ApiError. */
 function postBytes<T>(path: string, body: Blob | ArrayBuffer, onProgress?: (f: number) => void, signal?: AbortSignal): Promise<T> {
-  if (useWeb) throw new ApiError(404, 'Not Found');   // the in-browser server has no byte-upload routes (dub is off)
+  if (usingWebEngine()) throw new ApiError(404, 'Not Found');   // the in-browser server has no byte-upload routes (dub is off)
   const { promise, resolve, reject } = Promise.withResolvers<T>();
   const xhr = new XMLHttpRequest();
   xhr.open('POST', server + path);

@@ -243,9 +243,16 @@ curl -fsS -X PUT "$BASE/v2/projects/ci" -H 'Content-Type: application/json' \
   -d "{\"name\":\"ci\",\"data\":{\"media\":{\"$SHA\":{\"type\":\"x/y\",\"size\":5}}},\"base_revision\":null}" | grep -q '"revision":1' \
   || fail "PUT /v2/projects/ci did not save revision 1"
 pass "/v2/media + /v2/projects"
-# the studio (studio/dist of the checkout) at /: index.html, then an immutable asset; /studio/ is gone
+# the studio (studio/dist of the checkout) at /: index.html, then an immutable asset; pages are no-store;
+# /studio/ is gone
 curl -fsS "$BASE/" -o "$WORK/index.html" || fail "/ not served"
 grep -q '<div id="app">' "$WORK/index.html" || fail "/ is not the studio"
+curl -fsS -D "$WORK/index.h" -o /dev/null "$BASE/" || fail "/ not served"
+grep -qi '^cache-control: no-store, max-age=0' "$WORK/index.h" || fail "/ is not no-store"
+if [ -f "$ROOT/../../studio/dist/lite.html" ]; then
+  curl -fsS -D "$WORK/lite.h" -o /dev/null "$BASE/lite.html" || fail "/lite.html not served"
+  grep -qi '^cache-control: no-store, max-age=0' "$WORK/lite.h" || fail "/lite.html is not no-store"
+fi
 ASSET="$(sed -n 's/.*src="\(\/assets\/[^"]*\.js\)".*/\1/p' "$WORK/index.html" | head -1)"
 [ -n "$ASSET" ] || fail "the studio index references no /assets/*.js"
 curl -fsS -D "$WORK/asset.h" -o /dev/null "$BASE$ASSET" || fail "$ASSET not served"
