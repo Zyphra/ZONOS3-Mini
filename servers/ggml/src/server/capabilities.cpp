@@ -10,6 +10,7 @@
 #include "server/textnorm.h"
 #include "server/util.h"
 
+#include "zonos3-languages.h"
 #include "zonos3-markup.h"
 
 #include <cmath>
@@ -74,7 +75,7 @@ json capabilities(const ServerState & s) {
     json caps = {
         {"text_tokenizer_spec", json::parse(s.model.tok.spec_json)},
         {"text_normalization_enabled", s.text_normalizer != nullptr},
-        {"text_norm_languages", text_norm_languages()},
+        {"text_norm_languages", zonos3_server_language_codes()},
         {"accents", server_accents(s)},
         {"speaker_enabled", !modes.empty()},
         {"speaker_conditioning_type", "raw_reference_prefix"},

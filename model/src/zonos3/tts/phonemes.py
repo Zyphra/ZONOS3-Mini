@@ -26,23 +26,17 @@ from functools import lru_cache
 
 import lmdb
 
+from zonos3 import languages
+
 LEXICON_VERSION = 1
 _MAX_KEY_BYTES = 500  # LMDB key limit; the builder skips longer headwords
 _CJK_MAX = 8  # longest headword tried by maximum matching
 _JA_PARTICLES = frozenset("はがをにでとのもへ")  # hiragana that may follow a kanji word
 # Server language codes (text normalization) -> lexicon language codes.
-SERVER_LANGUAGES = {
-    "en_us": "eng", "en_gb": "eng", "fr_fr": "fra", "de": "deu", "es": "spa",
-    "it": "ita", "pt_br": "por", "ja": "jpn", "cmn": "cmn", "ko": "kor",
-}
+SERVER_LANGUAGES = {lang.code: lang.lexicon for lang in languages.SERVER}
 # Lexicon languages espeak-ng can guess. Chinese, Japanese, Korean and Vietnamese
 # are absent: espeak-ng writes their tones as ASCII digits or misreads the script.
-ESPEAK_VOICES = {
-    "eng": "en-us", "deu": "de", "fra": "fr", "spa": "es-419", "ita": "it", "por": "pt-br",
-    "nld": "nl", "pol": "pl", "ces": "cs", "swe": "sv", "fin": "fi", "dan": "da", "nob": "nb",
-    "isl": "is", "hun": "hu", "ron": "ro", "cat": "ca", "tur": "tr", "ind": "id", "msa": "ms",
-    "rus": "ru", "ukr": "uk", "ell": "el", "heb": "he", "ara": "ar", "fas": "fa", "hin": "hi",
-}
+ESPEAK_VOICES = languages.ESPEAK
 
 
 def normalize_headword(word: str) -> str:

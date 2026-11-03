@@ -446,13 +446,18 @@ class DubRuntime:
     # ---- references -------------------------------------------------------------------------------------------
 
     def add_ref(self, path: str) -> dict:
-        """A reference from an uploaded sound file or a video's audio track (runs in a request thread)."""
+        """A reference from an uploaded sound file or a video's audio track (runs in a request thread), with where its
+        speech is: the FuseAlign worker's VAD regions."""
         audio, sr = decode_upload(path)
         duration = len(audio) / sr
         if not P.MIN_REF_SECONDS <= duration <= P.MAX_REF_SECONDS:
             raise ValueError(f"reference must be {P.MIN_REF_SECONDS}–{P.MAX_REF_SECONDS:g} s, got {duration:.1f} s")
+        with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
+            wav = Path(tmp) / "ref.wav"
+            self._write_wav(wav, audio, sr)
+            regions = self.aligner.speech([str(wav)])[0]
         ref_id = self.refs.put({"audio": audio, "sr": sr, "duration": duration})
-        return {"ref_id": ref_id, "duration": duration, "sample_rate": sr}
+        return {"ref_id": ref_id, "duration": duration, "sample_rate": sr, "speech_regions": regions}
 
     @staticmethod
     def _write_wav(path: Path, audio: np.ndarray, sr: int) -> None:
@@ -803,19 +808,25 @@ class DubRuntime:
         t0 = time.time()
         valid = [i for i, t in enumerate(takes) if t["audio"] is not None and len(t["audio"])]
         aligned: dict[int, list[dict]] = {}
+        spans: dict[int, tuple[float, float]] = {}
         with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-            reqs = []
+            reqs, paths = [], {}
             for i in valid:
-                path = Path(tmp) / f"take{i}.wav"
-                self._write_wav(path, takes[i]["audio"], P.SAMPLE_RATE)
-                reqs.append({"audio": str(path), "text": spoken_text(jobs[i]["text"]), "language": target_lang})
+                paths[i] = str(Path(tmp) / f"take{i}.wav")
+                self._write_wav(Path(paths[i]), takes[i]["audio"], P.SAMPLE_RATE)
+                reqs.append({"audio": paths[i], "text": spoken_text(jobs[i]["text"]), "language": target_lang})
             if reqs:
                 for i, items in zip(valid, await self._align(reqs)):
                     aligned[i] = items
+            # A take without a placed word is measured by where the VAD hears speech.
+            unplaced = [i for i in valid if P.speech_span(aligned[i]) is None]
+            regions = {}
+            if unplaced:
+                found = await asyncio.to_thread(self.aligner.speech, [paths[i] for i in unplaced])
+                regions = dict(zip(unplaced, found, strict=True))
         stats["align_s"] = time.time() - t0
-        spans: dict[int, tuple[float, float]] = {}
         for i in valid:
-            sp = P.speech_span(aligned[i], takes[i]["audio"], P.SAMPLE_RATE)
+            sp = P.speech_span(aligned[i], regions.get(i))
             if sp is not None and sp[1] > sp[0]:
                 spans[i] = sp
 

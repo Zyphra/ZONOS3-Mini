@@ -17,6 +17,7 @@ import shutil
 import struct
 
 import numpy as np
+from zonos3.languages import CODES
 
 SHARD_CAP = 64 << 20
 ALIGN = 256
@@ -575,7 +576,6 @@ def export_voices(voices, out):
 COMPANIONS = ("steer.gguf",)
 LACI_EN = "zonos3_mini_mect60k_heads.json"
 LACI_ZH = "zonos3_mini_mect60k_heads_zh.json"
-LACI_LANGS = ("en_us", "en_gb", "fr_fr", "de", "es", "it", "pt_br", "ja", "ko")
 
 
 def export_companions(models, out):
@@ -601,7 +601,8 @@ def export_laci(laci, out):
     for fn in (LACI_EN, LACI_ZH):
         if not os.path.isfile(os.path.join(ldir, fn)):
             raise SystemExit(f"missing {os.path.join(laci, fn)}")
-    index = {lang: LACI_EN for lang in LACI_LANGS}
+    # Every server language (zonos3.languages) in its order, cmn (the zh heads) last.
+    index = {lang: LACI_EN for lang in CODES if lang != "cmn"}
     index["cmn"] = LACI_ZH
     with open(os.path.join(ldir, "index.json"), "w") as f:
         json.dump(index, f, indent=1)

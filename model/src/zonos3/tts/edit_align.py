@@ -26,6 +26,8 @@ import subprocess
 import sys
 import threading
 
+from zonos3 import languages
+
 from .align_text import align_tokens
 from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
 from . import textmatch
@@ -37,16 +39,13 @@ FUSEALIGN_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'fusealign.py'
 LONG_FORM_SECONDS = 30.0  # fusealign_hub.aligner.MAX_SECONDS: one FuseAlign forward
 MAX_TEXT_BYTES = 1022  # fusealign_hub.longform.MAX_TEXT_BYTES
 # Qwen3-ASR names of the unspaced languages (zonos3.dub.plan.UNSPACED: ja, zh, yue): their chunk texts join with "".
-UNSPACED_LANGUAGES = frozenset({'Japanese', 'Chinese', 'Cantonese'})
+UNSPACED_LANGUAGES = frozenset(lang.name for lang in languages.SPOKEN if lang.unspaced)
 
 
 # Server language codes (normalized, as /v2/generate) -> (the Whisper-style code the edit's words are tokenized by,
 # zonos3.tts.align_text.align_tokens; the Qwen3-ASR language name its recognition is forced to). Speech editing serves
 # the entries whose Qwen3-ASR language the ASR worker supports (its ping).
-EDIT_LANGUAGES = {'en_us': ('en', 'English'), 'en_gb': ('en', 'English'), 'fr_fr': ('fr', 'French'),
-                  'de': ('de', 'German'), 'es': ('es', 'Spanish'), 'it': ('it', 'Italian'),
-                  'pt_br': ('pt', 'Portuguese'), 'ja': ('ja', 'Japanese'), 'cmn': ('zh', 'Chinese'),
-                  'ko': ('ko', 'Korean')}
+EDIT_LANGUAGES = {lang.code: (lang.speech, languages.SPOKEN_BY_CODE[lang.speech].name) for lang in languages.SERVER}
 
 
 def edit_language(language: str, supported) -> tuple[str, str]:
@@ -211,6 +210,10 @@ class FuseAlignWorker(_JsonLinesWorker):
         if self._model is None:
             self._model = self.call('ping')['model']
         return self._model
+
+    def speech(self, audios: list[str]) -> list[list[list[float]]]:
+        """Per audio path its Silero VAD speech regions ``[[start, end], ...]`` (seconds, in time order)."""
+        return [r['regions'] for r in self.call('speech', items=[{'audio': a} for a in audios])['results']]
 
     def segments(self, audios: list[str]) -> list[list[list[float]]]:
         """Per audio path its speech chunks ``[[start, end], ...]`` (seconds, each at most 25 s) for recognition."""

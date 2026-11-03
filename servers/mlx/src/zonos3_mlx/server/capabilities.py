@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from zonos3 import languages
 from zonos3.server.schemas import PhonemizeRequest
 from zonos3.tts.edit_runtime import EditModel, edit_capabilities
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
@@ -15,8 +16,6 @@ from zonos3.tts.steering import controls_document
 
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
-
-TEXT_NORM_LANGUAGES = ("en_us", "en_gb", "fr_fr", "de", "es", "it", "pt_br", "ja", "cmn", "ko")
 
 
 def condition_tokens(state: ServerState) -> dict | None:
@@ -101,7 +100,7 @@ def capabilities(state: ServerState) -> dict:
     caps = {
         "text_tokenizer_spec": c.text_tokenizer_spec or None,
         "text_normalization_enabled": engine.normalizer is not None,
-        "text_norm_languages": list(TEXT_NORM_LANGUAGES),
+        "text_norm_languages": list(languages.CODES),
         "accents": engine.accent_names(),
         "speaker_enabled": bool(modes),
         "speaker_conditioning_type": "raw_reference_prefix",

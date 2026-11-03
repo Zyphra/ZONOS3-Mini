@@ -4151,7 +4151,8 @@
         "required": [
           "ref_id",
           "duration",
-          "sample_rate"
+          "sample_rate",
+          "speech_regions"
         ],
         "properties": {
           "ref_id": {
@@ -4162,6 +4163,18 @@
           },
           "sample_rate": {
             "type": "integer"
+          },
+          "speech_regions": {
+            "description": "Where the reference has speech (Silero VAD), [start, end] seconds in time order.",
+            "type": "array",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "number"
+              }
+            }
           }
         }
       },

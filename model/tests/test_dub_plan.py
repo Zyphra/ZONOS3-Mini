@@ -207,16 +207,15 @@ def test_voice_prompt_span():
     assert b == 12.0
 
 
-def test_speech_span_aligner_and_energy_fallback():
-    audio = np.zeros(44100, dtype=np.float32)
-    assert P.speech_span([{"start": 0.2, "end": 0.3}, {"start": 0.5, "end": 0.7}, {"start": 0.9, "end": 0.9}], audio, 44100) == (0.2, 0.7)
-    audio[int(0.3 * 44100) : int(0.6 * 44100)] = 0.5
-    s, e = P.speech_span([], audio, 44100)
-    assert s == pytest.approx(0.3, abs=0.02) and e == pytest.approx(0.6, abs=0.02)
+def test_speech_span_aligner_and_vad_fallback():
+    assert P.speech_span([{"start": 0.2, "end": 0.3}, {"start": 0.5, "end": 0.7}, {"start": 0.9, "end": 0.9}]) == (0.2, 0.7)
+    regions = [[0.3, 0.45], [0.5, 0.6]]
+    assert P.speech_span([], regions) == (0.3, 0.6)
     unplaced = {"start": 0.0, "end": 0.95, "placed": False}  # FuseAlign's fallback times: not speech evidence
-    assert P.speech_span([unplaced, {"start": 0.4, "end": 0.5, "placed": True}], audio, 44100) == (0.4, 0.5)
-    assert P.speech_span([unplaced], audio, 44100) == (s, e)
-    assert P.speech_span([], np.zeros(44100, dtype=np.float32), 44100) is None
+    assert P.speech_span([unplaced, {"start": 0.4, "end": 0.5, "placed": True}], regions) == (0.4, 0.5)
+    assert P.speech_span([unplaced], regions) == (0.3, 0.6)
+    assert P.speech_span([unplaced]) is None
+    assert P.speech_span([], []) is None
 
 
 def test_word_windows_cover_overlap_and_cap():

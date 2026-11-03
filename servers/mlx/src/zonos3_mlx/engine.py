@@ -20,11 +20,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import torch
+from zonos3 import languages
 from zonos3.reference.synth import (
     Branch,
     PromptPlan,
     TwinMsg,
-    normalize_language,
     parse_request,
     resolve_condition_buckets,
     silence_frames,
@@ -294,7 +294,7 @@ def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None,
     mode = speaker.mode if speaker is not None else "reference"
     embedding = None if speaker is None else speaker.embedding
     reference_codes = None if speaker is None else speaker.reference_codes
-    language = normalize_language(req.language)
+    language = languages.normalize(req.language)
     if req.max_tokens is not None and int(req.max_tokens) <= 0:
         raise ValueError("max_tokens must be positive.")
     max_tokens = engine.max_frames if req.max_tokens is None else min(int(req.max_tokens), engine.max_frames)

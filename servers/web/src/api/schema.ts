@@ -1478,6 +1478,11 @@ export interface components {
             ref_id: string;
             duration: number;
             sample_rate: number;
+            /** @description Where the reference has speech (Silero VAD), [start, end] seconds in time order. */
+            speech_regions: [
+                number,
+                number
+            ][];
         };
         DubLips: {
             start: number;

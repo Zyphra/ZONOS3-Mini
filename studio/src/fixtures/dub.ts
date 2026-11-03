@@ -11,38 +11,15 @@ import { bytesToBase64, encodeWav, parseWav } from '../lib/files';
 import { clamp, gaussian, hash32, hashHex, rng, uid } from '../lib/math';
 import { ipaGloss } from '../lib/pron';
 import { energyAlign, knownClip } from './edit';
+import { DUB_TO_SERVER, SPOKEN_LANGUAGES } from '../lib/languages';
 import { syntheticEmbedding } from './embeddings';
 import { synthesizeWords, type SynthWord } from './synth';
 import { stripTags } from '../lib/tags';
 
 const SR = 44100;
-const REF_LANGUAGES: Record<string, string> = {
-  en: 'English',
-  fr: 'French',
-  de: 'German',
-  es: 'Spanish',
-  it: 'Italian',
-  pt: 'Portuguese',
-  ja: 'Japanese',
-  zh: 'Chinese',
-  ko: 'Korean',
-  ru: 'Russian',
-  yue: 'Cantonese',
-};
-const TARGET_LANGUAGES: Record<string, string> = {
-  en: 'English',
-  fr: 'French',
-  de: 'German',
-  es: 'Spanish',
-  it: 'Italian',
-  pt: 'Portuguese',
-  ja: 'Japanese',
-  zh: 'Chinese',
-  ko: 'Korean',
-};
-/** The zonos3 TTS language each target language is normalized / synthesized in (plan.py TARGET_LANGUAGES). */
-const TTS_LANGUAGE: Record<string, string> = { en: 'en_us', fr: 'fr_fr', de: 'de', es: 'es', it: 'it', pt: 'pt_br', ja: 'ja', zh: 'cmn', ko: 'ko' };
-const UNSPACED: Record<string, true> = { ja: true, zh: true, yue: true };
+const REF_LANGUAGES: Record<string, string> = Object.fromEntries(SPOKEN_LANGUAGES.map((l) => [l.code, l.name]));
+const TARGET_LANGUAGES: Record<string, string> = Object.fromEntries(SPOKEN_LANGUAGES.flatMap((l) => (l.tts ? [[l.code, l.name]] : [])));
+const UNSPACED: Record<string, true> = Object.fromEntries(SPOKEN_LANGUAGES.flatMap((l) => (l.unspaced ? [[l.code, true]] : [])));
 const MIN_REF_SECONDS = 0.5;
 const MAX_SEGMENTS = 120;
 const PRE_PAD_S = 0.04;
@@ -67,7 +44,7 @@ export const CAPS: Omit<DubCaps, 'fixture'> = {
   enabled: true,
   available: true,
   ref_languages: Object.entries(REF_LANGUAGES).map(([code, name]) => ({ code, name })),
-  target_languages: Object.entries(TARGET_LANGUAGES).map(([code, label]) => ({ code, label, tts_language: TTS_LANGUAGE[code] })),
+  target_languages: Object.entries(TARGET_LANGUAGES).map(([code, label]) => ({ code, label, tts_language: DUB_TO_SERVER[code] })),
   max_ref_seconds: 180,
   max_video_bytes: 2 ** 30,
   max_segments: MAX_SEGMENTS,
@@ -440,7 +417,31 @@ export async function addRef(wav: ArrayBuffer, onProgress?: (f: number) => void)
     throw new ApiError(400, `reference must be ${MIN_REF_SECONDS}–${CAPS.max_ref_seconds} s, got ${duration.toFixed(1)} s`);
   }
   const ref_id = refs.put({ ...parsed, duration, voiceKey: fingerprint(parsed.pcm), lips: null });
-  return { ref_id, duration, sample_rate: parsed.sr };
+  return { ref_id, duration, sample_rate: parsed.sr, speech_regions: speechRegions(parsed.pcm, parsed.sr) };
+}
+
+/**
+ * The server's VAD (Silero) faked from energy: 30 ms frames louder than 8 % of the loudest are speech, pauses under
+ * 0.2 s are bridged.
+ */
+function speechRegions(pcm: Float32Array, sr: number): [number, number][] {
+  const hop = Math.max(1, Math.round(sr * 0.03));
+  const rms: number[] = [];
+  for (let i = 0; i + hop <= pcm.length; i += hop) {
+    let s = 0;
+    for (let j = i; j < i + hop; j++) s += pcm[j] * pcm[j];
+    rms.push(Math.sqrt(s / hop));
+  }
+  const thr = Math.max(...rms, 1e-6) * 0.08;
+  const out: [number, number][] = [];
+  rms.forEach((x, f) => {
+    if (x <= thr) return;
+    const [a, b] = [(f * hop) / sr, ((f + 1) * hop) / sr];
+    const last = out[out.length - 1];
+    if (last && a - last[1] < 0.2) last[1] = b;
+    else out.push([a, b]);
+  });
+  return out.map(([a, b]) => [round3(a), round3(b)]);
 }
 
 /** The video is the reference's own clip: its face track covers most of it, at 25 fps. */

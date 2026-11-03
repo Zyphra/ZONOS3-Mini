@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from zonos3 import languages
 from zonos3.tts import edit_align, textmatch
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
@@ -189,9 +190,7 @@ class EditRuntime:
     async def language(self, language: str) -> tuple[str, str]:
         """``(Whisper-style code, Qwen3-ASR name)`` of a request's ``language`` (edit_align.edit_language over the
         ASR worker's languages; ValueError for one editing does not serve)."""
-        from zonos3.reference.synth import normalize_language
-
-        normalized = normalize_language(language)
+        normalized = languages.normalize(language)
         return edit_align.edit_language(normalized, await asyncio.to_thread(self.asr.languages))
 
     async def _transcribe(self, path: str, language: tuple[str, str]) -> edit_align.Transcript:
@@ -253,7 +252,7 @@ class EditRuntime:
         around the regions (``plan_edit_windows``): each window's prompts hold its codes and its stretch of the target
         text, and every fill splices into the full clip, which is decoded once. Region k's steering (``controls`` +
         ``region_controls[k]``) moves its speaker row and adds its hidden delta on the frames it generates."""
-        from zonos3.reference.synth import decode_base64_blob, normalize_language
+        from zonos3.reference.synth import decode_base64_blob
 
         m = self.model
         self.require_editing()
@@ -271,7 +270,7 @@ class EditRuntime:
         if req.original_words is not None and not (req.original_text or "").strip():
             raise ValueError("original_words needs the original_text they spell.")
         doses = region_doses(req, m)
-        language = normalize_language(req.language)
+        language = languages.normalize(req.language)
         use_row = m.speaker_row if req.speaker_embedding is None else bool(req.speaker_embedding)
         if use_row and not m.speaker_row:
             raise ValueError("speaker_embedding needs a checkpoint with a speaker-embedding row.")

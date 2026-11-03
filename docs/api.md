@@ -63,7 +63,7 @@ CORS allows every origin and exposes the response headers above.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `de`, `es`, `it`, `pt_br`, `ja`, `cmn`, `ko` |
+| `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `de`, `es`, `it`, `pt_br`, `ja`, `cmn`, `ko` (the `server` rows of `model/src/zonos3/registries/languages.json`) |
 | `text_normalization` | `true` | Verbalize numbers, dates and currency first |
 | `stream` | `true` | Chunked PCM; `stream_decode` (`prefix` / `whole`, null = server default) picks the decode |
 | `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV, needs `stream: false` |

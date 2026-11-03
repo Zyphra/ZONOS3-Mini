@@ -181,7 +181,7 @@ def test_pack_regions_into_chunks_of_at_most_25_seconds():
     assert len(chunks) == 3 and all(e - s <= 25.0 for s, e in chunks) and chunks[-1][1] == 51.0
 
 
-def test_segments_op_runs_vad_on_16k_mono_without_the_model(tmp_path):
+def test_speech_and_segments_run_vad_on_16k_mono_without_the_model(tmp_path):
     wav = tmp_path / "a.wav"
     sf.write(wav, np.zeros((44100 * 3, 2), dtype=np.float32), 44100)
     seen = []
@@ -191,13 +191,16 @@ def test_segments_op_runs_vad_on_16k_mono_without_the_model(tmp_path):
         return [{"start": 0.2, "end": 1.0}, {"start": 1.5, "end": 2.5}]
 
     def load():
-        raise AssertionError("segments must not load the aligner")
+        raise AssertionError("speech and segments must not load the aligner")
 
-    (res,) = serve([{"id": 1, "op": "segments", "items": [{"audio": str(wav)}]}], load=load, speech_regions=vad)
-    assert res == {"id": 1, "status": "ok", "results": [{"chunks": [[0.2, 2.5]]}]}
-    assert seen == [16000 * 3]
-    (bad,) = serve([{"id": 2, "op": "segments", "items": [{"audio": str(wav), "language": "en"}]}], speech_regions=vad)
-    assert bad["invalid"] is True
+    speech, segments = serve([{"id": 1, "op": "speech", "items": [{"audio": str(wav)}]},
+                              {"id": 2, "op": "segments", "items": [{"audio": str(wav)}]}], load=load, speech_regions=vad)
+    assert speech == {"id": 1, "status": "ok", "results": [{"regions": [[0.2, 1.0], [1.5, 2.5]]}]}
+    assert segments == {"id": 2, "status": "ok", "results": [{"chunks": [[0.2, 2.5]]}]}
+    assert seen == [16000 * 3] * 2
+    for op in ("speech", "segments"):
+        (bad,) = serve([{"id": 3, "op": op, "items": [{"audio": str(wav), "language": "en"}]}], speech_regions=vad)
+        assert bad["invalid"] is True and op in bad["message"]
 
 
 def test_real_vad_finds_no_chunks_in_silence(tmp_path):

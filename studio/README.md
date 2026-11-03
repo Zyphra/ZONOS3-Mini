@@ -217,8 +217,9 @@ The fifth screen dubs a source into one of the server's target languages (`/v2/d
 - **Sources.** Drop / choose a video or audio file: the browser decodes its audio track, uploads it as a WAV
   (`/v2/dub/ref`, with progress), tracks the face for lip-sync when it is a video (`/v2/dub/lips`, status in the rail;
   Generate waits for it) and transcribes it (`/v2/dub/transcribe`, language detected, transcript editable). Or hand
-  over from the studio: **Scene → “Dub this scene”** (the scene's mixdown at its line places, one segment per line,
-  each with its character's voice and line direction, word timings known so no ASR runs), a **Direct take** (globe
+  over from the studio: **Scene → “Dub this scene”** (the scene's mixdown at its line places, uploaded first; one
+  segment per line, spanning the server's VAD regions (`speech_regions`) within the line's clip, each with its
+  character's voice and line direction, word timings known so no ASR runs), a **Direct take** (globe
   on the take; its text known, spoken by the script's voice with its baseline) or a **library voice clip** (its
   transcript when the library has one).
 - **Script.** The transcript and a whole translation are split at pauses (`/v2/dub/analyze`, `ref_words` when the

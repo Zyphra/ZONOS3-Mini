@@ -4,6 +4,7 @@
  */
 import './lite.css';
 import { bytesToBase64, download, encodeNpy, encodeWav, slug } from '../lib/files';
+import { langLabel } from '../lib/languages';
 import { onEncoderProgress, usingWebEngine } from '../lib/web-engine';
 import {
   ApiError,
@@ -57,19 +58,6 @@ const ui = {
   resultAudio: $<HTMLAudioElement>('result-audio'),
   resultDownload: $<HTMLAnchorElement>('result-download'),
   resultMeta: $<HTMLSpanElement>('result-meta'),
-};
-
-const LANGUAGES: Record<string, string> = {
-  en_us: 'English (US)',
-  en_gb: 'English (UK)',
-  fr_fr: 'French',
-  de: 'German',
-  es: 'Spanish',
-  it: 'Italian',
-  pt_br: 'Portuguese (Brazil)',
-  ja: 'Japanese',
-  cmn: 'Mandarin',
-  ko: 'Korean',
 };
 
 let voices: Speaker[] = [];
@@ -433,7 +421,7 @@ async function start() {
     );
   }
   const languages = caps.text_norm_languages.length ? caps.text_norm_languages : ['en_us'];
-  for (const code of languages) ui.language.append(new Option(LANGUAGES[code] ?? code, code, false, code === 'en_us'));
+  for (const code of languages) ui.language.append(new Option(langLabel(code), code, false, code === 'en_us'));
   if (!caps.speaker_audio_upload) {
     ui.clipUpload.disabled = true;
     ui.clipState.textContent = 'This server does not take clip uploads.';

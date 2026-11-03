@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from zonos3 import languages
 from zonos3.models.accent_format import AccentAdapter, list_accent_adapters, load_adapter
 from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM
@@ -361,15 +362,6 @@ def validate_phoneme_groups(spec: dict | None, text: str) -> None:
         raise ValueError(f"Pronunciation groups: {exc}") from exc
 
 
-def normalize_language(language: str) -> str:
-    from zonos3.tokenizer.textnorm import SERVER_TO_NEMO_LANG
-
-    normalized = str(language or "").strip().lower().replace("-", "_")
-    if normalized not in SERVER_TO_NEMO_LANG:
-        raise ValueError(f"Unsupported language code: {language!r}. Supported: {', '.join(SERVER_TO_NEMO_LANG)}.")
-    return normalized
-
-
 def _slerp_free_speaker_ids(req: Request) -> None:
     if req.speaker_embedding_id or req.speaker_blend_embedding_id_a or req.speaker_blend_embedding_id_b:
         raise ValueError("speaker ids need a server")
@@ -504,7 +496,7 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
     else:
         embedding = _speaker_embedding(lm, req, assets, device)
     reference_codes = _reference_codes(lm, req, mode, device)
-    language = normalize_language(req.language)
+    language = languages.normalize(req.language)
     if req.max_tokens is not None and int(req.max_tokens) <= 0:
         raise ValueError("max_tokens must be positive.")
     max_tokens = c.max_seqlen if req.max_tokens is None else min(int(req.max_tokens), c.max_seqlen)

@@ -9,11 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
-
-// Server language codes (text normalization) -> lexicon language codes, in phonemes.py order.
-extern const std::vector<std::pair<std::string, std::string>> ZONOS3_PHONEME_SERVER_LANGUAGES;
 
 struct zonos3_phoneme_segment {
     std::string text;                   // UTF-8; segment texts concatenate back to the input

@@ -38,6 +38,7 @@ from zonos3_sgl.message import (
     TTSSamplingParams,
     TTSTokenizeMsg,
 )
+from zonos3 import languages
 from zonos3.tts.audio import (
     _decode_audio_bytes,
     _decode_wav_bytes,
@@ -353,18 +354,6 @@ def _resolve_stream_decode(config: ServerArgs, value: str | None, streaming: boo
     if not _model_prefix_stream_supported(config):
         raise HTTPException(status_code=400, detail="stream_decode=prefix is only available for the matched long-context codecs")
     return value
-
-
-def _normalize_tts_request_language(language: str) -> str:
-    from zonos3.tokenizer.textnorm import SERVER_TO_NEMO_LANG
-
-    normalized = str(language or "").strip().lower().replace("-", "_")
-    if normalized not in SERVER_TO_NEMO_LANG:
-        supported = ", ".join(SERVER_TO_NEMO_LANG)
-        raise ValueError(
-            f"Unsupported language code: {language!r}. Supported: {supported}."
-        )
-    return normalized
 
 
 def _adapter_accents(config: ServerArgs) -> list[str]:
@@ -1546,7 +1535,7 @@ async def _tts_generate_msg(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        language = _normalize_tts_request_language(req.language)
+        language = languages.normalize(req.language)
         reference_codes = _reference_codes_tensor(req.speaker_reference_codes)
         max_tokens = _resolve_tts_max_tokens(state.config, req.max_tokens)
         accent, accent_strength = _resolve_tts_request_accent(
@@ -1858,13 +1847,13 @@ async def tts_controls():
 @app.get("/v2/capabilities")
 async def tts_capabilities():
     """Return TTS feature flags for the currently loaded model."""
-    from zonos3.tokenizer.textnorm import SERVER_TO_NEMO_LANG, normalization_enabled
+    from zonos3.tokenizer.textnorm import normalization_enabled
 
     state = get_global_state()
     return {
         "text_tokenizer_spec": _text_tokenizer_spec(str(state.config.model_path)),
         "text_normalization_enabled": normalization_enabled(),
-        "text_norm_languages": list(SERVER_TO_NEMO_LANG),
+        "text_norm_languages": list(languages.CODES),
         "accents": _adapter_accents(state.config),
         "speaker_enabled": _model_supports_speaker(state.config),
         "speaker_conditioning_type": (

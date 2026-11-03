@@ -11,9 +11,6 @@
 
 namespace zs {
 
-// Server language codes (zonos3.tokenizer.textnorm.SERVER_TO_NEMO_LANG, in its order).
-const std::vector<std::string> & text_norm_languages();
-
 class TextNormalizer {
 public:
     // python: the --worker-python interpreter; python_src: the directory holding the zonos3 package.

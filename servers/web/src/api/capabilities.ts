@@ -1,13 +1,15 @@
 // GET /v2/capabilities and GET /v2/dub/capabilities of the in-browser server (servers/ggml/src/server/capabilities.cpp,
 // edit.cpp edit_capabilities, phonemize.cpp phoneme_capabilities, dub.cpp DubRuntime::capabilities) with this server's
 // feature set: no text normalization, speech editing, dubbing, phonemizer or server projects.
+import languages from '../../../../model/src/zonos3/registries/languages.json';
 import { NONVERBAL_MARKUP_TAGS } from '../request/markup';
 import type { Engine } from './engine';
 
 const AUDIO_CODEC = 'opus_dual_3n_600k_sched600k_r4096_step600000';
 const SPEAKER_EMBEDDING_CODEC = 'ownmect_s2';
 const HOP = 2940;
-export const TEXT_NORM_LANGUAGES = ['en_us', 'en_gb', 'fr_fr', 'de', 'es', 'it', 'pt_br', 'ja', 'cmn', 'ko'];
+/** The server language codes (zonos3.languages SERVER), in order. */
+export const TEXT_NORM_LANGUAGES = languages.server.map((l) => l.code);
 export const MAX_FRAMES = 2000;
 export const EDIT_ALIGN_MAX_SECONDS = 150;
 const DECODER_CHECKPOINT = 'dac.gguf';
@@ -116,10 +118,8 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
   };
 }
 
-const REF_LANGUAGES: [string, string][] = [
-  ['en', 'English'], ['fr', 'French'], ['de', 'German'], ['es', 'Spanish'], ['it', 'Italian'], ['pt', 'Portuguese'],
-  ['ja', 'Japanese'], ['zh', 'Chinese'], ['ko', 'Korean'], ['ru', 'Russian'], ['yue', 'Cantonese'],
-];
+/** Dub reference languages (zonos3.languages SPOKEN): code → name. */
+const REF_LANGUAGES = languages.spoken.map(({ code, name }) => ({ code, name }));
 
 /** /v2/dub/capabilities with the dub routes off (DubRuntime::capabilities; no alignment worker in a browser). */
 export function dubCapabilities(e: Engine): Record<string, unknown> {
@@ -127,7 +127,7 @@ export function dubCapabilities(e: Engine): Record<string, unknown> {
   const rate = hp.condNames.indexOf('speaking_rate');
   return {
     available: false,
-    ref_languages: REF_LANGUAGES.map(([code, name]) => ({ code, name })),
+    ref_languages: REF_LANGUAGES,
     target_languages: [],
     max_ref_seconds: 180.0,
     max_video_bytes: 2 ** 30,

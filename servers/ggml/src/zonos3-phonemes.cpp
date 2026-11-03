@@ -1,5 +1,6 @@
 // Port of zonos3/tts/phonemes.py; see zonos3-phonemes.h.
 #include "zonos3-phonemes.h"
+#include "zonos3-languages.h"
 #include "unicode-data.h"
 
 #include "json.hpp"
@@ -20,11 +21,6 @@
 #  include <dlfcn.h>
 #endif
 
-const std::vector<std::pair<std::string, std::string>> ZONOS3_PHONEME_SERVER_LANGUAGES = {
-    {"en_us", "eng"}, {"en_gb", "eng"}, {"fr_fr", "fra"}, {"de", "deu"}, {"es", "spa"},
-    {"it", "ita"}, {"pt_br", "por"}, {"ja", "jpn"}, {"cmn", "cmn"}, {"ko", "kor"},
-};
-
 namespace {
 
 using u32 = std::u32string;
@@ -34,14 +30,6 @@ constexpr size_t MAX_KEY_BYTES   = 500;    // LMDB key limit; the builder skips 
 constexpr size_t CJK_MAX         = 8;      // longest headword tried by maximum matching
 constexpr size_t TIES_SAMPLE     = 20000;  // uses_ties: values inspected
 constexpr char32_t TIE = U'\u0361';
-
-// Lexicon languages espeak-ng can guess (phonemes.py ESPEAK_VOICES, same order).
-const std::vector<std::pair<std::string, std::string>> ESPEAK_VOICES = {
-    {"eng", "en-us"}, {"deu", "de"}, {"fra", "fr"}, {"spa", "es-419"}, {"ita", "it"}, {"por", "pt-br"},
-    {"nld", "nl"}, {"pol", "pl"}, {"ces", "cs"}, {"swe", "sv"}, {"fin", "fi"}, {"dan", "da"}, {"nob", "nb"},
-    {"isl", "is"}, {"hun", "hu"}, {"ron", "ro"}, {"cat", "ca"}, {"tur", "tr"}, {"ind", "id"}, {"msa", "ms"},
-    {"rus", "ru"}, {"ukr", "uk"}, {"ell", "el"}, {"heb", "he"}, {"ara", "ar"}, {"fas", "fa"}, {"hin", "hi"},
-};
 
 // ---------------------------------------------------------------- UTF-8
 
@@ -378,7 +366,7 @@ private:
             fprintf(stderr, "espeak-ng failed to initialize from %s; pronunciation guessing is off\n", data ? data : "(default)");
             return nullptr;
         }
-        for (const auto & [code, voice] : ESPEAK_VOICES)
+        for (const auto & [code, voice] : zonos3_espeak_voices())
             if (e->select(voice)) e->voices_[code] = voice;
         return e;
     }
@@ -564,8 +552,8 @@ zonos3_phoneme_lexicon::~zonos3_phoneme_lexicon() {
 
 bool zonos3_phoneme_lexicon::resolve_language(const std::string & language, std::string & code, std::string & err) const {
     code = language;
-    for (const auto & [lang, c] : ZONOS3_PHONEME_SERVER_LANGUAGES)
-        if (lang == language) { code = c; break; }
+    for (const auto & l : zonos3_server_languages())
+        if (l.code == language) { code = l.lexicon; break; }
     if (!dbs_.count(code)) {
         err = "No pronunciation lexicon for language " + py_repr(language);
         return false;
@@ -575,8 +563,8 @@ bool zonos3_phoneme_lexicon::resolve_language(const std::string & language, std:
 
 std::vector<std::string> zonos3_phoneme_lexicon::server_languages() const {
     std::vector<std::string> out;
-    for (const auto & [lang, code] : ZONOS3_PHONEME_SERVER_LANGUAGES)
-        if (dbs_.count(code)) out.push_back(lang);
+    for (const auto & l : zonos3_server_languages())
+        if (dbs_.count(l.lexicon)) out.push_back(l.code);
     return out;
 }
 
@@ -584,8 +572,8 @@ std::vector<std::string> zonos3_phoneme_lexicon::guess_languages() const {
     std::vector<std::string> out;
     espeak * e = espeak::get();
     if (!e) return out;
-    for (const auto & [lang, code] : ZONOS3_PHONEME_SERVER_LANGUAGES)
-        if (dbs_.count(code) && e->has(code)) out.push_back(lang);
+    for (const auto & l : zonos3_server_languages())
+        if (dbs_.count(l.lexicon) && e->has(l.lexicon)) out.push_back(l.code);
     return out;
 }
 

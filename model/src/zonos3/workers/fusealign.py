@@ -4,17 +4,21 @@
 Runs with the workspace interpreter and ``PYTHONPATH=<model/src>``. Reads one JSON request per stdin line and answers
 each with one JSON line on stdout, in order, until stdin closes: ``{"id", "status": "ok", ...}`` or ``{"id", "status":
 "error", "error", "message", "invalid"}`` ("invalid": a ValueError, i.e. the input is at fault). The model loads on
-the first ``align``, so ``ping`` (and ``segments``, which needs only Silero VAD) answer without it.
+the first ``align``, so ``ping``, ``speech`` and ``segments`` (which need only Silero VAD) answer without it.
 
 Ops:
   ping                                          -> {"model": checkpoint id (Zyphra/fusealign/<file>, or the local path)}
+  speech {items: [{audio}]}                     -> {"results": [{"regions": [[start, end], ...]}]}
   segments {items: [{audio}]}                   -> {"results": [{"chunks": [[start, end], ...]}]}
   align {items: [{audio, tokens, utterances?}]} -> {"results": [{"words": [{word, start, end, presence, placed}]}]}
 
 ``audio`` is the path of any sound file soundfile reads (channels are averaged).
 
-``segments`` cuts a recording into the pieces speech recognition transcribes for long-form anchors: Silero VAD speech
-regions (``fusealign_hub.vad.speech_regions`` of the 16 kHz mono audio, in seconds) packed greedily, in order, into
+``speech`` is where speech is in a recording: the Silero VAD speech regions (``fusealign_hub.vad.speech_regions`` of
+the 16 kHz mono audio, in seconds, in time order). No speech gives no regions.
+
+``segments`` cuts a recording into the pieces speech recognition transcribes for long-form anchors: its ``speech``
+regions packed greedily, in order, into
 chunks spanning (first region start .. last region end) at most ``CHUNK_SECONDS``; a region longer than that is split
 into the fewest equal parts of at most ``CHUNK_SECONDS``, each a chunk of its own. No speech gives no chunks.
 
@@ -78,21 +82,25 @@ def _items(op: str, items, fields: set[str]) -> list[dict]:
     return items
 
 
-def segments(items, speech_regions: Callable) -> list[dict]:
-    """Per item ``{"chunks": [[start, end], ...]}``; ``speech_regions(wav16k)`` is ``fusealign_hub.vad.speech_regions``
+def speech(items, speech_regions: Callable, op: str = "speech") -> list[dict]:
+    """Per item ``{"regions": [[start, end], ...]}``; ``speech_regions(wav16k)`` is ``fusealign_hub.vad.speech_regions``
     (``[{start, end}]`` seconds)."""
     import torch
     import torchaudio
 
     results = []
-    for item in _items("segments", items, {"audio"}):
+    for item in _items(op, items, {"audio"}):
         data, sr = read_mono(item["audio"])
         wav = torch.from_numpy(data)
         if sr != SAMPLE_RATE:
             wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE)
-        regions = [(r["start"], r["end"]) for r in speech_regions(wav)]
-        results.append({"chunks": pack_regions(regions)})
+        results.append({"regions": [[float(r["start"]), float(r["end"])] for r in speech_regions(wav)]})
     return results
+
+
+def segments(items, speech_regions: Callable) -> list[dict]:
+    """Per item ``{"chunks": [[start, end], ...]}``: its ``speech`` regions packed (``pack_regions``)."""
+    return [{"chunks": pack_regions(r["regions"])} for r in speech(items, speech_regions, op="segments")]
 
 
 def align(aligner, items, guide_words: Callable) -> list[dict]:
@@ -142,6 +150,8 @@ def serve(lines: Iterable[str], out: TextIO, model_id: str, load: Callable[[], o
             op = request.get("op")
             if op == "ping":
                 response = {"model": model_id}
+            elif op == "speech":
+                response = {"results": speech(request.get("items"), speech_regions)}
             elif op == "segments":
                 response = {"results": segments(request.get("items"), speech_regions)}
             elif op == "align":

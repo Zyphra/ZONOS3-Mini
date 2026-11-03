@@ -4,11 +4,6 @@
 
 namespace zs {
 
-const std::vector<std::string> & text_norm_languages() {
-    static const std::vector<std::string> langs = {"en_us", "en_gb", "fr_fr", "de", "es", "it", "pt_br", "ja", "cmn", "ko"};
-    return langs;
-}
-
 TextNormalizer::TextNormalizer(std::string python, std::string python_src)
     : python_(std::move(python)), python_src_(std::move(python_src)) {}
 

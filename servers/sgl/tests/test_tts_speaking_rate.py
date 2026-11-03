@@ -43,13 +43,6 @@ def test_tts_request_defaults():
     assert speech_req.voice is None and speech_req.response_format == "pcm"
 
 
-def test_tts_request_language_normalization():
-    assert api_server._normalize_tts_request_language("EN-US") == "en_us"
-    assert api_server._normalize_tts_request_language("cmn") == "cmn"
-    with pytest.raises(ValueError, match="Unsupported language"):
-        api_server._normalize_tts_request_language("klingon")
-
-
 def test_byte_tokenizer_uses_training_byte_offset():
     assert BYTE_TEXT_VOCAB_SIZE == 448
     assert text_to_byte_ids("Az") == [2, 192 + ord("A"), 192 + ord("z"), 3]

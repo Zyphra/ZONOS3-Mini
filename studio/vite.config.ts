@@ -1,6 +1,6 @@
 import { readdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { defineConfig, loadEnv, type Connect, type Plugin } from 'vite';
+import { defineConfig, loadEnv, searchForWorkspaceRoot, type Connect, type Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import sirv from 'sirv';
 
@@ -64,7 +64,8 @@ export default defineConfig(({ mode }) => {
       // Two pages: the full studio at / and the lite voice-cloning page at /lite.html.
       rolldownOptions: { input: { index: resolve(import.meta.dirname, 'index.html'), lite: resolve(import.meta.dirname, 'lite.html') } },
     },
-    server: { proxy },
+    // src/lib/languages.ts imports the language registry from the model package.
+    server: { proxy, fs: { allow: [searchForWorkspaceRoot(import.meta.dirname), resolve(import.meta.dirname, '../model/src/zonos3/registries')] } },
     preview: { proxy },
   };
 });

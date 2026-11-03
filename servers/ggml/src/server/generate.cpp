@@ -8,6 +8,7 @@
 #include "server/textnorm.h"
 #include "server/util.h"
 
+#include "zonos3-languages.h"
 #include "zonos3-markup.h"
 
 #include <algorithm>
@@ -124,7 +125,7 @@ std::string resolve_language(const json & body) {
     const std::string given = set(body, "language") ? body["language"].get<std::string>() : "en_us";
     std::string lang = lower_ascii(strip(given));
     std::replace(lang.begin(), lang.end(), '-', '_');
-    const auto & langs = text_norm_languages();
+    const auto & langs = zonos3_server_language_codes();
     if (std::find(langs.begin(), langs.end(), lang) == langs.end()) {
         std::string supported;
         for (const auto & l : langs) supported += (supported.empty() ? "" : ", ") + l;

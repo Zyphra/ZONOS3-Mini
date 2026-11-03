@@ -332,14 +332,20 @@ function lipsReset() {
   lips.value = { state: 'none', progress: 0, info: null, error: null };
 }
 
-/** A new project on `source`; the reference is uploaded (with progress) and, for a video, its face tracked. */
-async function start(source: DubSource, init: Partial<DubDoc>): Promise<boolean> {
+/** Dubbing takes 0.5 s up to the server's reference limit; a source outside it is refused with a notice. */
+function fits(duration: number): boolean {
   const c = caps.value;
   if (!c) return false;
-  if (source.duration < 0.5 || source.duration > c.max_ref_seconds) {
-    notify(`Dubbing takes 0.5–${Math.round(c.max_ref_seconds)} s of audio (this is ${source.duration.toFixed(1)} s).`, 'error');
+  if (duration < 0.5 || duration > c.max_ref_seconds) {
+    notify(`Dubbing takes 0.5–${Math.round(c.max_ref_seconds)} s of audio (this is ${duration.toFixed(1)} s).`, 'error');
     return false;
   }
+  return true;
+}
+
+/** A new project on `source`; the reference is uploaded (with progress) and, for a video, its face tracked. */
+async function start(source: DubSource, init: Partial<DubDoc>): Promise<boolean> {
+  if (!fits(source.duration)) return false;
   cancel();
   player.stop();
   lipsReset();
@@ -392,16 +398,25 @@ export function ensureRef(): Promise<boolean> {
   return p;
 }
 
-async function uploadRef(source: DubSource): Promise<boolean> {
-  busy.value = { label: `Uploading ${source.name}…`, started: performance.now(), progress: 0 };
-  let refId: string;
+/** `POST /v2/dub/ref` of `pcm`, the upload's progress on the busy line. */
+async function postRef(name: string, pcm: Float32Array, sr: number): Promise<api.DubRef> {
+  busy.value = { label: `Uploading ${name}…`, started: performance.now(), progress: 0 };
   try {
-    refId = (await api.dubRef(encodeWav(source.pcm, source.sr), (f) => busy.value && (busy.value = { ...busy.value, progress: f }))).ref_id;
-  } catch (e) {
-    if (doc.value.source === source) error.value = `Couldn’t upload the reference: ${errorText(e)}`;
-    return false;
+    return await api.dubRef(encodeWav(pcm, sr), (f) => busy.value && (busy.value = { ...busy.value, progress: f }));
   } finally {
     busy.value = null;
+  }
+}
+
+const uploadError = (e: unknown) => `Couldn’t upload the reference: ${errorText(e)}`;
+
+async function uploadRef(source: DubSource): Promise<boolean> {
+  let refId: string;
+  try {
+    refId = (await postRef(source.name, source.pcm, source.sr)).ref_id;
+  } catch (e) {
+    if (doc.value.source === source) error.value = uploadError(e);
+    return false;
   }
   refIds.set(source, refId);
   if (doc.value.source !== source) return false;
@@ -481,23 +496,19 @@ function spreadWords(text: string, start: number, end: number): DubWord[] {
   return out;
 }
 
-/** Where speech starts and ends in a clip (RMS over 10 ms against a fraction of its peak). */
-function speechSpan(pcm: Float32Array, sr: number): [number, number] {
-  const hop = Math.max(1, Math.round(sr * 0.01));
-  const rms: number[] = [];
-  for (let i = 0; i + hop <= pcm.length; i += hop) {
-    let s = 0;
-    for (let j = i; j < i + hop; j++) s += pcm[j] * pcm[j];
-    rms.push(Math.sqrt(s / hop));
-  }
-  const thr = Math.max(...rms, 1e-6) * 0.08;
-  const a = rms.findIndex((x) => x > thr);
-  let b = rms.length - 1;
-  while (b > 0 && rms[b] <= thr) b--;
-  return a < 0 ? [0, pcm.length / sr] : [(a * hop) / sr, ((b + 1) * hop) / sr];
+/**
+ * A clip's speech in the reference: from the first to the last of the server's VAD regions overlapping its window
+ * [a, b], clamped to it; the whole window when none does.
+ */
+function speechExtent(regions: [number, number][], a: number, b: number): [number, number] {
+  const over = regions.filter(([s, e]) => e > a && s < b);
+  return over.length ? [Math.max(a, over[0][0]), Math.min(b, over[over.length - 1][1])] : [a, b];
 }
 
-/** Scene → Dub: the scene's mixdown, one segment per line with its character's voice and direction. */
+/**
+ * Scene → Dub: the scene's mixdown, one segment per line with its character's voice and direction. The mixdown is
+ * uploaded first: the server's VAD of it places each line's speech.
+ */
 export async function dubScene() {
   await renderScene();
   const clips = timeline.value.clips;
@@ -505,19 +516,31 @@ export async function dubScene() {
   if (clips.some((c) => !c.audio)) return notify('Some scene lines could not be rendered; fix them first.', 'error');
   const sr = clips[0].audio!.sr;
   const mix = mixdown(sr);
+  if (!fits(mix.length / sr)) return;
+  cancel();
+  error.value = null;
+  act.value = 'dub';
+  let ref: api.DubRef;
+  try {
+    ref = await postRef('Scene', mix, sr);
+  } catch (e) {
+    error.value = uploadError(e);
+    return;
+  }
   const lines: SourceLine[] = clips.map((c) => {
-    const [a, b] = speechSpan(c.audio!.pcm, c.audio!.sr);
+    const [a, b] = speechExtent(ref.speech_regions, c.start, c.start + c.duration);
     const p = characterOf(c.line);
     return {
       lineId: c.line.id,
-      start: +(c.start + a).toFixed(3),
-      end: +(c.start + b).toFixed(3),
+      start: +a.toFixed(3),
+      end: +b.toFixed(3),
       text: spokenText(c.line.text),
       voice: p ? { kind: 'design', label: p.name, design: p.design } : { kind: 'source' },
       values: c.line.values ?? {},
     };
   });
   const source: DubSource = { kind: 'scene', name: 'Scene', pcm: mix, sr, duration: mix.length / sr, video: null, lines };
+  refIds.set(source, ref.ref_id);
   const refWords = lines.flatMap((l) => spreadWords(l.text, l.start, l.end));
   const segments: DubSeg[] = lines.map((l) => ({ id: uid(), ref_start: l.start, ref_end: l.end, ref_text: l.text, target_text: '', bucket: null, voice: l.voice, values: { ...l.values } }));
   await start(source, { refText: lines.map((l) => l.text).join(' '), refLang: 'en', refWords, segments });

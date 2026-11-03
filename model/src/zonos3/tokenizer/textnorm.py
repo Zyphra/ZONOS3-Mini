@@ -17,24 +17,14 @@ import re
 import threading
 from typing import Dict, Optional
 
+from zonos3 import languages
 from zonos3.tts.markup import has_nonverbal_markup, split_nonverbal_markup
 import logging
 
 logger = logging.getLogger(__name__)
 
 # Server language codes -> NeMo text_normalization language packages.
-SERVER_TO_NEMO_LANG: Dict[str, str] = {
-    "en_us": "en",
-    "en_gb": "en",
-    "fr_fr": "fr",
-    "de": "de",
-    "es": "es",
-    "it": "it",
-    "pt_br": "pt",
-    "ja": "ja",
-    "cmn": "zh",
-    "ko": "ko",
-}
+SERVER_TO_NEMO_LANG: Dict[str, str] = {lang.code: lang.nemo for lang in languages.SERVER}
 
 # Upstream's own tests run Korean grammars with lower_cased input; everything
 # else uses cased.

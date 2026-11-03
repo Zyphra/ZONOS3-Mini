@@ -608,18 +608,11 @@ class TTSLLM(TTSScheduler):
                 - "sample_rate": Audio sample rate (44100)
                 - "laci": the LACI record (attempts, end, failures, ...) of a LACI prompt, else None
         """
-        # Validate the language code up front, matching the server's
-        # _normalize_tts_request_language behavior.
+        # Validate the language code up front, as the server does.
         if text_normalization:
-            from zonos3.tokenizer.textnorm import SERVER_TO_NEMO_LANG
+            from zonos3.languages import normalize
 
-            normalized_lang = str(language or "").strip().lower().replace("-", "_")
-            if normalized_lang not in SERVER_TO_NEMO_LANG:
-                supported = ", ".join(SERVER_TO_NEMO_LANG)
-                raise ValueError(
-                    f"Unsupported language code: {language!r}. Supported: {supported}."
-                )
-            language = normalized_lang
+            language = normalize(language)
 
         # Reset state
         self.pending_requests = []

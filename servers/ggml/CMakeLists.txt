@@ -76,11 +76,27 @@ function(zonos3_use_dac target)
     endif()
 endfunction()
 
+# Embeds a repository JSON file as generated/<header> (src/embed-json.h.in): unsigned char <symbol>[] and size_t
+# <symbol>_len. The file is a configure dependency, so editing it re-generates the header on the next build.
+function(zonos3_embed_json source symbol header)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${source})
+    file(READ ${source} hex HEX)
+    string(LENGTH "${hex}" hex_len)
+    math(EXPR ZONOS3_EMBED_LEN "${hex_len} / 2")
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," ZONOS3_EMBED_BYTES "${hex}")
+    file(RELATIVE_PATH ZONOS3_EMBED_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${source})
+    set(ZONOS3_EMBED_SYMBOL ${symbol})
+    configure_file(src/embed-json.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/${header} @ONLY)
+endfunction()
+
 # Backbone and native audio paths are shared by CLI, server, and desktop.
 add_library(zonos3 STATIC
     src/zonos3.cpp src/zonos3-graph.cpp src/zonos3-sampler.cpp
-    src/zonos3-prompt.cpp src/zonos3-tokenizer.cpp src/zonos3-steer.cpp src/zonos3-markup.cpp)
-target_include_directories(zonos3 PUBLIC src ggml/include PRIVATE vendor)
+    src/zonos3-prompt.cpp src/zonos3-tokenizer.cpp src/zonos3-steer.cpp src/zonos3-markup.cpp src/zonos3-languages.cpp)
+target_include_directories(zonos3 PUBLIC src ggml/include PRIVATE vendor ${CMAKE_CURRENT_BINARY_DIR}/generated)
+# The language registry shared with the Python package (zonos3.languages), parsed by src/zonos3-languages.cpp.
+zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/languages.json
+    zonos3_languages_json zonos3-languages-json.h)
 target_link_libraries(zonos3 PUBLIC ggml)
 
 add_library(zonos3-audio STATIC
@@ -147,15 +163,9 @@ target_link_libraries(zonos3-perplexity PRIVATE zonos3)
 target_include_directories(zonos3-perplexity PRIVATE vendor)
 
 # --- HTTP server (plan 7.1): src/server/*, the API spec embedded for request validation ---
-# Request validation: vendored pboettch/json-schema-validator 2.3.0 (MIT) against api/openapi.json, embedded as a
-# generated header (re-generated whenever the spec changes).
-set(ZONOS3_OPENAPI ${CMAKE_CURRENT_SOURCE_DIR}/../../api/openapi.json)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ZONOS3_OPENAPI})
-file(READ ${ZONOS3_OPENAPI} ZONOS3_OPENAPI_HEX HEX)
-string(LENGTH "${ZONOS3_OPENAPI_HEX}" ZONOS3_OPENAPI_HEX_LEN)
-math(EXPR ZONOS3_OPENAPI_LEN "${ZONOS3_OPENAPI_HEX_LEN} / 2")
-string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," ZONOS3_OPENAPI_BYTES "${ZONOS3_OPENAPI_HEX}")
-configure_file(src/server/openapi.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/zonos3-openapi.h @ONLY)
+# Request validation: vendored pboettch/json-schema-validator 2.3.0 (MIT) against api/openapi.json, embedded as
+# generated/zonos3-openapi.h.
+zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../api/openapi.json zonos3_openapi_json zonos3-openapi.h)
 # The validator includes <nlohmann/json.hpp>: point it at the vendored single header.
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/generated/nlohmann/json.hpp "#include \"${CMAKE_CURRENT_SOURCE_DIR}/vendor/json.hpp\"\n")
 set(JSV vendor/json-schema-validator/src)
