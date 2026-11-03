@@ -12,7 +12,7 @@ export type BackboneApi = Pick<Backbone, 'steerSources'> & {
     Promise<{ logits: Float32Array; probe: Float32Array | null }>;
 };
 
-/** Streaming codec decoder (src/dac.ts DacStream). */
+/** Streaming codec decoder (src/zac.ts ZacStream). */
 export interface CodecApi {
   readonly gain: number;
   reset(): void;
@@ -39,7 +39,7 @@ export interface Engine {
   controlsDoc: unknown;                    // GET /v2/controls body (null without steer)
   laci: Map<string, LaciHeads>;            // language -> alignment heads (laci/index.json)
   voices: DefaultVoice[];
-  headroomDb: number;                      // dac meta headroom_db
+  headroomDb: number;                      // zac meta headroom_db
   /** Speaker encoder (lazy-loaded): 44.1 kHz mono -> [speakerDim]. Throws HttpError-compatible messages. */
   embedSpeaker(pcm44k: Float32Array): Promise<Float32Array>;
   /** Reference encoder (lazy-loaded): 44.1 kHz mono -> ordinary codes [T][10]. */

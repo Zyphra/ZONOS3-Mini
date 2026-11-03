@@ -17,9 +17,9 @@
 
 namespace pocketfft { namespace detail { template<typename T0> class pocketfft_r; } }
 
-struct dac_stage_hp { int in_dim, out_dim, d_model, n_head, n_layer, n_ff, context, patch; };
+struct zac_stage_hp { int in_dim, out_dim, d_model, n_head, n_layer, n_ff, context, patch; };
 
-struct dac_model {
+struct zac_model {
     ggml_context * ctx_w = nullptr;
     ggml_backend_t backend = nullptr;
     ggml_backend_buffer_type_t buft = nullptr;
@@ -31,13 +31,13 @@ struct dac_model {
     // graphs then run through `sched` instead of a plain CPU allocator.
     ggml_backend_t accel = nullptr;
     ggml_backend_sched_t sched = nullptr;
-    // GPU only: allocator reused across calls (graphs have a fixed width). One thread per dac_model.
+    // GPU only: allocator reused across calls (graphs have a fixed width). One thread per zac_model.
     mutable ggml_gallocr_t galloc = nullptr;
-    bool owns_weights = true;              // false for dac_clone copies sharing another model's weights
+    bool owns_weights = true;              // false for zac_clone copies sharing another model's weights
     std::map<std::string, ggml_tensor *> t;
     int n_codebooks = 10, codebook_size = 4096, latent_dim = 1024, semantic_dim = 768, sem_depth = 4;
     int sample_rate = 44100, internal_rate = 44160, frame_rate = 15, hop = 2940, internal_hop = 2944;
-    std::vector<dac_stage_hp> stages;
+    std::vector<zac_stage_hp> stages;
     float ln_eps = 1e-5f, convnext_eps = 1e-6f;
     // MR-iSTFT head: depth ConvNeXt blocks, per-branch spectrum projections, host synthesis.
     int head_depth = 0, head_hop = 0, fir_kernel = 0;
@@ -53,7 +53,7 @@ struct dac_model {
 
 // Incremental decode state. Frames are decoded in order; each call appends 44.1 kHz audio.
 // Owns a per-stream MOSS K/V ring buffer on the codec backend (allocated on first decode).
-struct dac_stream {
+struct zac_stream {
     int n_done = 0;                                   // 15 Hz frames decoded
     std::vector<std::vector<float>> conv;             // per history-consuming conv op, [C, R]
     // Host iSTFT, per branch i: overlap-add / window-envelope of padded positions [ola_base[i], ..).
@@ -68,41 +68,41 @@ struct dac_stream {
     int64_t mix_base = 0, mix_next = 0;
     std::vector<float> rs_buf; int64_t rs_base = 0;   // retained internal samples, absolute index of rs_buf[0]
     int64_t rs_in = 0, rs_next_block = 0;             // internal samples received; next 735-sample output block
-    const dac_model * owner = nullptr;                // model whose backend holds the cache
+    const zac_model * owner = nullptr;                // model whose backend holds the cache
     ggml_context * ctx_kv = nullptr;
     ggml_backend_buffer_t buf_kv = nullptr;
     std::vector<ggml_tensor *> kc, vc;                // per MOSS layer, stage-major: [head_dim, cap_s, n_head], F16 GPU / F32 CPU
     std::vector<int> cap;                             // per stage ring capacity (rows)
 
-    dac_stream() = default;
-    ~dac_stream();
-    dac_stream(const dac_stream &) = delete;
-    dac_stream & operator=(const dac_stream &) = delete;
-    dac_stream(dac_stream && o) noexcept;
-    dac_stream & operator=(dac_stream && o) noexcept;
+    zac_stream() = default;
+    ~zac_stream();
+    zac_stream(const zac_stream &) = delete;
+    zac_stream & operator=(const zac_stream &) = delete;
+    zac_stream(zac_stream && o) noexcept;
+    zac_stream & operator=(zac_stream && o) noexcept;
 };
 
-bool dac_load(dac_model & m, const char * path, bool use_gpu);
-void dac_free(dac_model & m);
+bool zac_load(zac_model & m, const char * path, bool use_gpu);
+void zac_free(zac_model & m);
 // dst gets its own backend/scheduler but shares src's weights (read-only).
 // src must outlive dst; free dst first.
-bool dac_clone(dac_model & dst, const dac_model & src);
+bool zac_clone(zac_model & dst, const zac_model & src);
 // 44.1 kHz output samples per 15 Hz frame.
-int dac_samples_per_frame(const dac_model & m);
+int zac_samples_per_frame(const zac_model & m);
 // Decode frames [st.n_done, f_hi) of the sheared code matrix `codes` ([H, n_codebooks], codebook c
 // of frame t read from row t+c; rows >= H count as padding) and append the resampled audio that is
-// final so far. The resampler holds back its lookahead until dac_stream_flush. The stream
+// final so far. The resampler holds back its lookahead until zac_stream_flush. The stream
 // allocates its K/V cache on m's backend on first use and must always be used with the same `m`
-// (and destroyed before dac_free(m)).
-bool dac_stream_decode(const dac_model & m, dac_stream & st, const int32_t * codes, int H, int f_hi,
+// (and destroyed before zac_free(m)).
+bool zac_stream_decode(const zac_model & m, zac_stream & st, const int32_t * codes, int H, int f_hi,
                        std::vector<float> & audio);
 // End of stream: flush the iSTFT/mixer holdback and the resampler tail so the total equals n_done * hop samples.
-bool dac_stream_flush(const dac_model & m, dac_stream & st, std::vector<float> & audio);
+bool zac_stream_flush(const zac_model & m, zac_stream & st, std::vector<float> & audio);
 // Whole-utterance decode of min(eos (if >= 0), H - (n_codebooks-1)) frames.
-bool dac_decode(const dac_model & m, const int32_t * codes, int H, int W, int eos,
+bool zac_decode(const zac_model & m, const int32_t * codes, int H, int W, int eos,
                 std::vector<float> & audio);
 // Linear output gain 10^(-db/20) for the decoder's headroom (db < 0 selects the model's own headroom_db).
-// dac_decode / dac_stream_* output is raw decoder level; callers apply the gain.
-float dac_output_gain(const dac_model & m, double headroom_db);
-std::vector<uint8_t> dac_wav_bytes(const std::vector<float> & audio, int sample_rate);
-bool dac_write_wav(const char * path, const std::vector<float> & audio, int sample_rate);
+// zac_decode / zac_stream_* output is raw decoder level; callers apply the gain.
+float zac_output_gain(const zac_model & m, double headroom_db);
+std::vector<uint8_t> zac_wav_bytes(const std::vector<float> & audio, int sample_rate);
+bool zac_write_wav(const char * path, const std::vector<float> & audio, int sample_rate);

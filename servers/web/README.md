@@ -21,7 +21,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 | `src/api/` | The routes (port of `servers/ggml/src/server/`): `router`, `generate` (resolve + one-request scheduler), `speakers`, `capabilities`, `validate` (spec validation, FastAPI 422 shape) |
 | `src/request/` | Pure ports of the ggml request logic: steering bundle, markup, LACI, span follow |
 | `src/generation.ts` | The generation registry ([`model/src/zonos3/registries/generation.json`](../../model/src/zonos3/registries/generation.json)): sampling defaults, the API rate, tag-CFG range, silence prefill (default 3, at most 30 frames), decode context (30), the 900-frame reference prefix (longer reference codes keep their first 900 frames), the 2000-frame budget (shrunk to the slot rows the prompt leaves), 60 s reference clips |
-| `src/backbone.ts`, `dac.ts`, `istft.ts`, `speaker.ts`, `encoder.ts`, `ssl.ts`, `rvq.ts` | The networks on WebGPU (`src/gpu/kernels/*.wgsl`) and their host parts |
+| `src/backbone.ts`, `zac.ts`, `istft.ts`, `speaker.ts`, `encoder.ts`, `ssl.ts`, `rvq.ts` | The networks on WebGPU (`src/gpu/kernels/*.wgsl`) and their host parts |
 | `scripts/export_web_models.py` | GGUF → sharded web format (`zonos3-web-v1`), voices, companions, LACI heads |
 | `harness/` | Headless-Chrome harness: `server.mjs` (HTTP front for conformance), `parity.mjs` (WebGPU parity checks) |
 | `worker/`, `wrangler.jsonc` | Cloudflare deployment: the studio with the engine as static assets, models from R2 |
@@ -30,13 +30,13 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 
 ```bash
 hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
-pnpm --dir servers/web export          # public/models/ (~4.5 GB; first load fetches backbone + dac, ~1.9 GB; uploads add encoder + teacher, ~2.6 GB, and spk)
+pnpm --dir servers/web export          # public/models/ (~4.5 GB; first load fetches backbone + zac, ~1.9 GB; uploads add encoder + teacher, ~2.6 GB, and spk)
 pnpm --dir servers/web build           # dist/engine.js + dist/worker.js
 pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (or /lite?api=web)
 ```
 
 The studio's dev and preview servers serve `dist/` at `/web-engine` and `public/models/` at `/models`. The worker
-caches shards in Cache Storage (`zonos3-web-models-v1`); `?models=URL` loads them from elsewhere. Without WebGPU (or
+caches shards in Cache Storage (`zonos3-web-models-v2`); `?models=URL` loads them from elsewhere. Without WebGPU (or
 with adapter limits too low) `engine.init` rejects and the studio shows the error. The speaker encoder clamps clips to
 what one storage binding of the device holds (60 s on Apple Silicon).
 

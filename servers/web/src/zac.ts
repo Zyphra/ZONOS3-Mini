@@ -1,7 +1,7 @@
 // mossdual_istft (15 Hz) streaming codec decoder on WebGPU over a fixed 16-frame graph: RVQ lookup, causal
 // ConvNeXt semantic head, 5 MOSS transformer stages with patch-up, the causal ConvNeXt iSTFT head projecting two
 // spectrogram resolutions at 240 rows/s, then the host iSTFT + FIR mixer (44160 Hz) and sinc resampler (44100 Hz).
-// Mirrors decode_chunk + dac_stream_decode/flush (dac.cpp).
+// Mirrors decode_chunk + zac_stream_decode/flush (zac.cpp).
 import type { Gpu } from './gpu/device';
 import { ACT, attentionWin, dwconv, gemm, layernorm, patchUp, ropeKv, type GemmOpts, type Weight } from './gpu/ops';
 import { Builder, type Program, type Step } from './gpu/program';
@@ -63,12 +63,12 @@ function checkMeta(meta: Record<string, unknown>): void {
     'head.fir_kernel': FIR,
   };
   for (const [k, v] of Object.entries(want))
-    if (JSON.stringify(meta[k]) !== JSON.stringify(v)) throw new Error('dac: unsupported codec; re-export with pnpm export');
+    if (JSON.stringify(meta[k]) !== JSON.stringify(v)) throw new Error('zac: unsupported codec; re-export with pnpm export');
   if (typeof meta['head.max_log_magnitude'] !== 'number' || typeof meta['headroom_db'] !== 'number')
-    throw new Error('dac: unsupported codec; re-export with pnpm export');
+    throw new Error('zac: unsupported codec; re-export with pnpm export');
 }
 
-export class DacStream {
+export class ZacStream {
   /** Output gain 10^(-headroom_db/20); applied by the caller (finish_block). */
   readonly gain: number;
   private prog: Program;
@@ -86,7 +86,7 @@ export class DacStream {
     checkMeta(w.meta);
     const host = (n: string): Float32Array => {
       const v = w.host.get(n);
-      if (!v) throw new Error(`dac: missing ${n}; re-export with pnpm export`);
+      if (!v) throw new Error(`zac: missing ${n}; re-export with pnpm export`);
       return v;
     };
     this.gain = Math.fround(Math.pow(10, -Number(w.meta['headroom_db']) / 20));
@@ -95,9 +95,9 @@ export class DacStream {
       nFft: N_FFT, hop: HEAD_HOP, windows: [host('head.window.0'), host('head.window.1')],
       mixer: host('head.mixer.weight'), maxLogMag: Number(w.meta['head.max_log_magnitude']),
     });
-    this.idx = gpu.buffer(10 * BLOCK_FRAMES * 4, 'dac.idx');
-    this.dyn = gpu.uniform(16, 'dac.dyn');
-    this.rope = gpu.upload(ropeTable((MAX_FRAMES + BLOCK_FRAMES) * CPF, 10000, HEAD_DIM), 'dac.rope');
+    this.idx = gpu.buffer(10 * BLOCK_FRAMES * 4, 'zac.idx');
+    this.dyn = gpu.uniform(16, 'zac.dyn');
+    this.rope = gpu.upload(ropeTable((MAX_FRAMES + BLOCK_FRAMES) * CPF, 10000, HEAD_DIM), 'zac.rope');
     const b = new Builder(gpu);
     this.spec = this.record(b);
     this.prog = b.finish();
@@ -117,8 +117,8 @@ export class DacStream {
     // the producer at float offset R*ch. After the consumer, rows [Tv, Tv+R) export to the history.
     const withHistory = (ch: number, R: number): HistBuf => {
       const rows = F * cpf;
-      const xf = b.tmp((R + rows) * ch * 4, 'dac.xf');
-      const hist = b.buf(R * ch * 4, 'dac.hist');
+      const xf = b.tmp((R + rows) * ch * 4, 'zac.xf');
+      const hist = b.buf(R * ch * 4, 'zac.hist');
       b.copy(hist, 0, xf, 0, R * ch * 4);
       return { xf, hist, off: R * ch };
     };
@@ -129,18 +129,18 @@ export class DacStream {
 
     // ---- semantic lookup + causal ConvNeXt head (768 ch, 15 Hz)
     let hx = withHistory(SEM, 6);
-    b.dispatch('dac_embed', { idx: this.idx, tables: T('sem.table'), bias: T('sem.bias'), outp: hx.xf },
+    b.dispatch('zac_embed', { idx: this.idx, tables: T('sem.table'), bias: T('sem.bias'), outp: hx.xf },
       { n: F, C: SEM, F, y_off: hx.off, mode: 0 }, [Math.ceil(SEM / 512), F, 1]);
-    const s = b.buf(F * SEM * 4, 'dac.sem');
+    const s = b.buf(F * SEM * 4, 'zac.sem');
     for (let bi = 0; bi < SEM_DEPTH; bi++) {
       const p = `sem_head.${bi}.`;
-      const h = b.tmp(F * SEM * 4, 'dac.cn');
+      const h = b.tmp(F * SEM * 4, 'zac.cn');
       dwconv(b, hx.xf, T(p + 'dw.weight'), h, F, SEM, 7, T(p + 'dw.bias'));
       exportHistory(hx.xf, hx.hist, SEM, 6);
-      const hn = b.tmp(F * SEM * 4, 'dac.cn');
+      const hn = b.tmp(F * SEM * 4, 'zac.cn');
       layernorm(b, h, T(p + 'norm.weight'), T(p + 'norm.bias'), hn, F, SEM, CNX_EPS);
       b.release(h);
-      const h1 = b.tmp(F * SEM_FF * 4, 'dac.pw1');
+      const h1 = b.tmp(F * SEM_FF * 4, 'zac.pw1');
       g(hn, M(p + 'pw1.weight'), h1, { T: F, O: SEM_FF, IC: SEM, act: ACT.gelu }, { bias: T(p + 'pw1.bias') });
       b.release(hn);
       const next = bi + 1 < SEM_DEPTH ? withHistory(SEM, 6) : null;
@@ -150,9 +150,9 @@ export class DacStream {
       b.release(hx.xf);
       if (next) hx = next;
     }
-    const z = b.buf(F * LATENT * 4, 'dac.z');
+    const z = b.buf(F * LATENT * 4, 'zac.z');
     g(s, M('sem_head.out.weight'), z, { T: F, O: LATENT, IC: SEM }, { bias: T('sem_head.out.bias') });
-    b.dispatch('dac_embed', { idx: this.idx, tables: T('res.tables'), bias: T('res.bias'), outp: z },
+    b.dispatch('zac_embed', { idx: this.idx, tables: T('res.tables'), bias: T('res.bias'), outp: z },
       { n: F, C: LATENT, F, y_off: 0, mode: 1 }, [Math.ceil(LATENT / 512), F, 1]);
 
     // ---- MOSS stages: windowed causal attention on absolute per-stage positions p0*cpf + i
@@ -163,21 +163,21 @@ export class DacStream {
       const { d, ff } = st;
       const nh = d / HEAD_DIM;
       const ring = st.ctx - 1 + rows;
-      const xa = b.buf(rows * d * 4, 'dac.xa');
-      const xb = b.buf(rows * d * 4, 'dac.xb');
-      const xn = b.buf(rows * d * 4, 'dac.xn');
-      const qkv = b.buf(rows * 3 * d * 4, 'dac.qkv');
-      const q = b.buf(rows * d * 4, 'dac.q');
-      const ao = b.buf(rows * d * 4, 'dac.ao');
-      const f1 = b.buf(rows * ff * 4, 'dac.f1');
+      const xa = b.buf(rows * d * 4, 'zac.xa');
+      const xb = b.buf(rows * d * 4, 'zac.xb');
+      const xn = b.buf(rows * d * 4, 'zac.xn');
+      const qkv = b.buf(rows * 3 * d * 4, 'zac.qkv');
+      const q = b.buf(rows * d * 4, 'zac.q');
+      const ao = b.buf(rows * d * 4, 'zac.ao');
+      const f1 = b.buf(rows * ff * 4, 'zac.f1');
       const sp = `stage.${si}.`;
       // outDim 0 and patch 1: the last layer writes straight into the head's history-prefixed input.
       const last = st.outDim === 0 && st.patch === 1;
       g(x, M(sp + 'in.weight'), xa, { T: rows, O: d, IC: st.inDim });
       for (let l = 0; l < st.nl; l++) {
         const p = `${sp}l${l}.`;
-        const kr = b.buf(ring * nh * HEAD_DIM * 4, `dac.k${si}.${l}`);
-        const vr = b.buf(ring * nh * HEAD_DIM * 4, `dac.v${si}.${l}`);
+        const kr = b.buf(ring * nh * HEAD_DIM * 4, `zac.k${si}.${l}`);
+        const vr = b.buf(ring * nh * HEAD_DIM * 4, `zac.v${si}.${l}`);
         layernorm(b, xa, T(p + 'norm1.weight'), T(p + 'norm1.bias'), xn, rows, d, LN_EPS);
         g(xn, M(p + 'qkv.weight'), qkv, { T: rows, O: 3 * d, IC: d });
         ropeKv(b, qkv, this.rope, q, kr, vr,
@@ -194,32 +194,32 @@ export class DacStream {
         }
       }
       if (last) continue;
-      const y = b.buf(rows * st.outDim * 4, 'dac.sout');
+      const y = b.buf(rows * st.outDim * 4, 'zac.sout');
       g(xa, M(sp + 'out.weight'), y, { T: rows, O: st.outDim, IC: d });
-      const xp = b.buf(rows * st.outDim * 4, 'dac.patch');
+      const xp = b.buf(rows * st.outDim * 4, 'zac.patch');
       patchUp(b, y, xp, rows, st.outDim / st.patch, st.patch);
       x = xp;
       cpf *= st.patch;
     }
-    if (!headIn || cpf !== CPF) throw new Error('dac: unsupported codec; re-export with pnpm export');
+    if (!headIn || cpf !== CPF) throw new Error('zac: unsupported codec; re-export with pnpm export');
 
     // ---- iSTFT head: causal ConvNeXt blocks at F*16 rows (768 ch), LayerNorm, two spectrogram projections
     const rows = F * cpf;
     let cur: HistBuf = headIn;
-    const hn = b.buf(rows * SEM * 4, 'dac.hnorm');
+    const hn = b.buf(rows * SEM * 4, 'zac.hnorm');
     for (let bi = 0; bi < HEAD_DEPTH; bi++) {
       const p = `head.${bi}.`;
-      const h = b.tmp(rows * SEM * 4, 'dac.hcn');
+      const h = b.tmp(rows * SEM * 4, 'zac.hcn');
       dwconv(b, cur.xf, T(p + 'dw.weight'), h, rows, SEM, 7, T(p + 'dw.bias'));
       exportHistory(cur.xf, cur.hist, SEM, 6);
-      const hl = b.tmp(rows * SEM * 4, 'dac.hcn');
+      const hl = b.tmp(rows * SEM * 4, 'zac.hcn');
       layernorm(b, h, T(p + 'norm.weight'), T(p + 'norm.bias'), hl, rows, SEM, CNX_EPS);
       b.release(h);
-      const h1 = b.tmp(rows * HEAD_FF * 4, 'dac.hpw1');
+      const h1 = b.tmp(rows * HEAD_FF * 4, 'zac.hpw1');
       g(hl, M(p + 'pw1.weight'), h1, { T: rows, O: HEAD_FF, IC: SEM, act: ACT.gelu }, { bias: T(p + 'pw1.bias') });
       b.release(hl);
       const next = bi + 1 < HEAD_DEPTH ? withHistory(SEM, 6) : null;
-      const out = next ? next.xf : b.tmp(rows * SEM * 4, 'dac.hout');
+      const out = next ? next.xf : b.tmp(rows * SEM * 4, 'zac.hout');
       g(h1, M(p + 'pw2.weight'), out, { T: rows, O: SEM, IC: HEAD_FF, r_off: cur.off, y_off: next ? next.off : 0 },
         { bias: T(p + 'pw2.bias'), res: cur.xf });
       b.release(h1);
@@ -231,7 +231,7 @@ export class DacStream {
       }
     }
     const spec = N_FFT.map((n, i) => {
-      const y = b.buf(rows * (n + 2) * 4, `dac.spec${i}`);
+      const y = b.buf(rows * (n + 2) * 4, `zac.spec${i}`);
       g(hn, M(`head.out.${i}.weight`), y, { T: rows, O: n + 2, IC: SEM }, { bias: T(`head.out.${i}.bias`) });
       return y;
     });
@@ -250,8 +250,8 @@ export class DacStream {
    * 44.1 kHz samples (variable length: the FIR mixer and resampler hold lookahead until flush()). No gain applied.
    */
   async chunk(idx: Int32Array, p0: number, n: number): Promise<Float32Array> {
-    if (n < 1 || n > BLOCK_FRAMES) throw new Error(`dac chunk size ${n} out of range`);
-    if (p0 + n > MAX_FRAMES) throw new Error(`dac: utterance exceeds ${MAX_FRAMES} frames`);
+    if (n < 1 || n > BLOCK_FRAMES) throw new Error(`zac chunk size ${n} out of range`);
+    if (p0 + n > MAX_FRAMES) throw new Error(`zac: utterance exceeds ${MAX_FRAMES} frames`);
     this.gpu.write(this.idx, 0, idx);
     this.dynData[0] = p0;
     this.dynData[1] = n;

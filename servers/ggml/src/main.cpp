@@ -4,8 +4,8 @@
 #include "zonos3-steer.h"
 #include "zonos3-accent.h"
 #include "zonos3-laci.h"
-#include "dac.h"
-#include "dac-encoder.h"
+#include "zac.h"
+#include "zac-encoder.h"
 #include "ssl-encoder.h"
 #include "spk-encoder.h"
 #include "audio-decode.h"
@@ -51,7 +51,7 @@ static void usage(const char * a0) {
         "      mutually exclusive speaker sources; reference codes are ordinary [T,10], IDs 0..4095;\n"
         "      the embedding is a float32 [192] npy (spk-encoder-cli output)\n"
         "  --speaker-mode embedding|reference   how --clone conditions the prompt (default embedding)\n"
-        "  --spk-encoder <spk-encoder.gguf> --dac-encoder <dac-encoder.gguf> --ssl-teacher <ssl-teacher.gguf>\n"
+        "  --spk-encoder <spk-encoder.gguf> --zac-encoder <zac-encoder.gguf> --ssl-teacher <ssl-teacher.gguf>\n"
         "      (--clone only; companions auto-discover next to the backbone)\n"
         "  --save-speaker-embedding <out.npy> saves the [192] embedding (--clone or --speaker-embedding)\n"
         "  --save-reference <out.npy> saves encoded reference codes\n"
@@ -64,7 +64,7 @@ static void usage(const char * a0) {
         "  --steer <steer.gguf> steering directions (auto-detected next to backbone when a control flag is given; --tts only)\n"
         "  --control ID=DOSE (repeatable) --control-span START:END:ID=DOSE[,ID=DOSE...] (repeatable, hidden-space controls over\n"
         "    code-point range [START,END) of the --tts text) --control-span-rate R (frames per character, default 1)\n"
-        "  --dac <dac.gguf> decodes output; companions auto-discover next to backbone\n"
+        "  --zac <zac.gguf> decodes output; companions auto-discover next to backbone\n"
         "  --max N --seed N --greedy --recompute\n"
         "  --dump-ids <ids.npy> saves the full teacher-forcing sequence for calibration\n"
         "  --probe-heads <heads.json> alignment probe of the decode steps (a laci_heads/ JSON: its heads, weight 1) over\n"
@@ -98,10 +98,10 @@ static bool load_cond_sidecar(const std::string & ids_path, zonos3_prompt & meta
 }
 
 // Persist the audio stream (silence-prefill rows + generated rows): codes npy (+ [eos, prefill]) and/or
-// a decoded wav when --dac is set. The wav omits the prefill frames' audio.
+// a decoded wav when --zac is set. The wav omits the prefill frames' audio.
 static bool emit_output(const std::string & out, const zonos3_model & model, const zonos3_prompt & prompt,
                         const std::vector<int32_t> & generated, int n_frames, int eos_frame,
-                        const std::string & dac_path, bool use_gpu, double headroom_db = -1.0) {
+                        const std::string & zac_path, bool use_gpu, double headroom_db = -1.0) {
     const int ncb = (int) model.hp.n_codebooks, prefill = prompt.prefill_frames;
     std::vector<int32_t> codes = zonos3_prefill_codes(model, prompt);
     codes.insert(codes.end(), generated.begin(), generated.end());
@@ -114,24 +114,24 @@ static bool emit_output(const std::string & out, const zonos3_model & model, con
         if (!npy::save_f32(out + ".eos.npy", ef, { (int64_t) 2 })) return false;
         printf("wrote %s\n", out.c_str());
     }
-    if (want_wav && dac_path.empty()) {
-        fprintf(stderr, "error: .wav output requested but no --dac <dac.gguf> given (also auto-detected next to <model.gguf>)\n");
+    if (want_wav && zac_path.empty()) {
+        fprintf(stderr, "error: .wav output requested but no --zac <zac.gguf> given (also auto-detected next to <model.gguf>)\n");
         return false;
     }
-    if (!dac_path.empty() && n_frames > 0) {
+    if (!zac_path.empty() && n_frames > 0) {
         const std::string wav = want_wav ? out : out + ".wav";
-        dac_model dm;
-        if (!dac_load(dm, dac_path.c_str(), use_gpu)) { dac_free(dm); return false; }
+        zac_model dm;
+        if (!zac_load(dm, zac_path.c_str(), use_gpu)) { zac_free(dm); return false; }
         std::vector<float> audio;
-        bool decoded = dac_decode(dm, codes.data(), total, ncb, eos_frame, audio);
+        bool decoded = zac_decode(dm, codes.data(), total, ncb, eos_frame, audio);
         if (decoded) {
-            const size_t drop = std::min(audio.size(), (size_t) prefill * dac_samples_per_frame(dm));
+            const size_t drop = std::min(audio.size(), (size_t) prefill * zac_samples_per_frame(dm));
             audio.erase(audio.begin(), audio.begin() + drop);
-            const float gain = dac_output_gain(dm, headroom_db);
+            const float gain = zac_output_gain(dm, headroom_db);
             for (float & v : audio) v *= gain;
         }
-        const bool written = decoded && dac_write_wav(wav.c_str(), audio, dm.sample_rate);
-        dac_free(dm);
+        const bool written = decoded && zac_write_wav(wav.c_str(), audio, dm.sample_rate);
+        zac_free(dm);
         if (!written) return false;
     }
     return true;
@@ -230,7 +230,7 @@ static int run_decode_bench(zonos3_model & model, const std::string & text, int 
 // persistent tensors, including paused and reused slots, on CPU or GPU.
 static int run_batch_test(zonos3_model & model, const std::string & texts_joined, int n_slots,
                           int max_frames, const zonos3_sampling & sp_in,
-                          const std::string & dac_path, bool use_gpu, const zonos3_prompt_options & opt) {
+                          const std::string & zac_path, bool use_gpu, const zonos3_prompt_options & opt) {
     if (use_gpu && !model.is_gpu) {
         fprintf(stderr, "batch-test: --gpu requested but no GPU backend loaded\n"); return 1;
     }
@@ -344,22 +344,22 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
                 if (!same) ++fails;
             }
 
-    if (!dac_path.empty() && n_req > 0 && !jobs[0].codes.empty()) {
-        dac_model dm;
-        if (dac_load(dm, dac_path.c_str(), use_gpu)) {
+    if (!zac_path.empty() && n_req > 0 && !jobs[0].codes.empty()) {
+        zac_model dm;
+        if (zac_load(dm, zac_path.c_str(), use_gpu)) {
             std::vector<float> audio;
             const int prefill = jobs[0].prompt.prefill_frames;
             std::vector<int32_t> stream = zonos3_prefill_codes(model, jobs[0].prompt);
             stream.insert(stream.end(), jobs[0].codes.begin(), jobs[0].codes.end());
             const int nf = prefill + (int) jobs[0].codes.size() / ncb;
-            if (dac_decode(dm, stream.data(), nf, ncb, jobs[0].eos_frame, audio)) {
-                const size_t drop = std::min(audio.size(), (size_t) prefill * dac_samples_per_frame(dm));
+            if (zac_decode(dm, stream.data(), nf, ncb, jobs[0].eos_frame, audio)) {
+                const size_t drop = std::min(audio.size(), (size_t) prefill * zac_samples_per_frame(dm));
                 audio.erase(audio.begin(), audio.begin() + drop);
-                const float gain = dac_output_gain(dm, -1.0);
+                const float gain = zac_output_gain(dm, -1.0);
                 for (float & v : audio) v *= gain;
-                dac_write_wav("/tmp/batch_slot0.wav", audio, dm.sample_rate);
+                zac_write_wav("/tmp/batch_slot0.wav", audio, dm.sample_rate);
             }
-            dac_free(dm);
+            zac_free(dm);
             printf("  wrote /tmp/batch_slot0.wav\n");
         }
     }
@@ -513,7 +513,7 @@ static int phonemize_main(int argc, char ** argv) {
 // ids.twin.cond.json -- the files of `python -m zonos3.reference --request req.json --dump-prompt ids.npy`.
 static int request_prompt_main(int argc, char ** argv) {
     const std::string path = argv[1];
-    std::string request_path, out, dac_encoder, ssl_teacher, spk_encoder, steer_path;
+    std::string request_path, out, zac_encoder, ssl_teacher, spk_encoder, steer_path;
     zs::ServerState s;
     s.default_voice_dir.clear();   // speaker ids need the server's voices
     for (int i = 2; i < argc; ++i) {
@@ -525,7 +525,7 @@ static int request_prompt_main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--worker-python") && v) s.worker_python = argv[++i];
         else if (!strcmp(argv[i], "--python-src") && v) s.python_src = argv[++i];
         else if (!strcmp(argv[i], "--spk-encoder") && v) spk_encoder = argv[++i];
-        else if (!strcmp(argv[i], "--dac-encoder") && v) dac_encoder = argv[++i];
+        else if (!strcmp(argv[i], "--zac-encoder") && v) zac_encoder = argv[++i];
         else if (!strcmp(argv[i], "--ssl-teacher") && v) ssl_teacher = argv[++i];
         else if (!strcmp(argv[i], "--steer") && v) steer_path = argv[++i];
         else if (!strcmp(argv[i], "--accent-adapters") && v) s.accent_adapters_path = argv[++i];
@@ -546,7 +546,7 @@ static int request_prompt_main(int argc, char ** argv) {
     std::string err;
     if (!zs::configure_silence_prefill(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     s.spk_path = spk_encoder.empty() ? mp_find_companion(path, "spk-encoder.gguf") : spk_encoder;
-    s.encoder_path = dac_encoder.empty() ? mp_find_companion(path, "dac-encoder.gguf") : dac_encoder;
+    s.encoder_path = zac_encoder.empty() ? mp_find_companion(path, "zac-encoder.gguf") : zac_encoder;
     s.teacher_path = ssl_teacher.empty() ? mp_find_companion(path, "ssl-teacher.gguf") : ssl_teacher;
     // The server's accent adapters next to the backbone (accents.gguf).
     if (s.accent_adapters_path.empty()) s.accent_adapters_path = mp_find_companion(path, "accents.gguf");
@@ -603,7 +603,7 @@ int main(int argc, char ** argv) {
     const std::string path = argv[1];
     bool use_gpu = false;
     bool validate = false, generate = false, do_tts = false, do_build_prompt = false, do_batch_test = false, do_decode_bench = false;
-    std::string ids_path, out_dir, out_codes, reference_path, text, prompt_out, dac_path, dump_ids_path;
+    std::string ids_path, out_dir, out_codes, reference_path, text, prompt_out, zac_path, dump_ids_path;
     std::string clone_path, encoder_path, teacher_path, save_reference_path;
     std::string speaker_mode, speaker_embedding_path, save_speaker_embedding_path, spk_encoder_path;
     std::string loudness_arg, fmax_arg, rate_arg, buckets_arg, cfg_arg, silence_arg, headroom_arg;
@@ -642,10 +642,10 @@ int main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--slots")  && i + 1 < argc) n_slots = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--layers") && i + 1 < argc) n_layer_limit = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--max")    && i + 1 < argc) max_frames = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--dac") && i + 1 < argc) dac_path = argv[++i];
+        else if (!strcmp(argv[i], "--zac") && i + 1 < argc) zac_path = argv[++i];
         else if (!strcmp(argv[i], "--reference-codes") && i + 1 < argc) reference_path = argv[++i];
         else if (!strcmp(argv[i], "--clone") && i + 1 < argc) clone_path = argv[++i];
-        else if (!strcmp(argv[i], "--dac-encoder") && i + 1 < argc) encoder_path = argv[++i];
+        else if (!strcmp(argv[i], "--zac-encoder") && i + 1 < argc) encoder_path = argv[++i];
         else if (!strcmp(argv[i], "--ssl-teacher") && i + 1 < argc) teacher_path = argv[++i];
         else if (!strcmp(argv[i], "--save-reference") && i + 1 < argc) save_reference_path = argv[++i];
         else if (!strcmp(argv[i], "--speaker-mode") && i + 1 < argc) speaker_mode = argv[++i];
@@ -717,14 +717,14 @@ int main(int argc, char ** argv) {
     }
 
     // Companion discovery, gated on the modes that actually need the file (an unconditional
-    // dac pickup would silently start emitting sibling .wavs on .npy outputs).
-    if (dac_path.empty() && !out_codes.empty() && ends_with(out_codes, ".wav")) {
-        dac_path = mp_find_companion(path, "dac.gguf");
-        if (!dac_path.empty()) fprintf(stderr, "zonos3-cli: using dac.gguf found next to model: %s\n", dac_path.c_str());
+    // zac pickup would silently start emitting sibling .wavs on .npy outputs).
+    if (zac_path.empty() && !out_codes.empty() && ends_with(out_codes, ".wav")) {
+        zac_path = mp_find_companion(path, "zac.gguf");
+        if (!zac_path.empty()) fprintf(stderr, "zonos3-cli: using zac.gguf found next to model: %s\n", zac_path.c_str());
         else {
             // fail before generation rather than after minutes of decode
-            fprintf(stderr, "error: .wav output requested but no --dac <dac.gguf> given (also auto-detected next to <model.gguf>)\n");
-            mp_print_missing_hint("dac.gguf", mp_parent_dir(path) + "/dac.gguf");
+            fprintf(stderr, "error: .wav output requested but no --zac <zac.gguf> given (also auto-detected next to <model.gguf>)\n");
+            mp_print_missing_hint("zac.gguf", mp_parent_dir(path) + "/zac.gguf");
             return 1;
         }
     }
@@ -832,7 +832,7 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "error: --save-speaker-embedding requires --clone or --speaker-embedding\n"); return 1;
     }
     if (!clone && (!encoder_path.empty() || !teacher_path.empty() || !spk_encoder_path.empty())) {
-        fprintf(stderr, "error: --spk-encoder, --dac-encoder and --ssl-teacher overrides require --clone\n"); return 1;
+        fprintf(stderr, "error: --spk-encoder, --zac-encoder and --ssl-teacher overrides require --clone\n"); return 1;
     }
     // --clone computes the speaker embedding (embedding mode, or --save-speaker-embedding) and/or the
     // reference codes (reference mode, or --save-reference); each needs its own companion models.
@@ -849,11 +849,11 @@ int main(int argc, char ** argv) {
         }
     }
     if (need_codec) {
-        if (encoder_path.empty()) encoder_path = mp_find_companion(path, "dac-encoder.gguf");
+        if (encoder_path.empty()) encoder_path = mp_find_companion(path, "zac-encoder.gguf");
         if (teacher_path.empty()) teacher_path = mp_find_companion(path, "ssl-teacher.gguf");
         if (encoder_path.empty() || teacher_path.empty()) {
-            fprintf(stderr, "error: --clone requires both --dac-encoder and --ssl-teacher (or sibling companions)\n");
-            if (encoder_path.empty()) mp_print_missing_hint("dac-encoder.gguf", mp_parent_dir(path) + "/dac-encoder.gguf");
+            fprintf(stderr, "error: --clone requires both --zac-encoder and --ssl-teacher (or sibling companions)\n");
+            if (encoder_path.empty()) mp_print_missing_hint("zac-encoder.gguf", mp_parent_dir(path) + "/zac-encoder.gguf");
             if (teacher_path.empty()) mp_print_missing_hint("ssl-teacher.gguf", mp_parent_dir(path) + "/ssl-teacher.gguf");
             return 1;
         }
@@ -918,13 +918,13 @@ int main(int argc, char ** argv) {
             }
         }
         if (need_codec) {
-            dac_encoder_model encoder;
+            zac_encoder_model encoder;
             ssl_model teacher;
             const bool teacher_ok = ssl_load(teacher, teacher_path.c_str(), use_gpu);
-            const bool encoder_ok = teacher_ok && dac_encoder_load(encoder, encoder_path.c_str(), use_gpu);
+            const bool encoder_ok = teacher_ok && zac_encoder_load(encoder, encoder_path.c_str(), use_gpu);
             const bool encoded = encoder_ok &&
-                                 dac_encode(encoder, teacher, pcm.data(), (int) pcm.size(), reference_codes);
-            dac_encoder_free(encoder);
+                                 zac_encode(encoder, teacher, pcm.data(), (int) pcm.size(), reference_codes);
+            zac_encoder_free(encoder);
             ssl_free(teacher);
             if (!encoded || reference_codes.empty()) {
                 fprintf(stderr, "clone: failed to load companions, decode or encode %s\n", clone_path.c_str());
@@ -1002,7 +1002,7 @@ int main(int argc, char ** argv) {
     }
 
     if (do_batch_test) {
-        const int rc = run_batch_test(model, text, n_slots, max_frames, sp, dac_path, use_gpu, reference_opt);
+        const int rc = run_batch_test(model, text, n_slots, max_frames, sp, zac_path, use_gpu, reference_opt);
         zonos3_model_free(model);
         return rc;
     }
@@ -1072,7 +1072,7 @@ int main(int argc, char ** argv) {
             for (int cb = 0; cb < ncb; ++cb) printf(" %d", codes[cb]);
             printf("\n");
         }
-        const bool emitted = emit_output(out_codes, model, prompt, codes, n_frames, eos_frame, dac_path, use_gpu);
+        const bool emitted = emit_output(out_codes, model, prompt, codes, n_frames, eos_frame, zac_path, use_gpu);
         zonos3_model_free(model);
         return emitted ? 0 : 1;
     }
@@ -1131,7 +1131,7 @@ int main(int argc, char ** argv) {
             for (int cb = 0; cb < ncb; ++cb) printf(" %d", codes[cb]);
             printf("\n");
         }
-        const bool emitted = emit_output(out_codes, model, prompt, codes, n_frames, eos_frame, dac_path, use_gpu, headroom_db);
+        const bool emitted = emit_output(out_codes, model, prompt, codes, n_frames, eos_frame, zac_path, use_gpu, headroom_db);
         zonos3_model_free(model);
         return emitted ? 0 : 1;
     }

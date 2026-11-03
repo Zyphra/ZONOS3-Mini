@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exercise the command flows shown in README.md / docs/INTERNALS.md against the tiny
-# committed fixtures (random-weight backbone + DAC), so the documented commands are
+# committed fixtures (random-weight backbone + ZAC), so the documented commands are
 # proven to actually run on CI — not just the usage string.
 #
 # Audio is gibberish by design; we only assert each command runs and emits the right
@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 MODEL="tests/fixtures/dummy-zonos3.gguf"
-DAC="tests/fixtures/dummy-dac.gguf"
+ZAC="tests/fixtures/dummy-zac.gguf"
 
 find_bin() {  # $1 = base name; honor an explicit path arg, else search build*/
   if [ -n "${2:-}" ]; then echo "$2"; return; fi
@@ -30,7 +30,7 @@ CLI="$(find_bin zonos3-cli "${1:-}")"
 SRV="$(find_bin zonos3-server "${2:-}")"
 [ -x "$CLI" ] || { echo "FAIL: zonos3-cli not found (pass it as \$1)"; exit 1; }
 [ -f "$MODEL" ] || { echo "FAIL: missing $MODEL"; exit 1; }
-[ -f "$DAC" ]   || { echo "FAIL: missing $DAC"; exit 1; }
+[ -f "$ZAC" ]   || { echo "FAIL: missing $ZAC"; exit 1; }
 
 WORK="$(mktemp -d)"
 SRV_PID=""
@@ -53,28 +53,28 @@ echo "== CLI ($CLI) =="
 [ -s "$WORK/ids.npy" ] || fail "--build-prompt wrote no ids.npy"
 pass "--build-prompt -> ids.npy"
 
-# generate codes from the prompt (16 rows: dac-cli below decodes them, past the 9-row shear)
+# generate codes from the prompt (16 rows: zac-cli below decodes them, past the 9-row shear)
 "$CLI" "$MODEL" --generate "$WORK/ids.npy" "$WORK/codes.npy" --max 16 --greedy >/dev/null 2>&1 \
   || fail "--generate exited nonzero"
 [ -s "$WORK/codes.npy" ] || fail "--generate wrote no codes.npy"
 pass "--generate -> codes.npy"
 
-# one-command text -> codes (.npy output, no DAC)
+# one-command text -> codes (.npy output, no ZAC)
 out="$("$CLI" "$MODEL" --tts "ci tts to codes" "$WORK/t.npy" --max 8 --greedy 2>&1)" \
   || { echo "$out"; fail "--tts (codes) exited nonzero"; }
 [ -s "$WORK/t.npy" ] || fail "--tts (codes) wrote no .npy"
 pass "--tts -> codes .npy"
 
-# one-command text -> WAV, decoding through the DAC (README Quick Start / CLI section). A WAV needs
+# one-command text -> WAV, decoding through the ZAC (README Quick Start / CLI section). A WAV needs
 # more rows than the 9-row codebook shear, so the decode tests generate 16 frames.
-"$CLI" "$MODEL" --tts "ci tts to wav" "$WORK/t.wav" --dac "$DAC" --max 16 --greedy >/dev/null 2>&1 \
-  || fail "--tts --dac (wav) exited nonzero"
-is_riff "$WORK/t.wav" || fail "--tts --dac did not write a RIFF WAV"
-pass "--tts --dac -> WAV"
+"$CLI" "$MODEL" --tts "ci tts to wav" "$WORK/t.wav" --zac "$ZAC" --max 16 --greedy >/dev/null 2>&1 \
+  || fail "--tts --zac (wav) exited nonzero"
+is_riff "$WORK/t.wav" || fail "--tts --zac did not write a RIFF WAV"
+pass "--tts --zac -> WAV"
 
 # speaker-embedding conditioning: speaker row + condition buckets + speaker CFG (two-slot twin) + silence prefill
 out="$("$CLI" "$MODEL" --tts "ci speaker" "$WORK/s.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
-  --loudness -23 --condition-buckets 10,3,10 --cfg-scale 1.5 --silence-prefill 3 --max 16 --greedy --dac "$DAC" 2>&1)" \
+  --loudness -23 --condition-buckets 10,3,10 --cfg-scale 1.5 --silence-prefill 3 --max 16 --greedy --zac "$ZAC" 2>&1)" \
   || { echo "$out"; fail "--tts --speaker-embedding (cfg) exited nonzero"; }
 is_riff "$WORK/s.wav" || fail "--tts --speaker-embedding did not write a RIFF WAV"
 pass "--tts --speaker-embedding --cfg-scale -> WAV"
@@ -82,35 +82,35 @@ pass "--tts --speaker-embedding --cfg-scale -> WAV"
 # steering: raw controls move the embedding, hidden controls + a span add to AttnRes bank sources
 out="$("$CLI" "$MODEL" --tts "ci steer" "$WORK/steer.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
   --steer tests/fixtures/dummy-steer.gguf --control who.gender=1.5 --control style.tempo=-1 \
-  --control-span 0:2:mood.valence=2 --cfg-scale 1.5 --max 16 --greedy --dac "$DAC" 2>&1)" \
+  --control-span 0:2:mood.valence=2 --cfg-scale 1.5 --max 16 --greedy --zac "$ZAC" 2>&1)" \
   || { echo "$out"; fail "--tts --steer --control exited nonzero"; }
 is_riff "$WORK/steer.wav" || fail "--tts --steer did not write a RIFF WAV"
 pass "--tts --steer --control --control-span -> WAV"
 if out="$("$CLI" "$MODEL" --tts "ci steer" "$WORK/steer-bad.wav" --steer tests/fixtures/dummy-steer.gguf \
-    --control who.gender=1 --max 4 --dac "$DAC" 2>&1)"; then fail "raw control without a speaker embedding must fail"; fi
+    --control who.gender=1 --max 4 --zac "$ZAC" 2>&1)"; then fail "raw control without a speaker embedding must fail"; fi
 echo "$out" | grep -q "need speaker_mode=embedding" || { echo "$out"; fail "raw control without embedding gave the wrong error"; }
 pass "--control (raw) without --speaker-embedding -> error"
 
-# same, with --dac dropped: dac.gguf sitting next to the backbone is auto-detected
+# same, with --zac dropped: zac.gguf sitting next to the backbone is auto-detected
 # (README CLI section's models/ example)
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-q6_k.gguf"
-cp "$DAC"   "$WORK/models/dac.gguf"
+cp "$ZAC"   "$WORK/models/zac.gguf"
 out=$("$CLI" "$WORK/models/zonos3-q6_k.gguf" --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
-  || { echo "$out"; fail "--tts with sibling dac.gguf exited nonzero"; }
-is_riff "$WORK/auto.wav" || fail "--tts with sibling dac.gguf did not write a RIFF WAV"
-pass "--tts (sibling dac.gguf auto-detected) -> WAV"
+  || { echo "$out"; fail "--tts with sibling zac.gguf exited nonzero"; }
+is_riff "$WORK/auto.wav" || fail "--tts with sibling zac.gguf did not write a RIFF WAV"
+pass "--tts (sibling zac.gguf auto-detected) -> WAV"
 
-# standalone codes -> wav (dac-cli), if present
-DACCLI="$(find_bin dac-cli "")"
-if [ -x "$DACCLI" ]; then
-  "$DACCLI" "$DAC" "$WORK/codes.npy" "$WORK/d.wav" >/dev/null 2>&1 || fail "dac-cli exited nonzero"
-  is_riff "$WORK/d.wav" || fail "dac-cli did not write a RIFF WAV"
-  pass "dac-cli codes -> WAV"
-  if [ -s tests/fixtures/dummy-dac-codes.npy ]; then
-    "$DACCLI" --seam "$DAC" tests/fixtures/dummy-dac-codes.npy --block 3 --cpu 2>&1 | grep -q PASS \
-      || fail "dac-cli --seam did not PASS"
-    pass "dac-cli --seam (streamed == buffered)"
+# standalone codes -> wav (zac-cli), if present
+ZACCLI="$(find_bin zac-cli "")"
+if [ -x "$ZACCLI" ]; then
+  "$ZACCLI" "$ZAC" "$WORK/codes.npy" "$WORK/d.wav" >/dev/null 2>&1 || fail "zac-cli exited nonzero"
+  is_riff "$WORK/d.wav" || fail "zac-cli did not write a RIFF WAV"
+  pass "zac-cli codes -> WAV"
+  if [ -s tests/fixtures/dummy-zac-codes.npy ]; then
+    "$ZACCLI" --seam "$ZAC" tests/fixtures/dummy-zac-codes.npy --block 3 --cpu 2>&1 | grep -q PASS \
+      || fail "zac-cli --seam did not PASS"
+    pass "zac-cli --seam (streamed == buffered)"
   fi
 fi
 
@@ -127,10 +127,10 @@ if [ -x "$QCLI" ]; then
     [ -s "$WORK/$q.npy" ] || fail "$q generation wrote no codes"
   done
   pass "quantize-cli q8_0 + q4_0 --experts-only --spine-f16 -> loadable backbones"
-  if [ -x "$DACCLI" ]; then
-    "$QCLI" "$DAC" "$WORK/dac-q8.gguf" q8_0 >"$WORK/dacq.log" 2>&1 \
-      || { cat "$WORK/dacq.log"; fail "quantize-cli codec q8_0"; }
-    "$DACCLI" "$WORK/dac-q8.gguf" "$WORK/codes.npy" "$WORK/dq.wav" >/dev/null 2>&1 || fail "quantized codec loading"
+  if [ -x "$ZACCLI" ]; then
+    "$QCLI" "$ZAC" "$WORK/zac-q8.gguf" q8_0 >"$WORK/zacq.log" 2>&1 \
+      || { cat "$WORK/zacq.log"; fail "quantize-cli codec q8_0"; }
+    "$ZACCLI" "$WORK/zac-q8.gguf" "$WORK/codes.npy" "$WORK/dq.wav" >/dev/null 2>&1 || fail "quantized codec loading"
     is_riff "$WORK/dq.wav" || fail "quantized codec did not write a RIFF WAV"
     pass "quantize-cli codec q8_0 -> loadable codec"
   fi
@@ -148,7 +148,7 @@ PORT="${ZONOS3_TEST_PORT:-19187}"
 BASE="http://127.0.0.1:$PORT"
 # default voice ci.npy = the speaker embedding fixture; dummy-steer.gguf's set calibrations disable two controls for it
 mkdir -p "$WORK/voices" && cp tests/fixtures/speaker-embedding.npy "$WORK/voices/ci.npy"
-"$SRV" "$MODEL" --dac "$DAC" --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
+"$SRV" "$MODEL" --zac "$ZAC" --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
   --studio-projects-dir "$WORK/projects" --tts-default-voices-dir "$WORK/voices" >"$WORK/srv.log" 2>&1 &
 SRV_PID=$!
 

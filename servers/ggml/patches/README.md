@@ -61,7 +61,7 @@ and the zonos3 CUDA captures before relying on them.
   `pad + transpose + im2col + mul_mat` and is bit-identical to it (reference codes
   for all three default voices, F32 and Q8_0, are byte-identical) while skipping
   the im2col buffer: 3.4–6.1x faster per conv on M3. zonos3 uses it only on Metal
-  (`dac_encoder_load` probe); the CPU reference sums differently from the CPU BF16
+  (`zac_encoder_load` probe); the CPU reference sums differently from the CPU BF16
   GEMM, so CPU keeps im2col.
 - `metal-encoder-throughput.patch` — two bandwidth fixes for the codec encoder's
   narrow, very long activations (`[C=64..128, T≈883k]`). Contiguous float

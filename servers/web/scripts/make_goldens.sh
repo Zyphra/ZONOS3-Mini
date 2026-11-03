@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Parity goldens for harness/parity.html, from a CPU ggml build and (for the decode argmax check) a Metal build:
 #   cmake -S servers/ggml -B /tmp/ggml-build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF
-#   cmake --build /tmp/ggml-build -j 8 --target zonos3-cli dac-cli dac-encoder-cli spk-encoder-cli
+#   cmake --build /tmp/ggml-build -j 8 --target zonos3-cli zac-cli zac-encoder-cli spk-encoder-cli
 #   cmake -S servers/ggml -B /tmp/ggml-build-metal -DCMAKE_BUILD_TYPE=Release
 #   cmake --build /tmp/ggml-build-metal -j 8 --target zonos3-cli
 # The CPU build accumulates F16 dot products in fp16 (NEON), which flips near-tie MoE expert picks against any GPU
@@ -23,7 +23,7 @@ mkdir -p "$O"
 # --validate reads the conditioning from full_ids.cond.json (written by --dump-ids)
 "$B/zonos3-cli" "$M/zonos3-qat.gguf" --cpu --validate "$O/full_ids.npy" "$O/validate"
 "$BM/zonos3-cli" "$M/zonos3-qat.gguf" --gpu --validate "$O/full_ids.npy" "$O/validate_metal"
-"$B/dac-cli" "$M/dac.gguf" "$O/tts.npy" "$O/dac_audio.npy" --cpu
+"$B/zac-cli" "$M/zac.gguf" "$O/tts.npy" "$O/zac_audio.npy" --cpu
 "$B/spk-encoder-cli" "$M/spk-encoder.gguf" --audio default_voices/AmericanFemale.mp3 "$O/spk.npy" --dump-dir "$O/spk" --cpu
 # The exact 44.1 kHz PCM the CLI's ffmpeg decode produced (audio-decode.cpp flags), for speaker_embed_pcm.
 ffmpeg -nostdin -v error -i default_voices/AmericanFemale.mp3 -ac 1 -ar 44100 -t 60 -f f32le - |

@@ -343,11 +343,11 @@ CODEC_DECODER_DOC = """Decode sheared codes with the reference ZONOS3 Mini MR-iS
 
     tools/dump_golden.py codec-decoder \\
         --generator <release>/autoencoder/generator.pt --head-dir <release>/autoencoder/heads/full_mr \\
-        out/codes.npy -o out/dac-golden [--compare out/cpp.npy]
+        out/codes.npy -o out/zac-golden [--compare out/cpp.npy]
 
 codes.npy is the zonos3-cli stream output [H, 10] (sheared: codebook c of frame t sits in row t + c; any
 silence-prefill rows are the first stream rows and are decoded like the rest). The frame count matches
-dac_decode: min(eos, H - 9), with eos read from <codes>.eos.npy (first value) if present.
+zac_decode: min(eos, H - 9), with eos read from <codes>.eos.npy (first value) if present.
 
 The decoder is built exactly like minisgl's tokenizer/matched_codec.py: zonos3.codec ISTFTCodec(cfg["model"],
 cfg["head"]), load_pretrained(generator), load_trainable_state_dict(head checkpoint "trainable"), CPU fp32, TF32 off.
@@ -463,11 +463,11 @@ def run_codec_decoder(args, parser):
 CODEC_ENCODER_DOC = """Dump the actual frozen zonos3.codec MossAutoencoder native dual recipe.
 
     tools/dump_golden.py codec-encoder --generator <release>/autoencoder/generator.pt \\
-        --audio speech.wav -o out/dac-encoder-golden [--teacher DIR] [--samples N] [--compare codes.npy]
+        --audio speech.wav -o out/zac-encoder-golden [--teacher DIR] [--samples N] [--compare codes.npy]
 
 Requires the production CUDA BF16 teacher/encoder path; no substitute teacher,
 folded-table inversion or independent approximation of reference preprocessing.
-Pass the resulting audio.npy to dac-encoder-cli --audio ... --dump ... . All
+Pass the resulting audio.npy to zac-encoder-cli --audio ... --dump ... . All
 intermediates use C-order [time,channels] matching the native diagnostic callback.
 The SSL teacher defaults to the generator's sibling teacher/ directory (release autoencoder/ layout).
 Qualify --samples 1, 2939, 2940, 2941, 882000, 882001 and 1323017 in separate

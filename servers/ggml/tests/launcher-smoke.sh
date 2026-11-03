@@ -14,7 +14,7 @@ cd "$ROOT"
 
 LAUNCHER="scripts/start-zonos3.sh"
 MODEL="tests/fixtures/dummy-zonos3.gguf"
-DAC="tests/fixtures/dummy-dac.gguf"
+ZAC="tests/fixtures/dummy-zac.gguf"
 
 find_bin() {
   if [ -n "${1:-}" ]; then echo "$1"; return; fi
@@ -23,7 +23,7 @@ find_bin() {
 SRV="$(find_bin "${1:-}")"
 [ -x "$SRV" ]     || { echo "FAIL: zonos3-server not found (pass it as \$1)"; exit 1; }
 [ -f "$MODEL" ]   || { echo "FAIL: missing $MODEL"; exit 1; }
-[ -f "$DAC" ]     || { echo "FAIL: missing $DAC"; exit 1; }
+[ -f "$ZAC" ]     || { echo "FAIL: missing $ZAC"; exit 1; }
 command -v curl    >/dev/null 2>&1 || { echo "SKIP: curl not available"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit 0; }
 
@@ -76,7 +76,7 @@ stop_launcher() {
 echo "== launcher: local models =="
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-qat.gguf"
-cp "$DAC"   "$WORK/models/dac.gguf"
+cp "$ZAC"   "$WORK/models/zac.gguf"
 run_launcher
 pass "local models -> server up"
 curl -fsS "$BASE/v2/generate" \
@@ -106,11 +106,11 @@ stop_launcher
 unset ZONOS3_SKIP_PATH_FFMPEG ZONOS3_FFMPEG_URL
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
 echo "== launcher: missing decoder =="
-rm "$WORK/models/dac.gguf"
+rm "$WORK/models/zac.gguf"
 if ZONOS3_MODEL_DIR="$WORK/models" ZONOS3_SERVER_BIN="$SRV" \
    ZONOS3_ASSUME_YES=1 ZONOS3_NO_BROWSER=1 bash "$LAUNCHER" \
    >"$WORK/missing.log" 2>&1; then
-  fail "launcher accepted missing dac.gguf"
+  fail "launcher accepted missing zac.gguf"
 fi
 pass "missing decoder rejected without download"
 

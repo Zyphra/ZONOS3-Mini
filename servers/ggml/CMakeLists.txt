@@ -65,12 +65,12 @@ set(GGML_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory(ggml)
 
-# The CPU DAC calls Accelerate's sgemm directly (src/dac.cpp) so each conv accumulates its taps,
-# bias and residual into one output buffer. Every target compiling dac.cpp uses zonos3_use_dac().
+# The CPU ZAC calls Accelerate's sgemm directly (src/zac.cpp) so each conv accumulates its taps,
+# bias and residual into one output buffer. Every target compiling zac.cpp uses zonos3_use_zac().
 if (APPLE)
     find_library(ACCELERATE_FRAMEWORK Accelerate REQUIRED)
 endif()
-function(zonos3_use_dac target)
+function(zonos3_use_zac target)
     if (APPLE)
         target_link_libraries(${target} PRIVATE ${ACCELERATE_FRAMEWORK})
     endif()
@@ -105,10 +105,10 @@ zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/
 target_link_libraries(zonos3 PUBLIC ggml)
 
 add_library(zonos3-audio STATIC
-    src/dac.cpp src/dac-encoder.cpp src/ssl-encoder.cpp src/spk-encoder.cpp src/audio-decode.cpp)
+    src/zac.cpp src/zac-encoder.cpp src/ssl-encoder.cpp src/spk-encoder.cpp src/audio-decode.cpp)
 target_include_directories(zonos3-audio PUBLIC src ggml/include PRIVATE vendor)
 target_link_libraries(zonos3-audio PUBLIC ggml)
-zonos3_use_dac(zonos3-audio)
+zonos3_use_zac(zonos3-audio)
 
 # --- Pronunciation lexicon (plan 7.9): vendored LMDB 0.9.36 (OpenLDAP libraries/liblmdb, tag LMDB_0.9.36)
 #     and the phonemes.py port. espeak-ng is dlopen'ed at run time (ZONOS3_ESPEAK_NG_LIBRARY), never linked. ---
@@ -141,10 +141,10 @@ add_executable(zonos3-cli src/main.cpp)
 target_link_libraries(zonos3-cli PRIVATE zonos3 zonos3-audio)
 target_include_directories(zonos3-cli PRIVATE vendor)
 
-add_executable(dac-cli src/dac-cli.cpp)
-target_link_libraries(dac-cli PRIVATE zonos3-audio)
-add_executable(dac-encoder-cli src/dac-encoder-cli.cpp)
-target_link_libraries(dac-encoder-cli PRIVATE zonos3-audio)
+add_executable(zac-cli src/zac-cli.cpp)
+target_link_libraries(zac-cli PRIVATE zonos3-audio)
+add_executable(zac-encoder-cli src/zac-encoder-cli.cpp)
+target_link_libraries(zac-encoder-cli PRIVATE zonos3-audio)
 add_executable(ssl-encoder-cli src/ssl-encoder-cli.cpp)
 target_link_libraries(ssl-encoder-cli PRIVATE zonos3-audio)
 add_executable(spk-encoder-cli src/spk-encoder-cli.cpp)
@@ -215,10 +215,10 @@ if (BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-steer.gguf)
     set_tests_properties(steering PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
     # Streamed (block 3) == buffered: iSTFT overlap-add / FIR mixer holdback and flush.
-    add_test(NAME dac-seam COMMAND dac-cli --seam tests/fixtures/dummy-dac.gguf
-        tests/fixtures/dummy-dac-codes.npy --block 3 --cpu
+    add_test(NAME zac-seam COMMAND zac-cli --seam tests/fixtures/dummy-zac.gguf
+        tests/fixtures/dummy-zac-codes.npy --block 3 --cpu
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-    set_tests_properties(dac-seam PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
+    set_tests_properties(zac-seam PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
     add_executable(prune-policy tests/prune-policy.cpp)
     target_include_directories(prune-policy PRIVATE src)
     add_test(NAME prune-policy COMMAND prune-policy)

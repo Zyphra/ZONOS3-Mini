@@ -32,7 +32,7 @@ from zonos3_mlx.server.state import ServerOptions, ServerState
 
 HOP = 2940
 PHONES = "aɪb"
-CODES = np.load(FIXTURES / "dummy-dac-codes.npy").astype(np.int32)  # [40, 10]
+CODES = np.load(FIXTURES / "dummy-zac-codes.npy").astype(np.int32)  # [40, 10]
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +40,7 @@ def files(tmp_path_factory):
     root = tmp_path_factory.mktemp("srv")
     subprocess.run([sys.executable, str(REPO / "servers/ggml/scripts/make-dummy-model.py"), "-o", str(root / "m.gguf"),
                     "--edit-markers", "3", "--span-end", "--phonemes", PHONES], check=True, capture_output=True)
-    (root / "dac.gguf").write_bytes((FIXTURES / "dummy-dac.gguf").read_bytes())
+    (root / "zac.gguf").write_bytes((FIXTURES / "dummy-zac.gguf").read_bytes())
     lexicon = root / "lexicon.lmdb"
     env = lmdb.open(str(lexicon), map_size=1 << 24, max_dbs=8, subdir=True)
     with env.begin(write=True) as txn:

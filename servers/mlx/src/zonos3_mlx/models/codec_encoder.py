@@ -1,6 +1,6 @@
 """Frozen dual reference encoder (``mossdual_encoder``) on MLX: 44.1 kHz audio -> ordinary [frames, 10] codes.
 
-A port of servers/ggml/src/dac-encoder.cpp, including its production autocast recipe: GEMM / convolution weights and
+A port of servers/ggml/src/zac-encoder.cpp, including its production autocast recipe: GEMM / convolution weights and
 biases hold BF16 values, operands are rounded to BF16 and accumulate in F32, and the outputs are rounded to BF16 at the
 same tensor boundaries as the C++ (``encoder_round``); residual sums, Snake and the RVQ stay F32. Lanes of 300 frames
 with 150 frames of left context; per lane the acoustic branch (Snake residual units, strided causal convs, patch-down,
@@ -83,7 +83,7 @@ class CodecEncoder:
         self.P = Params(f, host=("resample.kernel",) + rvq + conv_weights)
         self.rs_kernel = self.P.host["resample.kernel"]
         self.rvq = [_Quantizer(self.P.host, f"rvq.{c}") for c in range(10)]
-        # Linear matrices are BF16 operands (dac_encoder_load); stored as bfloat16, matmul upcasts them exactly.
+        # Linear matrices are BF16 operands (zac_encoder_load); stored as bfloat16, matmul upcasts them exactly.
         for name, W in self.P.w.items():
             if W.scales is None:
                 self.P.w[name] = Weight(W.w.astype(mx.bfloat16))
@@ -106,7 +106,7 @@ class CodecEncoder:
     # --------------------------------------------------------------------------------------------- acoustic
     def _causal_conv(self, x: mx.array, p: str, dilation: int = 1, stride: int = 1) -> mx.array:
         """x [T, IC] -> [T', OC]; left pad (K-1)*d + 1 - stride; BF16 input, BF16 output before and after the bias
-        (dac.cpp ``encoder_conv``)."""
+        (zac.cpp ``encoder_conv``)."""
         w = self.conv[p]
         K = w.shape[1]
         left = (K - 1) * dilation + 1 - stride
@@ -146,7 +146,7 @@ class CodecEncoder:
 
     # --------------------------------------------------------------------------------------------- semantic
     def _semantic(self, x: mx.array, encode: bool) -> mx.array:
-        """Semantic encoder (pooled SSL -> 768) or semantic head (q1 -> 1024 prediction): dac-encoder.cpp
+        """Semantic encoder (pooled SSL -> 768) or semantic head (q1 -> 1024 prediction): zac-encoder.cpp
         ``semantic_module``; the WNConv / output projections round before and after their bias."""
         def projection(name: str, h: mx.array) -> mx.array:
             return bf16_round(bf16_round(self.P.lin(name + ".weight", bf16_round(h))) + self.P.t[name + ".bias"])
@@ -161,7 +161,7 @@ class CodecEncoder:
         return x
 
     def _pool_ssl(self, ssl: np.ndarray) -> np.ndarray:
-        """Box-window average of the T SSL frames onto the lane's 300 frames (dac-encoder.cpp pool_ssl)."""
+        """Box-window average of the T SSL frames onto the lane's 300 frames (zac-encoder.cpp pool_ssl)."""
         T = ssl.shape[0]
         prefix = np.zeros((T + 1, ssl.shape[1]), dtype=np.float32)
         np.cumsum(ssl, axis=0, dtype=np.float32, out=prefix[1:])
@@ -180,7 +180,7 @@ class CodecEncoder:
     def encode(self, pcm44100: np.ndarray, *, max_seconds: float = REFERENCE_AUDIO_MAX_SECONDS) -> np.ndarray:
         """Mono 44.1 kHz PCM -> ordinary codes [frames, 10] int32 (frames = ceil(samples / 2940)), cut to whole
         codec frames at ``max_seconds``: at most the registry's UPLOAD_MAX_SECONDS, the limit of
-        zonos3.tokenizer.dual_reference.prepare_reference and dac-encoder.h DAC_ENCODER_MAX_SECONDS (the lanes keep
+        zonos3.tokenizer.dual_reference.prepare_reference and zac-encoder.h ZAC_ENCODER_MAX_SECONDS (the lanes keep
         memory independent of length; callers pass their own, shorter limit)."""
         if not 0 < max_seconds <= UPLOAD_MAX_SECONDS:
             raise ValueError(f"Codec input limit must be in (0, {UPLOAD_MAX_SECONDS}] seconds")

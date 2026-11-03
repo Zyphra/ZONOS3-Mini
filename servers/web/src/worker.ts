@@ -3,7 +3,7 @@
 import type { Engine, DefaultVoice } from './api/engine';
 import { Api } from './api/router';
 import { Backbone } from './backbone';
-import { BLOCK_FRAMES, DacStream } from './dac';
+import { BLOCK_FRAMES, ZacStream } from './zac';
 import { RefEncoder } from './encoder';
 import { parseGguf } from './gguf';
 import { Gpu, initGpu } from './gpu/device';
@@ -73,7 +73,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
     return { id: v.id, label: v.label, file: v.file, pcm: voicesPcm[v.id] ?? null, codes: loadReferenceCodes(await r.arrayBuffer()) };
   }));
   const bbw = await loadModel(gpu, base, 'backbone', progress, cache);
-  const dacw = await loadModel(gpu, base, 'dac', progress, cache);
+  const zacw = await loadModel(gpu, base, 'zac', progress, cache);
   const hp = modelHp(bbw.meta);
 
   const steerBuf = await companion(base, 'steer.gguf');
@@ -82,16 +82,16 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   const laci = await loadLaci(base);
 
   const backbone = new Backbone(gpu, bbw, steer ? steer.sources : []);
-  const dac = new DacStream(gpu, dacw);
+  const zac = new ZacStream(gpu, zacw);
   const tokenizer = createTokenizer();
-  await warmup(backbone, dac, hp);
+  await warmup(backbone, zac, hp);
 
   let spk: Promise<SpeakerEncoder> | null = null;
   let ref: Promise<RefEncoder> | null = null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-qat.gguf', backbone, codec: dac, tokenizer,
+    hp, modelFile: 'zonos3-qat.gguf', backbone, codec: zac, tokenizer,
     steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci,
-    voices, headroomDb: Number(dacw.meta.headroom_db ?? 3),
+    voices, headroomDb: Number(zacw.meta.headroom_db ?? 3),
     async embedSpeaker(pcm) {
       const enc = await (spk ??= SpeakerEncoder.load(gpu, base, progress, cache).catch((e: unknown) => { spk = null; throw e; }));
       return enc.embed(pcm);
@@ -107,7 +107,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
 /** Runs every program the first request needs once (both slots' prefill tiles, the cached 256-row chunk program plus a
  *  remainder via a 309-row reference prompt, one decode step per slot, a full codec chunk) so pipeline compilation and
  *  first-use costs land before 'ready' instead of in the first request. */
-async function warmup(backbone: Backbone, dac: DacStream, hp: ModelHp): Promise<void> {
+async function warmup(backbone: Backbone, zac: ZacStream, hp: ModelHp): Promise<void> {
   const tok = createTokenizer();
   const short = buildPrompt(tok, 'Hi.', { buckets: [], silencePrefill: 3 }, hp);
   const ref = buildPrompt(tok, 'Hi.', { referenceCodes: new Int32Array(300 * NCB), buckets: [], silencePrefill: 3 }, hp);
@@ -116,8 +116,8 @@ async function warmup(backbone: Backbone, dac: DacStream, hp: ModelHp): Promise<
     await backbone.prefill(slot, ref.ids, ref.cond);
     await backbone.step(slot, new Int32Array(W), null, null);
   }
-  await dac.chunk(new Int32Array(NCB * BLOCK_FRAMES), 0, BLOCK_FRAMES);
-  dac.reset();
+  await zac.chunk(new Int32Array(NCB * BLOCK_FRAMES), 0, BLOCK_FRAMES);
+  zac.reset();
 }
 
 async function serve(m: Extract<InMsg, { type: 'req' }>): Promise<void> {

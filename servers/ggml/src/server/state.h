@@ -5,8 +5,8 @@
 #include "server/scheduler.h"
 #include "server/textnorm.h"
 
-#include "dac-encoder.h"
-#include "dac.h"
+#include "zac-encoder.h"
+#include "zac.h"
 #include "spk-encoder.h"
 #include "ssl-encoder.h"
 #include "zonos3-accent.h"
@@ -49,9 +49,9 @@ struct ServerState {
     // ---- models
     zonos3_model model;
     std::string model_path;
-    dac_model dac;                         // owns the DAC weights shared by every lane
-    std::string dac_name;                  // dac.gguf file name (capabilities.decoder)
-    dac_encoder_model encoder;
+    zac_model zac;                         // owns the ZAC weights shared by every lane
+    std::string zac_name;                  // zac.gguf file name (capabilities.decoder)
+    zac_encoder_model encoder;
     ssl_model teacher;
     std::string encoder_path, teacher_path;
     bool reference_models_loaded = false;
@@ -74,7 +74,7 @@ struct ServerState {
     int max_frames = zonos3_generation().max_frames;   // --max: the frame budget of a request (R5's server_max)
     int context_capacity = 0;                          // rows of a slot (configure_frame_budget)
     int batch_slots = 8;
-    int dac_threads = 4;
+    int zac_threads = 4;
     bool use_gpu = false;
     bool prof = false;
     std::string stream_decode_default = "prefix";
@@ -106,7 +106,7 @@ struct ServerState {
     std::condition_variable sched_cv;
     std::deque<std::shared_ptr<ReqJob>> incoming;
     bool worker_ready = false, worker_failed = false;
-    std::vector<DacLane> dac_lanes;
+    std::vector<ZacLane> zac_lanes;
     std::atomic<uint64_t> next_lane{0};      // the backbone worker and submit_decode (handler threads) pick lanes
 
     // ---- speakers (speakers.cpp)

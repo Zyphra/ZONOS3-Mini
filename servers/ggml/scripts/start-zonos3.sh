@@ -94,15 +94,15 @@ ffmpeg_download() {
 
 BACKBONE="zonos3-$ZONOS3_QUANT.gguf"
 MISSING=()
-for f in "$BACKBONE" dac.gguf; do
+for f in "$BACKBONE" zac.gguf; do
     [ -f "$ZONOS3_MODEL_DIR/$f" ] || MISSING+=("$f")
 done
 [ "${#MISSING[@]}" -eq 0 ] ||
     die "missing ${MISSING[*]} in $ZONOS3_MODEL_DIR — create them with models/convert-*.py (docs/INTERNALS.md)"
 [ -f "$ZONOS3_MODEL_DIR/spk-encoder.gguf" ] ||
-    echo "note: spk-encoder.gguf missing — speaker-embedding cloning disabled (raw-reference cloning needs dac-encoder.gguf + ssl-teacher.gguf)" >&2
-for companion in dac-encoder.gguf ssl-teacher.gguf; do
-    [ -f "$ZONOS3_MODEL_DIR/$companion" ] || echo "note: $companion not found — raw-reference cloning needs both dac-encoder.gguf and ssl-teacher.gguf" >&2
+    echo "note: spk-encoder.gguf missing — speaker-embedding cloning disabled (raw-reference cloning needs zac-encoder.gguf + ssl-teacher.gguf)" >&2
+for companion in zac-encoder.gguf ssl-teacher.gguf; do
+    [ -f "$ZONOS3_MODEL_DIR/$companion" ] || echo "note: $companion not found — raw-reference cloning needs both zac-encoder.gguf and ssl-teacher.gguf" >&2
 done
 
 # ffmpeg is only needed for voice cloning. Prefer our own copy, then PATH.
@@ -139,10 +139,10 @@ sibling() {  # $1 = name: echo the archive-layout path, falling back to the repo
 }
 
 args=("$ZONOS3_MODEL_DIR/$BACKBONE"
-      --dac "$ZONOS3_MODEL_DIR/dac.gguf"
+      --zac "$ZONOS3_MODEL_DIR/zac.gguf"
       --host "$ZONOS3_HOST" --port "$ZONOS3_PORT")
 [ -d "$(sibling default_voices)" ]     && args+=(--tts-default-voices-dir "$(sibling default_voices)")
-[ -f "$ZONOS3_MODEL_DIR/dac-encoder.gguf" ] && args+=(--dac-encoder "$ZONOS3_MODEL_DIR/dac-encoder.gguf")
+[ -f "$ZONOS3_MODEL_DIR/zac-encoder.gguf" ] && args+=(--zac-encoder "$ZONOS3_MODEL_DIR/zac-encoder.gguf")
 [ -f "$ZONOS3_MODEL_DIR/ssl-teacher.gguf" ] && args+=(--ssl-teacher "$ZONOS3_MODEL_DIR/ssl-teacher.gguf")
 [ -f "$ZONOS3_MODEL_DIR/spk-encoder.gguf" ] && args+=(--spk-encoder "$ZONOS3_MODEL_DIR/spk-encoder.gguf")
 [ "$GPU_MODE" = gpu ] && args+=(--gpu)

@@ -37,7 +37,7 @@ export interface Model {
 
 export type Progress = (p: { model: string; loaded: number; total: number }) => void;
 
-export const CACHE_NAME = 'zonos3-web-models-v1';
+export const CACHE_NAME = 'zonos3-web-models-v2';
 
 /** Deletes stale model caches (older exports, and web-zonos3's `zonos3-models-*`, reuse the same shard URLs) once
  *  per context. */

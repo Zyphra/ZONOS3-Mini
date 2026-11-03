@@ -1,9 +1,9 @@
-// zonos3-server: the HTTP API v2 (api/openapi.yaml) over the native GGUF backbone, DAC decoder and companions, and the
+// zonos3-server: the HTTP API v2 (api/openapi.yaml) over the native GGUF backbone, ZAC decoder and companions, and the
 // studio at /. Module layout (src/server/):
 //   main.cpp          flags, model/companion loading, route registration, the accept loop (zonos3_server_main)
 //   http.*            {"detail"} errors, CORS, ZONOS3_ACCESS_TOKEN, X-Keepalive, X-TTS-Session-ID, studio serving
 //   schema.*          request validation against the embedded api/openapi.json (422 ValidationError)
-//   scheduler.*       continuous batching (backbone worker) + DAC decode lanes (prefix / whole decode)
+//   scheduler.*       continuous batching (backbone worker) + ZAC decode lanes (prefix / whole decode)
 //   speakers.*        default + session voices, speaker prompts of requests, /v2/speakers*
 //   generate.*        /v2/generate, /v1/audio/speech
 //   capabilities.*    /v2/capabilities, /v2/controls, /v2/health, /v1/models
@@ -47,21 +47,21 @@ using namespace zs;
 
 void usage(const char * a0) {
     fprintf(stderr,
-        "usage: %s <model.gguf> [--dac <dac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--dac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
-        "  (dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
+        "usage: %s <model.gguf> [--zac <zac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--zac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
+        "  (zac.gguf, spk-encoder.gguf, zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
         "   auto-detected next to <model.gguf> when their flags are omitted)\n"
         "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
-        "                      raw-reference cloning needs --dac-encoder + --ssl-teacher instead)\n"
+        "                      raw-reference cloning needs --zac-encoder + --ssl-teacher instead)\n"
         "  --host H            bind address (default 127.0.0.1)\n"
         "  --port P            port (default 1919; 0 picks a free ephemeral port)\n"
         "  --gpu | --cpu       backend (default cpu)\n"
-        "  --dac-cpu           run the DAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
-        "  --dac-gpu           run the DAC decoder on the --gpu backend (default)\n"
+        "  --zac-cpu           run the ZAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
+        "  --zac-gpu           run the ZAC decoder on the --gpu backend (default)\n"
         "  --max N             max frames per request (default %d, ~%ds; shrunk to the slot rows a prompt leaves)\n"
         "  --batch N           continuous-batching width / concurrent syntheses (default 8). A decode-graph\n"
         "                      ladder runs the narrowest width covering the active slots; cache/state memory\n"
         "                      scales with slots and context capacity.\n"
-        "  --dac-threads N     DAC decode pool lanes, parallel decode across requests (default 4)\n"
+        "  --zac-threads N     ZAC decode pool lanes, parallel decode across requests (default 4)\n"
         "  --reference-idle-unload N\n"
         "                      free the reference encoder + SSL teacher after N idle seconds\n"
         "                      (default 60; 0 keeps them loaded once used)\n"
@@ -108,15 +108,15 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
 #endif
 
     ServerState s;
-    std::string model_path = argv[1], dac_path, host = "127.0.0.1", projects_dir;
+    std::string model_path = argv[1], zac_path, host = "127.0.0.1", projects_dir;
     int port = 1919;
-    bool dac_cpu = false;
+    bool zac_cpu = false;
     auto value = [&](int & i) -> const char * { return i + 1 < argc ? argv[++i] : nullptr; };
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         const bool has_value = i + 1 < argc;
-        if      (a == "--dac" && has_value) dac_path = value(i);
-        else if (a == "--dac-encoder" && has_value) s.encoder_path = value(i);
+        if      (a == "--zac" && has_value) zac_path = value(i);
+        else if (a == "--zac-encoder" && has_value) s.encoder_path = value(i);
         else if (a == "--ssl-teacher" && has_value) s.teacher_path = value(i);
         else if (a == "--spk-encoder" && has_value) s.spk_path = value(i);
         else if (a == "--steer" && has_value) s.steer_path = value(i);
@@ -135,11 +135,11 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         else if (a == "--port" && has_value) port = atoi(value(i));
         else if (a == "--gpu") s.use_gpu = true;
         else if (a == "--cpu") s.use_gpu = false;
-        else if (a == "--dac-cpu") dac_cpu = true;
-        else if (a == "--dac-gpu") dac_cpu = false;
+        else if (a == "--zac-cpu") zac_cpu = true;
+        else if (a == "--zac-gpu") zac_cpu = false;
         else if (a == "--max" && has_value) s.max_frames = atoi(value(i));
         else if (a == "--batch" && has_value) s.batch_slots = std::max(1, atoi(value(i)));
-        else if (a == "--dac-threads" && has_value) s.dac_threads = std::max(1, atoi(value(i)));
+        else if (a == "--zac-threads" && has_value) s.zac_threads = std::max(1, atoi(value(i)));
         else if (a == "--reference-idle-unload" && has_value) s.reference_idle_unload_s = std::max(0, atoi(value(i)));
         else if (a == "--stream-decode-default" && has_value) {
             s.stream_decode_default = value(i);
@@ -179,11 +179,11 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     auto companion = [&](std::string & path, const char * name) {
         if (path.empty()) path = mp_find_companion(model_path, name);
     };
-    if (dac_path.empty()) {
-        dac_path = mp_find_companion(model_path, "dac.gguf");
-        if (!dac_path.empty()) fprintf(stderr, "zonos3-server: using dac.gguf found next to model: %s\n", dac_path.c_str());
+    if (zac_path.empty()) {
+        zac_path = mp_find_companion(model_path, "zac.gguf");
+        if (!zac_path.empty()) fprintf(stderr, "zonos3-server: using zac.gguf found next to model: %s\n", zac_path.c_str());
     }
-    companion(s.encoder_path, "dac-encoder.gguf");
+    companion(s.encoder_path, "zac-encoder.gguf");
     companion(s.teacher_path, "ssl-teacher.gguf");
     companion(s.spk_path, "spk-encoder.gguf");
     companion(s.steer_path, "steer.gguf");
@@ -197,9 +197,9 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         std::string err;
         if (!open_phoneme_lexicon(s, err)) { fprintf(stderr, "error: --tts-phoneme-lexicon: %s\n", err.c_str()); return 1; }
     }
-    if (dac_path.empty()) {
-        fprintf(stderr, "error: --dac <dac.gguf> is required (also auto-detected when dac.gguf sits next to <model.gguf>)\n");
-        mp_print_missing_hint("dac.gguf", mp_parent_dir(model_path) + "/dac.gguf");
+    if (zac_path.empty()) {
+        fprintf(stderr, "error: --zac <zac.gguf> is required (also auto-detected when zac.gguf sits next to <model.gguf>)\n");
+        mp_print_missing_hint("zac.gguf", mp_parent_dir(model_path) + "/zac.gguf");
         return 1;
     }
     if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
@@ -280,16 +280,16 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
     if (s.studio_dir.empty()) s.studio_dir = zonos3_find_studio_dir();
 
-    if (!dac_load(s.dac, dac_path.c_str(), s.use_gpu && !dac_cpu)) {
-        fprintf(stderr, "failed to load dac %s\n", dac_path.c_str());
-        if (!mp_file_exists(dac_path)) mp_print_missing_hint("dac.gguf", dac_path);
+    if (!zac_load(s.zac, zac_path.c_str(), s.use_gpu && !zac_cpu)) {
+        fprintf(stderr, "failed to load zac %s\n", zac_path.c_str());
+        if (!mp_file_exists(zac_path)) mp_print_missing_hint("zac.gguf", zac_path);
         return 1;
     }
-    s.dac_name = std::filesystem::path(dac_path).filename().string();
-    // DAC decode pool: one backend + thread per lane (ggml backends are not reentrant); lanes share s.dac's weights.
-    s.dac_lanes = std::vector<DacLane>(s.dac_threads);
-    for (int i = 0; i < s.dac_threads; ++i)
-        if (!dac_clone(s.dac_lanes[i].dac, s.dac)) { fprintf(stderr, "failed to load dac for pool lane %d\n", i); return 1; }
+    s.zac_name = std::filesystem::path(zac_path).filename().string();
+    // ZAC decode pool: one backend + thread per lane (ggml backends are not reentrant); lanes share s.zac's weights.
+    s.zac_lanes = std::vector<ZacLane>(s.zac_threads);
+    for (int i = 0; i < s.zac_threads; ++i)
+        if (!zac_clone(s.zac_lanes[i].zac, s.zac)) { fprintf(stderr, "failed to load zac for pool lane %d\n", i); return 1; }
 
     start_scheduler(s);
     start_reference_reaper(s);
@@ -309,10 +309,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     register_project_routes(svr, s.projects.get());
     install_studio(svr, s.studio_dir);   // last: every API route matches first
 
-    fprintf(stderr, "zonos3-server: backbone=%s dac=%s spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d dac-threads=%d python-src=%s\n",
-            model_path.c_str(), dac_path.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
+    fprintf(stderr, "zonos3-server: backbone=%s zac=%s spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d zac-threads=%d python-src=%s\n",
+            model_path.c_str(), zac_path.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
             s.encoder_path.empty() ? "(none)" : s.encoder_path.c_str(), s.teacher_path.empty() ? "(none)" : s.teacher_path.c_str(),
-            s.steer_path.empty() ? "(none)" : s.steer_path.c_str(), s.use_gpu ? "GPU" : "CPU", s.batch_slots, s.dac_threads,
+            s.steer_path.empty() ? "(none)" : s.steer_path.c_str(), s.use_gpu ? "GPU" : "CPU", s.batch_slots, s.zac_threads,
             s.python_src.empty() ? "(none)" : s.python_src.c_str());
     // Bind before announcing (and before publishing to ctl): --port 0 asks the OS for a free ephemeral port, which the
     // embedding app reads back from ctl->port.
@@ -330,7 +330,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
 
     if (s.edit_dub) s.edit_dub->close();   // before the scheduler: its engine calls finish first
-    stop_scheduler(s);   // stop the worker, reaper + DAC pool before returning
+    stop_scheduler(s);   // stop the worker, reaper + ZAC pool before returning
     stop_reference_reaper(s);
     if (s.text_normalizer) s.text_normalizer->close();
     if (ctl) ctl->svr = nullptr;   // svr is about to go out of scope

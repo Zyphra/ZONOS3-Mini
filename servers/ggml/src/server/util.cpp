@@ -286,11 +286,11 @@ std::string py_repr(const std::string & s) {
 
 // In the library (not main.cpp) so zonos3-cli --request can hold a ServerState.
 ServerState::~ServerState() {
-    for (auto & lane : dac_lanes) dac_free(lane.dac);
-    dac_encoder_free(encoder);
+    for (auto & lane : zac_lanes) zac_free(lane.zac);
+    zac_encoder_free(encoder);
     ssl_free(teacher);
     spk_free(spk);
-    dac_free(dac);
+    zac_free(zac);
     model.accents = nullptr;
     accent_adapters.reset();   // the adapter bank lives on the backbone's backend
     zonos3_model_free(model);

@@ -131,17 +131,17 @@ static bool is_ssl_bulk(const std::string & n) {
 // Codec (mossdual_istft): the MOSS transformer, semantic-head and iSTFT-head matrices (the loader's
 // MAT set) take the bulk quant; the F32 RVQ lookup tables go one tier above it. Depthwise kernels,
 // norms, the resampler kernel, the FIR mixer and the iSTFT windows stay F32 (host tensors).
-static bool is_dac_mat(const std::string & n) {
+static bool is_zac_mat(const std::string & n) {
     return (n.rfind("stage.", 0) == 0 || n.rfind("sem_head.", 0) == 0 || n.rfind("head.", 0) == 0) &&
            n.size() > 7 && n.compare(n.size() - 7, 7, ".weight") == 0 &&
            n.find(".dw.") == std::string::npos && n.find("norm") == std::string::npos &&
            n != "head.mixer.weight";
 }
-static bool is_dac_table(const std::string & n) {
+static bool is_zac_table(const std::string & n) {
     return n.size() > 6 && n.compare(n.size() - 6, 6, ".table") == 0;
 }
 
-enum class arch { zonos3, ssl, dac, dac_encoder };
+enum class arch { zonos3, ssl, zac, zac_encoder };
 
 static bool is_encoder_mat(const std::string & n) {
     if (n.rfind("stage.", 0) != 0) return false;
@@ -167,13 +167,13 @@ static ggml_type pick_qtype(const ggml_tensor * t, arch a, ggml_type bulk, bool 
     // Native teacher preprocessing consumes exact NumPy F64 window/mel tables.
     if (a == arch::ssl && n.rfind("frontend.", 0) == 0) return t->type;
     if (a == arch::ssl) return is_ssl_bulk(n) && ggml_n_dims(t) > 1 ? bulk_or_f16(t, bulk) : GGML_TYPE_F32;
-    if (a == arch::dac_encoder) return is_encoder_mat(n) && ggml_n_dims(t) > 1 ? bulk_or_f16(t, bulk) : GGML_TYPE_F32;
+    if (a == arch::zac_encoder) return is_encoder_mat(n) && ggml_n_dims(t) > 1 ? bulk_or_f16(t, bulk) : GGML_TYPE_F32;
     if (ggml_n_dims(t) == 1) return GGML_TYPE_F32;
     // Condition tables are ggml_get_rows sources (row gathers stay F16, never k-quant).
     if (a == arch::zonos3 && n.rfind("cond_embd.", 0) == 0) return GGML_TYPE_F16;
-    if (a == arch::dac) {
-        if (is_dac_mat(n))   return bulk_or_f16(t, bulk);
-        if (is_dac_table(n)) return higher_tier(bulk, t->ne[0]);
+    if (a == arch::zac) {
+        if (is_zac_mat(n))   return bulk_or_f16(t, bulk);
+        if (is_zac_table(n)) return higher_tier(bulk, t->ne[0]);
         return GGML_TYPE_F32;
     }
     if (experts_only && !is_expert(n)) {
@@ -236,8 +236,8 @@ int main(int argc, char ** argv) {
     const int64_t arch_id = gguf_find_key(gin, "general.architecture");
     const char * arch_s = arch_id >= 0 && gguf_get_kv_type(gin, arch_id) == GGUF_TYPE_STRING ? gguf_get_val_str(gin, arch_id) : "";
     if      (!strcmp(arch_s, "w2vbert_ssl"))     a = arch::ssl;
-    else if (!strcmp(arch_s, "mossdual_istft"))   a = arch::dac;
-    else if (!strcmp(arch_s, "mossdual_encoder")) a = arch::dac_encoder;
+    else if (!strcmp(arch_s, "mossdual_istft"))   a = arch::zac;
+    else if (!strcmp(arch_s, "mossdual_encoder")) a = arch::zac_encoder;
     else if (strcmp(arch_s, "zonos3")) {
         fprintf(stderr, "quantize: unsupported architecture '%s'\n", arch_s);
         gguf_free(gin); ggml_free(ctx_in); return 1;

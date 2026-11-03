@@ -1,10 +1,10 @@
-// dac-cli — decode mossdual audio codes [T,10] (15 Hz) to 44.1 kHz WAV or f32 NPY.
+// zac-cli — decode mossdual audio codes [T,10] (15 Hz) to 44.1 kHz WAV or f32 NPY.
 // Reads <codes>.eos.npy automatically if present: [eos] or [eos, prefill_frames]. The first
 // `skip` frames (--skip-frames, default prefill_frames) are decoded but their audio is dropped.
 //
-//   dac-cli <dac.gguf> <codes.npy> <out.wav> [--eos N] [--skip-frames N] [--headroom-db X] [--gpu|--cpu]
-//   dac-cli --seam <dac.gguf> <codes.npy> [--block N] [--gpu|--cpu]
-#include "dac.h"
+//   zac-cli <zac.gguf> <codes.npy> <out.wav> [--eos N] [--skip-frames N] [--headroom-db X] [--gpu|--cpu]
+//   zac-cli --seam <zac.gguf> <codes.npy> [--block N] [--gpu|--cpu]
+#include "zac.h"
 #include "npy.h"
 
 #include <algorithm>
@@ -34,38 +34,38 @@ static int seam_check(int argc, char ** argv) {
     std::vector<int32_t> codes(cf.size());
     for (size_t i = 0; i < cf.size(); ++i) codes[i] = (int32_t) lrintf(cf[i]);
 
-    dac_model m;
-    if (!dac_load(m, gguf_path, use_gpu)) return 1;
+    zac_model m;
+    if (!zac_load(m, gguf_path, use_gpu)) return 1;
 
-    const int spf = dac_samples_per_frame(m);
+    const int spf = zac_samples_per_frame(m);
     const int shear = m.n_codebooks - 1;
 
     std::vector<float> full;
-    if (!dac_decode(m, codes.data(), H, W, /*eos=*/-1, full)) { dac_free(m); return 1; }
+    if (!zac_decode(m, codes.data(), H, W, /*eos=*/-1, full)) { zac_free(m); return 1; }
 
     const int safe = H - shear;
     if (safe <= 0) {
         fprintf(stderr, "seam: need more than %d code rows to compare an emitted frame\n", shear);
-        dac_free(m);
+        zac_free(m);
         return 1;
     }
     std::vector<float> tiled;
     int emitted = 0;
     double secs;
     {
-        dac_stream st;   // holds a KV cache on m's backend: destroy before dac_free(m)
+        zac_stream st;   // holds a KV cache on m's backend: destroy before zac_free(m)
         const auto t0 = std::chrono::steady_clock::now();
         bool ok = true;
         while (ok && emitted < safe) {
             const int f_hi = std::min(emitted + std::max(1, block), safe);
-            ok = dac_stream_decode(m, st, codes.data(), H, f_hi, tiled);
+            ok = zac_stream_decode(m, st, codes.data(), H, f_hi, tiled);
             emitted = f_hi;
         }
-        ok = ok && dac_stream_flush(m, st, tiled);
+        ok = ok && zac_stream_flush(m, st, tiled);
         secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        if (!ok) { st = dac_stream(); dac_free(m); return 1; }
+        if (!ok) { st = zac_stream(); zac_free(m); return 1; }
     }
-    dac_free(m);
+    zac_free(m);
     fprintf(stderr, "seam: streamed %d frames in %.2fs (RTF %.3f), block %d\n", safe, secs,
             secs / ((double) tiled.size() / m.sample_rate), block);
 
@@ -83,8 +83,8 @@ static int seam_check(int argc, char ** argv) {
 int main(int argc, char ** argv) {
     if (argc >= 4 && std::string(argv[1]) == "--seam") return seam_check(argc, argv);
     if (argc < 4) {
-        fprintf(stderr, "usage: %s <dac.gguf> <codes.npy> <out.wav|out.npy> [--eos N] [--skip-frames N] [--headroom-db X] [--gpu|--cpu]\n"
-                        "       %s --seam <dac.gguf> <codes.npy> [--block N] [--gpu|--cpu]\n", argv[0], argv[0]);
+        fprintf(stderr, "usage: %s <zac.gguf> <codes.npy> <out.wav|out.npy> [--eos N] [--skip-frames N] [--headroom-db X] [--gpu|--cpu]\n"
+                        "       %s --seam <zac.gguf> <codes.npy> [--block N] [--gpu|--cpu]\n", argv[0], argv[0]);
         return 1;
     }
     const char * gguf_path = argv[1];
@@ -125,19 +125,19 @@ int main(int argc, char ** argv) {
     if (skip_override >= 0) skip = skip_override;
     if (headroom_db >= 0 && headroom_db > 24) { fprintf(stderr, "--headroom-db must be 0..24\n"); return 1; }
 
-    dac_model m;
-    if (!dac_load(m, gguf_path, use_gpu)) return 1;
+    zac_model m;
+    if (!zac_load(m, gguf_path, use_gpu)) return 1;
     std::vector<float> audio;
-    if (!dac_decode(m, codes.data(), H, W, eos, audio)) { dac_free(m); return 1; }
-    const size_t drop = std::min(audio.size(), (size_t) skip * (size_t) dac_samples_per_frame(m));
+    if (!zac_decode(m, codes.data(), H, W, eos, audio)) { zac_free(m); return 1; }
+    const size_t drop = std::min(audio.size(), (size_t) skip * (size_t) zac_samples_per_frame(m));
     audio.erase(audio.begin(), audio.begin() + drop);
-    const float gain = dac_output_gain(m, headroom_db);
+    const float gain = zac_output_gain(m, headroom_db);
     for (float & v : audio) v *= gain;
-    fprintf(stderr, "dac-cli: dropped %zu prefill samples, gain %.4f\n", drop, gain);
+    fprintf(stderr, "zac-cli: dropped %zu prefill samples, gain %.4f\n", drop, gain);
     const std::string out(out_path);
     bool ok = out.size() >= 4 && out.compare(out.size() - 4, 4, ".npy") == 0
         ? npy::save_f32(out_path, audio.data(), {(int64_t) audio.size()})
-        : dac_write_wav(out_path, audio, m.sample_rate);
-    dac_free(m);
+        : zac_write_wav(out_path, audio, m.sample_rate);
+    zac_free(m);
     return ok ? 0 : 1;
 }

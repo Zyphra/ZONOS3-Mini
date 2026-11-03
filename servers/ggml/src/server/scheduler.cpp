@@ -49,7 +49,7 @@ static void job_finish(ReqJob & job, bool failed) {
     job.cv.notify_one();
 }
 
-static void dac_lane_submit(DacLane & lane, DacTask && t) {
+static void zac_lane_submit(ZacLane & lane, ZacTask && t) {
     std::lock_guard<std::mutex> lk(lane.m);
     lane.q.push_back(std::move(t));
     lane.cv.notify_one();
@@ -75,19 +75,19 @@ static std::vector<int32_t> decode_rows(const ServerState & s, const ReqJob & jo
 }
 
 // One pool lane: decode tasks FIFO into the job channel. A job is pinned to one lane, so its blocks stay ordered.
-static void dac_lane_loop(ServerState & s, DacLane & lane) {
-    const int ncb = lane.dac.n_codebooks, sr = lane.dac.sample_rate;
+static void zac_lane_loop(ServerState & s, ZacLane & lane) {
+    const int ncb = lane.zac.n_codebooks, sr = lane.zac.sample_rate;
     // Warm this lane's pipelines before serving so the first block doesn't JIT-compile on a request's critical path.
     if (!getenv("ZONOS3_NO_WARMUP")) {
         const int H = 32;
         std::vector<int32_t> codes((size_t) H * ncb, 0);
         std::vector<float> pcm;
-        dac_decode(lane.dac, codes.data(), H, ncb, /*eos=*/-1, pcm);
-        dac_stream scratch;
-        dac_stream_decode(lane.dac, scratch, codes.data(), H, 16, pcm);
+        zac_decode(lane.zac, codes.data(), H, ncb, /*eos=*/-1, pcm);
+        zac_stream scratch;
+        zac_stream_decode(lane.zac, scratch, codes.data(), H, 16, pcm);
     }
     for (;;) {
-        DacTask t;
+        ZacTask t;
         {
             std::unique_lock<std::mutex> lk(lane.m);
             lane.cv.wait(lk, [&] { return !lane.q.empty() || s.stop.load(); });
@@ -101,8 +101,8 @@ static void dac_lane_loop(ServerState & s, DacLane & lane) {
         bool ok = !t.fail;
         if (!t.drop && !t.fail && !failed) {
             std::vector<float> pcm;
-            if (t.kind == DacTask::WINDOW) {
-                ok = dac_stream_decode(lane.dac, job.dst, t.codes.data(), t.H, t.f_hi, pcm);
+            if (t.kind == ZacTask::WINDOW) {
+                ok = zac_stream_decode(lane.zac, job.dst, t.codes.data(), t.H, t.f_hi, pcm);
                 if (ok) {
                     job.streamed_samples += (int64_t) pcm.size();
                     finish_block(job, pcm);
@@ -111,7 +111,7 @@ static void dac_lane_loop(ServerState & s, DacLane & lane) {
             } else {
                 // The exact whole decode; what prefix streaming already emitted is cut from its front.
                 const int eos = job.eos_frame >= 0 ? job.eos_frame + job.ctx_frames : -1;
-                ok = t.H <= 0 || dac_decode(lane.dac, t.codes.data(), t.H, ncb, eos, pcm);
+                ok = t.H <= 0 || zac_decode(lane.zac, t.codes.data(), t.H, ncb, eos, pcm);
                 if (ok) {
                     const size_t done = std::min(pcm.size(), (size_t) job.streamed_samples);
                     pcm.erase(pcm.begin(), pcm.begin() + done);
@@ -121,7 +121,7 @@ static void dac_lane_loop(ServerState & s, DacLane & lane) {
                 }
             }
         }
-        if (t.kind == DacTask::FINALIZE || !ok) job_finish(job, /*failed=*/!ok);
+        if (t.kind == ZacTask::FINALIZE || !ok) job_finish(job, /*failed=*/!ok);
     }
 }
 
@@ -134,13 +134,13 @@ static void prefix_submit_ready(ServerState & s, const std::shared_ptr<ReqJob> &
     if (job->eos_frame >= 0) complete = std::min(complete, job->eos_frame);
     const int decodable = complete - s.prefix.hold_back_frames;
     if (decodable - job->emitted < s.prefix.chunk_frames) return;
-    DacTask t;
+    ZacTask t;
     t.job = job;
-    t.kind = DacTask::WINDOW;
+    t.kind = ZacTask::WINDOW;
     t.codes = decode_rows(s, *job, H);
     t.H = H + job->ctx_frames;
     t.f_hi = decodable + job->ctx_frames;
-    dac_lane_submit(s.dac_lanes[job->lane], std::move(t));
+    zac_lane_submit(s.zac_lanes[job->lane], std::move(t));
     job->emitted = decodable;
 }
 
@@ -148,9 +148,9 @@ static void prefix_submit_ready(ServerState & s, const std::shared_ptr<ReqJob> &
 static void submit_finalize(ServerState & s, const std::shared_ptr<ReqJob> & job, bool dropped) {
     const int ncb = (int) s.model.hp.n_codebooks;
     const int nf = (int) job->codes.size() / ncb;
-    DacTask t;
+    ZacTask t;
     t.job = job;
-    t.kind = DacTask::FINALIZE;
+    t.kind = ZacTask::FINALIZE;
     t.drop = dropped;
     // EOS inside the silence prefill leaves no audio: the generation failed.
     t.fail = !dropped && job->eos_frame >= 0 && job->eos_frame <= job->prompt.prefill_frames;
@@ -158,7 +158,7 @@ static void submit_finalize(ServerState & s, const std::shared_ptr<ReqJob> & job
         t.codes = decode_rows(s, *job, nf);
         t.H = nf + job->ctx_frames;
     }
-    dac_lane_submit(s.dac_lanes[job->lane], std::move(t));
+    zac_lane_submit(s.zac_lanes[job->lane], std::move(t));
 }
 
 // A throwaway prefill + decode step at every ladder width JIT-compiles every backbone graph pipeline before the
@@ -364,7 +364,7 @@ static void worker_loop(ServerState & s) {
             job->slot.accent_strength = job->gr.accent_strength;
             job->codes = zonos3_prefill_codes(s.model, job->prompt);   // stream rows: silence prefill first
             job->emitted = job->prompt.prefill_frames;
-            job->lane = (int) (s.next_lane++ % s.dac_lanes.size());
+            job->lane = (int) (s.next_lane++ % s.zac_lanes.size());
             new_sampler(s, *job, job->gr.sp.seed);
             job->attempt_max = job->gr.max_frames;
             job->history_rows = 0;
@@ -558,8 +558,8 @@ static void worker_loop(ServerState & s) {
 }
 
 void start_scheduler(ServerState & s) {
-    for (int i = 0; i < (int) s.dac_lanes.size(); ++i)
-        s.dac_lanes[i].th = std::thread(dac_lane_loop, std::ref(s), std::ref(s.dac_lanes[i]));
+    for (int i = 0; i < (int) s.zac_lanes.size(); ++i)
+        s.zac_lanes[i].th = std::thread(zac_lane_loop, std::ref(s), std::ref(s.zac_lanes[i]));
     s.worker = std::thread(worker_loop, std::ref(s));
     std::unique_lock<std::mutex> lk(s.sched_mtx);
     s.sched_cv.wait(lk, [&] { return s.worker_ready; });
@@ -569,7 +569,7 @@ void stop_scheduler(ServerState & s) {
     s.stop.store(true);
     s.sched_cv.notify_all();
     if (s.worker.joinable()) s.worker.join();
-    for (auto & lane : s.dac_lanes) {
+    for (auto & lane : s.zac_lanes) {
         { std::lock_guard<std::mutex> lk(lane.m); }
         lane.cv.notify_all();
         if (lane.th.joinable()) lane.th.join();
@@ -582,7 +582,7 @@ void submit_job(ServerState & s, const std::shared_ptr<ReqJob> & job) {
 }
 
 void submit_decode(ServerState & s, const std::shared_ptr<ReqJob> & job) {
-    job->lane = (int) (s.next_lane++ % s.dac_lanes.size());
+    job->lane = (int) (s.next_lane++ % s.zac_lanes.size());
     submit_finalize(s, job, /*dropped=*/false);
 }
 

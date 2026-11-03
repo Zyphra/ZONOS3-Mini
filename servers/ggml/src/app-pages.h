@@ -59,15 +59,15 @@ static const char * ZONOS3_APP_SETUP_PAGE = R"html(
       <label>Backbone model (.gguf)</label>
       <div class="row"><input type="text" id="model_in" placeholder="zonos3-qat.gguf">
         <button onclick="browse('model')">Browse&hellip;</button></div>
-      <label>DAC decoder (.gguf)</label>
-      <div class="row"><input type="text" id="dac_in" placeholder="dac.gguf">
-        <button onclick="browse('dac')">Browse&hellip;</button></div>
+      <label>ZAC decoder (.gguf)</label>
+      <div class="row"><input type="text" id="zac_in" placeholder="zac.gguf">
+        <button onclick="browse('zac')">Browse&hellip;</button></div>
       <label>Speaker encoder (.gguf, optional; speaker-embedding cloning)</label>
       <div class="row"><input type="text" id="spk_encoder_in" placeholder="spk-encoder.gguf">
         <button onclick="browse('spk_encoder')">Browse&hellip;</button></div>
-      <label>DAC encoder (.gguf, optional &mdash; raw-reference cloning needs both DAC encoder and SSL teacher)</label>
-      <div class="row"><input type="text" id="dac_encoder_in" placeholder="dac-encoder.gguf">
-        <button onclick="browse('dac_encoder')">Browse&hellip;</button></div>
+      <label>ZAC encoder (.gguf, optional &mdash; raw-reference cloning needs both ZAC encoder and SSL teacher)</label>
+      <div class="row"><input type="text" id="zac_encoder_in" placeholder="zac-encoder.gguf">
+        <button onclick="browse('zac_encoder')">Browse&hellip;</button></div>
       <label>SSL teacher (.gguf, optional)</label>
       <div class="row"><input type="text" id="ssl_teacher_in" placeholder="ssl-teacher.gguf">
         <button onclick="browse('ssl_teacher')">Browse&hellip;</button></div>
@@ -90,17 +90,17 @@ static const char * ZONOS3_APP_SETUP_PAGE = R"html(
     catch (e) { fail(String(e)); }
   }
 
-  async function doLaunch(model, dac, encoder, teacher, spk, gpu) {
-    const err = await saucer.exposed.launch(model, dac, encoder, teacher, spk, gpu);
+  async function doLaunch(model, zac, encoder, teacher, spk, gpu) {
+    const err = await saucer.exposed.launch(model, zac, encoder, teacher, spk, gpu);
     if (err) throw new Error(err);   // C++ swaps to the splash page on success
   }
 
   async function launchManual() {
     clearErr();
-    const model = $('model_in').value.trim(), dac = $('dac_in').value.trim(), encoder = $('dac_encoder_in').value.trim(), teacher = $('ssl_teacher_in').value.trim(), spk = $('spk_encoder_in').value.trim();
-    if (!model || !dac) { fail('Backbone model and DAC decoder are required.'); return; }
+    const model = $('model_in').value.trim(), zac = $('zac_in').value.trim(), encoder = $('zac_encoder_in').value.trim(), teacher = $('ssl_teacher_in').value.trim(), spk = $('spk_encoder_in').value.trim();
+    if (!model || !zac) { fail('Backbone model and ZAC decoder are required.'); return; }
     $('launchbtn').disabled = true;
-    try { await doLaunch(model, dac, encoder, teacher, spk, $('gpu').checked); }
+    try { await doLaunch(model, zac, encoder, teacher, spk, $('gpu').checked); }
     catch (e) { fail(String(e.message || e)); $('launchbtn').disabled = false; }
   }
 
@@ -109,8 +109,8 @@ static const char * ZONOS3_APP_SETUP_PAGE = R"html(
     try {
       const cfg = JSON.parse(await saucer.exposed.get_config());
       if (cfg.model) $('model_in').value = cfg.model;
-      if (cfg.dac)   $('dac_in').value   = cfg.dac;
-      if (cfg.dac_encoder) $('dac_encoder_in').value = cfg.dac_encoder;
+      if (cfg.zac)   $('zac_in').value   = cfg.zac;
+      if (cfg.zac_encoder) $('zac_encoder_in').value = cfg.zac_encoder;
       if (cfg.ssl_teacher) $('ssl_teacher_in').value = cfg.ssl_teacher;
       if (cfg.spk_encoder) $('spk_encoder_in').value = cfg.spk_encoder;
       $('gpu').checked = cfg.gpu !== false;

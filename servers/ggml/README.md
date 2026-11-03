@@ -5,7 +5,7 @@ Native ggml/GGUF inference for **ZONOS3 Mini** ([Zyphra/ZONOS3_Mini_release_ckpt
 Voice cloning has two modes:
 
 - **Speaker embedding** (default): a native MECT-B2 speaker encoder (`spk-encoder.gguf`) turns up to 60 s of reference audio into a 192-d vector that the backbone's `speaker_projection` maps onto one prompt row. Saved embeddings need no encoder and no ffmpeg.
-- **Raw reference** (opt-in): the reference is encoded to ordinary codec codes (`dac-encoder.gguf` + `ssl-teacher.gguf`) and prepended to the prompt. Saved codes need no encoder and no ffmpeg.
+- **Raw reference** (opt-in): the reference is encoded to ordinary codec codes (`zac-encoder.gguf` + `ssl-teacher.gguf`) and prepended to the prompt. Saved codes need no encoder and no ffmpeg.
 
 Every prompt also carries three **condition rows** (loudness, bandwidth `fmax`, speaking rate; each a 10-bucket class, 10 = unknown), an optional **speaker CFG** twin pass, and a **codec-silence prefill** after the text.
 
@@ -32,9 +32,9 @@ The default backbone is the Q4_0-expert/Q8_0-mixer QAT model `zonos3-qat.gguf` (
 
 ```bash
 hf auth login
-hf download Zyphra/ZONOS3_Mini_GGUF zonos3-qat.gguf dac.gguf spk-encoder.gguf --local-dir models
+hf download Zyphra/ZONOS3_Mini_GGUF zonos3-qat.gguf zac.gguf spk-encoder.gguf --local-dir models
 # Optional raw-reference cloning companions:
-hf download Zyphra/ZONOS3_Mini_GGUF dac-encoder.gguf ssl-teacher.gguf --local-dir models
+hf download Zyphra/ZONOS3_Mini_GGUF zac-encoder.gguf ssl-teacher.gguf --local-dir models
 # Optional voice-direction steering bundle (request `controls`: voice design, emotion, accent directions; the
 # studio's design controls; dub tempo buckets):
 hf download Zyphra/ZONOS3_Mini_GGUF steer.gguf --local-dir models
@@ -67,33 +67,33 @@ $T lm "$R/lm/mect_60k" --outtype f16 -o models/zonos3-f16.gguf
 $T lm QAT/lm/mect_60k_q4q8_qat \
   --silence-frame "$R/registries/silence_frame_opus_dual_3n_600k_sched600k_r4096_step600000.json" \
   -o models/zonos3-qat.gguf
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/dac.gguf
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf
 $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-encoder.gguf
 
 # Optional: raw-reference cloning companions.
-$T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/dac-encoder.gguf
+$T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/zac-encoder.gguf
 $T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf
 
 # Optional: the steering bundle (repo-root steering/ assets).
 $T steer ../../steering/studio_bundle_mect60k.json -o models/steer.gguf
 
 # Optional: the keep2_plain decoder variant (2 layers per transformer stage).
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/dac-keep2.gguf
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf
 ```
 
 ```text
 models/
   zonos3-qat.gguf     default backbone (Q4_0 experts, Q8_0 mixers) + embedded tokenizer, condition edges and silence frame
   zonos3-f16.gguf     optional F16 reference backbone (select with --quant f16)
-  dac.gguf            MR-iSTFT waveform decoder (full_mr); needed for WAV/PCM output
+  zac.gguf            MR-iSTFT waveform decoder (full_mr); needed for WAV/PCM output
   spk-encoder.gguf    speaker encoder; speaker-embedding cloning from audio
-  dac-encoder.gguf    optional acoustic/semantic encoder + RVQ
+  zac-encoder.gguf    optional acoustic/semantic encoder + RVQ
   ssl-teacher.gguf    optional frozen SSL teacher; raw-reference audio cloning needs both
   steer.gguf          optional steering bundle (voice design, emotion and accent directions); convert_gguf.py steer
   accents.gguf        optional accent adapters; convert_gguf.py accents <adapter dir>
 ```
 
-`tools/convert_gguf.py` validates the source architecture, tensor shapes and checksums and loads every checkpoint strictly into its PyTorch module. The backbone embeds the pinned tokenizer and its spec, so a separate tokenizer is unnecessary at inference. Older GGUFs (375k backbone, conv-tail `dac.gguf`) fail with a reconvert message. See [conversion details](docs/INTERNALS.md#convert-the-release).
+`tools/convert_gguf.py` validates the source architecture, tensor shapes and checksums and loads every checkpoint strictly into its PyTorch module. The backbone embeds the pinned tokenizer and its spec, so a separate tokenizer is unnecessary at inference. Older GGUFs (375k backbone, conv-tail `zac.gguf`) fail with a reconvert message. See [conversion details](docs/INTERNALS.md#convert-the-release).
 
 ## Launch
 
@@ -102,7 +102,7 @@ ZONOS3_SERVER_BIN="$PWD/build/zonos3-server" ZONOS3_MODEL_DIR="$PWD/models" \
   bash ./scripts/start-zonos3.sh -y --no-browser
 ```
 
-Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.bat`. The launcher defaults to `zonos3-qat.gguf`; `--quant f16` selects `zonos3-f16.gguf` and `--quant q8_0` selects `zonos3-q8_0.gguf`. It checks the required local models, passes `--spk-encoder`, `--dac-encoder` and `--ssl-teacher` when those files exist (printing a note when `spk-encoder.gguf` is missing: speaker-embedding cloning is then disabled), and starts the UI at `http://127.0.0.1:1919/`. Models are never downloaded by the launcher or desktop app. ffmpeg is fetched only when unavailable locally or on `PATH`.
+Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.bat`. The launcher defaults to `zonos3-qat.gguf`; `--quant f16` selects `zonos3-f16.gguf` and `--quant q8_0` selects `zonos3-q8_0.gguf`. It checks the required local models, passes `--spk-encoder`, `--zac-encoder` and `--ssl-teacher` when those files exist (printing a note when `spk-encoder.gguf` is missing: speaker-embedding cloning is then disabled), and starts the UI at `http://127.0.0.1:1919/`. Models are never downloaded by the launcher or desktop app. ffmpeg is fetched only when unavailable locally or on `PATH`.
 
 `zonos3-app` offers local file pickers, including an optional speaker-encoder picker. Its one-time configuration migration preserves valid settings but requires selecting the new backbone; incompatible embedding/emotion state is discarded.
 
@@ -132,7 +132,7 @@ Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.ba
   --speaker-embedding voice-emb.npy --cfg-scale 1.5 --seed 1
 ```
 
-Pass `--gpu` for GPU execution or `--cpu` to force CPU. `--dac`, `--spk-encoder`, `--dac-encoder`, and `--ssl-teacher` override companion discovery; the encoder overrides require `--clone`.
+Pass `--gpu` for GPU execution or `--cpu` to force CPU. `--zac`, `--spk-encoder`, `--zac-encoder`, and `--ssl-teacher` override companion discovery; the encoder overrides require `--clone`.
 
 | Flag | Meaning |
 |---|---|
@@ -171,13 +171,13 @@ curl -fsSN http://127.0.0.1:1919/v2/generate \
 
 Requests are validated against the spec (embedded at build time): a schema violation, an unknown field or a dropped legacy field is a 422 `{"detail": [{"loc", "msg", "type"}]}`; a state-dependent error (unknown voice, a feature this server lacks, a CFG combination, `stream: true` with `format: "wav"`) is a 400 `{"detail"}`.
 
-- **Voices** (`GET|POST /v2/speakers`, `/v2/speakers/<id>/preview`, `/v2/speakers/<id>/embedding`): default voices come from `--tts-default-voices-dir` (audio files, ids `default_<sha1[:16]>` of the relative path; `.npy`/`.npz` speaker embeddings); `POST /v2/speakers` caches a clip (`speaker_audio_base64`) or an embedding (`speaker_embedding_base64`) in the `X-TTS-Session-ID` session. An audio voice with a sibling `<stem>.codes.npy` (ordinary `[T,10]` codes as written by `dac-encoder-cli`) uses those codes in reference mode instead of loading the encoder; regenerate them after changing a voice: `./build/dac-encoder-cli models/dac-encoder.gguf models/ssl-teacher.gguf --audio ../../default_voices/NAME.mp3 ../../default_voices/NAME.codes.npy --gpu`. Audio cloning needs `spk-encoder.gguf` (embedding mode) or `dac-encoder.gguf` + `ssl-teacher.gguf` (reference mode); encoding is lazy per mode and cached, and the reference encoder and SSL teacher are freed after `--reference-idle-unload N` idle seconds (default 60; `0` keeps them loaded).
+- **Voices** (`GET|POST /v2/speakers`, `/v2/speakers/<id>/preview`, `/v2/speakers/<id>/embedding`): default voices come from `--tts-default-voices-dir` (audio files, ids `default_<sha1[:16]>` of the relative path; `.npy`/`.npz` speaker embeddings); `POST /v2/speakers` caches a clip (`speaker_audio_base64`) or an embedding (`speaker_embedding_base64`) in the `X-TTS-Session-ID` session. An audio voice with a sibling `<stem>.codes.npy` (ordinary `[T,10]` codes as written by `zac-encoder-cli`) uses those codes in reference mode instead of loading the encoder; regenerate them after changing a voice: `./build/zac-encoder-cli models/zac-encoder.gguf models/ssl-teacher.gguf --audio ../../default_voices/NAME.mp3 ../../default_voices/NAME.codes.npy --gpu`. Audio cloning needs `spk-encoder.gguf` (embedding mode) or `zac-encoder.gguf` + `ssl-teacher.gguf` (reference mode); encoding is lazy per mode and cached, and the reference encoder and SSL teacher are freed after `--reference-idle-unload N` idle seconds (default 60; `0` keeps them loaded).
 - **Generation** (`POST /v2/generate`, `POST /v1/audio/speech` with `voice` = a speaker id): `speaker_embedding_id` (or an inline `speaker_audio_base64` / `speaker_embedding_base64` / `speaker_reference_codes`, or a `speaker_blend_embedding_id_a/_b` slerp at `speaker_blend_t`) with `speaker_mode` `"reference"` (the checkpoint default) or `"embedding"`; `condition_buckets` / `condition_values`; `speaker_cfg_scale` (needs a speaker prompt and `--batch >= 2`); `silence_prefill_frames` (server default 3, `0..30`, larger or negative is a 400); `headroom_db` (`0..24`); `decode_context`; `max_tokens`; `seed`. Reference codes (inline, a voice's `.codes.npy` or an encoded clip) keep their first 900 frames. `max_tokens` (at most `--max`, default 2000) shrinks to the slot rows the prompt leaves; a prompt that fills the slot is a 400 `TTS input len {rows} exceeds {capacity}`. Sampling defaults and these limits come from the generation registry `model/src/zonos3/registries/generation.json`, embedded at build time. Streaming uses `stream_decode` `"prefix"` (chunks of `ZONOS3_PREFIX_STREAM_CHUNK_FRAMES`=15 frames behind a `ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES`=3 hold-back, the tail from the exact whole decode; the default, see `--stream-decode-default`) or `"whole"` (one exact chunk at EOS).
 - **Python workers** (`--worker-python PY`): text normalization and speech editing + dubbing run as persistent workers of `model/src/zonos3/workers` under `PY` with `PYTHONPATH` = `--python-src` (default: `model/src` of the checkout holding the executable, else `python/` beside it). Speech editing and dubbing are the Python implementation the other servers run (`zonos3.tts.edit_runtime`, `zonos3.dub.runtime`) in one `edit_dub.py` worker, started on first use and again after it exited; it calls back into the server for everything that needs the served model (upload decode, speaker embedding and codes of a clip, each region's infill generation, decodes, the dub's LACI takes on the scheduler). Its word timings come from FuseAlign, so `PY` needs the workspace's packages, including `fusealign-hub` (the `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`, then `uv sync`; the checkpoint downloads from the [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) Hugging Face repository on first use, `ZONOS3_FUSEALIGN_DEVICE` picks its device); `uv run which python` from the repo root is such an interpreter. Release packages ship `fusealign_hub` (Apache-2.0) as `python/fusealign_hub` next to `python/zonos3`; `PY` there needs its dependencies (`torch`, `torchaudio`, `transformers`, `safetensors`, `huggingface_hub`, `silero-vad`), or `pip install git+https://github.com/Zyphra/fusealign-multilingual.git`.
 - **Speech recognition** (speech editing and dubbing): the edit/dub worker runs Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`, `model/src/zonos3/workers/asr.py`) in its own interpreter, `ZONOS3_ASR_PYTHON` (default `<repo>/.venv-asr/bin/python`, set up by `tools/setup_asr_env.sh`; `ZONOS3_ASR_DEVICE` picks its device, e.g. `cuda:1`).
 - **Text normalization**: off without `--worker-python` (text is tokenized raw); with it, `model/src/zonos3/workers/textnorm.py` (the `zonos3.tokenizer.textnorm` NeMo normalizer) normalizes request text.
-- **Speech editing** (`/v2/edit/transcribe`, `/v2/edit/align`, `/v2/edit`): needs an edit checkpoint (a GGUF with `zonos3.span_end_id` and edit marker rows, converted with `tools/convert_gguf.py lm`), `dac-encoder.gguf` + `ssl-teacher.gguf` (the clip's codes), `--worker-python` with `fusealign-hub` (FuseAlign places every word) and the ASR interpreter (Qwen3-ASR transcribes the original when no `original_text` is given and every take of `verify`). `spk-encoder.gguf` supplies the speaker row of speaker-embedding checkpoints.
-- **Dubbing** (`/v2/dub/capabilities`, `/v2/dub/ref`, `/v2/dub/lips/<ref_id>`, `/v2/dub/transcribe`, `/v2/dub/analyze`, `/v2/dub/generate`, `/v2/dub/regenerate`, `/v2/dub/mux/<dub_id>`): needs `--laci-heads` for the target languages (as `servers/sgl/scripts/serve.sh` `DUB=1`: `cmn=laci_heads/zonos3_mini_mect60k_heads_zh.json` and `en_us fr_fr de es it pt_br ja ko` = `laci_heads/zonos3_mini_mect60k_heads.json`), a checkpoint with a speaking-rate condition row and `--worker-python` (the edit/dub worker; FuseAlign word timings); the worker also needs ffmpeg, the ASR interpreter (reference transcripts) and the dubbing worker of `tools/setup_asr_env.sh` (`model/src/zonos3/workers/dub_align.py` in the same `<repo>/.venv-asr`: SimAlign word links, AV-sync in `<repo>/.avsync`; `ZONOS3_ASR_PYTHON`, `ZONOS3_DUB_AVSYNC_HOME`, `ZONOS3_ASR_DEVICE` override, e.g. `cuda:1` with two visible GPUs). Source voices clone the reference (its prompt clip is encoded with `dac-encoder.gguf` + `ssl-teacher.gguf`); studio voices are speaker ids in embedding mode. Every take is a LACI generation on this server's scheduler with the segment's duration target; the steering bundle's `rate_extension` (in `steer.gguf`) adds tempo-steered speaking-rate buckets.
+- **Speech editing** (`/v2/edit/transcribe`, `/v2/edit/align`, `/v2/edit`): needs an edit checkpoint (a GGUF with `zonos3.span_end_id` and edit marker rows, converted with `tools/convert_gguf.py lm`), `zac-encoder.gguf` + `ssl-teacher.gguf` (the clip's codes), `--worker-python` with `fusealign-hub` (FuseAlign places every word) and the ASR interpreter (Qwen3-ASR transcribes the original when no `original_text` is given and every take of `verify`). `spk-encoder.gguf` supplies the speaker row of speaker-embedding checkpoints.
+- **Dubbing** (`/v2/dub/capabilities`, `/v2/dub/ref`, `/v2/dub/lips/<ref_id>`, `/v2/dub/transcribe`, `/v2/dub/analyze`, `/v2/dub/generate`, `/v2/dub/regenerate`, `/v2/dub/mux/<dub_id>`): needs `--laci-heads` for the target languages (as `servers/sgl/scripts/serve.sh` `DUB=1`: `cmn=laci_heads/zonos3_mini_mect60k_heads_zh.json` and `en_us fr_fr de es it pt_br ja ko` = `laci_heads/zonos3_mini_mect60k_heads.json`), a checkpoint with a speaking-rate condition row and `--worker-python` (the edit/dub worker; FuseAlign word timings); the worker also needs ffmpeg, the ASR interpreter (reference transcripts) and the dubbing worker of `tools/setup_asr_env.sh` (`model/src/zonos3/workers/dub_align.py` in the same `<repo>/.venv-asr`: SimAlign word links, AV-sync in `<repo>/.avsync`; `ZONOS3_ASR_PYTHON`, `ZONOS3_DUB_AVSYNC_HOME`, `ZONOS3_ASR_DEVICE` override, e.g. `cuda:1` with two visible GPUs). Source voices clone the reference (its prompt clip is encoded with `zac-encoder.gguf` + `ssl-teacher.gguf`); studio voices are speaker ids in embedding mode. Every take is a LACI generation on this server's scheduler with the segment's duration target; the steering bundle's `rate_extension` (in `steer.gguf`) adds tempo-steered speaking-rate buckets.
 - **Projects** (`/v2/projects`, `/v2/media/<sha256>`): `--studio-projects-dir DIR` keeps the studio's projects and content-addressed media on the server, in the same layout as the CUDA server (both can share one directory).
 - **Access**: with `ZONOS3_ACCESS_TOKEN` set, every request needs `Authorization: Bearer <token>`, the `zonos3_access` cookie, or one `GET /?access_token=<token>` (which sets the cookie). `X-Keepalive: 1` on the edit and dub routes answers at once and sends a space every 10 s until the JSON body.
 
@@ -195,16 +195,16 @@ Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `co
 
 ```bash
 ./build/zonos3-cli models/zonos3-qat.gguf --build-prompt 'Hello.' ids.npy   # + ids.cond.json
-./build/dac-cli models/dac.gguf codes.npy decoded.wav
+./build/zac-cli models/zac.gguf codes.npy decoded.wav
 ./build/spk-encoder-cli models/spk-encoder.gguf --audio voice.mp3 voice-emb.npy --cpu
-./build/dac-encoder-cli models/dac-encoder.gguf models/ssl-teacher.gguf \
+./build/zac-encoder-cli models/zac-encoder.gguf models/ssl-teacher.gguf \
   --audio voice.mp3 voice-codes.npy --cpu
 ./build/quantize-cli models/zonos3-f16.gguf models/zonos3-q8_0.gguf q8_0
 ./build/quantize-cli models/zonos3-f16.gguf models/zonos3-q6_k-exp.gguf \
   q6_k --experts-only --spine-f16
 ```
 
-Prompt dumps carry a `.cond.json` sidecar (speaker vector, condition buckets, row layout) next to the ids. `dac-cli` honours `<codes>.eos.npy` (`[eos]` or `[eos, prefill]`), `--skip-frames N`, and `--headroom-db X`.
+Prompt dumps carry a `.cond.json` sidecar (speaker vector, condition buckets, row layout) next to the ids. `zac-cli` honours `<codes>.eos.npy` (`[eos]` or `[eos, prefill]`), `--skip-frames N`, and `--headroom-db X`.
 
 The default `zonos3-qat.gguf` matches the QAT checkpoint's baked weights exactly and was checked against the F16 backbone (golden logits cos 0.99995, eight-sentence Whisper-large-v3 WER 3.5% for both). Post-training quantization profiles (`quantize-cli`), pruning and calibration artifacts have not been qualified for Mini, and earlier (375k) measurements do not transfer. See [quantization](docs/INTERNALS.md#quantization) and [reference comparison](docs/INTERNALS.md#reference-comparison).
 

@@ -386,18 +386,18 @@ static void encode_reference_locked(ServerState & s, const std::vector<float> & 
     const int sample_rate = zonos3_generation().sample_rate;
     const size_t max_frames = (size_t) std::ceil(max_seconds * ZONOS3_FRAME_RATE) + 1;
     if (!reference_audio_available(s))
-        fail(400, "reference-mode cloning of audio requires dac-encoder.gguf and ssl-teacher.gguf; supply --dac-encoder and --ssl-teacher");
+        fail(400, "reference-mode cloning of audio requires zac-encoder.gguf and ssl-teacher.gguf; supply --zac-encoder and --ssl-teacher");
     if (!s.reference_models_loaded) {
         if (!ssl_load(s.teacher, s.teacher_path.c_str(), s.use_gpu) ||
-            !dac_encoder_load(s.encoder, s.encoder_path.c_str(), s.use_gpu)) {
-            dac_encoder_free(s.encoder);
+            !zac_encoder_load(s.encoder, s.encoder_path.c_str(), s.use_gpu)) {
+            zac_encoder_free(s.encoder);
             ssl_free(s.teacher);
             fail(500, "failed to load the codec encoder or SSL teacher companion");
         }
         s.reference_models_loaded = true;
     }
     s.reference_last_use = std::chrono::steady_clock::now();
-    if (pcm.empty() || pcm.size() > (size_t) max_seconds * sample_rate || !dac_encode(s.encoder, s.teacher, pcm.data(), (int) pcm.size(), codes) ||
+    if (pcm.empty() || pcm.size() > (size_t) max_seconds * sample_rate || !zac_encode(s.encoder, s.teacher, pcm.data(), (int) pcm.size(), codes) ||
         codes.empty() || codes.size() % 10 || codes.size() > max_frames * 10) {
         codes.clear();
         fail(400, "reference audio encoding failed (maximum " + std::to_string(max_seconds) + " seconds)");
@@ -446,7 +446,7 @@ static void reference_reaper_loop(ServerState & s) {
         std::unique_lock<std::mutex> compute(s.reference_compute_mtx, std::try_to_lock);
         if (!compute.owns_lock() || !s.reference_models_loaded) continue;
         if (std::chrono::steady_clock::now() - s.reference_last_use < std::chrono::seconds(s.reference_idle_unload_s)) continue;
-        dac_encoder_free(s.encoder);
+        zac_encoder_free(s.encoder);
         ssl_free(s.teacher);
         s.reference_models_loaded = false;
         fprintf(stderr, "zonos3-server: reference encoder unloaded after %ds idle\n", s.reference_idle_unload_s);
@@ -704,7 +704,7 @@ static void handle_create(ServerState & s, const httplib::Request & req, httplib
     } else {
         if (!audio) fail(400, "Provide an audio file to cache as the speaker reference.");
         if (!speaker_encoder_available(s) && !reference_audio_available(s))
-            fail(400, "audio cloning requires spk-encoder.gguf, or dac-encoder.gguf and ssl-teacher.gguf");
+            fail(400, "audio cloning requires spk-encoder.gguf, or zac-encoder.gguf and ssl-teacher.gguf");
         sp.original_name = opt_str(body, "speaker_audio_name");
         sp.pcm = decode_audio_bytes(decode_b64_field(body, "speaker_audio_base64"));
         sp.source_type = "audio";
@@ -748,7 +748,7 @@ static void handle_preview(ServerState & s, const httplib::Request & req, httpli
         remember(s, session, v);
     }
     if (v.pcm.empty()) fail(404, "Cached speaker preview audio is not available.");
-    const std::vector<uint8_t> wav = dac_wav_bytes(v.pcm, zonos3_generation().sample_rate);
+    const std::vector<uint8_t> wav = zac_wav_bytes(v.pcm, zonos3_generation().sample_rate);
     res.set_content((const char *) wav.data(), wav.size(), "audio/wav");
 }
 

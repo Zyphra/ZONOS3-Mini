@@ -1,4 +1,4 @@
-"""Reference audio longer than 60 seconds through the native codec encoder (dac-encoder-cli) against the Python
+"""Reference audio longer than 60 seconds through the native codec encoder (zac-encoder-cli) against the Python
 contract, zonos3.tokenizer.dual_reference.encode_dual_reference (the frozen MossAutoencoder on CUDA).
 
 The native encoder runs the same independent 20-second lanes with 10 s of left context as the Python batcher, so a
@@ -8,8 +8,8 @@ with the reference as well as earlier frames do. Codes are not bit-exact against
 82% of all codes and 97% of codebook 0 agree on the default voices), so the gate is agreement, measured separately
 before and after the 60 s mark.
 
-Inputs (skipped when absent): the release GGUFs ``ZONOS3_DAC_ENCODER`` / ``ZONOS3_SSL_TEACHER`` (default
-servers/ggml/models/{dac-encoder,ssl-teacher}.gguf) and CUDA for the reference. The build's encoder runs on the GPU
+Inputs (skipped when absent): the release GGUFs ``ZONOS3_ZAC_ENCODER`` / ``ZONOS3_SSL_TEACHER`` (default
+servers/ggml/models/{zac-encoder,ssl-teacher}.gguf) and CUDA for the reference. The build's encoder runs on the GPU
 when it was configured with GGML_CUDA (a CPU build takes about 4 s per audio second).
 
     uv run --package zonos3-tools pytest servers/ggml/tests/parity/test_ggml_encoder.py --ggml-build servers/ggml/build-cuda -s
@@ -27,15 +27,15 @@ import torch
 
 REPO = Path(__file__).resolve().parents[4]
 MODELS = REPO / "servers" / "ggml" / "models"
-DAC_ENCODER = Path(os.environ.get("ZONOS3_DAC_ENCODER", MODELS / "dac-encoder.gguf"))
+ZAC_ENCODER = Path(os.environ.get("ZONOS3_ZAC_ENCODER", MODELS / "zac-encoder.gguf"))
 SSL_TEACHER = Path(os.environ.get("ZONOS3_SSL_TEACHER", MODELS / "ssl-teacher.gguf"))
 SR, HOP, FRAMES_60S = 44100, 2940, 900
 SECONDS = 66.1          # five full lanes and a final lane wholly past 60 s
-MAX_SECONDS = 600       # dac-encoder.h DAC_ENCODER_MAX_SECONDS = prepare_reference's limit
+MAX_SECONDS = 600       # zac-encoder.h ZAC_ENCODER_MAX_SECONDS = prepare_reference's limit
 
 
 def _cli(ggml_build: Path) -> Path:
-    exe = ggml_build / "dac-encoder-cli"
+    exe = ggml_build / "zac-encoder-cli"
     if not exe.exists():
         pytest.fail(f"{exe} is not built")
     return exe
@@ -77,13 +77,13 @@ def test_cli_limit(ggml_build, tmp_path):
 
 
 def test_encode_past_60_seconds(ggml_build, tmp_path):
-    if not (DAC_ENCODER.is_file() and SSL_TEACHER.is_file()):
-        pytest.skip(f"no release encoder GGUFs at {DAC_ENCODER} / {SSL_TEACHER}")
+    if not (ZAC_ENCODER.is_file() and SSL_TEACHER.is_file()):
+        pytest.skip(f"no release encoder GGUFs at {ZAC_ENCODER} / {SSL_TEACHER}")
     if not torch.cuda.is_available():
         pytest.skip("the reference encoder needs CUDA")
     audio = _clip(SECONDS)
     np.save(tmp_path / "audio.npy", audio)
-    run = subprocess.run([str(_cli(ggml_build)), str(DAC_ENCODER), str(SSL_TEACHER), "--audio", str(tmp_path / "audio.npy"),
+    run = subprocess.run([str(_cli(ggml_build)), str(ZAC_ENCODER), str(SSL_TEACHER), "--audio", str(tmp_path / "audio.npy"),
                           str(tmp_path / "codes.npy"), "--gpu" if _uses_cuda(ggml_build) else "--cpu"],
                          capture_output=True, text=True)
     assert run.returncode == 0, run.stderr

@@ -48,7 +48,7 @@ def silence_prefill(state: ServerState) -> dict:
 
 
 def decoder(state: ServerState) -> dict:
-    name = Path(state.engine.paths["dac"]).name
+    name = Path(state.engine.paths["zac"]).name
     return {"kind": "istft_mr", "label": f"Multi-resolution iSTFT head ({name}); causal", "checkpoint": name,
                 "expect_step": None, "headroom_db": float(state.engine.decoder.headroom_db), "causal": True,
                 "codec": state.config.audio_codec}

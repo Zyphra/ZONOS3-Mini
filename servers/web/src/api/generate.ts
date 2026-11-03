@@ -2,7 +2,7 @@
 // one-request scheduler (CFG twin on the backbone's second slot, LACI, span follow, hidden steering) and answered as
 // streamed / buffered float32 PCM or a buffered 16-bit WAV. Ports servers/ggml/src/server/generate.cpp (resolve,
 // plan_generate, make_job, the routes) and scheduler.cpp (attach_probe, laci_resume, step_steer, the worker tick,
-// the DAC lane's prefix / whole decode).
+// the ZAC lane's prefix / whole decode).
 import type { ProbeInput } from '../backbone';
 import { locateTextSpan, probeReduce } from '../probe';
 import {

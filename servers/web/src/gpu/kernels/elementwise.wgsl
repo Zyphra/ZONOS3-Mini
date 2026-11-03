@@ -8,7 +8,7 @@ struct P { op: u32, n: u32, C: u32, a_off: u32, y_off: u32 }
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
 @group(0) @binding(15) var<uniform> p: P;
 
-// Port of sin2_f32 (dac.cpp): Cody-Waite reduction + Cephes sinf/cosf polynomials.
+// Port of sin2_f32 (zac.cpp): Cody-Waite reduction + Cephes sinf/cosf polynomials.
 fn sin2(v: f32) -> f32 {
   let q = round(v * 0.63661977236758134);
   var r = v - q * 1.5703125;

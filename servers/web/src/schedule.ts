@@ -1,4 +1,4 @@
-// Streaming codec scheduling + un-shear (server.cpp stream blocks, dac_decode frame count, decode_chunk ids).
+// Streaming codec scheduling + un-shear (server.cpp stream blocks, zac_decode frame count, decode_chunk ids).
 export const NCB = 10;
 export const SHEAR = NCB - 1;
 export const FIRST_BLOCK = 4;

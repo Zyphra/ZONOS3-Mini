@@ -31,7 +31,7 @@ from zonos3_mlx.models.codec_decoder import CodecDecoder
 from zonos3_mlx.models.lm import LMConfig, Zonos3MLX
 
 COMPANIONS = {
-    "dac": "dac.gguf", "spk_encoder": "spk-encoder.gguf", "dac_encoder": "dac-encoder.gguf",
+    "zac": "zac.gguf", "spk_encoder": "spk-encoder.gguf", "zac_encoder": "zac-encoder.gguf",
     "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "accent_adapters": "accents.gguf",
 }
 
@@ -167,13 +167,13 @@ class Engine:
             text_vocab=c.text_vocab, text_tokenizer_spec=c.text_tokenizer_spec))
 
     @classmethod
-    def load(cls, model: str | Path, *, dac: str | None = None, **kwargs) -> "Engine":
-        given = {"dac": dac, **{k: kwargs.pop(k) for k in list(kwargs) if k in COMPANIONS}}
+    def load(cls, model: str | Path, *, zac: str | None = None, **kwargs) -> "Engine":
+        given = {"zac": zac, **{k: kwargs.pop(k) for k in list(kwargs) if k in COMPANIONS}}
         paths = find_companions(model, given)
-        if not paths.get("dac"):
-            raise FileNotFoundError(f"--dac <dac.gguf> is required (also auto-detected when dac.gguf sits next to {model})")
+        if not paths.get("zac"):
+            raise FileNotFoundError(f"--zac <zac.gguf> is required (also auto-detected when zac.gguf sits next to {model})")
         lm = Zonos3MLX.load(model)
-        return cls(lm, CodecDecoder.load(paths["dac"]), paths=paths, **kwargs)
+        return cls(lm, CodecDecoder.load(paths["zac"]), paths=paths, **kwargs)
 
     # -- companions -------------------------------------------------------------------------------------------------
 
@@ -186,7 +186,7 @@ class Engine:
 
     @property
     def has_reference_encoder(self) -> bool:
-        return bool(self.paths.get("dac_encoder") and self.paths.get("ssl_teacher"))
+        return bool(self.paths.get("zac_encoder") and self.paths.get("ssl_teacher"))
 
     def reference_encoder(self):
         """The codec encoder + SSL teacher, loaded on first use (call on the scheduler worker thread)."""
@@ -195,7 +195,7 @@ class Engine:
                 from zonos3_mlx.models.codec_encoder import CodecEncoder
                 from zonos3_mlx.models.ssl_teacher import SSLTeacher
 
-                self._reference_encoder = CodecEncoder.load(self.paths["dac_encoder"],
+                self._reference_encoder = CodecEncoder.load(self.paths["zac_encoder"],
                                                             SSLTeacher.load(self.paths["ssl_teacher"]))
             self._reference_last_use = time.monotonic()
             return self._reference_encoder

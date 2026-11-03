@@ -1,5 +1,5 @@
 // model-paths.h — companion-GGUF discovery and local converter hints.
-// dac.gguf / dac-encoder.gguf / ssl-teacher.gguf are conventional backbone siblings;
+// zac.gguf / zac-encoder.gguf / ssl-teacher.gguf are conventional backbone siblings;
 // when the flags are omitted we look there before giving up.
 #pragma once
 
@@ -30,8 +30,8 @@ static inline std::string mp_find_companion(const std::string & backbone, const 
 
 static inline void mp_print_missing_hint(const char * name, const std::string & tried) {
     const std::string label(name);
-    const char * script = label == "dac.gguf" ? "codec-decoder" :
-                          label == "dac-encoder.gguf" ? "codec-encoder" :
+    const char * script = label == "zac.gguf" ? "codec-decoder" :
+                          label == "zac-encoder.gguf" ? "codec-encoder" :
                           label == "ssl-teacher.gguf" ? "ssl-teacher" :
                           label == "spk-encoder.gguf" ? "speaker-encoder" :
                           label == "steer.gguf" ? "steer" :

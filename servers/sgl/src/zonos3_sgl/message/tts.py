@@ -88,7 +88,7 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     decode_context_frames: int = DECODE_CONTEXT_FRAMES
     # Optional speaker embedding for voice cloning; shape: (speaker_embedding_dim,)
     speaker_embedding: torch.Tensor | None = None
-    # Encoded by the tokenizer into the raw delayed-DAC reference prefix used
+    # Encoded by the tokenizer into the raw delayed-ZAC reference prefix used
     # by speaker-reference-prefix checkpoints. Mutually exclusive with the
     # vector speaker_embedding path.
     speaker_reference_audio: bytes | None = None

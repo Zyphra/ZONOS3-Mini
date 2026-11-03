@@ -78,7 +78,7 @@ json rows_json(const std::vector<int32_t> & flat, int k) {
     return out;
 }
 
-double frame_rate(const ServerState & s) { return (double) s.dac.sample_rate / dac_samples_per_frame(s.dac); }
+double frame_rate(const ServerState & s) { return (double) s.zac.sample_rate / zac_samples_per_frame(s.zac); }
 
 // ---------------------------------------------------------------------------------------------------- init facts
 
@@ -158,7 +158,7 @@ Generated generate_fill(ServerState & s, const std::string & text, const std::ve
     return out;
 }
 
-// The whole decode of ordinary codes [frames, K] on a DAC lane, with the decoder's output gain.
+// The whole decode of ordinary codes [frames, K] on a ZAC lane, with the decoder's output gain.
 std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & frames) {
     const int K = (int) s.model.hp.n_codebooks;
     const int n = (int) (frames.size() / K), H = n + K - 1;
@@ -167,7 +167,7 @@ std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & fr
     for (int r = 0; r < H; ++r)
         for (int c = 0; c < K; ++c)
             if (r - c >= 0 && r - c < n) job->codes[(size_t) r * K + c] = frames[(size_t) (r - c) * K + c];
-    job->gain = dac_output_gain(s.dac, -1.0);
+    job->gain = zac_output_gain(s.zac, -1.0);
     submit_decode(s, job);
     std::vector<float> audio;
     std::unique_lock<std::mutex> lk(job->m);
@@ -273,7 +273,7 @@ json call_fill(ServerState & s, const json & c) {
 // EditEngine.decode: the codes' audio with the output gain as float WAV at `out`.
 json call_decode(ServerState & s, const json & c) {
     const std::vector<float> audio = decode_codes(s, flat_rows(c.at("codes"), (int) s.model.hp.n_codebooks));
-    write_float_wav(c.at("out").get<std::string>(), audio, s.dac.sample_rate);
+    write_float_wav(c.at("out").get<std::string>(), audio, s.zac.sample_rate);
     return json::object();
 }
 

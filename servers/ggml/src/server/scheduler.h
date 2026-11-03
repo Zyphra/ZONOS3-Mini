@@ -1,12 +1,12 @@
 // Continuous-batching scheduler: one worker thread owns the backbone and a zonos3_batch_ctx and only produces codes;
-// DAC decode runs on a pool of lanes (each its own dac_model sharing the weights). HTTP handlers enqueue a ReqJob and
+// ZAC decode runs on a pool of lanes (each its own zac_model sharing the weights). HTTP handlers enqueue a ReqJob and
 // read PCM blocks back through its channel.
 #pragma once
 
 #include "zonos3.h"
 #include "zonos3-sampler.h"
 #include "zonos3-steer.h"
-#include "dac.h"
+#include "zac.h"
 #include "zonos3-laci.h"
 #include "zonos3-span-follow.h"
 
@@ -72,12 +72,12 @@ struct GenReq {
     double follow_lead = 1.0, follow_lag = 0.0;
 };
 
-// A DAC decode unit handed from the backbone worker to the job's lane, with a snapshot of the code rows (the worker
+// A ZAC decode unit handed from the backbone worker to the job's lane, with a snapshot of the code rows (the worker
 // keeps appending to job->codes). WINDOW stream-decodes frames up to f_hi (prefix streaming); FINALIZE does the exact
 // whole decode (emitting what the stream has not), then finishes the channel. `drop` finishes without decoding
 // (client gone); `fail` finishes as failed.
 struct ReqJob;
-struct DacTask {
+struct ZacTask {
     std::shared_ptr<ReqJob> job;
     std::vector<int32_t> codes;   // delayed rows [H, n_codebooks], decode-context rows first
     int H = 0;
@@ -87,12 +87,12 @@ struct DacTask {
     bool fail = false;
 };
 
-struct DacLane {
-    dac_model dac;
+struct ZacLane {
+    zac_model zac;
     std::thread th;
     std::mutex m;
     std::condition_variable cv;
-    std::deque<DacTask> q;
+    std::deque<ZacTask> q;
 };
 
 struct ReqJob {
@@ -118,7 +118,7 @@ struct ReqJob {
     int eos_frame = -1;
     int emitted = 0;                     // prefix streaming: frames handed to the lane
     int lane = 0;
-    dac_stream dst;                      // lane-owned incremental decoder state (prefix streaming)
+    zac_stream dst;                      // lane-owned incremental decoder state (prefix streaming)
     int64_t streamed_samples = 0;        // lane-owned: raw samples the stream decode produced
 
     std::chrono::steady_clock::time_point t_decode0;
@@ -134,7 +134,7 @@ struct ReqJob {
     int attempt_max = 0;                 // the current attempt's row budget (max_frames, then Continuation::max_tokens)
     std::string laci_record;             // LaciSession.record() as JSON once final (empty: not a LACI job)
 
-    // channel: DAC lane -> handler
+    // channel: ZAC lane -> handler
     std::mutex m;
     std::condition_variable cv;
     std::deque<std::vector<float>> pcm;
@@ -151,10 +151,10 @@ struct PrefixStreamSettings {
     int context_frames = 450;
 };
 
-void start_scheduler(ServerState & s);   // DAC lanes + backbone worker; waits until the worker is ready
+void start_scheduler(ServerState & s);   // ZAC lanes + backbone worker; waits until the worker is ready
 void stop_scheduler(ServerState & s);
 void submit_job(ServerState & s, const std::shared_ptr<ReqJob> & job);
-// Whole-decode the job's delayed code rows (job->codes; eos_frame < 0 = every complete frame) on a DAC lane without
+// Whole-decode the job's delayed code rows (job->codes; eos_frame < 0 = every complete frame) on a ZAC lane without
 // the backbone; the PCM arrives on the job's channel like a generation's.
 void submit_decode(ServerState & s, const std::shared_ptr<ReqJob> & job);
 

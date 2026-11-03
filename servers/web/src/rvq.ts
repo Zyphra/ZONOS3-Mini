@@ -1,5 +1,5 @@
 // Host-side reference-encoder pieces in F32 arithmetic (Math.fround at every native float operation):
-// pool_ssl and the RVQ quantizer of dac-encoder.cpp.
+// pool_ssl and the RVQ quantizer of zac-encoder.cpp.
 const f = Math.fround;
 export const LANE = 300;
 const SSL_DIM = 1024;

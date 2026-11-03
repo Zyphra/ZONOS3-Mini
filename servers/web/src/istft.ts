@@ -1,5 +1,5 @@
 // Host multi-resolution iSTFT head + FIR mixer at 44160 Hz: a port of head_init/head_push/ola_finalize/
-// mix_emit/head_flush (servers/ggml/src/dac.cpp), with a Float64 mixed-radix real inverse DFT in place of pocketfft.
+// mix_emit/head_flush (servers/ggml/src/zac.cpp), with a Float64 mixed-radix real inverse DFT in place of pocketfft.
 
 /** Real inverse DFT of even length n from FFTPACK halfcomplex input [r0, r1, i1, …, r(n/2-1), i(n/2-1), r(n/2)]:
  *  x[j] = scale * (r0 + r(n/2)(-1)^j + 2 Σ_k (rk cos(2πjk/n) - ik sin(2πjk/n))). Mixed-radix decimation in time over

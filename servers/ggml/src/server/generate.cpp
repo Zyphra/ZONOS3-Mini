@@ -447,7 +447,7 @@ void generate(ServerState & s, const json & body, const std::optional<std::strin
     r.gr.wav = wav;
     const std::string span_follow = r.span_follow;
     auto job = make_job(s, std::move(r));
-    const int sr = s.dac.sample_rate;
+    const int sr = s.zac.sample_rate;
     res.set_header("X-Audio-Sample-Rate", std::to_string(sr));
     res.set_header("X-Audio-Channels", "1");
     res.set_header("X-Audio-Format", wav ? "pcm16" : "float32");
@@ -604,8 +604,8 @@ std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan) {
     job->idf_twin.assign(job->twin.ids.begin(), job->twin.ids.end());
     job->n0 = job->prompt.n_rows;
     job->ctx_frames = (int) (gr.decode_context.size() / s.model.hp.n_codebooks);
-    job->skip_samples = (int64_t) (job->prompt.prefill_frames + job->ctx_frames) * dac_samples_per_frame(s.dac);
-    job->gain = dac_output_gain(s.dac, gr.headroom_db);
+    job->skip_samples = (int64_t) (job->prompt.prefill_frames + job->ctx_frames) * zac_samples_per_frame(s.zac);
+    job->gain = zac_output_gain(s.zac, gr.headroom_db);
     job->gr = std::move(plan.gr);
     try {
         attach_probe(s, *job);

@@ -1,4 +1,4 @@
-// Streaming torchaudio sinc resampler 44160 -> 44100 Hz, a port of resample() in dac.cpp:
+// Streaming torchaudio sinc resampler 44160 -> 44100 Hz, a port of resample() in zac.cpp:
 //   out[n*nw + i] = sum_k kernel[i][k] * x[n*orig + k - width],  x = 0 outside [0, inCount).
 // Block n needs input up to n*orig + orig + width; push() waits for it, flush() zero-extends and
 // truncates the total to ceil(nw * inCount / orig).

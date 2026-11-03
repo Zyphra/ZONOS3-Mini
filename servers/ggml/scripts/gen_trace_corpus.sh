@@ -45,13 +45,13 @@ case "$1" in
 esac
 BUILD=${BUILD:-build-cuda}
 MODEL=${MODEL:-out/zonos3-f16.gguf}
-DAC=${DAC:-out/dac.gguf}
-DAC_ENCODER=${DAC_ENCODER:-out/dac-encoder.gguf}
+ZAC=${ZAC:-out/zac.gguf}
+ZAC_ENCODER=${ZAC_ENCODER:-out/zac-encoder.gguf}
 SSL_TEACHER=${SSL_TEACHER:-out/ssl-teacher.gguf}
 TRACE_MAX=${TRACE_MAX:-300}
 BACKEND=${BACKEND:---gpu}
 case "$BACKEND" in --gpu|--cpu) ;; *) echo 'gen_trace_corpus: BACKEND must be --gpu or --cpu' >&2; exit 2 ;; esac
-for input in "$BUILD/zonos3-cli" "$BUILD/dac-encoder-cli" "$MODEL" "$DAC" "$DAC_ENCODER" "$SSL_TEACHER"; do
+for input in "$BUILD/zonos3-cli" "$BUILD/zac-encoder-cli" "$MODEL" "$ZAC" "$ZAC_ENCODER" "$SSL_TEACHER"; do
   if [ ! -f "$input" ]; then echo "gen_trace_corpus: missing $input" >&2; exit 1; fi
 done
 rm -rf "$OUT"; mkdir -p "$OUT"; : > "$MAN"
@@ -61,7 +61,7 @@ references=()
 for v in default_voices/*.mp3; do
   [ -f "$v" ] || continue
   reference="$OUT/reference_$(basename "$v" .mp3).npy"
-  args=("$BUILD/dac-encoder-cli" "$DAC_ENCODER" "$SSL_TEACHER" --audio "$v" "$reference")
+  args=("$BUILD/zac-encoder-cli" "$ZAC_ENCODER" "$SSL_TEACHER" --audio "$v" "$reference")
   if [ "$BACKEND" = --gpu ]; then args+=(--gpu); fi
   run "${args[@]}"
   references+=("$reference")
@@ -70,7 +70,7 @@ idx=0
 for text in "${texts[@]}"; do
   for reference in '' "${references[@]}"; do
     base="$OUT/seq_$(printf '%03d' "$idx")"
-    args=("$BUILD/zonos3-cli" "$MODEL" --tts "$text" "$base.codes.npy" --dump-ids "$base.npy" --dac "$DAC" --seed "$((SEED0+idx))" --max "$TRACE_MAX" "$BACKEND")
+    args=("$BUILD/zonos3-cli" "$MODEL" --tts "$text" "$base.codes.npy" --dump-ids "$base.npy" --zac "$ZAC" --seed "$((SEED0+idx))" --max "$TRACE_MAX" "$BACKEND")
     if [ -n "$reference" ]; then args+=(--reference-codes "$reference"); fi
     run "${args[@]}"
     echo "$base.npy" >> "$MAN"

@@ -1,5 +1,5 @@
 // Frozen acoustic + native SSL semantic dual encoding. No Python/runtime model bridge.
-#include "dac-encoder.h"
+#include "zac-encoder.h"
 #include "ssl-encoder.h"
 #include "compat.h"
 #include "ggml-alloc.h"
@@ -29,13 +29,13 @@ struct stage_inputs {
 // Each operation reuses two device activation buffers and the graph allocator. Only
 // final acoustic/semantic outputs (or explicitly requested diagnostics) cross to host.
 class encoder_graph {
-    const dac_model & m;
+    const zac_model & m;
     ggml_backend_buffer_t buffers[2] = {nullptr, nullptr};
     int current = 0, channels = 0, frames = 0;
     size_t capacity = 0;
 public:
     using builder = std::function<ggml_tensor *(ggml_context *, ggml_cgraph *, ggml_tensor *)>;
-    explicit encoder_graph(const dac_model & model) : m(model) {}
+    explicit encoder_graph(const zac_model & model) : m(model) {}
     ~encoder_graph() { for (auto b : buffers) if (b) ggml_backend_buffer_free(b); }
     bool init(int C, int T, const float * values, size_t max_elements) {
         capacity = max_elements * sizeof(float) + ggml_backend_get_alignment(m.backend);
@@ -52,7 +52,7 @@ public:
         ggml_free(ctx);
         return ok;
     }
-    bool run(const builder & build, const dac_encoder_dump * dump = nullptr,
+    bool run(const builder & build, const zac_encoder_dump * dump = nullptr,
              const std::string * prefix = nullptr) {
         auto * ctx = ggml_init({32 * 1024 * 1024, nullptr, true});
         if (!ctx) return false;
@@ -117,9 +117,9 @@ ggml_tensor * bf16(ggml_context * ctx, ggml_tensor * x) {
     return ggml_cast(ctx, ggml_cast(ctx, x, GGML_TYPE_BF16), GGML_TYPE_F32);
 }
 
-bool acoustic_lane(const dac_model & m, const float * audio, std::vector<float> & out,
-                   const std::string & prefix, const dac_encoder_dump & dump) {
-    using namespace dac_encoder_detail;
+bool acoustic_lane(const zac_model & m, const float * audio, std::vector<float> & out,
+                   const std::string & prefix, const zac_encoder_dump & dump) {
+    using namespace zac_encoder_detail;
     encoder_graph g(m);
     auto capture = [&](const std::string & name) {
         if (!dump) return true;
@@ -182,9 +182,9 @@ bool acoustic_lane(const dac_model & m, const float * audio, std::vector<float> 
     return true;
 }
 
-bool semantic_module(const dac_model & m, const std::vector<float> & input, bool encode,
+bool semantic_module(const zac_model & m, const std::vector<float> & input, bool encode,
                      std::vector<float> & output) {
-    using namespace dac_encoder_detail;
+    using namespace zac_encoder_detail;
     encoder_graph g(m);
     const int width = m.semantic_dim;
     if (!g.init(encode ? 1024 : width, LANE, input.data(), (size_t) 2048 * LANE)) return false;
@@ -222,9 +222,9 @@ std::vector<float> pool_ssl(const std::vector<float> & ssl, int T, float window_
     return pooled;
 }
 
-bool quantize(const dac_encoder_model::quantizer & q, const std::vector<float> & input,
+bool quantize(const zac_encoder_model::quantizer & q, const std::vector<float> & input,
               std::vector<float> & quantized, std::vector<int32_t> & ids,
-              const std::string & prefix, const dac_encoder_dump & dump) {
+              const std::string & prefix, const zac_encoder_dump & dump) {
     const int C = q.input_dim, D = q.code_dim, T = (int) input.size()/C;
     quantized.resize(input.size()); ids.resize(T);
     std::vector<float> projected((size_t) T*D), normalized(D), lookup(D);
@@ -268,7 +268,7 @@ bool quantize(const dac_encoder_model::quantizer & q, const std::vector<float> &
     return true;
 }
 
-std::vector<float> resample(const dac_model & m, const float * audio, int n) {
+std::vector<float> resample(const zac_model & m, const float * audio, int n) {
     const int orig = m.rs_orig, target = m.rs_new, width = m.rs_width, K = 2*width+orig;
     // Exactly torchaudio's phase-major FIR, then transpose/flatten and ceil-length crop.
     const int count = (int) (((int64_t) n*target + orig-1)/orig);
@@ -285,19 +285,19 @@ std::vector<float> resample(const dac_model & m, const float * audio, int n) {
 }
 }
 
-void dac_encoder_free(dac_encoder_model & m) {
-    dac_free(m.codec);
+void zac_encoder_free(zac_encoder_model & m) {
+    zac_free(m.codec);
     m.codec.t.clear(); m.codec.rs_kernel.clear(); m.codec.stages.clear();
     m.rvq.clear();
 }
 
-bool dac_encoder_load(dac_encoder_model & model, const char * path, bool use_gpu) {
-    dac_encoder_free(model);
+bool zac_encoder_load(zac_encoder_model & model, const char * path, bool use_gpu) {
+    zac_encoder_free(model);
     auto & m = model.codec;
     ggml_context * meta = nullptr;
     gguf_context * file = gguf_init_from_file(path, {true, &meta});
-    if (!file) { fprintf(stderr, "dac-encoder: cannot open %s\n", path); return false; }
-    auto reject = [&](const char * why) { fprintf(stderr, "dac-encoder: invalid mossdual_encoder GGUF: %s\n", why); gguf_free(file); ggml_free(meta); dac_encoder_free(model); return false; };
+    if (!file) { fprintf(stderr, "zac-encoder: cannot open %s\n", path); return false; }
+    auto reject = [&](const char * why) { fprintf(stderr, "zac-encoder: invalid mossdual_encoder GGUF: %s\n", why); gguf_free(file); ggml_free(meta); zac_encoder_free(model); return false; };
     int64_t arch = gguf_find_key(file, "general.architecture");
     if (arch < 0 || gguf_get_kv_type(file,arch) != GGUF_TYPE_STRING || strcmp(gguf_get_val_str(file,arch),ARCH)) return reject("architecture");
     auto integer = [&](const char * k, int & value) {
@@ -321,7 +321,7 @@ bool dac_encoder_load(dac_encoder_model & model, const char * path, bool use_gpu
         arrays.emplace_back(values,values+5);
     }
     for (int s=0; s<5; ++s) {
-        dac_stage_hp hp{arrays[0][s],arrays[1][s],arrays[2][s],arrays[3][s],arrays[4][s],arrays[5][s],arrays[6][s],arrays[7][s]};
+        zac_stage_hp hp{arrays[0][s],arrays[1][s],arrays[2][s],arrays[3][s],arrays[4][s],arrays[5][s],arrays[6][s],arrays[7][s]};
         if (hp.in_dim <= 0 || hp.out_dim <= 0 || hp.d_model <= 0 || hp.n_head <= 0 || hp.n_layer <= 0 || hp.n_ff <= 0 || hp.context <= 0 || hp.patch != (s==0 ? 23 : 2) || hp.d_model/hp.n_head != 64 || hp.d_model%hp.n_head || (s==0 ? hp.in_dim != 256*23 : hp.in_dim != m.stages.back().out_dim*hp.patch)) return reject("stage dimensions");
         m.stages.push_back(hp);
     }
@@ -332,7 +332,7 @@ bool dac_encoder_load(dac_encoder_model & model, const char * path, bool use_gpu
     m.buft = ggml_backend_dev_buffer_type(dev);
     m.is_gpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU;
     if (!m.is_gpu) {
-        const char * threads = getenv("DAC_THREADS");
+        const char * threads = getenv("ZAC_THREADS");
         if (threads) ggml_backend_cpu_set_n_threads(m.backend,std::max(1,atoi(threads)));
     }
     m.ctx_w = ggml_init({(size_t) gguf_get_n_tensors(file)*ggml_tensor_overhead(),nullptr,true});
@@ -436,7 +436,7 @@ bool dac_encoder_load(dac_encoder_model & model, const char * path, bool use_gpu
     for (int c=0;c<10;++c) {
         const std::string p="rvq."+std::to_string(c); const int C=c==0?768:1024;
         if (!shape(p+".in_proj.weight",{C,8}) || !shape(p+".in_proj.bias",{8}) || !shape(p+".out_proj.weight",{8,C}) || !shape(p+".out_proj.bias",{C}) || !shape(p+".codebook",{8,4096})) return reject("RVQ input projection/original codebook/output projection");
-        dac_encoder_model::quantizer q; q.input_dim=C; q.code_dim=8; q.size=4096;
+        zac_encoder_model::quantizer q; q.input_dim=C; q.code_dim=8; q.size=4096;
         q.in_weight=std::move(host.at(p+".in_proj.weight")); q.in_bias=std::move(host.at(p+".in_proj.bias"));
         q.out_weight=std::move(host.at(p+".out_proj.weight")); q.out_bias=std::move(host.at(p+".out_proj.bias")); q.codebook=std::move(host.at(p+".codebook"));
         q.normalized.resize(q.codebook.size()); q.norm_squared.resize(q.size);
@@ -458,16 +458,16 @@ bool dac_encoder_load(dac_encoder_model & model, const char * path, bool use_gpu
         m.use_conv1d = m.is_gpu && ggml_backend_supports_op(m.backend, ggml_conv_1d_implicit(pc, w, x, 7, 1, 1, 6));
         ggml_free(pc);
     }
-    fprintf(stderr,"dac-encoder: loaded %zu tensors on %s (native BF16 modules, F32 RVQ)\n",m.t.size(),m.is_gpu?"GPU":"CPU");
+    fprintf(stderr,"zac-encoder: loaded %zu tensors on %s (native BF16 modules, F32 RVQ)\n",m.t.size(),m.is_gpu?"GPU":"CPU");
     return true;
 }
 
-bool dac_encode_diagnostic(const dac_encoder_model & model, const ssl_model & teacher,
+bool zac_encode_diagnostic(const zac_encoder_model & model, const ssl_model & teacher,
                            const float * audio, int n, std::vector<int32_t> & codes,
-                           const dac_encoder_dump & dump) {
+                           const zac_encoder_dump & dump) {
     codes.clear();
-    if (!model.codec.backend || model.rvq.size()!=10 || !audio || n<=0 || n>DAC_ENCODER_MAX_SECONDS*44100 || !std::all_of(audio,audio+n,[](float v){return std::isfinite(v);})) {
-        fprintf(stderr,"dac-encoder: expected finite nonempty mono 44100 Hz audio, at most %d seconds\n",DAC_ENCODER_MAX_SECONDS); return false;
+    if (!model.codec.backend || model.rvq.size()!=10 || !audio || n<=0 || n>ZAC_ENCODER_MAX_SECONDS*44100 || !std::all_of(audio,audio+n,[](float v){return std::isfinite(v);})) {
+        fprintf(stderr,"zac-encoder: expected finite nonempty mono 44100 Hz audio, at most %d seconds\n",ZAC_ENCODER_MAX_SECONDS); return false;
     }
     const auto & m=model.codec;
     const int frames=(n+HOP-1)/HOP;
@@ -509,7 +509,7 @@ bool dac_encode_diagnostic(const dac_encoder_model & model, const ssl_model & te
     return true;
 }
 
-bool dac_encode(const dac_encoder_model & m, const ssl_model & teacher, const float * audio,
+bool zac_encode(const zac_encoder_model & m, const ssl_model & teacher, const float * audio,
                 int n_samples, std::vector<int32_t> & codes) {
-    return dac_encode_diagnostic(m,teacher,audio,n_samples,codes,{});
+    return zac_encode_diagnostic(m,teacher,audio,n_samples,codes,{});
 }

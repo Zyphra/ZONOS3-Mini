@@ -43,12 +43,12 @@ def main():
     reference = parser.add_mutually_exclusive_group()
     reference.add_argument("--reference-codes")
     reference.add_argument("--clone")
-    parser.add_argument("--dac-encoder")
+    parser.add_argument("--zac-encoder")
     parser.add_argument("--ssl-teacher")
     args = parser.parse_args()
     ref, test, mx, gpu = args.ref, args.test, args.max_frames, args.gpu
     reference_args = []
-    for flag in ("reference_codes", "clone", "dac_encoder", "ssl_teacher"):
+    for flag in ("reference_codes", "clone", "zac_encoder", "ssl_teacher"):
         value = getattr(args, flag)
         if value:
             reference_args += ["--" + flag.replace("_", "-"), value]

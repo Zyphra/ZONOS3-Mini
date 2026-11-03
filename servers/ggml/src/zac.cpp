@@ -2,8 +2,8 @@
 // causal ConvNeXt head, residual RVQ, windowed-causal MOSS transformer stages with patch upsampling
 // (240 Hz), the multi-resolution iSTFT head (ConvNeXt trunk on the backend; iSTFT synthesis and the
 // FIR mixer on the host) at 44160 Hz, and the exact 44160->44100 sinc resampler (host side).
-#include "dac.h"
-#include "dac-encoder.h"
+#include "zac.h"
+#include "zac-encoder.h"
 
 #define POCKETFFT_NO_MULTITHREADING
 #include "pocketfft_hdronly.hpp"
@@ -28,20 +28,20 @@
 // matmul/add/concat passes.
 #define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>
-#define DAC_CPU_GEMM 1
+#define ZAC_CPU_GEMM 1
 #endif
 
 #include <deque>
 
-ggml_tensor * dac_model::get(const std::string & n) const {
+ggml_tensor * zac_model::get(const std::string & n) const {
     auto it = t.find(n);
-    if (it == t.end()) { fprintf(stderr, "dac: missing tensor '%s'\n", n.c_str()); return nullptr; }
+    if (it == t.end()) { fprintf(stderr, "zac: missing tensor '%s'\n", n.c_str()); return nullptr; }
     return it->second;
 }
 
 
-// Creates the backend for `dev`; on CPU also the DAC_THREADS setting and the BLAS offload.
-static bool dac_init_backend(dac_model & m, ggml_backend_dev_t dev) {
+// Creates the backend for `dev`; on CPU also the ZAC_THREADS setting and the BLAS offload.
+static bool zac_init_backend(zac_model & m, ggml_backend_dev_t dev) {
     // F16 weight storage does not authorize narrowing F32 decoder activations.
     // Match the codec's full-precision accumulation before CUDA creates handles.
 #ifdef _WIN32
@@ -54,7 +54,7 @@ static bool dac_init_backend(dac_model & m, ggml_backend_dev_t dev) {
     m.buft = ggml_backend_dev_buffer_type(dev);
     m.is_gpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU;
     if (!m.is_gpu) {
-        const char * th = getenv("DAC_THREADS");
+        const char * th = getenv("ZAC_THREADS");
         if (th) ggml_backend_cpu_set_n_threads(m.backend, std::max(1, atoi(th)));
         // The decoder convs are large f32 GEMMs; ggml's CPU kernels run them ~4x slower than
         // a BLAS backend such as Accelerate. Offload them when one is built in.
@@ -69,13 +69,13 @@ static bool dac_init_backend(dac_model & m, ggml_backend_dev_t dev) {
     return true;
 }
 
-bool dac_load(dac_model & m, const char * path, bool use_gpu) {
+bool zac_load(zac_model & m, const char * path, bool use_gpu) {
     ggml_context * ctx_meta = nullptr;
     gguf_init_params gp = { /*no_alloc=*/ true, /*ctx=*/ &ctx_meta };
     gguf_context * gguf = gguf_init_from_file(path, gp);
-    if (!gguf) { fprintf(stderr, "dac: cannot open gguf '%s'\n", path); return false; }
+    if (!gguf) { fprintf(stderr, "zac: cannot open gguf '%s'\n", path); return false; }
     auto reject = [&](const char * why) {
-        fprintf(stderr, "dac: '%s' is not a ZONOS3 Mini iSTFT decoder GGUF (reconvert with tools/convert_gguf.py codec-decoder): %s\n", path, why);
+        fprintf(stderr, "zac: '%s' is not a ZONOS3 Mini iSTFT decoder GGUF (reconvert with tools/convert_gguf.py codec-decoder): %s\n", path, why);
         gguf_free(gguf);
         ggml_free(ctx_meta);
         return false;
@@ -181,7 +181,7 @@ bool dac_load(dac_model & m, const char * path, bool use_gpu) {
     ggml_backend_dev_t dev = nullptr;
     if (use_gpu) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
     if (!dev) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-    if (!dac_init_backend(m, dev)) return reject("cannot init backend");
+    if (!zac_init_backend(m, dev)) return reject("cannot init backend");
     // MAT = transformer / semantic-head / iSTFT-head matrices: F16 on GPU, F32 on CPU (Accelerate
     // sgemm). Q8_0 on GPU measured no faster on M3 Metal (buffered RTF 0.123 vs 0.122 F16). Quantized
     // MAT weights and RVQ tables (quantize-cli) load as stored. DW = depthwise taps, repacked [K,C] ->
@@ -206,7 +206,7 @@ bool dac_load(dac_model & m, const char * path, bool use_gpu) {
                  name.find("norm") == std::string::npos) kind = MAT;
         if (kind == MAT ? (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16 && !ggml_is_quantized(t->type))
                         : (kind != PLAIN && t->type != GGML_TYPE_F32)) {
-            ggml_free(ctx_w); dac_free(m);
+            ggml_free(ctx_w); zac_free(m);
             return reject("unexpected tensor type");
         }
         if (kind == HOST) { loads.push_back({ t, nullptr, kind }); continue; }
@@ -224,7 +224,7 @@ bool dac_load(dac_model & m, const char * path, bool use_gpu) {
     FILE * f = fopen(path, "rb");
     if (!m.buf_w || !f) {
         if (f) fclose(f);
-        gguf_free(gguf); ggml_free(ctx_meta); dac_free(m); return false;
+        gguf_free(gguf); ggml_free(ctx_meta); zac_free(m); return false;
     }
     const size_t data_off = gguf_get_data_offset(gguf);
     std::vector<char> tmp;
@@ -237,8 +237,8 @@ bool dac_load(dac_model & m, const char * path, bool use_gpu) {
         const size_t nb = ggml_nbytes(l.src);
         tmp.resize(nb);
         if (fseeko(f, off, SEEK_SET) || fread(tmp.data(), 1, nb, f) != nb) {
-            fprintf(stderr, "dac: read fail %s\n", name);
-            fclose(f); gguf_free(gguf); ggml_free(ctx_meta); dac_free(m); return false;
+            fprintf(stderr, "zac: read fail %s\n", name);
+            fclose(f); gguf_free(gguf); ggml_free(ctx_meta); zac_free(m); return false;
         }
         const int64_t n = ggml_nelements(l.src);
         if (l.kind == HOST) {
@@ -281,8 +281,8 @@ bool dac_load(dac_model & m, const char * path, bool use_gpu) {
     gguf_free(gguf);
     ggml_free(ctx_meta);
     if (m.rs_kernel.size() != (size_t) m.rs_new * (2 * m.rs_width + m.rs_orig)) {
-        fprintf(stderr, "dac: '%s' is not a ZONOS3 Mini iSTFT decoder GGUF (reconvert with tools/convert_gguf.py codec-decoder): resample.kernel\n", path);
-        dac_free(m);
+        fprintf(stderr, "zac: '%s' is not a ZONOS3 Mini iSTFT decoder GGUF (reconvert with tools/convert_gguf.py codec-decoder): resample.kernel\n", path);
+        zac_free(m);
         return false;
     }
     for (int i = 0; i < 2; ++i)
@@ -299,14 +299,14 @@ bool dac_load(dac_model & m, const char * path, bool use_gpu) {
         ggml_prec_set_acc(fa, GGML_PREC_F32);
         m.use_fattn = ggml_backend_supports_op(m.backend, fa);
         ggml_free(pc);
-        if (!m.use_fattn) fprintf(stderr, "dac: flash attention unsupported on this backend, using matmul attention\n");
+        if (!m.use_fattn) fprintf(stderr, "zac: flash attention unsupported on this backend, using matmul attention\n");
     }
-    fprintf(stderr, "dac: loaded %zu mossdual_istft tensors on %s (%d MOSS layers, head %s)\n",
+    fprintf(stderr, "zac: loaded %zu mossdual_istft tensors on %s (%d MOSS layers, head %s)\n",
             m.t.size(), m.is_gpu ? "GPU" : "CPU", n_moss, head_variant.c_str());
     return true;
 }
 
-void dac_free(dac_model & m) {
+void zac_free(zac_model & m) {
     ggml_gallocr_free(m.galloc);
     if (m.sched)   ggml_backend_sched_free(m.sched);
     if (m.owns_weights) {
@@ -321,13 +321,13 @@ void dac_free(dac_model & m) {
     m.owns_weights = true;
 }
 
-bool dac_clone(dac_model & dst, const dac_model & src) {
+bool zac_clone(zac_model & dst, const zac_model & src) {
     dst = src;
     dst.backend = nullptr; dst.accel = nullptr; dst.sched = nullptr;
     dst.galloc = nullptr;
     dst.owns_weights = false;
-    if (dac_init_backend(dst, ggml_backend_get_device(src.backend))) return true;
-    dac_free(dst);
+    if (zac_init_backend(dst, ggml_backend_get_device(src.backend))) return true;
+    zac_free(dst);
     return false;
 }
 
@@ -342,13 +342,13 @@ struct conv_gemm_params {
 
 struct render_ctx {
     ggml_context * ctx;
-    const dac_model & m;
+    const zac_model & m;
     int n_valid;                           // frames of real input; the rest is right padding
     int cpf;                               // columns per frame at the current resolution
     std::vector<ggml_tensor *> hist_in, hist_out;
     std::deque<conv_gemm_params> conv_params;
     ggml_cgraph * graph = nullptr;         // render graph, for explicit node ordering
-    dac_stream * st = nullptr;             // MOSS K/V caches (st->kc/vc), consumed in layer order
+    zac_stream * st = nullptr;             // MOSS K/V caches (st->kc/vc), consumed in layer order
     int layer = 0;                         // next MOSS layer index into st->kc/vc
     bool encoder = false;                 // independent lane, no streaming history
     bool input_bf16 = false;
@@ -383,7 +383,7 @@ static ggml_tensor * encoder_round(render_ctx & rc, ggml_tensor * x) {
     return rc.encoder ? ggml_cast(rc.ctx, ggml_cast(rc.ctx, x, GGML_TYPE_BF16), GGML_TYPE_F32) : x;
 }
 
-#if DAC_CPU_GEMM
+#if ZAC_CPU_GEMM
 // dst [OC, T] = bias (+ residual) + sum_k W_k^T xf[:, t + k*d], where xf = [hist | x] is never
 // materialized: each tap's column range is split into the part reading `hist` and the part
 // reading `x`. Threads take contiguous output column ranges. Sources: x, w, bias, hist?, res?.
@@ -514,7 +514,7 @@ static ggml_tensor * conv_causal(render_ctx & rc, ggml_tensor * w, ggml_tensor *
         auto * y = encoder_conv(rc, w, bias, x, d, 1);
         return res ? ggml_add(ctx, res, y) : y;
     }
-#if DAC_CPU_GEMM
+#if ZAC_CPU_GEMM
     if (!rc.m.is_gpu && !rc.encoder) {
         std::vector<size_t> off(K);
         for (int64_t k = 0; k < K; ++k) off[k] = (size_t) (k * IC * OC);
@@ -585,7 +585,7 @@ static ggml_tensor * snake(render_ctx & rc, ggml_tensor * x, const std::string &
     return ggml_add(ctx, x, ggml_mul(ctx, s2, ggml_reshape_2d(ctx, inv_alpha, C, 1)));
 }
 
-#if DAC_CPU_GEMM
+#if ZAC_CPU_GEMM
 // Exact GELU 0.5*x*(1 + erf(x/sqrt2)) over a contiguous F32 tensor (ggml's CPU gelu_erf calls
 // scalar erff). erf by Abramowitz-Stegun 7.1.26 (|err| <= 1.5e-7), exp(-z^2) in blocks via vvexpf.
 static void gelu_erf_cpu(ggml_tensor * dst, const ggml_tensor * x, int ith, int nth, void *) {
@@ -611,7 +611,7 @@ static void gelu_erf_cpu(ggml_tensor * dst, const ggml_tensor * x, int ith, int 
 #endif
 
 static ggml_tensor * gelu(render_ctx & rc, ggml_tensor * x) {
-#if DAC_CPU_GEMM
+#if ZAC_CPU_GEMM
     if (!rc.m.is_gpu && !rc.encoder) {
         GGML_ASSERT(ggml_is_contiguous(x) && x->type == GGML_TYPE_F32);
         return ggml_map_custom1(rc.ctx, x, gelu_erf_cpu, GGML_N_TASKS_MAX, nullptr);
@@ -622,14 +622,14 @@ static ggml_tensor * gelu(render_ctx & rc, ggml_tensor * x) {
 
 // Causal residual unit.
 static ggml_tensor * res_unit(render_ctx & rc, ggml_tensor * x, const std::string & p, int dil) {
-    const dac_model & m = rc.m;
+    const zac_model & m = rc.m;
     ggml_tensor * y = snake(rc, x, p + ".snake1");
     y = conv_causal(rc, m.get(p + ".conv1.weight"), m.get(p + ".conv1.bias"), y, dil);
     y = snake(rc, y, p + ".snake2");
     return conv_causal(rc, m.get(p + ".conv2.weight"), m.get(p + ".conv2.bias"), y, 1, x);
 }
 
-int dac_samples_per_frame(const dac_model & m) { return m.hop; }
+int zac_samples_per_frame(const zac_model & m) { return m.hop; }
 
 static ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, ggml_tensor * w, ggml_tensor * b, float eps) {
     return ggml_add(ctx, ggml_mul(ctx, ggml_norm(ctx, x, eps), w), b);
@@ -639,7 +639,7 @@ static ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, ggml_tensor
 // LayerNorm, pw1, exact GELU, pw2, residual. No layer scale.
 static ggml_tensor * convnext_block(render_ctx & rc, ggml_tensor * x, const std::string & p) {
     ggml_context * ctx = rc.ctx;
-    const dac_model & m = rc.m;
+    const zac_model & m = rc.m;
     const int64_t C = x->ne[0], T = x->ne[1];
     ggml_tensor * dw = m.get(p + ".dw.weight");    // [C, K]
     const int K = (int) dw->ne[1];
@@ -674,10 +674,10 @@ static ggml_tensor * patch_up(render_ctx & rc, ggml_tensor * x, int h) {
 // the stream's ring cache at rows `slots`; attention reads the whole ring, and `mask` [cap, T]
 // keeps only slots holding positions with 0 <= q_pos - k_pos < context and k_pos >= 0.
 static ggml_tensor * moss_layer(render_ctx & rc, ggml_tensor * x, const std::string & p,
-                                const dac_stage_hp & hp, ggml_tensor * pos, ggml_tensor * slots,
+                                const zac_stage_hp & hp, ggml_tensor * pos, ggml_tensor * slots,
                                 ggml_tensor * mask) {
     ggml_context * ctx = rc.ctx;
-    const dac_model & m = rc.m;
+    const zac_model & m = rc.m;
     const int d = hp.d_model, nh = hp.n_head, hd = d / nh;
     const int64_t T = x->ne[1];
     ggml_tensor * kc = rc.st ? rc.st->kc[rc.layer] : nullptr;
@@ -743,13 +743,13 @@ static ggml_tensor * moss_layer(render_ctx & rc, ggml_tensor * x, const std::str
     return ggml_add(ctx, x, ggml_mul(ctx, h, m.get(p + ".ffn_scale")));
 }
 
-namespace dac_encoder_detail {
-static render_ctx lane(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m, ggml_tensor * x) {
+namespace zac_encoder_detail {
+static render_ctx lane(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m, ggml_tensor * x) {
     render_ctx rc{ctx, m, (int) x->ne[1], 1, {}, {}, {}, graph, nullptr, 0};
     rc.encoder = true;
     return rc;
 }
-ggml_tensor * conv(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m,
+ggml_tensor * conv(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m,
                    ggml_tensor * x, const std::string & p, int dilation, int stride) {
     auto rc = lane(ctx, graph, m, x);
     auto * w = m.get(p + ".weight");
@@ -757,24 +757,24 @@ ggml_tensor * conv(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m,
     if (stride == 1) return conv_causal(rc, w, b, x, dilation);
     return encoder_conv(rc, w, b, x, dilation, stride);
 }
-ggml_tensor * snake(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m,
+ggml_tensor * snake(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m,
                     ggml_tensor * x, const std::string & p) {
     auto rc = lane(ctx, graph, m, x);
     return ::snake(rc, x, p);
 }
-ggml_tensor * residual(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m,
+ggml_tensor * residual(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m,
                        ggml_tensor * x, const std::string & p, int dilation) {
     auto rc = lane(ctx, graph, m, x);
     return res_unit(rc, x, p, dilation);
 }
-ggml_tensor * convnext(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m,
+ggml_tensor * convnext(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m,
                        ggml_tensor * x, const std::string & p, bool input_bf16) {
     auto rc = lane(ctx, graph, m, x);
     rc.input_bf16 = input_bf16;
     return convnext_block(rc, x, p);
 }
-ggml_tensor * moss(ggml_context * ctx, ggml_cgraph * graph, const dac_model & m,
-                   ggml_tensor * x, const std::string & p, const dac_stage_hp & hp,
+ggml_tensor * moss(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m,
+                   ggml_tensor * x, const std::string & p, const zac_stage_hp & hp,
                    ggml_tensor * pos, ggml_tensor * mask, bool first) {
     auto rc = lane(ctx, graph, m, x);
     rc.input_bf16 = first;
@@ -794,14 +794,14 @@ static int gpu_width(int n) {
     return GPU_MAX_CHUNK;
 }
 
-dac_stream::~dac_stream() {
+zac_stream::~zac_stream() {
     if (buf_kv) ggml_backend_buffer_free(buf_kv);
     if (ctx_kv) ggml_free(ctx_kv);
 }
 
-dac_stream::dac_stream(dac_stream && o) noexcept { *this = std::move(o); }
+zac_stream::zac_stream(zac_stream && o) noexcept { *this = std::move(o); }
 
-dac_stream & dac_stream::operator=(dac_stream && o) noexcept {
+zac_stream & zac_stream::operator=(zac_stream && o) noexcept {
     if (this == &o) return *this;
     if (buf_kv) ggml_backend_buffer_free(buf_kv);
     if (ctx_kv) ggml_free(ctx_kv);
@@ -819,16 +819,16 @@ dac_stream & dac_stream::operator=(dac_stream && o) noexcept {
 
 // Per-stage K/V ring caches sized so the window [p0 - context + 1, p0 + T - 1] of any chunk
 // (T <= max chunk width in columns) maps to distinct rows.
-static bool dac_stream_alloc(const dac_model & m, dac_stream & st) {
+static bool zac_stream_alloc(const zac_model & m, zac_stream & st) {
     const int max_chunk = m.is_gpu ? GPU_MAX_CHUNK : CPU_CHUNK;
     size_t n_tensors = 0;
-    for (const dac_stage_hp & hp : m.stages) n_tensors += 2 * (size_t) hp.n_layer;
+    for (const zac_stage_hp & hp : m.stages) n_tensors += 2 * (size_t) hp.n_layer;
     st.ctx_kv = ggml_init({ n_tensors * ggml_tensor_overhead(), nullptr, true });
     // F32 on CPU: ggml's CPU flash attention accumulates V*softmax in F16 for an F16 cache, which
     // made streamed (block 3) and buffered output differ by 2.4e-3. Metal accumulates in F32.
     const ggml_type kv_type = m.is_gpu ? GGML_TYPE_F16 : GGML_TYPE_F32;
     int cpf = 1;
-    for (const dac_stage_hp & hp : m.stages) {
+    for (const zac_stage_hp & hp : m.stages) {
         const int cap = hp.context - 1 + max_chunk * cpf, hd = hp.d_model / hp.n_head;
         st.cap.push_back(cap);
         for (int l = 0; l < hp.n_layer; ++l) {
@@ -839,7 +839,7 @@ static bool dac_stream_alloc(const dac_model & m, dac_stream & st) {
     }
     st.buf_kv = ggml_backend_alloc_ctx_tensors(st.ctx_kv, m.backend);
     if (!st.buf_kv) {
-        fprintf(stderr, "dac: stream KV cache allocation failed\n");
+        fprintf(stderr, "zac: stream KV cache allocation failed\n");
         ggml_free(st.ctx_kv); st.ctx_kv = nullptr;
         st.kc.clear(); st.vc.clear(); st.cap.clear();
         return false;
@@ -855,7 +855,7 @@ static bool dac_stream_alloc(const dac_model & m, dac_stream & st) {
 // padded positions [t*hop, t*hop + n); branch sample m is padded position m + n/2.
 
 // Emit mixer outputs y[m] for every m whose taps are available. `flush`: all remaining m < L.
-static void mix_emit(const dac_model & m, dac_stream & st, std::vector<float> & out) {
+static void mix_emit(const zac_model & m, zac_stream & st, std::vector<float> & out) {
     const int K = m.fir_kernel;
     // mix_in index j holds s[j - h]; y[m] = sum_c sum_k w[c][k] * mix_in_c[m + k].
     const int64_t avail = std::min(st.mix_avail[0], st.mix_avail[1]);
@@ -884,7 +884,7 @@ static void mix_emit(const dac_model & m, dac_stream & st, std::vector<float> & 
 
 // Finalize overlap-add positions [ola_base, pf) of branch i into the mixer input (dropping the
 // centre padding m < 0).
-static void ola_finalize(const dac_model & m, dac_stream & st, int i, int64_t pf) {
+static void ola_finalize(const zac_model & m, zac_stream & st, int i, int64_t pf) {
     const int64_t pad = m.n_fft[i] / 2;
     const int64_t n = pf - st.ola_base[i];
     if (n <= 0) return;
@@ -898,7 +898,7 @@ static void ola_finalize(const dac_model & m, dac_stream & st, int i, int64_t pf
     st.ola_base[i] = pf;
 }
 
-static void head_init(const dac_model & m, dac_stream & st) {
+static void head_init(const zac_model & m, zac_stream & st) {
     const int h = (m.fir_kernel - 1) / 2;
     for (int i = 0; i < 2; ++i) {
         st.mix_in[i].assign((size_t) h, 0.0f);
@@ -909,7 +909,7 @@ static void head_init(const dac_model & m, dac_stream & st) {
 
 // Add `n_cols` head frames: y0 [n_fft0 + 2, n_cols], y1 [n_fft1 + 2, n_cols] (column-major as read
 // from the backend: logmag[0:bins], phase[bins:2*bins]); append the finished 44160 Hz samples.
-static void head_push(const dac_model & m, dac_stream & st, const float * y0, const float * y1,
+static void head_push(const zac_model & m, zac_stream & st, const float * y0, const float * y1,
                       int64_t n_cols, std::vector<float> & out) {
     if (st.head_frames == 0) head_init(m, st);
     const float * y[2] = { y0, y1 };
@@ -946,7 +946,7 @@ static void head_push(const dac_model & m, dac_stream & st, const float * y0, co
 
 // End of stream: every sample m < L = head_frames*hop is final (the envelope only covers existing
 // frames, like torch); the mixer's right zero padding is h zeros after the last branch sample.
-static void head_flush(const dac_model & m, dac_stream & st, std::vector<float> & out) {
+static void head_flush(const zac_model & m, zac_stream & st, std::vector<float> & out) {
     if (st.head_done || st.head_frames == 0) return;
     st.head_done = true;
     const int h = (m.fir_kernel - 1) / 2;
@@ -964,7 +964,7 @@ static void head_flush(const dac_model & m, dac_stream & st, std::vector<float> 
 
 // Decode frames [f0, f0 + n_valid) through the trunk and head projections, advancing the conv/KV
 // history in `st`, and append the internal-rate samples that are final so far to `internal`.
-static bool decode_chunk(const dac_model & m, dac_stream & st, const int32_t * codes, int H,
+static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * codes, int H,
                          int f0, int n_valid, std::vector<float> & internal) {
     const int ncb = m.n_codebooks, gf = m.is_gpu ? gpu_width(n_valid) : n_valid;
     ggml_context * ctx = ggml_init({ (size_t) 64 * 1024 * 1024, nullptr, true });
@@ -986,7 +986,7 @@ static bool decode_chunk(const dac_model & m, dac_stream & st, const int32_t * c
     struct stage_in { ggml_tensor * pos, * slots, * mask; int cpf, T, context, cap; };
     std::vector<stage_in> sin;
     for (size_t s = 0; s < m.stages.size(); ++s) {
-        const dac_stage_hp & hp = m.stages[s];
+        const zac_stage_hp & hp = m.stages[s];
         const std::string p = "stage." + std::to_string(s);
         x = ggml_mul_mat(ctx, m.get(p + ".in.weight"), x);
         const int T = (int) x->ne[1], cap = st.cap[s];
@@ -1016,7 +1016,7 @@ static bool decode_chunk(const dac_model & m, dac_stream & st, const int32_t * c
         if (node->op == GGML_OP_MUL_MAT) ggml_prec_set_acc(node, GGML_PREC_F32);
     }
     if (!st.conv.empty() && st.conv.size() != rc.hist_in.size()) {
-        fprintf(stderr, "dac: stream state mismatch\n");
+        fprintf(stderr, "zac: stream state mismatch\n");
         ggml_free(ctx); return false;
     }
 
@@ -1033,7 +1033,7 @@ static bool decode_chunk(const dac_model & m, dac_stream & st, const int32_t * c
         ok = ggml_gallocr_alloc_graph(alloc, graph);
     }
     if (!ok) {
-        fprintf(stderr, "dac: graph allocation failed\n");
+        fprintf(stderr, "zac: graph allocation failed\n");
         ggml_gallocr_free(alloc); ggml_free(ctx); return false;
     }
 
@@ -1079,7 +1079,7 @@ static bool decode_chunk(const dac_model & m, dac_stream & st, const int32_t * c
     const ggml_status status = m.sched ? ggml_backend_sched_graph_compute(m.sched, graph)
                                        : ggml_backend_graph_compute(m.backend, graph);
     if (status != GGML_STATUS_SUCCESS) {
-        fprintf(stderr, "dac: compute failed\n");
+        fprintf(stderr, "zac: compute failed\n");
         ggml_gallocr_free(alloc); ggml_free(ctx); return false;
     }
     const int64_t n_cols = (int64_t) n_valid * (m.internal_hop / m.head_hop);       // head frames in this chunk
@@ -1103,7 +1103,7 @@ static bool decode_chunk(const dac_model & m, dac_stream & st, const int32_t * c
 //   out[n*new + i] = sum_k K[i][k] * x[n*orig + k - width],  x = 0 outside [0, rs_in).
 // Block n needs x up to n*orig + (2*width + orig - 1) - width; without `flush` it waits for those
 // samples, with `flush` it zero-extends and truncates the total to ceil(new * rs_in / orig).
-static void resample(const dac_model & m, dac_stream & st, bool flush, std::vector<float> & audio) {
+static void resample(const zac_model & m, zac_stream & st, bool flush, std::vector<float> & audio) {
     const int O = m.rs_orig, N = m.rs_new, W = m.rs_width, KL = 2 * W + O;
     const int64_t total = flush ? ((int64_t) N * st.rs_in + O - 1) / O : -1;
     std::vector<float> xw(KL), y(N);
@@ -1114,7 +1114,7 @@ static void resample(const dac_model & m, dac_stream & st, bool flush, std::vect
             const int64_t j = x0 + k;
             xw[k] = (j < 0 || j >= st.rs_in) ? 0.0f : st.rs_buf[(size_t) (j - st.rs_base)];
         }
-#if DAC_CPU_GEMM
+#if ZAC_CPU_GEMM
         cblas_sgemv(CblasRowMajor, CblasNoTrans, N, KL, 1.0f, m.rs_kernel.data(), KL, xw.data(), 1, 0.0f, y.data(), 1);
 #else
         for (int i = 0; i < N; ++i) {
@@ -1135,11 +1135,11 @@ static void resample(const dac_model & m, dac_stream & st, bool flush, std::vect
     }
 }
 
-bool dac_stream_decode(const dac_model & m, dac_stream & st, const int32_t * codes, int H, int f_hi,
+bool zac_stream_decode(const zac_model & m, zac_stream & st, const int32_t * codes, int H, int f_hi,
                        std::vector<float> & audio) {
     if (f_hi < 0 || H < 0 || (f_hi > st.n_done && !codes)) return false;
-    if (st.kc.empty() && !dac_stream_alloc(m, st)) return false;
-    if (st.owner != &m) { fprintf(stderr, "dac: stream used with a different codec model\n"); return false; }
+    if (st.kc.empty() && !zac_stream_alloc(m, st)) return false;
+    if (st.owner != &m) { fprintf(stderr, "zac: stream used with a different codec model\n"); return false; }
     const int chunk = m.is_gpu ? GPU_MAX_CHUNK : CPU_CHUNK;
     std::vector<float> internal;
     while (st.n_done < f_hi) {
@@ -1154,7 +1154,7 @@ bool dac_stream_decode(const dac_model & m, dac_stream & st, const int32_t * cod
     return true;
 }
 
-bool dac_stream_flush(const dac_model & m, dac_stream & st, std::vector<float> & audio) {
+bool zac_stream_flush(const zac_model & m, zac_stream & st, std::vector<float> & audio) {
     std::vector<float> internal;
     head_flush(m, st, internal);
     st.rs_buf.insert(st.rs_buf.end(), internal.begin(), internal.end());
@@ -1163,32 +1163,32 @@ bool dac_stream_flush(const dac_model & m, dac_stream & st, std::vector<float> &
     return true;
 }
 
-float dac_output_gain(const dac_model & m, double headroom_db) {
+float zac_output_gain(const zac_model & m, double headroom_db) {
     const double db = headroom_db < 0 ? (double) m.headroom_db : headroom_db;
     return powf(10.0f, (float) (-db / 20.0));
 }
 
-bool dac_decode(const dac_model & m, const int32_t * codes, int H, int W, int eos,
+bool zac_decode(const zac_model & m, const int32_t * codes, int H, int W, int eos,
                 std::vector<float> & audio) {
     if (W != m.n_codebooks) {
-        fprintf(stderr, "dac: codes have %d codebooks, expected %d\n", W, m.n_codebooks); return false;
+        fprintf(stderr, "zac: codes have %d codebooks, expected %d\n", W, m.n_codebooks); return false;
     }
     const int E = std::min(eos >= 0 ? eos : H, H - (m.n_codebooks - 1));
-    if (E <= 0) { fprintf(stderr, "dac: no frames to decode (eos=%d, H=%d)\n", eos, H); return false; }
-    dac_stream st;
+    if (E <= 0) { fprintf(stderr, "zac: no frames to decode (eos=%d, H=%d)\n", eos, H); return false; }
+    zac_stream st;
     audio.clear();
     const auto t0 = std::chrono::steady_clock::now();
-    if (!dac_stream_decode(m, st, codes, H, E, audio) || !dac_stream_flush(m, st, audio)) return false;
+    if (!zac_stream_decode(m, st, codes, H, E, audio) || !zac_stream_flush(m, st, audio)) return false;
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const double audio_s = (double) audio.size() / m.sample_rate;
     double rms = 0, peak = 0;
     for (float v : audio) { rms += (double) v * v; peak = std::max(peak, (double) fabsf(v)); }
-    fprintf(stderr, "dac: H=%d eos=%d -> %d frames, %zu samples = %.2fs, rms=%.4f peak=%.4f, decode %.2fs (RTF %.3f)\n",
+    fprintf(stderr, "zac: H=%d eos=%d -> %d frames, %zu samples = %.2fs, rms=%.4f peak=%.4f, decode %.2fs (RTF %.3f)\n",
             H, eos, E, audio.size(), audio_s, sqrt(rms / audio.size()), peak, secs, secs / audio_s);
     return true;
 }
 
-std::vector<uint8_t> dac_wav_bytes(const std::vector<float> & audio, int sample_rate) {
+std::vector<uint8_t> zac_wav_bytes(const std::vector<float> & audio, int sample_rate) {
     const int64_t ns = (int64_t) audio.size();
     const uint32_t sr = (uint32_t) sample_rate, byte_rate = sr * 2, data_bytes = (uint32_t) (ns * 2);
     const uint32_t riff = 36 + data_bytes;
@@ -1208,12 +1208,12 @@ std::vector<uint8_t> dac_wav_bytes(const std::vector<float> & audio, int sample_
     return out;
 }
 
-bool dac_write_wav(const char * path, const std::vector<float> & audio, int sample_rate) {
+bool zac_write_wav(const char * path, const std::vector<float> & audio, int sample_rate) {
     FILE * wf = fopen(path, "wb");
-    if (!wf) { fprintf(stderr, "dac: cannot write %s\n", path); return false; }
-    const std::vector<uint8_t> buf = dac_wav_bytes(audio, sample_rate);
+    if (!wf) { fprintf(stderr, "zac: cannot write %s\n", path); return false; }
+    const std::vector<uint8_t> buf = zac_wav_bytes(audio, sample_rate);
     fwrite(buf.data(), 1, buf.size(), wf);
     fclose(wf);
-    fprintf(stderr, "dac: wrote %s\n", path);
+    fprintf(stderr, "zac: wrote %s\n", path);
     return true;
 }

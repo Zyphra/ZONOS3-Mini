@@ -72,8 +72,8 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
-          encoder=$(find build \( -name dac-encoder-cli -o -name dac-encoder-cli.exe \) -type f | head -1)
-          test -n "$encoder" || { echo "DAC encoder companion tool not built"; exit 1; }
+          encoder=$(find build \( -name zac-encoder-cli -o -name zac-encoder-cli.exe \) -type f | head -1)
+          test -n "$encoder" || { echo "ZAC encoder companion tool not built"; exit 1; }
           out=$("$encoder" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "encoder smoke failed:"; echo "$out"; exit 1; }
           teacher=$(find build \( -name ssl-encoder-cli -o -name ssl-encoder-cli.exe \) -type f | head -1)
@@ -85,7 +85,7 @@ jobs:
           out=$("$speaker" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "speaker smoke failed:"; echo "$out"; exit 1; }
       # Run the documented README / docs/INTERNALS.md commands against the committed
-      # dummy fixtures (backbone + DAC): the CLI codes/WAV paths on every platform,
+      # dummy fixtures (backbone + ZAC): the CLI codes/WAV paths on every platform,
       # plus the zonos3-server HTTP routes on Linux/macOS (the script self-skips the
       # server on Windows and when curl is absent).
       - name: README command tests
@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find build \( -name 'zonos3-cli' -o -name 'dac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'dac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
+          find build \( -name 'zonos3-cli' -o -name 'zac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'zac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
           cp -r ../../default_voices dist/
           cp -r ../../laci_heads dist/
@@ -174,8 +174,8 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
-          encoder=$(find build \( -name dac-encoder-cli -o -name dac-encoder-cli.exe \) -type f | head -1)
-          test -n "$encoder" || { echo "DAC encoder companion tool not built"; exit 1; }
+          encoder=$(find build \( -name zac-encoder-cli -o -name zac-encoder-cli.exe \) -type f | head -1)
+          test -n "$encoder" || { echo "ZAC encoder companion tool not built"; exit 1; }
           out=$("$encoder" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "encoder smoke failed:"; echo "$out"; exit 1; }
           teacher=$(find build \( -name ssl-encoder-cli -o -name ssl-encoder-cli.exe \) -type f | head -1)
@@ -187,7 +187,7 @@ jobs:
           out=$("$speaker" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "speaker smoke failed:"; echo "$out"; exit 1; }
       # Run the documented README / docs/INTERNALS.md commands against the committed
-      # dummy fixtures (backbone + DAC): the CLI codes/WAV paths on every platform,
+      # dummy fixtures (backbone + ZAC): the CLI codes/WAV paths on every platform,
       # plus the zonos3-server HTTP routes on Linux/macOS (the script self-skips the
       # server on Windows and when curl is absent).
       - name: README command tests
@@ -201,7 +201,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find build \( -name 'zonos3-cli' -o -name 'dac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'dac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
+          find build \( -name 'zonos3-cli' -o -name 'zac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'zac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
           cp -r ../../default_voices dist/
           cp -r ../../laci_heads dist/
@@ -335,8 +335,8 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
-          encoder=$(find build \( -name dac-encoder-cli -o -name dac-encoder-cli.exe \) -type f | head -1)
-          test -n "$encoder" || { echo "DAC encoder companion tool not built"; exit 1; }
+          encoder=$(find build \( -name zac-encoder-cli -o -name zac-encoder-cli.exe \) -type f | head -1)
+          test -n "$encoder" || { echo "ZAC encoder companion tool not built"; exit 1; }
           out=$("$encoder" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "encoder smoke failed:"; echo "$out"; exit 1; }
           teacher=$(find build \( -name ssl-encoder-cli -o -name ssl-encoder-cli.exe \) -type f | head -1)
@@ -348,7 +348,7 @@ jobs:
           out=$("$speaker" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "speaker smoke failed:"; echo "$out"; exit 1; }
       # Run the documented README / docs/INTERNALS.md commands against the committed
-      # dummy fixtures (backbone + DAC): the CLI codes/WAV paths on every platform,
+      # dummy fixtures (backbone + ZAC): the CLI codes/WAV paths on every platform,
       # plus the zonos3-server HTTP routes on Linux/macOS (the script self-skips the
       # server on Windows and when curl is absent).
       - name: README command tests
@@ -367,7 +367,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find build \( -name 'zonos3-cli' -o -name 'dac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'dac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
+          find build \( -name 'zonos3-cli' -o -name 'zac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'zac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
           cp -r ../../default_voices dist/
           cp -r ../../laci_heads dist/
@@ -530,8 +530,8 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
-          encoder=$(find build \( -name dac-encoder-cli -o -name dac-encoder-cli.exe \) -type f | head -1)
-          test -n "$encoder" || { echo "DAC encoder companion tool not built"; exit 1; }
+          encoder=$(find build \( -name zac-encoder-cli -o -name zac-encoder-cli.exe \) -type f | head -1)
+          test -n "$encoder" || { echo "ZAC encoder companion tool not built"; exit 1; }
           out=$("$encoder" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "encoder smoke failed:"; echo "$out"; exit 1; }
           teacher=$(find build \( -name ssl-encoder-cli -o -name ssl-encoder-cli.exe \) -type f | head -1)
@@ -543,7 +543,7 @@ jobs:
           out=$("$speaker" 2>&1 || true)
           echo "$out" | grep -q "usage:" || { echo "speaker smoke failed:"; echo "$out"; exit 1; }
       # Run the documented README / docs/INTERNALS.md commands against the committed
-      # dummy fixtures (backbone + DAC): the CLI codes/WAV paths on every platform,
+      # dummy fixtures (backbone + ZAC): the CLI codes/WAV paths on every platform,
       # plus the zonos3-server HTTP routes on Linux/macOS (the script self-skips the
       # server on Windows and when curl is absent).
       - name: README command tests
@@ -557,7 +557,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find build \( -name 'zonos3-cli.exe' -o -name 'dac-encoder-cli.exe' -o -name 'ssl-encoder-cli.exe' -o -name 'spk-encoder-cli.exe' -o -name 'dac-cli.exe' -o -name 'quantize-cli.exe' -o -name 'zonos3-server.exe' -o -name 'zonos3-app.exe' \) -type f -exec cp {} dist/ \;
+          find build \( -name 'zonos3-cli.exe' -o -name 'zac-encoder-cli.exe' -o -name 'ssl-encoder-cli.exe' -o -name 'spk-encoder-cli.exe' -o -name 'zac-cli.exe' -o -name 'quantize-cli.exe' -o -name 'zonos3-server.exe' -o -name 'zonos3-app.exe' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
           cp -r ../../default_voices dist/
           cp -r ../../laci_heads dist/

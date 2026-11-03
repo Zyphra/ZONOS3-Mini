@@ -4,8 +4,8 @@
     T="uv run --package zonos3-tools python tools/convert_gguf.py"
     $T lm RELEASE/lm/mect_60k [--outtype f32|f16|q8_0] [--silence-frame J] -o zonos3-f16.gguf
     $T lm lm/mect_60k_q4q8_qat -o zonos3-qat.gguf               (QAT directory: bake.json present)
-    $T codec-decoder RELEASE/autoencoder/generator.pt --head RELEASE/autoencoder/heads/full_mr -o dac.gguf
-    $T codec-encoder RELEASE/autoencoder/generator.pt -o dac-encoder.gguf
+    $T codec-decoder RELEASE/autoencoder/generator.pt --head RELEASE/autoencoder/heads/full_mr -o zac.gguf
+    $T codec-encoder RELEASE/autoencoder/generator.pt -o zac-encoder.gguf
     $T ssl-teacher RELEASE/autoencoder/teacher -o ssl-teacher.gguf
     $T speaker-encoder RELEASE/speaker_encoders/ownmect_s2/ckpt_0037.pth -o spk-encoder.gguf
     $T steer steering/studio_bundle_mect60k.json -o steer.gguf

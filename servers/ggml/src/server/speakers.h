@@ -15,7 +15,7 @@ namespace zs {
 
 // The speaker paths of the checkpoint, in sgl _speaker_modes order: the raw reference prefix, then the speaker row.
 std::vector<std::string> checkpoint_speaker_modes(const ServerState & s);
-bool reference_audio_available(const ServerState & s);   // dac-encoder.gguf + ssl-teacher.gguf
+bool reference_audio_available(const ServerState & s);   // zac-encoder.gguf + ssl-teacher.gguf
 bool speaker_encoder_available(const ServerState & s);   // spk-encoder.gguf
 
 // The speaker prompt of a GenerateRequest for `mode` ("embedding" | "reference" | "" = none): empty when the request

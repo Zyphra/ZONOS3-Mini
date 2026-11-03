@@ -50,7 +50,7 @@ static json condition_tokens(const ServerState & s) {
 
 // sgl _silence_prefill_spec (the matched dual codec has codec-matched silence frames).
 static json silence_prefill(const ServerState & s) {
-    const int hop = dac_samples_per_frame(s.dac);
+    const int hop = zac_samples_per_frame(s.zac);
     const double rate = zonos3_generation().sample_rate;
     const int frames = s.silence_prefill_frames;
     return {{"available", true}, {"default_frames", frames}, {"default_on", s.silence_prefill_on},
@@ -61,10 +61,10 @@ static json silence_prefill(const ServerState & s) {
                      "turns it off and silence_prefill_frames=N sets the length"}};
 }
 
-// sgl _decoder_capability: the iSTFT head decoder (dac.gguf) behind the matched codec.
-static json decoder(const ServerState & s, const std::string & dac_name) {
-    return {{"kind", "istft_mr"}, {"label", "Multi-resolution iSTFT head (" + dac_name + "); causal"},
-            {"checkpoint", dac_name}, {"expect_step", nullptr}, {"headroom_db", (double) s.dac.headroom_db},
+// sgl _decoder_capability: the iSTFT head decoder (zac.gguf) behind the matched codec.
+static json decoder(const ServerState & s, const std::string & zac_name) {
+    return {{"kind", "istft_mr"}, {"label", "Multi-resolution iSTFT head (" + zac_name + "); causal"},
+            {"checkpoint", zac_name}, {"expect_step", nullptr}, {"headroom_db", (double) s.zac.headroom_db},
             {"causal", true}, {"codec", AUDIO_CODEC}};
 }
 
@@ -100,7 +100,7 @@ json capabilities(const ServerState & s) {
                                      "no-op without a reference prompt"}}},
         {"speaker_modes", modes},
         {"speaker_mode_default", modes.empty() ? json(nullptr) : json(modes[0])},
-        {"decoder", decoder(s, s.dac_name)},
+        {"decoder", decoder(s, s.zac_name)},
         {"condition_tokens", condition_tokens(s)},
         {"speaker_audio_upload", !modes.empty() && (speaker_encoder_available(s) || reference_audio_available(s))},
         {"speaker_cfg_supported", cfg},

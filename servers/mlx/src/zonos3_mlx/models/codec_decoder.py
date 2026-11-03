@@ -1,4 +1,4 @@
-"""ZONOS3 Mini codec decoder (``mossdual_istft``) on MLX: a port of servers/ggml/src/dac.cpp.
+"""ZONOS3 Mini codec decoder (``mossdual_istft``) on MLX: a port of servers/ggml/src/zac.cpp.
 
 Semantic RVQ table + causal ConvNeXt head, residual RVQ tables, five windowed-causal MOSS transformer stages with patch
 upsampling (15 -> 240 Hz), the multi-resolution iSTFT head (ConvNeXt trunk, two irfft branches, overlap-add) and the
@@ -88,7 +88,7 @@ def causal_depthwise(x: mx.array, w: mx.array, b: mx.array | None) -> mx.array:
 
 
 def convnext_block(P: Params, x: mx.array, p: str, eps: float, rnd=_identity, round_out: bool = False) -> mx.array:
-    """Causal ConvNeXt block. ``rnd`` marks the encoder's BF16 boundaries (dac.cpp ``encoder_round``; identity for the
+    """Causal ConvNeXt block. ``rnd`` marks the encoder's BF16 boundaries (zac.cpp ``encoder_round``; identity for the
     decoder), ``round_out`` its rounded output (the semantic encoder's blocks)."""
     h = causal_depthwise(rnd(x), P.t[p + ".dw.weight"], None)
     h = rnd(rnd(h) + P.t[p + ".dw.bias"])
@@ -146,7 +146,7 @@ def read_stages(f: GGUFFile, arch: str) -> list[StageHP]:
 
 def sinc_resample(x: mx.array, kernel: mx.array, orig: int, new: int, width: int) -> mx.array:
     """torchaudio-style polyphase resampling: out[n*new + i] = sum_k K[i][k] x[n*orig + k - width], zero outside,
-    total ceil(new * len / orig) samples (dac.cpp ``resample``)."""
+    total ceil(new * len / orig) samples (zac.cpp ``resample``)."""
     L = int(x.shape[0])
     total = -(-new * L // orig)
     blocks = -(-total // new)

@@ -1,5 +1,5 @@
 // Reference-encoder parity: RefEncoder codes of default_voices/AmericanFemale.mp3 (the ffmpeg-decoded 44.1 kHz PCM the
-// CLIs read, goldens/spk/pcm44k.npy) vs the shipped AmericanFemale.codes.npy (dac-encoder-cli, native BF16 recipe).
+// CLIs read, goldens/spk/pcm44k.npy) vs the shipped AmericanFemale.codes.npy (zac-encoder-cli, native BF16 recipe).
 // The web encoder ports that BF16 recipe, but near-tie RVQ picks still follow GPU accumulation order, so codes differ
 // slightly; the plan's bar is codebook-0 agreement >= 0.95.
 import { RefEncoder } from '../../src/encoder';

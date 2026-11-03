@@ -27,7 +27,7 @@ export default {
     obj.writeHttpMetadata(headers);
     headers.set('etag', obj.httpEtag);
     headers.set('content-length', String(obj.size));
-    // The app caches shards itself in Cache Storage (zonos3-web-models-v1); keep the browser HTTP cache from storing a second copy.
+    // The app caches shards itself in Cache Storage (zonos3-web-models-v2); keep the browser HTTP cache from storing a second copy.
     headers.set('cache-control', 'no-store');
     return new Response(req.method === 'HEAD' ? null : obj.body, { headers });
   },

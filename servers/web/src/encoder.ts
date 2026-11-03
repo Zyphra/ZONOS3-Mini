@@ -1,9 +1,9 @@
 // Reference-audio encoder (mossdual_encoder + w2v-BERT SSL teacher) on WebGPU: 44.1 kHz audio ->
-// ordinary [T][10] codec codes. Mirrors dac_encode_diagnostic (dac-encoder.cpp) with its native BF16 recipe:
+// ordinary [T][10] codec codes. Mirrors zac_encode_diagnostic (zac-encoder.cpp) with its native BF16 recipe:
 // 300-frame lanes with 150 frames of left context; per lane a causal acoustic path (SEANet front in
 // 10 tiles with carried conv histories, then 5 MOSS stages), the SSL teacher pooled to 300 frames
 // through the semantic encoder and RVQ level 0, the semantic head prediction, and 9 residual levels.
-// BF16 recipe (dac.cpp encoder_conv / encoder_round / convnext_block / moss_layer): every GEMM reads bf16 weights and
+// BF16 recipe (zac.cpp encoder_conv / encoder_round / convnext_block / moss_layer): every GEMM reads bf16 weights and
 // bf16-rounded inputs with f32 accumulation. Convolutions (and the semantic in/out projections) round the product,
 // add the bias and round again; residual units round after their residual add. MOSS linears round their product
 // (ffn1 also after GELU), q/k round after RoPE, while attention, LayerNorm, layer scales and the MOSS residual stream

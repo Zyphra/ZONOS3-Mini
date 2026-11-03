@@ -1,4 +1,4 @@
-"""MLX codec decoder vs a float64 NumPy transcription of servers/ggml/src/dac.cpp (dac_decode: un-shear, trunk,
+"""MLX codec decoder vs a float64 NumPy transcription of servers/ggml/src/zac.cpp (zac_decode: un-shear, trunk,
 per-branch iSTFT with overlap-add, FIR mixer, 44160 -> 44100 resampler) on the dummy decoder fixture."""
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from conftest import FIXTURES
 from gguf import GGUFReader
 from zonos3_mlx.models.codec_decoder import CodecDecoder
 
-GGUF = FIXTURES / "dummy-dac.gguf"
-CODES = FIXTURES / "dummy-dac-codes.npy"
+GGUF = FIXTURES / "dummy-zac.gguf"
+CODES = FIXTURES / "dummy-zac-codes.npy"
 
 
 class Ref:

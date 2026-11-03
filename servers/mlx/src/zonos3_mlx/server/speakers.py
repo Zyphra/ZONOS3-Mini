@@ -2,7 +2,7 @@
 
 A port of the sgl api_server speaker code (default voices, the session cache, embedding files, slerp blends, the
 /v2/speakers routes) with the ggml server's companions: embeddings come from spk-encoder.gguf, reference codes from a
-default voice's ``<stem>.codes.npy`` or from the MLX reference encoder (dac-encoder.gguf + ssl-teacher.gguf).
+default voice's ``<stem>.codes.npy`` or from the MLX reference encoder (zac-encoder.gguf + ssl-teacher.gguf).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ EMBEDDING_EXTENSIONS = {".npy", ".npz"}
 REFERENCE_CACHE = 64
 NO_SPEAKER_ENCODER = ("This server has no speaker encoder (spk-encoder.gguf); send speaker_embedding_base64 or use "
                       "speaker_mode=reference.")
-NO_REFERENCE_ENCODER = ("This server has no reference encoder (dac-encoder.gguf + ssl-teacher.gguf); send "
+NO_REFERENCE_ENCODER = ("This server has no reference encoder (zac-encoder.gguf + ssl-teacher.gguf); send "
                         "speaker_reference_codes or use speaker_mode=embedding.")
 
 

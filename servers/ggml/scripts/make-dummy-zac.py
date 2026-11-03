@@ -3,7 +3,7 @@
 and iSTFT head geometry (hop 184, n_fft 736/2208, FIR 127), shrunk widths. Tensor names/shapes mirror
 `tools/convert_gguf.py codec-decoder`.
 
-Usage:  python scripts/make-dummy-dac.py -o dummy-dac.gguf [--codes-out dummy-dac-codes.npy]
+Usage:  python scripts/make-dummy-zac.py -o dummy-zac.gguf [--codes-out dummy-zac-codes.npy]
 """
 from __future__ import annotations
 

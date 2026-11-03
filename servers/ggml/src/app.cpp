@@ -129,7 +129,7 @@ static json load_config() {
         }
         j["extra_args"] = args;
     }
-    for (const char * k : {"model", "dac", "dac_encoder", "ssl_teacher", "spk_encoder"})
+    for (const char * k : {"model", "zac", "zac_encoder", "ssl_teacher", "spk_encoder"})
         if (j.contains(k) && j[k].is_string()) j[k] = file_uri_to_path(j[k].get<std::string>());
     if (migrate) {
         fs::create_directories(target.parent_path(), ec);
@@ -152,8 +152,8 @@ static std::string save_config(const json & j) {   // returns error message or "
 
 static bool config_launchable(const json & j) {
     std::error_code ec;
-    return !j.value("migration_requires_setup", false) && j.contains("model") && j.contains("dac") &&
-           fs::exists(j.value("model", ""), ec) && fs::exists(j.value("dac", ""), ec);
+    return !j.value("migration_requires_setup", false) && j.contains("model") && j.contains("zac") &&
+           fs::exists(j.value("model", ""), ec) && fs::exists(j.value("zac", ""), ec);
 }
 
 // --------------------------------------------------------------------------- ffmpeg
@@ -389,8 +389,8 @@ static void start_server(saucer::smartview * webview, std::vector<std::string> a
 }
 
 static std::vector<std::string> args_from_config(const json & cfg) {
-    std::vector<std::string> a = {"zonos3-app", cfg.value("model", ""), "--dac", cfg.value("dac", "")};
-    for (const auto & companion : {std::pair{"dac_encoder", "--dac-encoder"}, std::pair{"ssl_teacher", "--ssl-teacher"},
+    std::vector<std::string> a = {"zonos3-app", cfg.value("model", ""), "--zac", cfg.value("zac", "")};
+    for (const auto & companion : {std::pair{"zac_encoder", "--zac-encoder"}, std::pair{"ssl_teacher", "--ssl-teacher"},
                                    std::pair{"spk_encoder", "--spk-encoder"}}) {
         const std::string path = cfg.value(companion.first, "");
         if (!path.empty()) { a.push_back(companion.second); a.push_back(path); }
@@ -434,24 +434,24 @@ coco::stray start(saucer::application * app) {
         return r ? file_uri_to_path(r->string()) : std::string{};
     });
     webview->expose("get_config", []() -> std::string { return load_config().dump(); });
-    webview->expose("launch", [webview](const std::string & model_in, const std::string & dac_in,
+    webview->expose("launch", [webview](const std::string & model_in, const std::string & zac_in,
                                      const std::string & encoder_in, const std::string & teacher_in,
                                      const std::string & spk_in, bool gpu) -> std::string {
         const std::string model = file_uri_to_path(model_in);
-        const std::string dac = file_uri_to_path(dac_in);
+        const std::string zac = file_uri_to_path(zac_in);
         const std::string encoder = file_uri_to_path(encoder_in);
         const std::string teacher = file_uri_to_path(teacher_in);
         const std::string spk = file_uri_to_path(spk_in);
         std::error_code ec;
         if (!fs::exists(model, ec)) return "backbone model not found: " + model;
-        if (!fs::exists(dac, ec)) return "DAC decoder not found: " + dac;
-        if (!encoder.empty() && !fs::exists(encoder, ec)) return "DAC encoder not found: " + encoder;
+        if (!fs::exists(zac, ec)) return "ZAC decoder not found: " + zac;
+        if (!encoder.empty() && !fs::exists(encoder, ec)) return "ZAC encoder not found: " + encoder;
         if (!teacher.empty() && !fs::exists(teacher, ec)) return "SSL teacher not found: " + teacher;
         if (!spk.empty() && !fs::exists(spk, ec)) return "Speaker encoder not found: " + spk;
         json cfg = load_config();
         cfg["model"] = model;
-        cfg["dac"] = dac;
-        cfg["dac_encoder"] = encoder;
+        cfg["zac"] = zac;
+        cfg["zac_encoder"] = encoder;
         cfg["ssl_teacher"] = teacher;
         cfg["spk_encoder"] = spk;
         cfg["gpu"] = gpu;
@@ -480,7 +480,7 @@ coco::stray start(saucer::application * app) {
 }
 
 static void usage() {
-    printf("usage: zonos3-app [--setup] | [<model.gguf> --dac <dac.gguf> [server options]]\n"
+    printf("usage: zonos3-app [--setup] | [<model.gguf> --zac <zac.gguf> [server options]]\n"
            "\n"
            "Native desktop app for the zonos3 TTS server.\n"
            "\n"

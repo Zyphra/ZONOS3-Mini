@@ -1,9 +1,9 @@
 """Debugging CLI of the MLX networks: decode, embed, ssl, encode, generate.
 
-    python -m zonos3_mlx.tools decode dac.gguf codes.npy out.npy [--eos N]
+    python -m zonos3_mlx.tools decode zac.gguf codes.npy out.npy [--eos N]
     python -m zonos3_mlx.tools embed spk-encoder.gguf audio.wav emb.npy [--dump-dir D]
     python -m zonos3_mlx.tools ssl ssl-teacher.gguf (--audio A | --features F --mask M) --out D
-    python -m zonos3_mlx.tools encode dac-encoder.gguf ssl-teacher.gguf audio.mp3 codes.npy
+    python -m zonos3_mlx.tools encode zac-encoder.gguf ssl-teacher.gguf audio.mp3 codes.npy
     python -m zonos3_mlx.tools generate zonos3-qat.gguf "Text." out.wav [--seed S] [--dump-codes codes.npy]
 
 Outputs are the golden names of tools/dump_golden.py, for tools/compare_golden.py.
@@ -101,7 +101,7 @@ def cmd_generate(args) -> int:
     from zonos3_mlx.engine import Engine
     from zonos3_mlx.scheduler import Scheduler
 
-    engine = Engine.load(args.model, dac=args.dac)
+    engine = Engine.load(args.model, zac=args.zac)
     scheduler = Scheduler(engine, batch=2)
     scheduler.start(warmup=False)
     try:
@@ -145,7 +145,7 @@ def main(argv=None) -> int:
     c.set_defaults(fn=cmd_encode)
     g = sub.add_parser("generate", help="one in-process synthesis (Engine + Scheduler, no HTTP)")
     g.add_argument("model"); g.add_argument("text"); g.add_argument("out")
-    g.add_argument("--dac", help="decoder GGUF (default: dac.gguf next to the model)")
+    g.add_argument("--zac", help="decoder GGUF (default: zac.gguf next to the model)")
     g.add_argument("--seed", type=int); g.add_argument("--dump-codes")
     g.add_argument("--request", help="extra GenerateRequest fields as JSON")
     g.set_defaults(fn=cmd_generate)

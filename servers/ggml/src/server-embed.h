@@ -1,7 +1,7 @@
 // In-process embedding hooks for the zonos3 HTTP server (used by zonos3-app).
 //
 // zonos3_server_main is the whole of zonos3-server's main(): it loads the models,
-// spawns the worker/DAC threads, binds, and blocks serving requests until
+// spawns the worker/ZAC threads, binds, and blocks serving requests until
 // httplib::Server::stop() is called (or bind fails). A non-null `ctl` lets an
 // embedder observe startup and shut the server down:
 //

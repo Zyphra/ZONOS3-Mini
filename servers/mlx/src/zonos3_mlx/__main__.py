@@ -1,8 +1,8 @@
 """zonos3-mlx-server: the v2 HTTP API on Apple Silicon (MLX) over the ggml server's GGUF files.
 
-python -m zonos3_mlx <model.gguf> [--dac dac.gguf] [--port 1919] [options]
+python -m zonos3_mlx <model.gguf> [--zac zac.gguf] [--port 1919] [options]
 
-dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are auto-detected next to
+zac.gguf, spk-encoder.gguf, zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are auto-detected next to
 <model.gguf> when their flags are omitted (servers/ggml main.cpp).
 """
 
@@ -24,9 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m zonos3_mlx", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("model", help="backbone GGUF (zonos3-qat.gguf / zonos3-f16.gguf)")
-    for flag, help_ in (("--dac", "codec decoder (dac.gguf)"),
+    for flag, help_ in (("--zac", "codec decoder (zac.gguf)"),
                         ("--spk-encoder", "speaker encoder for speaker-embedding cloning of audio voices"),
-                        ("--dac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),
+                        ("--zac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),
                         ("--ssl-teacher", "SSL teacher of the reference encoder"),
                         ("--steer", "steering bundle (steer.gguf): request controls and /v2/controls"),
                         ("--accent-adapters", "accent adapters (accents.gguf): request accent")):
@@ -119,7 +119,7 @@ def main(argv=None) -> int:
     normalizer = None
     if args.worker_python:
         normalizer = TextNormalizer(args.worker_python, Path(args.python_src))
-    engine = Engine.load(args.model, dac=args.dac, spk_encoder=args.spk_encoder, dac_encoder=args.dac_encoder,
+    engine = Engine.load(args.model, zac=args.zac, spk_encoder=args.spk_encoder, zac_encoder=args.zac_encoder,
                          ssl_teacher=args.ssl_teacher, steer=args.steer, accent_adapters=args.accent_adapters,
                          laci_heads=laci, max_frames=args.max, normalizer=normalizer,
                          reference_idle_unload=args.reference_idle_unload)

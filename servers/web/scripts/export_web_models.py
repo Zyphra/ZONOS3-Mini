@@ -333,21 +333,21 @@ def export_backbone(path, out):
 
 # --------------------------------------------------------------------------- codec decoder (mossdual_istft)
 
-DAC_HOST = {"resample.kernel", "head.mixer.weight", "head.window.0", "head.window.1"}
+ZAC_HOST = {"resample.kernel", "head.mixer.weight", "head.window.0", "head.window.1"}
 
 
-def is_dac_mat(n):
-    """quantize.cpp is_dac_mat: the MOSS transformer, semantic-head and iSTFT-head matrices."""
+def is_zac_mat(n):
+    """quantize.cpp is_zac_mat: the MOSS transformer, semantic-head and iSTFT-head matrices."""
     return (n.startswith("stage.") or n.startswith("sem_head.") or n.startswith("head.")) and \
         n.endswith(".weight") and ".dw." not in n and "norm" not in n and n != "head.mixer.weight"
 
 
-def export_dac(path, out):
+def export_zac(path, out):
     g = Gguf(path)
     g.check_types()
     if g.kv.get("general.architecture") != "mossdual_istft":
         raise SystemExit(f"{path}: not a mossdual_istft codec GGUF")
-    w = Writer(os.path.join(out, "dac"), "dac", g.meta())
+    w = Writer(os.path.join(out, "zac"), "zac", g.meta())
     sem = g.arr("sem.table").astype(np.float16)
     w.add("sem.table", sem, "f16", [sem.shape[1], sem.shape[0]])
     del sem
@@ -359,17 +359,17 @@ def export_dac(path, out):
             continue
         t = g.tensors[name]
         if t.type == GGUF_Q8_0:
-            if not is_dac_mat(name) or len(t.ne) != 2:
+            if not is_zac_mat(name) or len(t.ne) != 2:
                 raise SystemExit(f"{name}: q8_0 is only supported for codec linear matrices")
             w.add_q8(name, g.raw(name), t.ne)
             continue
         a = g.arr(name)  # C-order shape reversed(ne)
-        if name in DAC_HOST:
+        if name in ZAC_HOST:
             w.add(name, a.astype(np.float32), "f32", t.ne, host=True)
         elif name.endswith(".dw.weight"):
             K, C = t.ne  # a: (C, K) -> [K][C]
             w.add(name, np.ascontiguousarray(a.T).astype(np.float32), "f32", [C, K])
-        elif len(t.ne) == 2 and is_dac_mat(name) and t.ne[0] % 32 == 0:
+        elif len(t.ne) == 2 and is_zac_mat(name) and t.ne[0] % 32 == 0:
             w.add_q8_from(name, a, t.ne)
         elif len(t.ne) >= 2 and t.ne[0] != 1:
             w.add(name, a.astype(np.float16), "f16", t.ne)
@@ -380,12 +380,12 @@ def export_dac(path, out):
 
 # --------------------------------------------------------------------------- reference encoder + teacher
 #
-# Both run the native BF16 recipe of servers/ggml/src/dac-encoder.cpp / ssl-encoder.cpp (see encoder.ts, ssl.ts):
+# Both run the native BF16 recipe of servers/ggml/src/zac-encoder.cpp / ssl-encoder.cpp (see encoder.ts, ssl.ts):
 # every matrix a BF16 GEMM reads is stored as bf16 (round to nearest even of the F32 checkpoint, exactly
 # ggml_fp32_to_bf16), and the remaining tensors keep the values the native loaders give them.
 
 def is_encoder_linear(n, ne):
-    """dac_encoder_load linear_matrix: converted to a BF16 tensor (2-D stage matrices, the semantic projections and
+    """zac_encoder_load linear_matrix: converted to a BF16 tensor (2-D stage matrices, the semantic projections and
     the ConvNeXt pointwise matrices)."""
     stage_matrix = n.startswith("stage.") and ".weight" in n and "norm" not in n
     return len(ne) == 2 and (stage_matrix or n in ("sem_enc.in.weight", "sem_head.out.weight") or
@@ -393,7 +393,7 @@ def is_encoder_linear(n, ne):
 
 
 def is_encoder_autocast(n):
-    """dac_encoder_load autocast_parameter: F32 storage holding bf16-rounded values (conv/depthwise weights and every
+    """zac_encoder_load autocast_parameter: F32 storage holding bf16-rounded values (conv/depthwise weights and every
     non-norm bias). Norm parameters, Snake alphas and layer scales stay exact F32."""
     return "norm" not in n and (".weight" in n or ".bias" in n)
 
@@ -411,7 +411,7 @@ def export_encoder(path, out):
     for name in g.order:
         t = g.tensors[name]
         if t.type != GGUF_F32:
-            raise SystemExit(f"{name}: the reference encoder export needs the F32 dac-encoder.gguf")
+            raise SystemExit(f"{name}: the reference encoder export needs the F32 zac-encoder.gguf")
         if name == "resample.kernel" or name.startswith("rvq."):
             w.add(name, g.arr(name).astype(np.float32), "f32", t.ne, host=True)
         elif is_encoder_linear(name, t.ne):
@@ -611,7 +611,7 @@ def export_laci(laci, out):
 
 # --------------------------------------------------------------------------- main
 
-MODEL_FILES = ("zonos3-qat.gguf", "dac.gguf", "dac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + COMPANIONS
+MODEL_FILES = ("zonos3-qat.gguf", "zac.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + COMPANIONS
 
 
 def main():
@@ -628,8 +628,8 @@ def main():
     m = a.models
     os.makedirs(a.out, exist_ok=True)
     export_backbone(os.path.join(m, "zonos3-qat.gguf"), a.out)
-    export_dac(os.path.join(m, "dac.gguf"), a.out)
-    export_encoder(os.path.join(m, "dac-encoder.gguf"), a.out)
+    export_zac(os.path.join(m, "zac.gguf"), a.out)
+    export_encoder(os.path.join(m, "zac-encoder.gguf"), a.out)
     export_teacher(os.path.join(m, "ssl-teacher.gguf"), a.out)
     export_spk(os.path.join(m, "spk-encoder.gguf"), a.out)
     export_voices(a.voices, a.out)

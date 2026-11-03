@@ -85,18 +85,18 @@ function Download-Ffmpeg {
 
 $Backbone = "zonos3-$Quant.gguf"
 $Missing = @()
-foreach ($f in @($Backbone, 'dac.gguf')) {
+foreach ($f in @($Backbone, 'zac.gguf')) {
     if (-not (Test-Path (Join-Path $ModelDir $f))) { $Missing += $f }
 }
 if ($Missing.Count -gt 0) {
     Fail "missing $($Missing -join ', ') in $ModelDir — create them with models/convert-*.py (docs/INTERNALS.md)"
 }
 if (-not (Test-Path (Join-Path $ModelDir 'spk-encoder.gguf'))) {
-    Write-Host "note: spk-encoder.gguf missing — speaker-embedding cloning disabled (raw-reference cloning needs dac-encoder.gguf + ssl-teacher.gguf)"
+    Write-Host "note: spk-encoder.gguf missing — speaker-embedding cloning disabled (raw-reference cloning needs zac-encoder.gguf + ssl-teacher.gguf)"
 }
-foreach ($companion in @('dac-encoder.gguf', 'ssl-teacher.gguf')) {
+foreach ($companion in @('zac-encoder.gguf', 'ssl-teacher.gguf')) {
     if (-not (Test-Path (Join-Path $ModelDir $companion))) {
-        Write-Host "note: $companion not found — raw-reference cloning needs both dac-encoder.gguf and ssl-teacher.gguf"
+        Write-Host "note: $companion not found — raw-reference cloning needs both zac-encoder.gguf and ssl-teacher.gguf"
     }
 }
 
@@ -134,12 +134,12 @@ function Get-Sibling([string]$name) {
 }
 
 $srvArgs = @((Join-Path $ModelDir $Backbone),
-             '--dac', (Join-Path $ModelDir 'dac.gguf'),
+             '--zac', (Join-Path $ModelDir 'zac.gguf'),
              '--host', $BindHost, '--port', $Port)
 if (Test-Path (Get-Sibling 'default_voices')) {
     $srvArgs += @('--tts-default-voices-dir', (Get-Sibling 'default_voices'))
 }
-foreach ($companion in @('spk-encoder', 'dac-encoder', 'ssl-teacher')) {
+foreach ($companion in @('spk-encoder', 'zac-encoder', 'ssl-teacher')) {
     if (Test-Path (Join-Path $ModelDir "$companion.gguf")) {
         $srvArgs += @("--$companion", (Join-Path $ModelDir "$companion.gguf"))
     }

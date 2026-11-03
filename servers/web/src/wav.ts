@@ -1,4 +1,4 @@
-// 16-bit mono WAV writers and the output fade: dac_wav_bytes (lrintf rounding; speaker previews) and generate.cpp
+// 16-bit mono WAV writers and the output fade: zac_wav_bytes (lrintf rounding; speaker previews) and generate.cpp
 // pcm16_wav (truncating (int16_t) cast; /v2/generate format=wav), and scheduler.cpp apply_fade.
 
 /** Rounding of a float sample to int16: 'rint' (lrintf, half to even) or 'trunc' (C cast). */

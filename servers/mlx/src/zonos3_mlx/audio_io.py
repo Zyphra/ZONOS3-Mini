@@ -43,7 +43,7 @@ def decode_pcm(audio_bytes: bytes, sample_rate: int = SAMPLE_RATE, max_seconds: 
 def polyphase_resample(x: np.ndarray, kernel: np.ndarray, orig: int, new: int, width: int) -> np.ndarray:
     """torchaudio's polyphase sinc resampler with its ``[new, 2*width + orig]`` kernel (the GGUFs store it):
     ``out[n*new + i] = sum_k K[i][k] * x[n*orig + k - width]``, zero outside, ``ceil(new * len / orig)`` samples
-    (ggml resample-16k.h ``run``, dac.cpp / dac-encoder.cpp ``resample``). Accumulates in float64."""
+    (ggml resample-16k.h ``run``, zac.cpp / zac-encoder.cpp ``resample``). Accumulates in float64."""
     x = np.asarray(x, dtype=np.float64)
     L = len(x)
     total = -(-new * L // orig)

@@ -14,7 +14,7 @@ const SPEAKER_EMBEDDING_CODEC = 'ownmect_s2';
 const HOP = 2940;
 /** The server language codes (zonos3.languages SERVER), in order. */
 export const TEXT_NORM_LANGUAGES = languages.server.map((l) => l.code);
-const DECODER_CHECKPOINT = 'dac.gguf';
+const DECODER_CHECKPOINT = 'zac.gguf';
 
 /** float_decimal: a float32 metadata value as the shortest decimal that round-trips it. */
 export function floatDecimal(v: number): number {
