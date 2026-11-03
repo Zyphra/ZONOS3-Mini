@@ -22,7 +22,7 @@ dubbing worker (SimAlign, AV-sync) and AV-sync's checkout are found through `ZON
 `ZONOS3_DUB_AVSYNC_HOME` (defaults: the repo's `.venv-asr`, `cuda`, `.avsync`):
 
 ```bash
-STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh      # open http://127.0.0.1:1919/ -> Dub
+STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh      # open http://127.0.0.1:1919/studio -> Dub
 # pronunciation groups in target texts: SERVE_MODEL=<phoneme checkpoint> PHONEME_LEXICON=<lexicon dir>
 ```
 

@@ -239,16 +239,21 @@ void install_studio(httplib::Server & svr, const std::string & studio_dir) {
             return;
         }
         if (root.empty()) return send_error(res, 404, "Not Found");
-        const fs::path target = fs::weakly_canonical(root / fs::path(path), ec);
-        const fs::path rel = target.lexically_relative(root);
-        std::string body;
-        if (ec || rel.empty() || *rel.begin() == ".." || !fs::is_regular_file(target, ec) || !read_file(target, body))
-            return send_error(res, 404, "Not Found");
-        // Pages are no-store (a rebuild's new hashed assets are picked up at once); every other file is immutable.
-        const std::string name = target.filename().string();
-        const bool page = name.size() >= 5 && name.compare(name.size() - 5, 5, ".html") == 0;
-        res.set_header("Cache-Control", page ? "no-store, max-age=0" : "public, max-age=31536000, immutable");
-        res.set_content(body, httplib::detail::find_content_type(target.string(), {}, "application/octet-stream"));
+        // The file itself, else the page <path>.html (/studio, /lite).
+        for (const fs::path & candidate : {root / fs::path(path), root / fs::path(path + ".html")}) {
+            const fs::path target = fs::weakly_canonical(candidate, ec);
+            const fs::path rel = target.lexically_relative(root);
+            std::string body;
+            if (ec || rel.empty() || *rel.begin() == ".." || !fs::is_regular_file(target, ec) || !read_file(target, body))
+                continue;
+            // Pages are no-store (a rebuild's new hashed assets are picked up at once); every other file is immutable.
+            const std::string name = target.filename().string();
+            const bool page = name.size() >= 5 && name.compare(name.size() - 5, 5, ".html") == 0;
+            res.set_header("Cache-Control", page ? "no-store, max-age=0" : "public, max-age=31536000, immutable");
+            res.set_content(body, httplib::detail::find_content_type(target.string(), {}, "application/octet-stream"));
+            return;
+        }
+        send_error(res, 404, "Not Found");
     };
     auto not_found = [](const httplib::Request &, httplib::Response & res) { send_error(res, 404, "Not Found"); };
     svr.Get(R"(/(.*))", serve);   // GET handlers serve HEAD too

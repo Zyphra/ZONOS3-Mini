@@ -66,8 +66,9 @@ The first start JIT-compiles kernels and builds the text-normalization grammar c
 On Apple Silicon, `servers/mlx/scripts/serve.sh` serves the GGUF files of `Zyphra/ZONOS3_Mini_GGUF` on the same port
 with the same variables. Without any server, the studio runs ZONOS3 in the browser on WebGPU (`?api=web`; models from
 the GGUF files, see [servers/web/README.md](servers/web/README.md)).
-Every server also serves a lightweight voice-cloning page at `/lite.html` (pick, upload, record or load a voice
-embedding, then speak with it; see [studio/README.md](studio/README.md#lite-ui)).
+Every server answers `/` with a page that opens either app: Zonos Voice Studio at `/studio`, or a lightweight
+voice-cloning page at `/lite` (pick, upload, record or load a voice embedding, then speak with it; see
+[studio/README.md](studio/README.md#lite-ui)).
 
 | Variable | Effect |
 | --- | --- |
@@ -104,7 +105,7 @@ curl -X POST http://127.0.0.1:1919/v1/audio/speech -H 'Content-Type: application
 ```
 
 `stream: true` returns the audio progressively (prefix re-decode of the causal decoder); `"format": "wav"` returns a
-buffered 16-bit WAV instead of raw PCM (with `stream: false`). Open `http://127.0.0.1:1919/` for the Zonos Voice
+buffered 16-bit WAV instead of raw PCM (with `stream: false`). Open `http://127.0.0.1:1919/studio` for the Zonos Voice
 Studio (its steering controls come from the default `STEER_BUNDLE`). The API
 guide is [docs/api.md](docs/api.md); the schemas are in [api/openapi.yaml](api/openapi.yaml).
 

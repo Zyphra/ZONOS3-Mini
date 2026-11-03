@@ -19,7 +19,7 @@ Every file is auto-detected next to the backbone. Generation runs on one worker 
 ```bash
 uv sync --locked --package zonos3-mlx
 hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
-servers/mlx/scripts/serve.sh            # 127.0.0.1:1919, the studio at /
+servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /lite
 ```
 
 `serve.sh` takes the same variables as the sgl launcher (`SERVE_MODEL`, `SERVE_VOICES`, `PHONEME_LEXICON`,

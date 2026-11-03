@@ -45,7 +45,7 @@ class ServerArgs(SchedulerConfig):
     studio_projects_dir: str | None = None
     studio_max_project_bytes: int = 20 * 1024**2
     studio_max_media_bytes: int = 2 * 1024**3
-    # Production build of Zonos Voice Studio (studio/dist), served at / (the studio serving rule of api/openapi.yaml).
+    # Production build of Zonos Voice Studio (studio/dist): / chooser, /studio, /lite (the studio serving rule of api/openapi.yaml).
     studio_dir: str = str(Path(__file__).resolve().parents[5] / "studio" / "dist")
 
     @property
@@ -338,7 +338,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--studio-dir",
         type=str,
         default=ServerArgs.studio_dir,
-        help="Production build of Zonos Voice Studio served at / (default: <repo>/studio/dist; "
+        help="Production build of Zonos Voice Studio: / chooser, /studio, /lite (default: <repo>/studio/dist; "
         "pnpm --dir studio build).",
     )
     parser.add_argument(

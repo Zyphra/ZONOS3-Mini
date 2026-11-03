@@ -8,27 +8,40 @@ accent map and fflate for project files; hand-written CSS, SVG and canvas.
 
 ## Design system
 
-Zyphra's design language, all through the tokens in `src/styles.css` `:root` (dark, the default) and
+Zyphra's design language, all through the tokens in `src/styles/base.css` `:root` (dark, the default) and
 `:root[data-theme='light']`: surfaces `--bg --bg-2 --surface*`, hairlines `--line --line-2`, text `--text*`,
 the inverted primary `--inv --inv-text`, Zyphra orange `--o` (focus, the active act, selection and the one primary
 highlight only), status `--ok --warn --bad`, data hues `--c1…--c6`, radii `--r` / `--r-s` (5 px nav and chips),
 motion `--ease --t`. Inter and JetBrains Mono are bundled (`@fontsource`). Buttons are pills with hairlines;
-`.btn.primary` is inverted. Never hard-code a colour: canvases read tokens through `token()` in
-`src/state/theme.ts`, which also holds the theme toggle (browser-wide, `localStorage['zvs.theme']`, applied before
-first paint by `index.html`). One screen header (`.screen-head`) and one empty state (`.empty`) for every screen.
+`.btn.primary` is inverted. `src/styles/base.css` holds the tokens, the top bar, the primitives (`.btn`, `.input`,
+`.pill`, `.panel`, `.mode` …) shared with the lite page; `src/styles.css` imports it and adds the screens. The brand
+marks and icon paths live in `src/lib/marks.ts` for the same reason. Never hard-code a colour: canvases read tokens
+through `token()` in `src/state/theme.ts`, which also holds the theme toggle (browser-wide,
+`localStorage['zvs.theme']`, applied before first paint by every page's HTML). The pages without Preact (the
+chooser and the lite page) mount the same top bar, icons and toggle through `src/lib/chrome.ts`. One screen header
+(`.screen-head`) and one empty state (`.empty`) for every screen.
 
 ## Develop and build
 
 ```bash
 pnpm --dir studio install
 echo "ZONOS_SERVER=https://<server>" > studio/.env.local   # or export ZONOS_SERVER; /v1 and /v2 are proxied there
-pnpm --dir studio dev         # http://localhost:5173/
+pnpm --dir studio dev         # http://localhost:5173/ (the chooser), /studio, /lite
 pnpm --dir studio typecheck   # gen:api, then tsc
 pnpm --dir studio build       # gen:api, tsc, vite → studio/dist/ (commit it)
 ```
 
-`studio/dist/` is committed so a checkout serves the studio without Node: both servers serve it at `/` (`index.html`
-uncached, hashed assets immutable; `--studio-dir` points elsewhere). The API contract is `../api/openapi.json`:
+Three pages, three Vite entries: `index.html` (`src/home/`) is the chooser at `/` that opens either app,
+`studio.html` (`src/main.tsx`) is the Voice Studio at `/studio`, and `lite.html` (`src/lite/`) is the lite page at
+`/lite`. The chooser passes its query on (`/?api=web` opens `/studio?api=web`). On a phone (a coarse pointer and a
+viewport under 600 px on either side) `/` skips the chooser and replaces itself with `/lite`, query and hash kept,
+before first paint; tablets and narrow desktop windows still get the chooser, and `/studio` always opens the
+studio. Every server maps `/<page>` to
+`<page>.html` (the studio serving rule of `../api/openapi.yaml`; Vite's dev and preview servers and Cloudflare's
+static assets do the same).
+
+`studio/dist/` is committed so a checkout serves the studio without Node: every server serves it (pages uncached,
+hashed assets immutable; `--studio-dir` points elsewhere). The API contract is `../api/openapi.json`:
 `pnpm gen:api` (run by `build` and `typecheck`) regenerates `src/api/schema.ts` from it (committed with the spec), and
 `src/api.ts` aliases its schemas and sends every JSON call through an `openapi-fetch` client typed by its `paths`;
 the streamed `/v2/generate` and the raw-body / binary routes (`/v2/speakers/{id}/preview`, `/v2/dub/ref`,
@@ -52,17 +65,20 @@ offline; `?edit=fixture` forces the fixture, `?edit=0` a checkpoint that cannot 
 
 ## Lite UI
 
-`lite.html` + `src/lite/` are a second Vite entry, built by the same `pnpm build` into `dist/lite.html`: a
-one-job page for voice cloning from a speaker embedding, served by every server at `/lite.html`. It is plain
-TypeScript and DOM with its own small stylesheet (light/dark from `prefers-color-scheme`), no Preact and no studio
-CSS or fonts (about 12 kB gzipped in all); it shares only the generated `src/api/schema.ts` types, `openapi-fetch`,
+`lite.html` + `src/lite/` are a Vite entry, built by the same `pnpm build` into `dist/lite.html`: a
+one-job page for voice cloning from a speaker embedding, served by every server at `/lite`. It is plain
+TypeScript and DOM, no Preact, in the studio's design language: the same tokens, top bar, primitives and fonts
+(`src/styles/base.css`, `src/lib/marks.ts`, `@fontsource`) plus its own one-column layout (`src/lite/lite.css`), and
+the studio's theme toggle (`localStorage['zvs.theme']`, so the two pages switch together). Beyond those it shares
+only the generated `src/api/schema.ts` types, `openapi-fetch`,
 `src/lib/files.ts` and `src/lib/web-engine.ts`. It runs on an HTTP server or on the in-browser server exactly as the
 studio does (`src/lib/web-engine.ts` is the studio's own engine loader and transport): `?api=web` forces the
 in-browser server, `?api=live` the HTTP server, and `auto` (the default) takes the in-browser server when no ZONOS
 server answers `GET /v2/capabilities` and the browser has WebGPU and the site serves the engine (`?engine=URL`,
 default `/web-engine/engine.js`, loaded at run time and never bundled; `?models=URL` is the engine's own). Every
 request, the raw preview and generate ones included, goes through that one transport. While the engine loads its
-models the page shows a progress line (`Loading backbone … 42%`) with the form inert, then an **In-browser** badge;
+models the page shows a progress line (`Loading backbone … 42%`) with the form inert; the top bar's pill then says
+**Live** or **In-browser**;
 the speaker encoder it loads on a clip voice's first use (generate or embedding download) shows on the same line.
 On load it reads `GET /v2/capabilities` and, when `speaker_modes` lacks `embedding`, says the server cannot clone
 from an embedding and disables the form.
@@ -71,7 +87,9 @@ uploaded or recorded clip (a recording is sent as a 16-bit WAV) or a saved `.npy
 `POST /v2/speakers`); the chosen voice offers its preview (`has_preview`) and **Download embedding**
 (`GET /v2/speakers/{id}/embedding` saved as a float32 `.npy`, which loads back as an embedding file). Generate posts
 `/v2/generate` with `speaker_mode: "embedding"`, `stream: true`, `format: "pcm"`, plays the float32 PCM through
-WebAudio as it streams, then offers the WAV (built in the browser) and shows `X-Seed`; errors show the server's
+WebAudio as it streams and draws it live as the studio's preview waveform (`src/lib/wave.ts`, shared with
+`components/Waveform.tsx`) with a playhead; click the waveform to play from there. Then it offers the WAV (built in
+the browser) and shows `X-Seed`; errors show the server's
 `detail` (the 422 list as `field: message`). `?server=https://…` points it at another server; `X-TTS-Session-ID` is
 random per tab (sessionStorage), so the voices a tab adds are its own.
 
@@ -124,8 +142,8 @@ regions, the last generation's takes) and in-flight work stay per session.
   server: uploads the media, then creates the project) and opens it.
 - Without a store (blocked browser storage, or the server's projects not answering) the studio works for the
   session and says that nothing is saved.
-- **Opening a given project**: `/?project=<id>` opens that project at boot (the MCP server's links); an unknown id
-  falls back to the last one.
+- **Opening a given project**: `/studio?project=<id>` opens that project at boot (the MCP server's links); an unknown
+  id falls back to the last one.
 - **MCP server**: `mcp/` (`zonos-studio-mcp`) lets LLM clients design voices, speak and edit speech into these
   projects through the same request and schema code; see `mcp/README.md`.
 

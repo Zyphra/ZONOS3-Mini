@@ -169,7 +169,7 @@ export function registerEditTools(server: McpServer) {
         sampling: samplingOf(requestShown, 'EditRequest'),
         request: requestShown,
       };
-      const project = ref ?? (sess.id && sess.revision !== null ? { id: sess.id, name: doc.name, revision: sess.revision, url: `${config.server}/?project=${encodeURIComponent(sess.id)}#edit` } : null);
+      const project = ref ?? (sess.id && sess.revision !== null ? { id: sess.id, name: doc.name, revision: sess.revision, url: `${config.server}/studio?project=${encodeURIComponent(sess.id)}#edit` } : null);
       const payload: WidgetPayload = { kind: 'edit', title: `Edit · ${source.label}`, text: a.target_text, takes, params, project, warnings };
       const body =
         [

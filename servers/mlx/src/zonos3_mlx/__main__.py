@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="server-side studio projects and media (/v2/projects, /v2/media)")
     p.add_argument("--studio-max-project-bytes", type=int, default=20 * 1024**2)
     p.add_argument("--studio-max-media-bytes", type=int, default=2 * 1024**3)
-    p.add_argument("--studio-dir", default=str(paths.STUDIO_DIR), help="studio production build served at /")
+    p.add_argument("--studio-dir", default=str(paths.STUDIO_DIR), help="studio production build (/ chooser, /studio, /lite)")
     p.add_argument("--log-level", default="info")
     return p
 

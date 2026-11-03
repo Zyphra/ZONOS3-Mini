@@ -124,16 +124,19 @@ def test_removed_paths_are_404(client, method, path):
 def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path):
     studio = tmp_path / "studio"
     (studio / "assets").mkdir(parents=True)
-    (studio / "index.html").write_text('<div id="app"></div>')
-    (studio / "lite.html").write_text('<div id="app"></div>')
+    for page in ("index", "studio", "lite"):
+        (studio / f"{page}.html").write_text(f'<div id="{page}"></div>')
     (studio / "assets" / "index-abc.js").write_text("export {}")
-    for path in ("/", "/lite.html"):
+    # / is the chooser; /studio and /lite are their pages, with or without .html
+    for path, page in (("/", "index"), ("/studio", "studio"), ("/studio.html", "studio"), ("/lite", "lite"), ("/lite.html", "lite")):
         r = client.get(path)
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
         assert r.headers["cache-control"] == "no-store, max-age=0", path
+        assert f'id="{page}"' in r.text, path
     r = client.get("/assets/index-abc.js")
     assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=31536000, immutable"
-    assert client.get("/nope.html").status_code == 404
+    for path in ("/nope.html", "/nope", "/assets/index-abc"):
+        assert client.get(path).status_code == 404, path
 
 
 def test_generate_streams_pcm_with_the_drawn_seed(client, frontend):

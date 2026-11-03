@@ -156,7 +156,7 @@ For file cloning, install ffmpeg or set `ZONOS3_FFMPEG`. `--max` limits generate
 
 ## HTTP API and the studio
 
-`zonos3-server` serves the v2 HTTP API of `api/openapi.yaml` (the same contract as the CUDA server in `servers/sgl`): the native routes under `/v2/`, the OpenAI-compatible `GET /v1/models` and `POST /v1/audio/speech`, and Zonos Voice Studio at `/` (`studio/dist` of the checkout, or `--studio-dir`).
+`zonos3-server` serves the v2 HTTP API of `api/openapi.yaml` (the same contract as the CUDA server in `servers/sgl`): the native routes under `/v2/`, the OpenAI-compatible `GET /v1/models` and `POST /v1/audio/speech`, and the studio build (`studio/dist` of the checkout, or `--studio-dir`): a chooser at `/`, Zonos Voice Studio at `/studio` and the lite voice-cloning page at `/lite`.
 
 ```bash
 ./build/zonos3-server models/zonos3-qat.gguf \

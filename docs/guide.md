@@ -756,7 +756,7 @@ voices and Mood-pad landmarks of the six named moods (see More moods).
 
 ```bash
 servers/sgl/scripts/serve.sh  # STEER_BUNDLE defaults to steering/studio_bundle_mect60k.json
-# open http://127.0.0.1:1919/
+# open http://127.0.0.1:1919/studio
 ```
 
 `--steer-bundle` (`zonos3.tts.steering`) serves all the sets at once: a request's

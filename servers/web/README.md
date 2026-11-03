@@ -32,7 +32,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
 pnpm --dir servers/web export          # public/models/ (~4.5 GB; first load fetches backbone + dac, ~1.9 GB; uploads add encoder + teacher, ~2.6 GB, and spk)
 pnpm --dir servers/web build           # dist/engine.js + dist/worker.js
-pnpm --dir studio dev                  # http://localhost:5173/?api=web
+pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (or /lite?api=web)
 ```
 
 The studio's dev and preview servers serve `dist/` at `/web-engine` and `public/models/` at `/models`. The worker

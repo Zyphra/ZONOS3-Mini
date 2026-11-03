@@ -2129,9 +2129,9 @@ def _studio_dir() -> Path:
 
 
 # Registered last, so every API route matches first: the studio serving rule. GET|HEAD / is the studio's
-# index.html; GET|HEAD /<path> a file inside the studio dir (never under /v1/ or /v2/); anything else is a 404.
-# Pages (index.html and every other *.html) are no-store, so a rebuild's new hashed assets are picked up at once;
-# every other file is immutable.
+# index.html (the chooser); GET|HEAD /<path> a file inside the studio dir, else the page <path>.html (/studio, /lite;
+# never under /v1/ or /v2/); anything else is a 404. Pages (*.html) are no-store, so a rebuild's new hashed assets
+# are picked up at once; every other file is immutable.
 # No SPA fallback: the studio routes with the URL hash.
 @app.api_route("/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
 async def serve_studio(request: Request, path: str = ""):
@@ -2143,11 +2143,11 @@ async def serve_studio(request: Request, path: str = ""):
         if not index.is_file():
             raise HTTPException(status_code=404, detail="The studio is not built (pnpm --dir studio build).")
         return FileResponse(index, media_type="text/html", headers={"Cache-Control": "no-store, max-age=0"})
-    target = (root / path).resolve()
-    if not target.is_relative_to(root) or not target.is_file():
-        raise HTTPException(status_code=404, detail="Not Found")
-    cache = "no-store, max-age=0" if target.name.endswith(".html") else "public, max-age=31536000, immutable"
-    return FileResponse(target, headers={"Cache-Control": cache})
+    for target in ((root / path).resolve(), (root / f"{path}.html").resolve()):
+        if target.is_relative_to(root) and target.is_file():
+            cache = "no-store, max-age=0" if target.name.endswith(".html") else "public, max-age=31536000, immutable"
+            return FileResponse(target, headers={"Cache-Control": cache})
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 async def tts_shell():

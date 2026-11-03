@@ -46,12 +46,11 @@ def index(client):
     return r
 
 
-@pytest.fixture(scope="module")
-def lite(client):
-    r = client.get("/lite.html")
-    if r.status_code == 404:
-        pytest.skip("this studio build has no lite.html")
-    assert r.status_code == 200, r.text[:300]
+@pytest.fixture(scope="module", params=["/studio", "/lite"])
+def page(client, index, request):
+    """A studio page by its extensionless path (the serving rule maps /<page> to <page>.html)."""
+    r = client.get(request.param)
+    assert r.status_code == 200, f"{request.param}: {r.text[:300]}"
     return r
 
 
@@ -63,7 +62,7 @@ def _assert_page(page, api_token):
 
 
 def _assert_assets_immutable(client, page, api_token):
-    assets = re.findall(r'(?:src|href)="(/[^"]+)"', page.text)
+    assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', page.text)
     assert assets
     for path in assets:
         r = client.get(path)
@@ -72,21 +71,22 @@ def _assert_assets_immutable(client, page, api_token):
             assert "immutable" in r.headers.get("cache-control", ""), path
 
 
-def test_root_serves_the_studio(index, api_token):
+def test_root_serves_the_chooser(client, index, api_token):
     _assert_page(index, api_token)
-    assert '<div id="app">' in index.text
-
-
-def test_studio_assets_are_immutable(client, index, api_token):
+    assert re.search(r'href="/studio"', index.text) and re.search(r'href="/lite"', index.text)
     _assert_assets_immutable(client, index, api_token)
 
 
-def test_lite_page_is_not_stored(lite, api_token):
-    _assert_page(lite, api_token)
+def test_pages_are_served_by_name_and_not_stored(client, page, api_token):
+    _assert_page(page, api_token)
+    _assert_assets_immutable(client, page, api_token)
+    # the same page under its file name
+    named = client.get(page.url.path + ".html")
+    assert named.status_code == 200 and named.text == page.text
 
 
-def test_lite_assets_are_immutable(client, lite, api_token):
-    _assert_assets_immutable(client, lite, api_token)
+def test_studio_page_holds_the_app(client, index):
+    assert '<div id="app">' in client.get("/studio").text
 
 
 @pytest.mark.parametrize(

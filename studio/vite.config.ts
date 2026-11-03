@@ -61,8 +61,11 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       emptyOutDir: false,
       target: 'es2022',
-      // Two pages: the full studio at / and the lite voice-cloning page at /lite.html.
-      rolldownOptions: { input: { index: resolve(import.meta.dirname, 'index.html'), lite: resolve(import.meta.dirname, 'lite.html') } },
+      // Three pages: the chooser at /, the full studio at /studio and the lite voice-cloning page at /lite (the
+      // servers' studio serving rule maps /<page> to <page>.html; so do the dev and preview servers).
+      rolldownOptions: {
+        input: Object.fromEntries(['index', 'studio', 'lite'].map((page) => [page, resolve(import.meta.dirname, `${page}.html`)])),
+      },
     },
     // src/lib/languages.ts imports the language registry from the model package.
     server: { proxy, fs: { allow: [searchForWorkspaceRoot(import.meta.dirname), resolve(import.meta.dirname, '../model/src/zonos3/registries')] } },

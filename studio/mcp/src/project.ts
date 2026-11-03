@@ -168,7 +168,7 @@ export async function saveProject<T>(s: Session, act: Act, patch: (doc: ProjectD
       }
       s.revision = saved.revision;
       state.activeProjectId = s.id;
-      return { result, project: { id: s.id, name: s.doc.name, revision: saved.revision, url: `${config.server}/?project=${encodeURIComponent(s.id)}#${act}` }, session: s };
+      return { result, project: { id: s.id, name: s.doc.name, revision: saved.revision, url: `${config.server}/studio?project=${encodeURIComponent(s.id)}#${act}` }, session: s };
     } catch (e) {
       if (!(e instanceof zonos.RevisionConflict)) throw e;
       if (attempt >= 3) throw new Error('Project changed elsewhere 3 times in a row; try again');

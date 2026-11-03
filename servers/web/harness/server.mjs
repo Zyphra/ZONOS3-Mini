@@ -68,15 +68,15 @@ function serveStatic(req, res, pathname) {
     sendFile(req, res, f, 'no-store');
     return true;
   }
-  // The studio serving rule (install_studio): GET / is index.html; pages (*.html) are no-store, any other file is
-  // immutable.
+  // The studio serving rule (install_studio): GET / is index.html (the chooser); /<path> is the file, else the page
+  // <path>.html (/studio, /lite); pages (*.html) are no-store, any other file is immutable.
   if (pathname === '/') {
     const f = fileIn(STUDIO, 'index.html');
     if (!f) { sendError(res, 404, 'The studio is not built (pnpm --dir studio build).'); return true; }
     sendFile(req, res, f, 'no-store, max-age=0');
     return true;
   }
-  const f = fileIn(STUDIO, pathname.slice(1));
+  const f = fileIn(STUDIO, pathname.slice(1)) ?? fileIn(STUDIO, pathname.slice(1) + '.html');
   if (!f) return false;
   sendFile(req, res, f, f.endsWith('.html') ? 'no-store, max-age=0' : 'public, max-age=31536000, immutable');
   return true;

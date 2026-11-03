@@ -61,7 +61,7 @@ export function registerInfoTools(server: McpServer) {
       if (state.activeProjectId && c.projects.enabled) {
         try {
           const p = await zonos.getProject(state.activeProjectId);
-          active = `“${p.name}” (${p.id}) rev ${p.revision} → ${config.server}/?project=${p.id}`;
+          active = `“${p.name}” (${p.id}) rev ${p.revision} → ${config.server}/studio?project=${p.id}`;
         } catch {
           active = `${state.activeProjectId} (not saved yet)`;
         }
@@ -162,7 +162,7 @@ export function registerInfoTools(server: McpServer) {
         if (!pid) throw new Error(`No project ${id ?? name ?? ''}: pass id or exact name (see action=list)`);
         const [sess, speakers] = await Promise.all([openProject(pid), zonos.speakers()]);
         const label = (sid: string) => speakers.find((s) => s.id === sid)?.label ?? sid;
-        return text(`${overview(sess.doc, label)}\nRevision ${sess.revision} → ${config.server}/?project=${sess.id}${warningsText(sess.warnings)}`);
+        return text(`${overview(sess.doc, label)}\nRevision ${sess.revision} → ${config.server}/studio?project=${sess.id}${warningsText(sess.warnings)}`);
       }
       const nid = uid();
       const doc = newProjectDoc(nid, name ?? sessionName(), lang ?? 'en_us');

@@ -1,10 +1,15 @@
 /**
- * Lite UI (`/lite.html`): voice cloning from a speaker embedding, and nothing else. Plain DOM over the markup in
- * `lite.html`; the server contract is `./api.ts`.
+ * Lite UI (`/lite`): voice cloning from a speaker embedding, and nothing else. Plain DOM over the markup in
+ * `lite.html`, styled by the studio's own tokens and primitives (`../styles/base.css`); the server contract is `./api.ts`.
  */
+import '@fontsource-variable/inter/wght.css';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
 import './lite.css';
+import { mountChrome, setLabel } from '../lib/chrome';
 import { bytesToBase64, download, encodeNpy, encodeWav, slug } from '../lib/files';
 import { langLabel } from '../lib/languages';
+import { drawWave } from '../lib/wave';
 import { onEncoderProgress, usingWebEngine } from '../lib/web-engine';
 import {
   ApiError,
@@ -32,12 +37,15 @@ const ui = {
   sources: document.querySelectorAll<HTMLInputElement>('input[name="source"]'),
   panels: { default: $('panel-default'), clip: $('panel-clip'), embedding: $('panel-embedding') },
   voiceSelect: $<HTMLSelectElement>('voice-select'),
+  clipPick: $<HTMLButtonElement>('clip-pick'),
   clipFile: $<HTMLInputElement>('clip-file'),
   record: $<HTMLButtonElement>('record'),
   clipState: $<HTMLSpanElement>('clip-state'),
   clipLabel: $<HTMLInputElement>('clip-label'),
   clipUpload: $<HTMLButtonElement>('clip-upload'),
+  embeddingPick: $<HTMLButtonElement>('embedding-pick'),
   embeddingFile: $<HTMLInputElement>('embedding-file'),
+  embeddingState: $<HTMLSpanElement>('embedding-state'),
   embeddingLabel: $<HTMLInputElement>('embedding-label'),
   embeddingUpload: $<HTMLButtonElement>('embedding-upload'),
   voiceError: $<HTMLParagraphElement>('voice-error'),
@@ -52,14 +60,19 @@ const ui = {
   seed: $<HTMLInputElement>('seed'),
   generate: $<HTMLButtonElement>('generate'),
   stop: $<HTMLButtonElement>('stop'),
-  status: $<HTMLParagraphElement>('generate-status'),
+  status: $<HTMLSpanElement>('generate-status'),
   error: $<HTMLParagraphElement>('generate-error'),
   result: $<HTMLDivElement>('result'),
-  resultAudio: $<HTMLAudioElement>('result-audio'),
+  wave: $<HTMLDivElement>('wave'),
+  play: $<HTMLButtonElement>('play'),
   resultDownload: $<HTMLAnchorElement>('result-download'),
   resultMeta: $<HTMLSpanElement>('result-meta'),
 };
 
+mountChrome(() => {
+  drawn = -1;
+  animate();
+});
 let voices: Speaker[] = [];
 let voice: Speaker | null = null;
 /** The clip to clone: a chosen file or a finished recording. */
@@ -69,6 +82,57 @@ const player = new StreamPlayer(SAMPLE_RATE);
 const preview = new Audio();
 let previewUrl = '';
 let resultUrl = '';
+
+// ── Waveform ──────────────────────────────────────────────────────────────────────────────────────
+
+/** The take so far: `audio[0, samples)`, grown by doubling while it streams; drawn and played from here. */
+let audio = new Float32Array(SAMPLE_RATE * 8);
+let samples = 0;
+/** Samples drawn on the canvas (-1: redraw); the playhead loop redraws when the stream has grown. */
+let drawn = -1;
+let frame = 0;
+const waveCanvas = ui.wave.querySelector('canvas')!;
+const waveHead = ui.wave.querySelector<HTMLElement>('.wave-head')!;
+
+function append(pcm: Float32Array) {
+  if (samples + pcm.length > audio.length) {
+    const grown = new Float32Array(Math.max(audio.length * 2, samples + pcm.length));
+    grown.set(audio.subarray(0, samples));
+    audio = grown;
+  }
+  audio.set(pcm, samples);
+  samples += pcm.length;
+}
+
+/** One frame: the waveform when the take has grown (or the theme or width changed), the playhead, the play button. */
+function redraw() {
+  frame = 0;
+  if (drawn !== samples) {
+    // The studio's preview look: orange bars stretched over what has arrived; `color` is the token's value.
+    drawWave(waveCanvas, audio.subarray(0, samples), ui.wave.clientWidth, 72, getComputedStyle(ui.wave).color);
+    drawn = samples;
+  }
+  const at = player.position();
+  const playing = at !== null && at * SAMPLE_RATE < samples;
+  waveHead.hidden = !playing;
+  if (playing) waveHead.style.left = `${Math.min(100, ((at * SAMPLE_RATE) / samples) * 100)}%`;
+  if (ui.play.dataset.icon !== (playing ? 'stop' : 'play')) {
+    ui.play.dataset.icon = playing ? 'stop' : 'play';
+    setLabel(ui.play, '');
+    ui.play.title = playing ? 'Stop' : 'Play';
+    ui.play.setAttribute('aria-label', ui.play.title);
+  }
+  if (playing || generation) frame = requestAnimationFrame(redraw);
+}
+
+function animate() {
+  if (!frame) frame = requestAnimationFrame(redraw);
+}
+
+new ResizeObserver(() => {
+  drawn = -1;
+  animate();
+}).observe(ui.wave);
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -127,7 +191,7 @@ function setVoice(s: Speaker | null) {
     const from = s.source_type === 'audio' ? 'from a clip' : 'from an embedding';
     ui.voiceMeta.textContent = `(${scope}, ${from}${s.embedding_dim ? `, ${s.embedding_dim}-d` : ''})`;
     ui.preview.hidden = !s.has_preview;
-    ui.preview.textContent = 'Play preview';
+    setLabel(ui.preview, 'Play preview', 'play');
   }
   updateGenerate();
 }
@@ -143,16 +207,18 @@ function showSource(source: string) {
 
 /** Runs a voice action with its button busy; failures show inline under the voice section. */
 async function voiceAction(button: HTMLButtonElement, busy: string, run: () => Promise<void>) {
-  const idle = button.textContent;
+  const idle = button.textContent!;
   button.disabled = true;
-  button.textContent = busy;
+  button.classList.add('is-busy');
+  setLabel(button, busy);
   show(ui.voiceError, null);
   try {
     await run();
   } catch (e) {
     show(ui.voiceError, message(e));
   } finally {
-    button.textContent = idle;
+    setLabel(button, idle);
+    button.classList.remove('is-busy');
     button.disabled = false;
     encoderLoaded();
   }
@@ -212,7 +278,8 @@ async function toggleRecording() {
     clearTimeout(limit);
     stream.getTracks().forEach((t) => t.stop());
     recorder = null;
-    ui.record.textContent = 'Record';
+    ui.record.classList.remove('is-recording');
+    setLabel(ui.record, 'Record');
     ui.record.setAttribute('aria-pressed', 'false');
     const wav = await recordingAsWav(new Blob(parts, { type: rec.mimeType }));
     ui.clipFile.value = '';
@@ -220,7 +287,8 @@ async function toggleRecording() {
   };
   recorder = { stop: () => rec.state === 'recording' && rec.stop() };
   rec.start();
-  ui.record.textContent = 'Stop recording';
+  ui.record.classList.add('is-recording');
+  ui.record.replaceChildren(Object.assign(document.createElement('span'), { className: 'rec-dot' }), 'Stop recording');
   ui.record.setAttribute('aria-pressed', 'true');
   ui.clipState.textContent = 'Recording… 0 s';
 }
@@ -229,16 +297,6 @@ async function toggleRecording() {
 
 function updateGenerate() {
   ui.generate.disabled = !voice || !!generation;
-}
-
-function concat(chunks: Float32Array[], total: number): Float32Array {
-  const pcm = new Float32Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    pcm.set(c, at);
-    at += c.length;
-  }
-  return pcm;
 }
 
 async function generate() {
@@ -260,12 +318,15 @@ async function generate() {
   updateGenerate();
   ui.stop.hidden = false;
   show(ui.error, null);
-  ui.result.hidden = true;
-  ui.resultAudio.pause();
   preview.pause();
   ui.status.textContent = 'Generating…';
-  const chunks: Float32Array[] = [];
-  let total = 0;
+  samples = 0;
+  drawn = -1;
+  ui.result.hidden = false;
+  ui.wave.classList.add('is-busy');
+  ui.resultDownload.hidden = true;
+  ui.resultMeta.textContent = '';
+  animate();
   const t0 = performance.now();
   let firstAudio = 0;
   try {
@@ -274,25 +335,23 @@ async function generate() {
       body,
       (pcm) => {
         firstAudio ||= performance.now();
-        chunks.push(pcm);
-        total += pcm.length;
+        append(pcm);
         player.push(pcm);
-        ui.status.textContent = `Playing while generating… ${seconds(total)}`;
+        ui.status.textContent = `Playing while generating… ${seconds(samples)}`;
       },
       ctrl.signal,
     );
     player.flush();
-    if (!total) throw new ApiError(200, 'The server returned no audio.');
+    if (!samples) throw new ApiError(200, 'The server returned no audio.');
     if (resultUrl) URL.revokeObjectURL(resultUrl);
-    resultUrl = URL.createObjectURL(new Blob([encodeWav(concat(chunks, total), SAMPLE_RATE)], { type: 'audio/wav' }));
-    ui.resultAudio.src = resultUrl;
+    resultUrl = URL.createObjectURL(new Blob([encodeWav(audio.subarray(0, samples), SAMPLE_RATE)], { type: 'audio/wav' }));
     ui.resultDownload.href = resultUrl;
     ui.resultDownload.download = `${slug(voice.label)}${seed ? `-seed${seed}` : ''}.wav`;
-    ui.resultMeta.textContent = `${seconds(total)} · seed ${seed ?? 'unknown'} · first audio after ${((firstAudio - t0) / 1000).toFixed(2)} s`;
-    ui.result.dataset.samples = String(total);
+    ui.resultDownload.hidden = false;
+    ui.resultMeta.textContent = `${seconds(samples)} · seed ${seed ?? 'unknown'} · first audio after ${((firstAudio - t0) / 1000).toFixed(2)} s`;
+    ui.result.dataset.samples = String(samples);
     ui.result.dataset.seed = seed ?? '';
-    ui.result.hidden = false;
-    ui.status.textContent = `Done: ${seconds(total)} of audio.`;
+    ui.status.textContent = `Done: ${seconds(samples)} of audio.`;
   } catch (e) {
     player.stop();
     if (ctrl.signal.aborted) ui.status.textContent = 'Stopped.';
@@ -300,13 +359,35 @@ async function generate() {
       ui.status.textContent = '';
       show(ui.error, message(e));
     }
+    ui.result.hidden = !samples;
   } finally {
     generation = null;
+    ui.wave.classList.remove('is-busy');
     ui.stop.hidden = true;
     updateGenerate();
     encoderLoaded();
+    animate();
   }
 }
+
+/** Plays the take from `fraction` of its length; while it plays (or streams), the play button stops it. */
+async function playTake(fraction: number) {
+  if (!samples || generation) return;
+  preview.pause();
+  await player.play(audio.subarray(0, samples), (fraction * samples) / SAMPLE_RATE);
+  animate();
+}
+
+ui.play.addEventListener('click', () => {
+  if (player.position() === null) return void playTake(0);
+  generation?.abort();
+  player.stop();
+  animate();
+});
+ui.wave.addEventListener('pointerdown', (e) => {
+  const r = ui.wave.getBoundingClientRect();
+  void playTake(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)));
+});
 
 // ── Wiring ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -314,9 +395,10 @@ for (const input of ui.sources) input.addEventListener('change', () => input.che
 
 ui.voiceSelect.addEventListener('change', () => setVoice(voices.find((s) => s.id === ui.voiceSelect.value) ?? null));
 
+ui.clipPick.addEventListener('click', () => ui.clipFile.click());
 ui.clipFile.addEventListener('change', () => {
   const file = ui.clipFile.files?.[0];
-  setClip(file ? { blob: file, name: file.name } : null, '');
+  setClip(file ? { blob: file, name: file.name } : null, file?.name ?? '');
 });
 ui.record.addEventListener('click', () => void toggleRecording());
 ui.clipUpload.addEventListener('click', () =>
@@ -331,9 +413,11 @@ ui.clipUpload.addEventListener('click', () =>
   }),
 );
 
+ui.embeddingPick.addEventListener('click', () => ui.embeddingFile.click());
 ui.embeddingFile.addEventListener('change', () => {
   const file = ui.embeddingFile.files?.[0];
   ui.embeddingUpload.disabled = !file;
+  ui.embeddingState.textContent = file?.name ?? '';
   if (file) ui.embeddingLabel.placeholder = stem(file.name);
 });
 ui.embeddingUpload.addEventListener('click', () =>
@@ -362,10 +446,15 @@ ui.preview.addEventListener('click', () => {
       preview.dataset.id = id;
     }
     await preview.play();
-  }).then(() => (ui.preview.textContent = preview.paused ? 'Play preview' : 'Stop preview'));
+  }).then(() => preview.paused || playing(true));
 });
-preview.addEventListener('play', () => (ui.preview.textContent = 'Stop preview'));
-preview.addEventListener('pause', () => (ui.preview.textContent = 'Play preview'));
+/** The preview button while the preview plays: Stop, in orange. */
+function playing(on: boolean) {
+  setLabel(ui.preview, on ? 'Stop preview' : 'Play preview', on ? 'stop' : 'play');
+  ui.preview.classList.toggle('is-playing', on);
+}
+preview.addEventListener('play', () => playing(true));
+preview.addEventListener('pause', () => playing(false));
 
 ui.downloadEmbedding.addEventListener('click', () => {
   const s = voice;
@@ -409,8 +498,14 @@ async function start() {
   }
   booting(null);
   const { kind, caps } = backend;
+  ui.backend.hidden = false;
+  ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In-browser' : 'Live';
+  ui.backend.title =
+    kind === 'web'
+      ? 'ZONOS3 runs in this tab on WebGPU; models are cached in the browser (Cache Storage).'
+      : `Connected to ${server || location.origin}.`;
+  ui.backend.classList.add(`pill-${kind}`);
   if (kind === 'web') {
-    ui.backend.hidden = false;
     ui.studioLink.search = '?api=web';
     void onEncoderProgress((text) => show(ui.notice, text));
   }
@@ -425,7 +520,7 @@ async function start() {
   if (!caps.speaker_audio_upload) {
     ui.clipUpload.disabled = true;
     ui.clipState.textContent = 'This server does not take clip uploads.';
-    ui.clipFile.disabled = ui.record.disabled = true;
+    ui.clipFile.disabled = ui.clipPick.disabled = ui.record.disabled = true;
   }
   if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) ui.record.hidden = true;
   try {

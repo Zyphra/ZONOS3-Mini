@@ -86,7 +86,7 @@ void usage(const char * a0) {
         "  --laci-heads LANG=PATH      LACI alignment heads of a language (repeatable)\n"
         "  --tts-phoneme-lexicon DIR   gold pronunciation lexicon (LMDB) for /v2/phonemize\n"
         "  --studio-projects-dir DIR   server-side studio projects and media (/v2/projects, /v2/media)\n"
-        "  --studio-dir DIR    studio production build served at / (default: studio/dist of the checkout\n"
+        "  --studio-dir DIR    studio production build (/ chooser, /studio, /lite) (default: studio/dist of the checkout\n"
         "                      holding the executable, else studio/ beside it)\n",
         a0, zonos3_generation().max_frames, (int) (zonos3_generation().max_frames / ZONOS3_FRAME_RATE));
 }
