@@ -2,25 +2,23 @@
 
 #include "server/edit.h"
 
+#include "server/edit_align.h"
 #include "server/generate.h"
 #include "server/http.h"
 #include "server/schema.h"
 #include "server/speakers.h"
 #include "server/util.h"
-#include "server/workers.h"
 
 #include "align-text.h"
 #include "zonos3-edit.h"
 #include "zonos3-markup.h"
+#include "zonos3-textmatch.h"
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <future>
-#include <list>
 #include <random>
-#include <thread>
 
 namespace zs {
 
@@ -81,131 +79,54 @@ EditAudio write_edit_audio(const std::vector<uint8_t> & bytes, const TempDir & t
     return a;
 }
 
-// ------------------------------------------------------------------------------------------------------ MMS workers
+// --------------------------------------------------------------------------------------------- ASR and FuseAlign
 
-// MMS workers (ASR and zsa token normalization) by worker language, least recently used first; at most
-// ZONOS3_MMS_MAX_WORKERS (default 2) stay resident (each holds MMS-1B-all on the GPU). A worker that failed is replaced
-// on the next request (sgl _mms_worker).
-std::mutex mms_mtx;
-std::list<std::pair<std::string, std::shared_ptr<JsonLinesWorker>>> mms_workers;
-
-std::shared_ptr<JsonLinesWorker> mms_worker(const ServerState & s, const std::string & language) {
-    const char * root = getenv("ZSA_ROOT");
-    if (!root || !*root)
-        throw WorkerError("Speech editing needs ZSA_ROOT: a z-speech-alignment checkout "
-                          "(git@github.com:Zyphra/z-speech-alignment.git) with its uv environment (run `uv sync` in it); "
-                          "ZSA_PYTHON overrides the interpreter.");
-    std::lock_guard<std::mutex> lk(mms_mtx);
-    for (auto it = mms_workers.begin(); it != mms_workers.end(); ++it)
-        if (it->first == language) {
-            mms_workers.splice(mms_workers.end(), mms_workers, it);
-            return mms_workers.back().second;
-        }
-    const char * zsa_python = getenv("ZSA_PYTHON");
-    std::vector<std::string> argv{zsa_python && *zsa_python ? std::string(zsa_python) : (fs::path(root) / ".venv/bin/python").string(),
-                                  (fs::path(s.python_src) / "zonos3" / "workers" / "zsa_mms.py").string(), "--lang", language};
-    const char * device = getenv("ZONOS3_MMS_DEVICE");
-    if (device && *device) { argv.push_back("--device"); argv.push_back(device); }
-    auto worker = std::make_shared<JsonLinesWorker>(
-        argv, std::map<std::string, std::optional<std::string>>{{"PYTHONPATH", std::string(root)},
-                                                                {"HF_HUB_OFFLINE", std::string("1")},
-                                                                {"PYTHONDONTWRITEBYTECODE", std::string("1")},
-                                                                {"VIRTUAL_ENV", std::nullopt}});
-    mms_workers.emplace_back(language, worker);
-    const char * cap_env = getenv("ZONOS3_MMS_MAX_WORKERS");
-    const size_t cap = (size_t) std::max(1, cap_env && *cap_env ? atoi(cap_env) : 2);
-    while (mms_workers.size() > cap) {
-        auto old = mms_workers.front().second;
-        mms_workers.pop_front();
-        std::thread([old] { old->close(); }).detach();   // an in-flight call finishes first (the worker's lock)
-    }
-    return worker;
-}
-
-void drop_mms_worker(const std::string & language, const std::shared_ptr<JsonLinesWorker> & worker) {
-    std::lock_guard<std::mutex> lk(mms_mtx);
-    for (auto it = mms_workers.begin(); it != mms_workers.end(); ++it)
-        if (it->first == language && it->second == worker) { mms_workers.erase(it); break; }
-    std::thread([worker] { worker->close(); }).detach();
-}
-
-// sgl _mms_run: 503 when the worker cannot run, 400 when it answers an error.
-json mms_one(const ServerState & s, const json & request, const std::string & language) {
-    json response;
-    std::shared_ptr<JsonLinesWorker> worker;
+// sgl _edit_worker: an ASR / FuseAlign call (server/edit_align.h); 503 when a worker is unavailable, 400 when the input
+// is at fault, with the workers' clients' messages.
+template <class F>
+auto worker_call(F && f) -> decltype(f()) {
     try {
-        worker = mms_worker(s, language);
-        response = worker->call(request);
-    } catch (const WorkerError & e) {
-        if (worker) drop_mms_worker(language, worker);
-        fail(503, std::string("MMS is unavailable: ") + e.what());
-    }
-    if (response.contains("error")) {
-        const json & err = response["error"];
-        fail(400, "MMS " + request["op"].get<std::string>() + " failed: " + (err.is_string() ? err.get<std::string>() : err.dump()));
-    }
-    return response;
-}
-
-// sgl _edit_mms_language: the Whisper-style worker language of a request's `language` (400 for one editing does not
-// serve).
-std::string edit_mms_language(const json & body) {
-    const std::string language = resolve_language(body);
-    const auto code = E::mms_language(language);
-    if (!code) fail(400, E::mms_language_error(language));
-    return *code;
-}
-
-std::vector<std::vector<std::string>> token_lists(const json & j) {
-    std::vector<std::vector<std::string>> out;
-    for (const auto & l : j) out.push_back(l.get<std::vector<std::string>>());
-    return out;
-}
-
-// The FuseAlign words of `tokens` spoken in `audio` (503 when the worker is unavailable, 400 for input it rejects).
-std::vector<FuseAlignWord> fuse_align(const ServerState & s, const std::string & audio,
-                                      const std::vector<std::string> & tokens, const std::string & language) {
-    if (!s.aligner) fail(503, "FuseAlign alignment is unavailable: start the server with --worker-python");
-    try {
-        return s.aligner->align({{audio, tokens, language}})[0];
-    } catch (const FuseAlignError & e) {
-        fail(503, std::string("FuseAlign alignment is unavailable: ") + e.what());
-    } catch (const std::invalid_argument & e) {
-        fail(400, std::string("FuseAlign alignment failed: ") + e.what());
-    }
-}
-
-// sgl _edit_words: the edit's words of `text` spoken in `audio` (FuseAlign over align_tokens(text, language), each
-// word's zsa tokens from the MMS normalize; E::aligned_words), with the zsa tokens of `texts` from the same normalize
-// call, which runs concurrently with the alignment.
-struct EditWords { std::vector<std::vector<std::string>> normalized; std::vector<E::AlignedWord> words; };
-EditWords edit_words_of(const ServerState & s, const std::string & audio, const std::string & text,
-                        const std::string & language, const std::vector<std::string> & texts = {}) {
-    const std::vector<std::string> tokens = aligntext::align_tokens(text, language);
-    std::vector<std::string> sent = texts;
-    sent.insert(sent.end(), tokens.begin(), tokens.end());
-    auto normalize = std::async(std::launch::async, [&] {
-        return token_lists(mms_one(s, {{"id", "words"}, {"op", "normalize"}, {"normalize", sent}}, language).at("normalized"));
-    });
-    std::vector<FuseAlignWord> placed;
-    if (!tokens.empty()) placed = fuse_align(s, audio, tokens, language);
-    const auto lists = normalize.get();
-    if (lists.size() != sent.size()) fail(503, "MMS is unavailable: malformed normalize answer");
-    EditWords out;
-    out.normalized.assign(lists.begin(), lists.begin() + (std::ptrdiff_t) texts.size());
-    std::vector<E::WordIn> ws;
-    for (const auto & w : placed) ws.push_back({w.word, w.start, w.end, w.presence});
-    try {
-        out.words = E::aligned_words(ws, {lists.begin() + (std::ptrdiff_t) texts.size(), lists.end()});
+        return f();
+    } catch (const WorkerUnavailable & e) {
+        fail(503, e.what());
     } catch (const std::invalid_argument & e) {
         bad(e);
     }
-    return out;
 }
 
-std::vector<E::AlignedWord> words_of(const ServerState & s, const std::string & audio, const std::string & text,
-                                     const std::string & language) {
-    return edit_words_of(s, audio, text, language).words;
+// sgl _edit_language: (Whisper-style code, Qwen3-ASR name) of a request's `language` (E::edit_language over the ASR
+// worker's languages; 400 for one editing does not serve).
+using EditLanguage = std::pair<std::string, std::string>;
+EditLanguage edit_language_of(const ServerState & s, const json & body) {
+    const std::string language = resolve_language(body);
+    const auto supported = worker_call([&] { return asr_worker(s).languages(); });
+    try {
+        return E::edit_language(language, supported);
+    } catch (const std::invalid_argument & e) {
+        bad(e);
+    }
+}
+
+// sgl _edit_transcribe: Qwen3-ASR transcript of a clip in the edit's language (chunk-wise past 30 s).
+Transcript edit_transcribe(const ServerState & s, const std::string & audio, double seconds, const EditLanguage & language) {
+    return worker_call([&] { return transcribe_audio(s, audio, seconds, language.second); });
+}
+
+// sgl _edit_aligned_words (edit_align.edit_aligned_words): the words of `text` in the clip with their edit tokens,
+// FuseAlign over align_tokens(text, code); `utterances` are the long-form anchors of a transcript of the same clip.
+std::vector<E::AlignedWord> edit_aligned_words(const ServerState & s, const std::string & audio, double seconds,
+                                               const std::string & text, const EditLanguage & language,
+                                               const std::optional<std::vector<FuseAlignUtterance>> & utterances = std::nullopt) {
+    return worker_call([&] {
+        const std::vector<std::string> words = aligntext::align_tokens(text, language.first);
+        std::vector<FuseAlignWord> aligned;
+        if (!words.empty()) aligned = align_words(s, {{audio, seconds, words, language.second, utterances}})[0];
+        std::vector<E::WordIn> ws;
+        for (const auto & w : aligned) ws.push_back({w.word, w.start, w.end, w.presence});
+        std::vector<std::vector<std::string>> tokens;
+        for (const auto & w : words) tokens.push_back(zonos3_textmatch::tokens(w));
+        return E::aligned_words(ws, tokens);
+    });
 }
 
 json public_words(const std::vector<E::AlignedWord> & words) {
@@ -357,15 +278,16 @@ std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & fr
 
 // ---------------------------------------------------------------------------------------------------- handlers
 
-// MMS recognizes the text; FuseAlign places its words.
+// Qwen3-ASR recognizes the text (chunk-wise past 30 s); FuseAlign places its words, anchored by the transcript's chunks.
 json handle_transcribe(ServerState & s, const json & body) {
     require_editing(s);
     TempDir tmp;
     const EditAudio audio = write_edit_audio(decode_b64_field(body, "audio_base64"), tmp, EDIT_ALIGN_MAX_SECONDS);
-    const std::string language = edit_mms_language(body);
-    const json response = mms_one(s, {{"id", "original"}, {"op", "transcribe"}, {"audio", audio.path}}, language);
-    const std::string text = response.at("text").get<std::string>();
-    return {{"text", text}, {"duration", audio.duration}, {"words", public_words(words_of(s, audio.path, text, language))}};
+    const EditLanguage language = edit_language_of(s, body);
+    const Transcript transcript = edit_transcribe(s, audio.path, audio.duration, language);
+    return {{"text", transcript.text}, {"duration", audio.duration},
+            {"words", public_words(edit_aligned_words(s, audio.path, audio.duration, transcript.text, language,
+                                                      transcript.utterances))}};
 }
 
 json handle_align(ServerState & s, const json & body) {
@@ -375,7 +297,7 @@ json handle_align(ServerState & s, const json & body) {
     TempDir tmp;
     const EditAudio audio = write_edit_audio(decode_b64_field(body, "audio_base64"), tmp, EDIT_ALIGN_MAX_SECONDS);
     return {{"text", text}, {"duration", audio.duration},
-            {"words", public_words(words_of(s, audio.path, text, edit_mms_language(body)))}};
+            {"words", public_words(edit_aligned_words(s, audio.path, audio.duration, text, edit_language_of(s, body)))}};
 }
 
 // POST /v2/edit (sgl tts_edit): regenerate the edited regions of recorded speech; unedited codec frames are kept
@@ -393,6 +315,7 @@ json handle_edit(ServerState & s, const json & body) {
     // never reach the workers (word diff, alignment, verify).
     const std::string target_text = E::canonical_markup(strip(body.at("target_text").get<std::string>()));
     const std::string plain_target_text = zonos3_strip_nonverbal_markup(target_text);
+    const EditLanguage edit_lang = edit_language_of(s, body);   // every ASR and FuseAlign call of the edit
     const bool has_spans = set(body, "spans");
     const double min_fill_ratio = num(body, "min_fill_ratio", 0.7);
     const double max_span_seconds = num(body, "max_span_seconds", 30.0);
@@ -400,7 +323,7 @@ json handle_edit(ServerState & s, const json & body) {
     TempDir tmp;
 
     std::optional<std::vector<std::map<std::string, double>>> region_doses;
-    std::string language, mms_lang;
+    std::string language;
     bool use_speaker_row;
     std::vector<int32_t> condition_ids;
     std::vector<uint8_t> upload;
@@ -415,9 +338,6 @@ json handle_edit(ServerState & s, const json & body) {
         use_speaker_row = set(body, "speaker_embedding") ? body["speaker_embedding"].get<bool>() : speaker_row_capable;
         region_doses = edit_region_doses(s, body, use_speaker_row);
         language = resolve_language(body);
-        const auto code = E::mms_language(language);
-        if (!code) throw std::invalid_argument(E::mms_language_error(language));
-        mms_lang = *code;
         if (use_speaker_row && !speaker_row_capable)
             throw std::invalid_argument("speaker_embedding needs a checkpoint with a speaker-embedding row.");
         condition_ids = resolve_condition_buckets(s, body);
@@ -432,64 +352,48 @@ json handle_edit(ServerState & s, const json & body) {
     const int total_frames = (int) (codes.size() / K);
 
     // Longer clips are windowed and every fill gets a minimum length; both read word timings of the original (the
-    // caller's original_words, else a FuseAlign alignment) and the target words' zsa tokens. Without original_text, a
+    // caller's original_words, else a FuseAlign alignment) and the target words' edit tokens. Without original_text, a
     // short clip with explicit spans is not transcribed: its regions' own lengths are expected.
     const bool windowed = total_frames / fr > num(body, "max_context_seconds", 16.0);
     const std::vector<std::string> target_words = E::split_words(target_text);
-    const E::TargetNormalize target_norm = E::target_normalize_request(target_text);
+    // [target tokens, tokens of each target word]; a pronunciation group is one target token (target_tokens).
+    const std::vector<std::vector<std::string>> normalized = E::target_tokens(target_text);
     std::optional<std::string> original_text;
     if (set(body, "original_text")) original_text = zonos3_strip_nonverbal_markup(body["original_text"].get<std::string>());
     const bool has_original_text = original_text && !original_text->empty();
     std::optional<std::vector<E::AlignedWord>> words;
-    std::vector<std::vector<std::string>> normalized;   // [target tokens, tokens of target word 0, ...]
-    try {
-        if (set(body, "original_words")) {
-            const json & given = body["original_words"];
-            std::vector<size_t> missing;
-            json texts = json::array({*original_text});
-            for (const auto & t : target_norm.texts) texts.push_back(t);
-            for (size_t k = 0; k < given.size(); ++k)
-                if (!set(given[k], "tokens")) { missing.push_back(k); texts.push_back(given[k].at("word")); }
-            const auto lists = token_lists(mms_one(s, {{"id", "original_words"}, {"op", "normalize"}, {"normalize", texts}},
-                                                   mms_lang).at("normalized"));
-            const size_t nt = target_norm.texts.size();
-            if (lists.size() != 1 + nt + missing.size()) fail(503, "MMS is unavailable: malformed normalize answer");
-            std::vector<E::WordIn> ws;
-            std::vector<std::vector<std::string>> word_tokens;
-            size_t m = 0;
-            for (size_t k = 0; k < given.size(); ++k) {
-                E::WordIn w;
-                w.word = given[k].at("word").get<std::string>();
-                w.start = given[k].at("start").get<double>();
-                w.end = given[k].at("end").get<double>();
-                if (set(given[k], "confidence")) w.confidence = given[k]["confidence"].get<double>();
-                ws.push_back(std::move(w));
-                word_tokens.push_back(set(given[k], "tokens") ? given[k]["tokens"].get<std::vector<std::string>>()
-                                                              : lists[1 + nt + m++]);
-            }
-            words = E::edit_words(ws, word_tokens, lists[0], original.duration);
-            normalized = target_norm.assemble({lists.begin() + 1, lists.begin() + 1 + nt});
-        } else if (!has_spans || windowed || (min_fill_ratio > 0 && has_original_text)) {
-            // the original's words (MMS recognizes the text when it is not given; FuseAlign places it) and the
-            // target's zsa tokens, from one normalize call
-            if (!has_original_text)
-                original_text = mms_one(s, {{"id", "original"}, {"op", "transcribe"}, {"audio", original.path}}, mms_lang)
-                                    .at("text").get<std::string>();
-            EditWords aligned = edit_words_of(s, original.path, *original_text, mms_lang, target_norm.texts);
-            normalized = target_norm.assemble(aligned.normalized);
-            words = std::move(aligned.words);
+    if (set(body, "original_words")) {
+        const json & given = body["original_words"];
+        std::vector<E::WordIn> ws;
+        std::vector<std::vector<std::string>> word_tokens;
+        for (const auto & g : given) {
+            E::WordIn w;
+            w.word = g.at("word").get<std::string>();
+            w.start = g.at("start").get<double>();
+            w.end = g.at("end").get<double>();
+            if (set(g, "confidence")) w.confidence = g["confidence"].get<double>();
+            word_tokens.push_back(set(g, "tokens") ? g["tokens"].get<std::vector<std::string>>() : zonos3_textmatch::tokens(w.word));
+            ws.push_back(std::move(w));
         }
-    } catch (const std::invalid_argument & e) {
-        bad(e);
+        try {
+            words = E::edit_words(ws, word_tokens, zonos3_textmatch::tokens(*original_text), original.duration);
+        } catch (const std::invalid_argument & e) {
+            bad(e);
+        }
+    } else if (!has_spans || windowed || (min_fill_ratio > 0 && has_original_text)) {
+        // the original's words: Qwen3-ASR recognizes the text when it is not given (its chunks anchor the alignment
+        // of a long clip), FuseAlign places it
+        std::optional<std::vector<FuseAlignUtterance>> utterances;
+        if (!has_original_text) {
+            Transcript transcript = edit_transcribe(s, original.path, original.duration, edit_lang);
+            original_text = std::move(transcript.text);
+            utterances = std::move(transcript.utterances);
+        }
+        words = edit_aligned_words(s, original.path, original.duration, *original_text, edit_lang, utterances);
     }
     // verify with pronunciation groups: the reference's tokens, each group a wildcard word
     std::optional<std::vector<std::string>> verify_reference;
-    if (verify && target_text.find(GROUP_OPEN) != std::string::npos) {
-        if (words) verify_reference = normalized.at(0);
-        else
-            verify_reference = target_norm.assemble(token_lists(
-                mms_one(s, {{"id", "target"}, {"op", "normalize"}, {"normalize", target_norm.texts}}, mms_lang).at("normalized")))[0];
-    }
+    if (verify && target_text.find(GROUP_OPEN) != std::string::npos) verify_reference = normalized.at(0);
 
     std::vector<E::Span> spans;
     std::vector<E::EditWindow> windows;
@@ -593,34 +497,33 @@ json handle_edit(ServerState & s, const json & body) {
         if (verify) {
             const std::string edited_path = tmp.file("take" + std::to_string(k) + ".wav");
             if (!dac_write_wav(edited_path.c_str(), edited, sr)) fail(500, "cannot write a temporary audio file");
-            const std::string id = "take" + std::to_string(k);
+            // The take's transcript (Qwen3-ASR) and its anchors for the alignment of the take's words.
+            const Transcript transcript = edit_transcribe(s, edited_path, duration, edit_lang);
             if (!verify_reference) {
-                // MMS scores the take against the target while FuseAlign places the target's words in it.
-                auto asr_call = std::async(std::launch::async, [&] {
-                    return mms_one(s, {{"id", id}, {"op", "transcribe"}, {"audio", edited_path}, {"reference", plain_target_text}},
-                                   mms_lang);
-                });
-                take_words = public_words(words_of(s, edited_path, plain_target_text, mms_lang));
-                const json asr = asr_call.get();
-                verify_json = {{"asr_text", asr.at("text")},
-                               {"wer", asr.at("word_errors").get<double>() / std::max(1, asr.at("ref_words").get<int>())},
-                               {"cer", asr.at("cer")}};
+                const auto ref = zonos3_textmatch::tokens(plain_target_text);
+                const int word_errors = zonos3_textmatch::word_errors(ref, zonos3_textmatch::tokens(transcript.text));
+                verify_json = {{"asr_text", transcript.text},
+                               {"wer", (double) word_errors / std::max<double>(1, (double) ref.size())},
+                               {"cer", zonos3_textmatch::char_error_rate(plain_target_text, transcript.text)}};
+                take_words = public_words(edit_aligned_words(s, edited_path, duration, plain_target_text, edit_lang,
+                                                             transcript.utterances));
             } else {
                 // Groups are wildcard words: any one recognized word matches; the take's words come from aligning the
                 // target with each group replaced by the word heard.
-                const json asr = mms_one(s, {{"id", id}, {"op", "transcribe"}, {"audio", edited_path}}, mms_lang);
-                const E::Verify scored = E::wildcard_verify(*verify_reference, asr.at("tokens").get<std::vector<std::string>>());
+                const E::Verify scored = E::wildcard_verify(*verify_reference, zonos3_textmatch::tokens(transcript.text));
                 json groups = json::array();
                 std::vector<std::optional<std::string>> heard;
                 for (const auto & g : scored.groups) {
                     groups.push_back({{"ipa", g.ipa}, {"heard", g.heard ? json(*g.heard) : json()}});
                     heard.push_back(g.heard);
                 }
-                verify_json = {{"asr_text", asr.at("text")},
+                verify_json = {{"asr_text", transcript.text},
                                {"wer", (double) scored.word_errors / std::max(1, scored.ref_words)},
                                {"cer", scored.cer}, {"groups", groups}};
                 const std::string heard_text = E::fill_groups(plain_target_text, heard);
-                if (!heard_text.empty()) take_words = public_words(words_of(s, edited_path, heard_text, mms_lang));
+                if (!heard_text.empty())
+                    take_words = public_words(edit_aligned_words(s, edited_path, duration, heard_text, edit_lang,
+                                                                 transcript.utterances));
             }
         }
         const std::vector<uint8_t> wav = dac_wav_bytes(edited, sr);
@@ -659,13 +562,12 @@ json handle_edit(ServerState & s, const json & body) {
 
 }  // namespace
 
-// speech_editing: an edit checkpoint, ZSA_ROOT (MMS ASR and token normalization) and the FuseAlign worker
-// (--worker-python).
+// speech_editing: an edit checkpoint, the ASR interpreter (ZONOS3_ASR_PYTHON / .venv-asr) and FuseAlign (fusealign_hub
+// in the --worker-python interpreter).
 json edit_capabilities(const ServerState & s) {
     const bool model = zonos3_supports_editing(s.model);
-    const char * root = getenv("ZSA_ROOT");
-    return {{"speech_editing", model && root && *root && s.aligner}, {"edit_max_spans", model ? edit_max_spans(s) : 0},
-            {"edit_frame_rate", model ? json(frame_rate(s)) : json()},
+    return {{"speech_editing", model && s.asr && s.asr->installed() && s.aligner && s.fusealign_installed},
+            {"edit_max_spans", model ? edit_max_spans(s) : 0}, {"edit_frame_rate", model ? json(frame_rate(s)) : json()},
             {"edit_max_seconds", EDIT_MAX_SECONDS}, {"edit_align_max_seconds", EDIT_ALIGN_MAX_SECONDS}};
 }
 

@@ -329,7 +329,7 @@
     "/v2/edit/transcribe": {
       "post": {
         "operationId": "editTranscribe",
-        "summary": "MMS transcript of the audio to edit and its FuseAlign word timings",
+        "summary": "Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -414,7 +414,7 @@
       "post": {
         "operationId": "edit",
         "summary": "Edit recorded speech so it says target_text",
-        "description": "Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\n`original_text` (MMS recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\nspan-end-terminated generation; unedited codec frames are kept exactly.\n",
+        "description": "Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\n`original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\nspan-end-terminated generation; unedited codec frames are kept exactly.\n",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -1287,7 +1287,7 @@
         }
       },
       "Unavailable": {
-        "description": "A helper worker (MMS, FuseAlign, the dub alignment worker) is unavailable.",
+        "description": "A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker) is unavailable.",
         "content": {
           "application/json": {
             "schema": {
@@ -3236,7 +3236,8 @@
             "type": "boolean"
           },
           "speech_editing": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "The checkpoint edits speech (span-end and marker rows) and the server has Qwen3-ASR (.venv-asr) and FuseAlign."
           },
           "edit_max_spans": {
             "type": "integer"
@@ -3539,7 +3540,7 @@
         }
       },
       "EditWord": {
-        "description": "One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign\ninterval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous\nword is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its\nzsa-normalized tokens. Punctuation-only words are left out.\n",
+        "description": "One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign\ninterval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous\nword is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its edit\ntokens (upper-cased; letters, digits and `'` of any script kept, everything else a word break). Punctuation-only\nwords are left out.\n",
         "type": "object",
         "required": [
           "word",
@@ -3585,7 +3586,7 @@
           "language": {
             "type": "string",
             "default": "en_us",
-            "description": "The audio's language (picks the MMS adapter and FuseAlign's tokenization)."
+            "description": "The audio's language (server code): the Qwen3-ASR recognition language and FuseAlign's tokenization."
           }
         }
       },
@@ -4135,7 +4136,7 @@
           },
           "available": {
             "type": "boolean",
-            "description": "The alignment worker is installed and the checkpoint can dub."
+            "description": "The dub workers are installed (.venv-asr), the ASR and FuseAlign workers answer and the checkpoint can dub."
           },
           "ref_languages": {
             "type": "array",
@@ -4204,7 +4205,7 @@
           },
           "asr_model": {
             "type": "string",
-            "description": "The reference transcription model (Qwen3-ASR)."
+            "description": "The speech-recognition model of the server's ASR worker (Qwen3-ASR, its ping); empty when the worker cannot start."
           },
           "aligner_model": {
             "type": "string",

@@ -1,7 +1,7 @@
-"""AV-sync lip-sync step of the alignment worker (dub_align_worker.py; runs in .venv-dub-align).
+"""AV-sync lip-sync step of the alignment worker (dub_align.py; runs in .venv-asr).
 
 AV-sync (https://github.com/Ryu1845/AV-sync, "Dynamic Temporal Alignment of Speech to Lips", Halperin et al.) is
-imported from its checkout (--avsync-home, cloned at a pinned commit by tools/setup_dub_align_env.sh): the S3FD face
+imported from its checkout (--avsync-home, cloned at a pinned commit by tools/setup_asr_env.sh): the S3FD face
 detector, SyncNet, the lip / audio embeddings, the banded dynamic programming and its smoothing filters. Its two entry
 points are scripts that run on import, so the glue between those pieces is ported here, kept to
 their constants: the face tracking and crop of run_pipeline.py (prepare) and the path post-processing of
@@ -52,7 +52,7 @@ def _ffmpeg(args: list[str], what: str) -> None:
 class AvSync:
     def __init__(self, home: str, device: str):
         if not models_present(home):
-            raise RuntimeError(f"AV-sync models missing under {home}/data (run tools/setup_dub_align_env.sh)")
+            raise RuntimeError(f"AV-sync models missing under {home}/data (run tools/setup_asr_env.sh)")
         sys.path.insert(0, str(home))
         import avsnap_utils
         import s3fd

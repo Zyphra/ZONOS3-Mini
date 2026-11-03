@@ -1,5 +1,19 @@
-"""Speech-editing helpers: the MMS worker (zsa ASR and token normalization), the FuseAlign forced-alignment worker
-and transcript-diff edit regions."""
+"""Speech-editing helpers: the speech-recognition (Qwen3-ASR) and forced-alignment (FuseAlign) worker clients shared by
+speech editing and dubbing, their long-form orchestration, and transcript-diff edit regions.
+
+Both workers are JSON-lines processes, one of each per server, started on first use and again after they exited:
+``AsrWorker`` runs zonos3/workers/asr.py in .venv-asr (``ZONOS3_ASR_PYTHON``; tools/setup_asr_env.sh) and
+``FuseAlignWorker`` runs zonos3/workers/fusealign.py in the server's interpreter. Their failures are ``WorkerError``s
+(``AsrError`` / ``FuseAlignError``: the worker is unavailable, HTTP 503) or ``ValueError``s (the input is at fault,
+HTTP 400), each with its final message.
+
+Long-form alignment: a FuseAlign item whose audio is longer than ``LONG_FORM_SECONDS`` or whose tokens (joined with
+spaces) exceed ``MAX_TEXT_BYTES`` UTF-8 bytes is routed by approximate word times. They come from Qwen3-ASR on the
+recording's VAD chunks (the FuseAlign worker's ``segments``): every chunk transcribed (``start`` / ``end``) gives one
+utterance ``{text, start, end}`` (empty texts dropped), sent as the item's ``utterances``; FuseAlign's built-in
+Whisper anchoring never runs. A transcript Qwen3-ASR makes of a recording over ``LONG_FORM_SECONDS``
+(``transcribe_audio``) is made the same way, chunk by chunk, and its utterances anchor the alignments that follow.
+"""
 from dataclasses import dataclass
 import difflib
 import importlib.util
@@ -12,93 +26,49 @@ import subprocess
 import sys
 import threading
 
+from .align_text import align_tokens
 from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
+from . import textmatch
 
-ZSA_ROOT = os.environ.get('ZSA_ROOT')
-ZSA_PYTHON = Path(os.environ.get('ZSA_PYTHON') or (Path(ZSA_ROOT) / '.venv/bin/python' if ZSA_ROOT else ''))
-WORKER = Path(__file__).resolve().parents[1] / 'workers' / 'zsa_mms.py'
-FUSEALIGN_WORKER = Path(__file__).resolve().parents[1] / 'workers' / 'fusealign.py'
-
-
-# Server language codes (normalized, as /v2/generate) -> the Whisper-style codes of the edit's workers: zsa maps them
-# to MMS-1B-all adapters (WHISPER_TO_MMS), FuseAlign tokenizes by them (zonos3.tts.align_text) and anchors long
-# recordings with Whisper in them; the dub target languages.
-MMS_LANGUAGES = {'en_us': 'en', 'fr_fr': 'fr', 'de': 'de', 'es': 'es', 'it': 'it', 'pt_br': 'pt', 'ja': 'ja',
-                 'cmn': 'zh', 'ko': 'ko'}
+REPO_ROOT = Path(__file__).resolve().parents[4]
+MODEL_SRC = Path(__file__).resolve().parents[2]  # model/src: PYTHONPATH of both workers
+ASR_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'asr.py'
+FUSEALIGN_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'fusealign.py'
+LONG_FORM_SECONDS = 30.0  # fusealign_hub.aligner.MAX_SECONDS: one FuseAlign forward
+MAX_TEXT_BYTES = 1022  # fusealign_hub.longform.MAX_TEXT_BYTES
+# Qwen3-ASR names of the unspaced languages (zonos3.dub.plan.UNSPACED: ja, zh, yue): their chunk texts join with "".
+UNSPACED_LANGUAGES = frozenset({'Japanese', 'Chinese', 'Cantonese'})
 
 
-def mms_language(language: str) -> str:
-    """The Whisper-style worker language of a normalized server language code; ValueError for languages speech
-    editing does not serve."""
-    code = MMS_LANGUAGES.get(language)
-    if code is None:
-        raise ValueError(f"Speech editing does not serve language {language!r} "
-                         f"(supported: {', '.join(MMS_LANGUAGES)}).")
-    return code
+# Server language codes (normalized, as /v2/generate) -> (the Whisper-style code the edit's words are tokenized by,
+# zonos3.tts.align_text.align_tokens; the Qwen3-ASR language name its recognition is forced to). Speech editing serves
+# the entries whose Qwen3-ASR language the ASR worker supports (its ping).
+EDIT_LANGUAGES = {'en_us': ('en', 'English'), 'en_gb': ('en', 'English'), 'fr_fr': ('fr', 'French'),
+                  'de': ('de', 'German'), 'es': ('es', 'Spanish'), 'it': ('it', 'Italian'),
+                  'pt_br': ('pt', 'Portuguese'), 'ja': ('ja', 'Japanese'), 'cmn': ('zh', 'Chinese'),
+                  'ko': ('ko', 'Korean')}
 
 
-class MMSWorker:
-    """One MMS-1B-all process in the zsa interpreter with one language adapter (ASR and zsa token normalization);
-    requests are answered in order.
-
-    The model loads once per worker, so a long-lived worker (the server's) pays
-    the load only on its first request. ``run`` is thread-safe.
-    """
-
-    def __init__(self, device: str | None = None, language: str = 'en'):
-        if not ZSA_ROOT:
-            raise RuntimeError("Speech editing needs ZSA_ROOT: a z-speech-alignment checkout "
-                               "(git@github.com:Zyphra/z-speech-alignment.git) with its uv environment (run `uv sync` "
-                               "in it); ZSA_PYTHON overrides the interpreter.")
-        env = dict(os.environ, PYTHONPATH=str(ZSA_ROOT), HF_HUB_OFFLINE='1', PYTHONDONTWRITEBYTECODE='1')
-        env.pop('VIRTUAL_ENV', None)
-        command = [str(ZSA_PYTHON), str(WORKER), '--lang', language] + (['--device', device] if device else [])
-        self._process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self._lock = threading.Lock()
-
-    @property
-    def alive(self) -> bool:
-        return self._process.poll() is None
-
-    def run(self, requests: list[dict]) -> list[dict]:
-        responses = []
-        with self._lock:
-            for request in requests:
-                self._process.stdin.write(json.dumps(request) + '\n')
-                self._process.stdin.flush()
-                line = self._process.stdout.readline()
-                if not line:
-                    raise RuntimeError(f'MMS worker exited with code {self._process.wait()}')
-                responses.append(json.loads(line))
-        return responses
-
-    def close(self) -> None:
-        with self._lock:  # after any in-flight run
-            if self.alive:
-                self._process.stdin.close()
-            self._process.wait()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
+def edit_language(language: str, supported) -> tuple[str, str]:
+    """``(code, Qwen3-ASR name)`` of a normalized server language code, given the ASR worker's ``supported`` language
+    names; ValueError for languages speech editing does not serve."""
+    served = [k for k, (_, name) in EDIT_LANGUAGES.items() if name in supported]
+    if language not in served:
+        raise ValueError(f"Speech editing does not serve language {language!r} (supported: {', '.join(served)}).")
+    return EDIT_LANGUAGES[language]
 
 
-def run_mms(requests: list[dict], device: str | None = None, language: str = 'en') -> list[dict]:
-    with MMSWorker(device, language) as worker:
-        return worker.run(requests)
+class WorkerError(RuntimeError):
+    """A worker is unavailable: it could not start, exited twice in a row, or failed without the input being at fault
+    (e.g. its model could not be loaded). The message is final (HTTP 503)."""
 
 
-def expect_ok(resp):
-    if 'error' in resp:
-        raise RuntimeError(f"zsa {resp['id']}: {resp['error']}")
-    return resp
+class AsrError(WorkerError):
+    """The ASR worker is unavailable (``ASR is unavailable: ...``)."""
 
 
-class FuseAlignError(RuntimeError):
-    """The FuseAlign worker is unavailable: it could not start, exited twice in a row, or failed without the input
-    being at fault (e.g. its checkpoint could not be loaded)."""
+class FuseAlignError(WorkerError):
+    """The FuseAlign worker is unavailable (``FuseAlign alignment is unavailable: ...``)."""
 
 
 def fusealign_installed() -> bool:
@@ -106,20 +76,28 @@ def fusealign_installed() -> bool:
     return importlib.util.find_spec('fusealign_hub') is not None
 
 
-class FuseAlignWorker:
-    """The workers/fusealign.py process (this interpreter, ``PYTHONPATH`` = model/src): one per server, shared by
-    speech editing and dubbing. It starts on the first call and again after it exited; a call that meets an exited
-    worker (EOF) is retried once on a fresh one. Thread-safe: calls are serialized.
+def asr_python() -> str:
+    """The interpreter of the ASR worker and of the dubbing worker: ``ZONOS3_ASR_PYTHON``, else the repo's .venv-asr."""
+    return os.environ.get('ZONOS3_ASR_PYTHON') or str(REPO_ROOT / '.venv-asr' / 'bin' / 'python')
 
-    ``call`` raises ValueError when the worker reports the input at fault and FuseAlignError otherwise."""
 
-    def __init__(self, device: str | None = None, checkpoint: str | None = None, python: str = sys.executable):
-        self._command = ([python, str(FUSEALIGN_WORKER)] + (['--device', device] if device else [])
-                         + (['--checkpoint', checkpoint] if checkpoint else []))
+class _JsonLinesWorker:
+    """A persistent worker process (``PYTHONPATH`` = model/src). It starts on the first call and again after it exited;
+    a call that meets an exited worker (EOF) is retried once on a fresh one. Thread-safe: calls are serialized.
+
+    ``call`` raises ValueError (``<failed>: <message>``) when the worker reports the input at fault and ``error``
+    (``<unavailable>: <detail>``) otherwise."""
+
+    error: type[WorkerError] = WorkerError
+    name = 'worker'
+    unavailable = 'worker is unavailable'
+    failed = 'worker failed'
+
+    def __init__(self, command: list[str]):
+        self._command = command
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._next_id = 0
-        self._model: str | None = None
 
     @property
     def alive(self) -> bool:
@@ -127,13 +105,14 @@ class FuseAlignWorker:
 
     def _start(self) -> subprocess.Popen:
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONPATH', 'VIRTUAL_ENV')}
-        env['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])  # model/src
+        env['PYTHONPATH'] = str(MODEL_SRC)
         env['PYTHONDONTWRITEBYTECODE'] = '1'
+        env.setdefault('HF_HUB_OFFLINE', '1')
         try:
             return subprocess.Popen(self._command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                                     encoding='utf-8')
         except OSError as exc:
-            raise FuseAlignError(f'cannot start the FuseAlign worker: {exc}') from exc
+            raise self.error(f'{self.unavailable}: cannot start the {self.name}: {exc}') from exc
 
     def call(self, op: str, **payload) -> dict:
         with self._lock:
@@ -152,23 +131,13 @@ class FuseAlignWorker:
                     break
                 code = self._process.wait()
             else:
-                raise FuseAlignError(f'FuseAlign worker exited with code {code}')
+                raise self.error(f'{self.unavailable}: the {self.name} exited with code {code}')
         response = json.loads(reply)
         if response.get('status') != 'ok':
             if response.get('invalid'):
-                raise ValueError(response.get('message') or response.get('error'))
-            raise FuseAlignError(response.get('error', 'unknown error'))
+                raise ValueError(f"{self.failed}: {response.get('message') or response.get('error')}")
+            raise self.error(f"{self.unavailable}: {response.get('error', 'unknown error')}")
         return response
-
-    def model(self) -> str:
-        """The checkpoint id the worker aligns with (its ``ping``)."""
-        if self._model is None:
-            self._model = self.call('ping')['model']
-        return self._model
-
-    def align(self, items: list[dict]) -> list[list[dict]]:
-        """``[{audio, tokens, language}]`` -> per item one ``{word, start, end, presence, placed}`` per token."""
-        return [r['words'] for r in self.call('align', items=items)['results']]
 
     def close(self) -> None:
         with self._lock:  # after any in-flight call
@@ -179,9 +148,164 @@ class FuseAlignWorker:
                 self._process = None
 
 
-# Pronunciation groups (U+E000 IPA U+E001, phoneme-token checkpoints) in a target text. zsa's normalize
-# mangles them (IPA upper-cased, the private-use markers and tie bars become word breaks), so a group
-# never goes to MMS: it is one target token of its own, the group string itself, which no MMS token of
+class AsrWorker(_JsonLinesWorker):
+    """The workers/asr.py process (Qwen3-ASR) in .venv-asr: one per server, shared by speech editing and dubbing.
+    ``device`` defaults to ``ZONOS3_ASR_DEVICE`` (else the worker's own default), ``model`` to the worker's."""
+
+    error = AsrError
+    name = 'ASR worker'
+    unavailable = 'ASR is unavailable'
+    failed = 'ASR failed'
+
+    def __init__(self, python: str | None = None, device: str | None = None, model: str | None = None):
+        self.python = python or asr_python()
+        device = device or os.environ.get('ZONOS3_ASR_DEVICE')
+        super().__init__([self.python, str(ASR_WORKER)] + (['--device', device] if device else [])
+                         + (['--model', model] if model else []))
+        self._ping: dict | None = None
+
+    @property
+    def installed(self) -> bool:
+        """Whether the worker's interpreter exists (tools/setup_asr_env.sh)."""
+        return Path(self.python).is_file()
+
+    def _start(self) -> subprocess.Popen:
+        if not self.installed:
+            raise AsrError(f'{self.unavailable}: interpreter not found: {self.python} (run tools/setup_asr_env.sh)')
+        return super()._start()
+
+    def ping(self) -> dict:
+        """``{"model", "languages"}`` of the worker (cached)."""
+        if self._ping is None:
+            response = self.call('ping')
+            self._ping = {'model': response['model'], 'languages': list(response['languages'])}
+        return self._ping
+
+    def model(self) -> str:
+        return self.ping()['model']
+
+    def languages(self) -> list[str]:
+        """The Qwen3-ASR language names the worker transcribes."""
+        return self.ping()['languages']
+
+    def transcribe(self, items: list[dict]) -> list[dict]:
+        """``[{audio, start?, end?, language}]`` -> per item ``{text, language}`` (workers/asr.py)."""
+        return self.call('transcribe', items=items)['results']
+
+
+class FuseAlignWorker(_JsonLinesWorker):
+    """The workers/fusealign.py process (this interpreter): one per server, shared by speech editing and dubbing."""
+
+    error = FuseAlignError
+    name = 'FuseAlign worker'
+    unavailable = 'FuseAlign alignment is unavailable'
+    failed = 'FuseAlign alignment failed'
+
+    def __init__(self, device: str | None = None, checkpoint: str | None = None, python: str = sys.executable):
+        super().__init__([python, str(FUSEALIGN_WORKER)] + (['--device', device] if device else [])
+                         + (['--checkpoint', checkpoint] if checkpoint else []))
+        self._model: str | None = None
+
+    def model(self) -> str:
+        """The checkpoint id the worker aligns with (its ``ping``)."""
+        if self._model is None:
+            self._model = self.call('ping')['model']
+        return self._model
+
+    def segments(self, audios: list[str]) -> list[list[list[float]]]:
+        """Per audio path its speech chunks ``[[start, end], ...]`` (seconds, each at most 25 s) for recognition."""
+        return [r['chunks'] for r in self.call('segments', items=[{'audio': a} for a in audios])['results']]
+
+    def align(self, items: list[dict]) -> list[list[dict]]:
+        """``[{audio, tokens, utterances?}]`` -> per item one ``{word, start, end, presence, placed}`` per token."""
+        return [r['words'] for r in self.call('align', items=items)['results']]
+
+
+def audio_seconds(path: str) -> float:
+    """Duration of a sound file (frames / sample rate)."""
+    import soundfile
+
+    info = soundfile.info(path)
+    return info.frames / info.samplerate
+
+
+def needs_anchors(seconds: float, tokens: list[str]) -> bool:
+    """Whether FuseAlign aligns an item long-form: audio over ``LONG_FORM_SECONDS`` or tokens over ``MAX_TEXT_BYTES``."""
+    return seconds > LONG_FORM_SECONDS or len(' '.join(tokens).encode('utf-8')) > MAX_TEXT_BYTES
+
+
+def chunk_utterances(asr: AsrWorker, aligner: FuseAlignWorker, audios: list[str],
+                     languages: list[str | None]) -> list[list[dict]]:
+    """Per audio the Qwen3-ASR transcripts of its ``segments`` chunks (forced to its language, a Qwen3-ASR name, or
+    detected for None) as utterances ``{text, start, end, language}`` in time order, empty texts dropped. One
+    ``segments`` and one ``transcribe`` call for all of them."""
+    if not audios:
+        return []
+    chunks = aligner.segments(audios)
+    items = [{'audio': audio, 'start': start, 'end': end, 'language': language}
+             for audio, language, cs in zip(audios, languages, chunks, strict=True) for start, end in cs]
+    results = iter(asr.transcribe(items) if items else [])
+    out = []
+    for cs in chunks:
+        utterances = []
+        for start, end in cs:
+            r = next(results)
+            if r['text']:
+                utterances.append({'text': r['text'], 'start': start, 'end': end, 'language': r['language']})
+        out.append(utterances)
+    return out
+
+
+@dataclass
+class Transcript:
+    text: str
+    language: str  # as Qwen3-ASR reports it: the forced language, or the detected one(s), comma-joined
+    utterances: list[dict] | None  # the chunk transcripts {text, start, end} of audio over LONG_FORM_SECONDS
+
+
+def transcribe_audio(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, language: str | None) -> Transcript:
+    """Qwen3-ASR transcript of a sound file, forced to ``language`` (a Qwen3-ASR name) or detected (None).
+
+    Up to ``LONG_FORM_SECONDS`` one recognition of the whole file. Longer audio is transcribed chunk by chunk
+    (``chunk_utterances``): the text is the chunk texts joined with " " (with "" when the language, the forced one or
+    else the first spoken chunk's first detected one, is unspaced: ``UNSPACED_LANGUAGES``), the reported language is
+    the first spoken chunk's ("" without speech), and the utterances are returned to anchor later alignments of the
+    file (``align_words``)."""
+    if audio_seconds(audio) <= LONG_FORM_SECONDS:
+        r = asr.transcribe([{'audio': audio, 'language': language}])[0]
+        return Transcript(r['text'], r['language'], None)
+    utterances = chunk_utterances(asr, aligner, [audio], [language])[0]
+    reported = utterances[0]['language'] if utterances else ''
+    name = language or reported.split(',')[0].strip()
+    joiner = '' if name in UNSPACED_LANGUAGES else ' '
+    return Transcript(joiner.join(u['text'] for u in utterances), reported,
+                      [{k: u[k] for k in ('text', 'start', 'end')} for u in utterances])
+
+
+def align_words(asr: AsrWorker, aligner: FuseAlignWorker, items: list[dict]) -> list[list[dict]]:
+    """FuseAlign words of ``[{audio, tokens, language, utterances?}]`` (``language``: the Qwen3-ASR name anchors are
+    recognized in, None to detect; ``utterances``: anchors already made for the audio, e.g. ``Transcript.utterances``)
+    -> per item one ``{word, start, end, presence, placed}`` per token.
+
+    An item that ``needs_anchors`` carries ``utterances``: its own, else ``chunk_utterances`` of its audio (one batch
+    for every such item); the other items carry none."""
+    long = [k for k, it in enumerate(items) if it['tokens'] and needs_anchors(audio_seconds(it['audio']), it['tokens'])]
+    missing = [k for k in long if items[k].get('utterances') is None]
+    made = dict(zip(missing, chunk_utterances(asr, aligner, [items[k]['audio'] for k in missing],
+                                              [items[k].get('language') for k in missing])))
+    requests = []
+    for k, it in enumerate(items):
+        request = {'audio': it['audio'], 'tokens': list(it['tokens'])}
+        if k in long:
+            utterances = made[k] if k in made else it['utterances']
+            request['utterances'] = [{'text': u['text'], 'start': u['start'], 'end': u['end']} for u in utterances]
+        requests.append(request)
+    return aligner.align(requests)
+
+
+# Pronunciation groups (U+E000 IPA U+E001, phoneme-token checkpoints) in a target text. The edit tokens' normalize
+# (zonos3.tts.textmatch) mangles them (IPA upper-cased, the private-use markers and tie bars become word breaks), so a
+# group is never normalized: it is one target token of its own, the group string itself, which no recognized token of
 # the original can equal (a changed word in the diff). Its length for the expected fill counts its IPA
 # symbols in letter-equivalents: GROUP_LETTERS_PER_SYMBOL, fitted on edits that replace a word by a group
 # and by the spelled word (z3m_mect_edit_phonemes, 4 words x 8 takes each: the letter count that gives a
@@ -215,29 +339,20 @@ def canonical_markup(text: str) -> str:
     return _NONVERBAL_MARKUP.sub(lambda m: "".join(m.group(0).split()), text) if has_nonverbal_markup(text) else text
 
 
-def target_normalize_request(target_text: str):
-    """What to send to the MMS worker's normalize for a target text, and how to read the answer.
-
-    Returns ``(texts, assemble)``: ``assemble(normalized)`` (the worker's lists for ``texts``, in
-    order) gives ``[target tokens, tokens of target word 0, of word 1, ...]`` over the whitespace
-    words of ``target_text``. Without groups or markup the texts are the target and its words, as
-    before; with them only the plain pieces between them are normalized, each group is a token and
-    each nonverbal marker (``canonical_markup`` text) none: markup is text for the model only, outside
-    the word diff, the alignment and verify."""
+def target_tokens(target_text: str) -> list[list[str]]:
+    """``[target tokens, tokens of target word 0, of word 1, ...]`` over the whitespace words of ``target_text``
+    (``zonos3.tts.textmatch.tokens``). Without groups or markup these are the tokens of the target and of its words;
+    with them only the plain pieces between them are normalized, each group is a token and each nonverbal marker
+    (``canonical_markup`` text) none: markup is text for the model only, outside the word diff, the alignment and
+    verify."""
     words = target_text.split()
     if GROUP_OPEN not in target_text and not has_nonverbal_markup(target_text):
-        return [target_text] + words, lambda normalized: list(normalized)
+        return [textmatch.tokens(target_text)] + [textmatch.tokens(word) for word in words]
     pieces = [[piece for piece in _PIECE_RE.split(word) if piece] for word in words]
-    plain = [piece for word in pieces for piece in word if not is_group_token(piece) and not is_marker_token(piece)]
-
-    def assemble(normalized):
-        normalized = iter(normalized)
-        word_tokens = [[t for piece in word for t in (
-            [piece] if is_group_token(piece) else [] if is_marker_token(piece) else next(normalized))]
-            for word in pieces]
-        return [[t for tokens in word_tokens for t in tokens]] + word_tokens
-
-    return plain, assemble
+    word_tokens = [[t for piece in word for t in (
+        [piece] if is_group_token(piece) else [] if is_marker_token(piece) else textmatch.tokens(piece))]
+        for word in pieces]
+    return [[t for ts in word_tokens for t in ts]] + word_tokens
 
 
 @dataclass
@@ -251,8 +366,8 @@ class AlignedWord:
 
 def aligned_words(words: list[dict], word_tokens: list[list[str]]) -> list[AlignedWord]:
     """The edit's words of an alignment: FuseAlign's words (``FuseAlignWorker.align``, one per ``align_tokens``
-    token) with each word's zsa tokens (the MMS worker's normalize of the word) and FuseAlign's presence as the
-    confidence. A word without zsa tokens (punctuation only) carries nothing the edit reads and is dropped; an
+    token) with each word's edit tokens (``textmatch.tokens`` of the word) and FuseAlign's presence as the
+    confidence. A word without tokens (punctuation only) carries nothing the edit reads and is dropped; an
     unplaced word keeps FuseAlign's fallback times. FuseAlign does not repair order, so neighbours may overlap by a
     few ms: an overlap is split at its midpoint, which keeps the words valid ``original_words`` (``edit_words``)."""
     if len(words) != len(word_tokens):
@@ -263,6 +378,17 @@ def aligned_words(words: list[dict], word_tokens: list[list[str]]) -> list[Align
         if word.start < previous.end:
             previous.end = word.start = (previous.end + word.start) / 2
     return out
+
+
+def edit_aligned_words(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, text: str, language: tuple[str, str],
+                       utterances: list[dict] | None = None) -> list[AlignedWord]:
+    """The words of ``text`` in a sound file with their edit tokens: FuseAlign over ``align_tokens(text, code)``
+    (``align_words``; ``language`` is the ``edit_language`` pair, ``utterances`` anchors already made for the file)."""
+    code, name = language
+    words = align_tokens(text, code)
+    aligned = align_words(asr, aligner, [{'audio': audio, 'tokens': words, 'language': name,
+                                          'utterances': utterances}])[0] if words else []
+    return aligned_words(aligned, [textmatch.tokens(w) for w in words])
 
 
 @dataclass
@@ -309,10 +435,10 @@ def diff_spans(words, target_tokens, *, total_frames, frame_rate=15.0, margin_se
 
 def edit_words(words, word_tokens, original_tokens, *, duration) -> list[AlignedWord]:
     """Caller-supplied word timings of the original (``{word, start, end, confidence?}`` in
-    order, e.g. corrected aligned words) as AlignedWords with ``word_tokens`` (zsa tokens per word).
+    order, e.g. corrected aligned words) as AlignedWords with ``word_tokens`` (edit tokens per word).
     Raises ValueError unless the times are finite, each word has start < end, the words are
     ascending and non-overlapping inside [0, duration] and their tokens spell ``original_tokens``
-    (the zsa tokens of the original text)."""
+    (the edit tokens of the original text)."""
     if not words:
         raise ValueError("original_words is empty.")
     previous_end = 0.0
@@ -371,8 +497,8 @@ def whole_clip_window(spans, total_frames: int, target_text: str) -> EditWindow:
 
 
 class WordDiff:
-    """The original's aligned words (with zsa ``tokens``) against the target's whitespace words and
-    their zsa tokens, diffed over the tokens: maps original word ranges to target word ranges."""
+    """The original's aligned words (with edit ``tokens``) against the target's whitespace words and
+    their edit tokens, diffed over the tokens: maps original word ranges to target word ranges."""
 
     def __init__(self, words, target_words, target_word_tokens):
         if len(target_word_tokens) != len(target_words):
@@ -421,8 +547,8 @@ def plan_edit_windows(spans, words, target_words, target_word_tokens, *, total_f
                       context_seconds=4.0, target_text=None) -> list[EditWindow]:
     """Word-snapped context windows around edit regions of a long clip.
 
-    ``words`` are the aligned words of the original (with zsa ``tokens``); ``target_words`` the
-    whitespace words of the target text and ``target_word_tokens`` their zsa tokens. Each region
+    ``words`` are the aligned words of the original (with edit ``tokens``); ``target_words`` the
+    whitespace words of the target text and ``target_word_tokens`` their edit tokens. Each region
     takes the words within ``context_seconds`` of it; an edge inside a changed block of the
     original -> target token diff (or inside a target word) moves outward to the block edge, and
     overlapping windows merge. A window's audio is cut halfway between its edge words and their
@@ -477,7 +603,7 @@ def plan_edit_windows(spans, words, target_words, target_word_tokens, *, total_f
 
 def expected_fill_seconds(spans, words, target_words, target_word_tokens, *, frame_rate=15.0) -> list[float]:
     """How long each region's fill should take: the region's seconds scaled by the target over
-    the original text length (zsa token characters) of the words in it (word midpoints inside
+    the original text length (edit token characters) of the words in it (word midpoints inside
     the region; the range widened to clean diff edges, so insertions at its edges count). A
     region holding no original word (a pure insertion) takes the clip's characters per second."""
     diff = WordDiff(words, target_words, target_word_tokens)
@@ -519,7 +645,7 @@ def wildcard_verify(reference_tokens, hypothesis_tokens) -> dict:
     Ties between word alignments go to the one with the fewest character edits on the plain words,
     so a group takes the word recognized where it was spoken. Returns ``word_errors``,
     ``ref_words``, ``cer`` (characters of the reference with each group replaced by the word heard
-    there, against the hypothesis, as zsa's char_error_rate) and ``groups``: each group's IPA and
+    there, against the hypothesis, as textmatch.char_error_rate) and ``groups``: each group's IPA and
     the recognized word aligned with it (None if none)."""
     ref, hyp = list(reference_tokens), list(hypothesis_tokens)
     n, m = len(ref), len(hyp)

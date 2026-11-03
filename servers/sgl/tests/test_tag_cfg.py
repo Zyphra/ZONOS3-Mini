@@ -460,16 +460,13 @@ def test_span_follow_tokens_skip_marker_edges():
 
 
 def test_edit_target_markup_is_outside_the_word_diff():
-    from zonos3.tts.edit_align import canonical_markup, target_normalize_request
+    from zonos3.tts.edit_align import canonical_markup, target_tokens
 
     target = canonical_markup(f"Say <laugh /> hi{G} <shouting>now</shouting>")
     assert target == f"Say <laugh/> hi{G} <shouting>now</shouting>"
-    texts, assemble = target_normalize_request(target)
-    assert texts == ["Say", "hi", "now"]
-    normalized = assemble([["say"], ["hi"], ["now"]])
     # [target tokens] + one token list per whitespace word: a marker word has none, a group is one token
-    assert normalized == [["say", "hi", G, "now"], ["say"], [], ["hi", G], ["now"]]
-    assert target_normalize_request("plain words")[0] == ["plain words", "plain", "words"]
+    assert target_tokens(target) == [["SAY", "HI", G, "NOW"], ["SAY"], [], ["HI", G], ["NOW"]]
+    assert target_tokens("plain words, too") == [["PLAIN", "WORDS", "TOO"], ["PLAIN"], ["WORDS"], ["TOO"]]
 
 
 def test_dub_text_rate_and_alignment_ignore_markup():

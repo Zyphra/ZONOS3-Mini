@@ -81,11 +81,12 @@ def cmd_ssl(args) -> int:
 
 def cmd_encode(args) -> int:
     from zonos3_mlx.audio_io import decode_pcm
-    from zonos3_mlx.models.codec_encoder import CodecEncoder
+    from zonos3_mlx.models.codec_encoder import MAX_SECONDS, CodecEncoder
     from zonos3_mlx.models.ssl_teacher import SSLTeacher
 
     encoder = CodecEncoder.load(args.encoder, SSLTeacher.load(args.ssl))
-    codes = encoder.encode(decode_pcm(Path(args.audio).read_bytes(), max_seconds=60), max_seconds=60)
+    pcm = decode_pcm(Path(args.audio).read_bytes(), max_seconds=MAX_SECONDS)
+    codes = encoder.encode(pcm, max_seconds=MAX_SECONDS)
     np.save(args.out, codes.astype(np.int32))
     print(f"{codes.shape[0]} frames -> {args.out}")
     return 0

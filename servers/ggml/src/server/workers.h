@@ -1,6 +1,6 @@
 // A persistent child process speaking JSON lines: one request object per stdin line, one response object per stdout
-// line, in order (model/src/zonos3/workers/*.py). Used by text normalization, the FuseAlign forced aligner, the MMS
-// worker (edit ASR and token normalization) and the dub alignment worker.
+// line, in order (model/src/zonos3/workers/*.py). Used by text normalization, the ASR worker (Qwen3-ASR), the FuseAlign
+// forced aligner and the dub alignment worker.
 #pragma once
 
 #include "json.hpp"
@@ -15,6 +15,12 @@
 namespace zs {
 
 struct WorkerError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// A service worker (ASR, FuseAlign) is unavailable: it could not start, exited twice in a row, or failed without the
+// input being at fault. The message is final (HTTP 503); input a worker rejects is a std::invalid_argument (400).
+struct WorkerUnavailable : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 

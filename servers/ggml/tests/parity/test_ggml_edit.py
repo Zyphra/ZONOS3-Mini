@@ -1,4 +1,5 @@
-"""Parity of src/zonos3-edit.cpp (via the edit-replay binary) with model/src/zonos3/tts/{edit,edit_align}.py.
+"""Parity of src/zonos3-edit.cpp and src/zonos3-textmatch.cpp (via the edit-replay binary) with
+model/src/zonos3/tts/{edit,edit_align,textmatch}.py and Python's str.upper()/str.lower().
 
 Every case runs the same call through ``edit-replay`` ({"fn", "args"} JSON on stdin) and through the Python module;
 results must be equal (floats within 1e-9 relative). ``test_fixture_file_is_current`` keeps
@@ -20,6 +21,7 @@ import torch
 
 from zonos3.tts import edit as E
 from zonos3.tts import edit_align as A
+from zonos3.tts import textmatch as T
 from zonos3.tts.prompt import TTSPromptConfig
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "edit-replay" / "cases.json"
@@ -41,7 +43,7 @@ WORDS = _words([
 
 
 def _target(words: list[str]):
-    """Target words and their (fake, upper-cased) zsa tokens; a group is a token of its own."""
+    """Target words and their (fake, upper-cased) edit tokens; a group is a token of its own."""
     tokens = [[w] if A.is_group_token(w) else [t for t in w.upper().replace("-", " ").replace(".", "").split()] for w in words]
     return words, tokens
 
@@ -147,13 +149,10 @@ def _cases() -> list[dict]:
     add("canonical", "canonical_markup", text="Hi <laugh /> there < sigh/> <shouting >Out</shouting > <nope />")
     add("canonical-plain", "canonical_markup", text="no markup here")
 
-    def fake_normalize(texts):
-        return [t.upper().replace(",", "").split() for t in texts]
-
     for name, text in [("plain", "Hello, big world"), ("group", f"Hi {G('ʃɪv')}, how{G('ɑɹ')} you"),
-                       ("markup", "Oh <laugh/> really<sigh/>,  yes"), ("both", f"{G('a')}<laugh/>b c")]:
-        req = A.target_normalize_request(text)[0]
-        add(f"target-{name}", "target_normalize_request", target_text=text, normalized=fake_normalize(req))
+                       ("markup", "Oh <laugh/> really<sigh/>,  yes"), ("both", f"{G('a')}<laugh/>b c"),
+                       ("cjk", "我们今天 去公园。 日本語、です"), ("quotes", "don’t ‘stop’ snake_case 42nd")]:
+        add(f"target-{name}", "target_tokens", target_text=text)
 
     good = [{"word": "Hello", "start": 0.1, "end": 0.5, "confidence": 0.9}, {"word": "there", "start": 0.6, "end": 1.0}]
     add("words-ok", "edit_words", words=good, word_tokens=[["HELLO"], ["THERE"]], original_tokens=["HELLO", "THERE"], duration=1.2)
@@ -180,11 +179,46 @@ def _cases() -> list[dict]:
                    {"word": "c", "start": 0.70, "end": 0.75, "presence": 0.7, "placed": True},
                    {"word": "d", "start": 0.74, "end": 1.20, "presence": 0.6, "placed": True}]
     add("aligned-overlap", "aligned_words", words=overlapping, word_tokens=[["A"], [], ["B"], ["C"], ["D"]])
-    for lang in ("en_us", "cmn", "pt_br", "xx"):
-        add(f"mms-{lang}", "mms_language", language=lang)
+    asr_languages = ["Chinese", "English", "Cantonese", "French", "German", "Japanese", "Korean", "Portuguese",
+                     "Spanish", "Italian", "Russian"]
+    for lang in ("en_us", "en_gb", "cmn", "pt_br", "ko", "xx"):
+        add(f"lang-{lang}", "edit_language", language=lang, supported=asr_languages)
+    add("lang-unsupported-name", "edit_language", language="ko", supported=["English", "French"])
+    add("lang-none", "edit_language", language="en_us", supported=[])
     add("split", "split_words", text=" a\u3000b\tc\u00a0 d\u200be ")
     add("chars-group", "token_chars", token=G("ʃɪv"))
     add("chars-word", "token_chars", token="ÉCOLE")
+
+    # zonos3.tts.textmatch: Python's \w (letters, numbers, _), str.upper() (full mappings) and curly quotes
+    texts = [
+        "Hello, world!", "don’t ‘stop’ ʼtil it‛s_done", "snake_case __x__ a_1", "Straße ﬁne ŉ ΐ ǅemal İstanbul",
+        "我们今天去公园。我们 今天", "日本語の文章です、はい。カタカナ ｶﾀｶﾅ", "한국어 텍스트입니다!", "Café 123 ٣٤٥ Ⅻ ½ ² ①",
+        "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α", "हिन्दी भाषा", "  ", "", "tab\tnew\nline\u3000x\u00a0y", "'quoted' — dash… 'tis",
+        "Ⓐⓑ ﬀ ﬃ ʰᵃ", "Привет, МИР ёЁ", "x\u0301y\u0308 e\u20ddz", "\u2160\u2161 \U0001d400\U0001d7ce", "🙂 emoji 🙂ok",
+    ]
+    rng2 = random.Random(77)
+    pools = [(0x20, 0x250), (0x370, 0x3FF), (0x400, 0x4FF), (0x900, 0x97F), (0x3040, 0x30FF), (0x4E00, 0x4F00),
+             (0x1E00, 0x1FFF), (0xAC00, 0xAC80), (0x2000, 0x2070), (0xFB00, 0xFB06)]
+    for _ in range(40):
+        texts.append("".join(chr(rng2.randrange(*rng2.choice(pools))) if rng2.random() < 0.8
+                             else rng2.choice(["_", "\u2019", " ", "'", "\u03a3", "\u02bc"]) for _ in range(rng2.randrange(1, 24))))
+    for k, text in enumerate(texts):
+        add(f"normalize-{k}", "normalize", text=text)
+        add(f"tokens-{k}", "tokens", text=text)
+        add(f"upper-{k}", "upper", text=text)
+        add(f"lower-{k}", "lower", text=text)
+    for k in range(0, len(texts) - 1):
+        add(f"cer-{k}", "char_error_rate", reference=texts[k], hypothesis=texts[k + 1])
+        add(f"verify-text-{k}", "verify", reference=texts[k], hypothesis=texts[(k * 7 + 3) % len(texts)])
+    add("cer-same", "char_error_rate", reference="Hello world", hypothesis="hello, WORLD!")
+    add("cer-empty-ref", "char_error_rate", reference="—", hypothesis="abc")
+    add("cer-empty-hyp", "char_error_rate", reference="abc", hypothesis="...")
+    add("cer-cjk", "char_error_rate", reference="我们今天去公园", hypothesis="我们明天去公园。")
+    for name, ref, hyp in [("same", ["A", "B"], ["A", "B"]), ("sub", ["A", "B", "C"], ["A", "X", "C"]),
+                           ("ins-del", ["A", "B", "C"], ["B", "C", "D", "E"]), ("empty-ref", [], ["A"]),
+                           ("empty-hyp", ["A", "B"], []), ("both-empty", [], [])]:
+        add(f"word-errors-{name}", "word_errors", reference=ref, hypothesis=hyp)
+    add("verify-text-cjk", "verify", reference="我们 今天 去 公园", hypothesis="我们今天去公园")
     return cases
 
 
@@ -243,19 +277,32 @@ def py_call(fn: str, a: dict):
         return A.fill_groups(a["text"], a["heard"])
     if fn == "canonical_markup":
         return A.canonical_markup(a["text"])
-    if fn == "target_normalize_request":
-        texts, assemble = A.target_normalize_request(a["target_text"])
-        return {"texts": texts, "assembled": assemble(a["normalized"])}
+    if fn == "target_tokens":
+        return A.target_tokens(a["target_text"])
     if fn == "edit_words":
         return [_word_json(w) for w in A.edit_words(a["words"], a["word_tokens"], a["original_tokens"], duration=a["duration"])]
     if fn == "aligned_words":
         return [_word_json(w) for w in A.aligned_words(a["words"], a["word_tokens"])]
-    if fn == "mms_language":
-        return A.mms_language(a["language"])
+    if fn == "edit_language":
+        return list(A.edit_language(a["language"], a["supported"]))
     if fn == "split_words":
         return a["text"].split()
     if fn == "token_chars":
         return A.token_chars(a["token"])
+    if fn == "normalize":
+        return T.normalize(a["text"])
+    if fn == "tokens":
+        return T.tokens(a["text"])
+    if fn == "upper":
+        return a["text"].upper()
+    if fn == "lower":
+        return a["text"].lower()
+    if fn == "char_error_rate":
+        return T.char_error_rate(a["reference"], a["hypothesis"])
+    if fn == "word_errors":
+        return T.word_errors(a["reference"], a["hypothesis"])
+    if fn == "verify":
+        return T.verify(a["reference"], a["hypothesis"])
     raise AssertionError(fn)
 
 

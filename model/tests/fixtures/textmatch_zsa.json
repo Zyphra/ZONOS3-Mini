@@ -1,0 +1,366 @@
+{
+ "normalize": [
+  [
+   "",
+   ""
+  ],
+  [
+   "   ",
+   ""
+  ],
+  [
+   "Hello, world!",
+   "HELLO WORLD"
+  ],
+  [
+   "Don’t stop—it's 5:30 p.m.",
+   "DON'T STOP IT'S 5 30 P M"
+  ],
+  [
+   "snake_case_word and\ttabs\nnewlines",
+   "SNAKE CASE WORD AND TABS NEWLINES"
+  ],
+  [
+   "ʼokina ‘quoted’ ‛rev’",
+   "'OKINA 'QUOTED' 'REV'"
+  ],
+  [
+   "Ça va? Très bien, merci.",
+   "ÇA VA TRÈS BIEN MERCI"
+  ],
+  [
+   "Grüße aus München — 100 % sicher!",
+   "GRÜSSE AUS MÜNCHEN 100 SICHER"
+  ],
+  [
+   "我们去公园。OK, go!",
+   "我们去公园 OK GO"
+  ],
+  [
+   "「今日は」いい天気ですね。",
+   "今日は いい天気ですね"
+  ],
+  [
+   "안녕하세요, 세계!",
+   "안녕하세요 세계"
+  ],
+  [
+   "Привет, мир!",
+   "ПРИВЕТ МИР"
+  ],
+  [
+   "नमस्ते दुनिया।",
+   "नमस त द न य"
+  ],
+  [
+   "مرحبا بالعالم",
+   "مرحبا بالعالم"
+  ],
+  [
+   "e-mail: a.b@c.com",
+   "E MAIL A B C COM"
+  ],
+  [
+   "x² + y³ = z¹",
+   "X² Y³ Z¹"
+  ],
+  [
+   "emoji 😀 test 👍🏽 done",
+   "EMOJI TEST DONE"
+  ],
+  [
+   "rock'n'roll ''double''",
+   "ROCK'N'ROLL ''DOUBLE''"
+  ],
+  [
+   "MIXED case WoRdS",
+   "MIXED CASE WORDS"
+  ],
+  [
+   "ſtraße ﬁne ﬀ",
+   "STRASSE FINE FF"
+  ],
+  [
+   "123,456.78 and 1e9",
+   "123 456 78 AND 1E9"
+  ],
+  [
+   "<laugh/> ha [noise] (aside) {x}",
+   "LAUGH HA NOISE ASIDE X"
+  ],
+  [
+   "tab nbsp thin",
+   "TAB NBSP THIN"
+  ],
+  [
+   "İstanbul ılık",
+   "İSTANBUL ILIK"
+  ],
+  [
+   "ΣΊΣΥΦΟΣ σίσυφος",
+   "ΣΊΣΥΦΟΣ ΣΊΣΥΦΟΣ"
+  ],
+  [
+   "Ꭰ Cherokee ꭰ",
+   "Ꭰ CHEROKEE Ꭰ"
+  ]
+ ],
+ "char_error_rate": [
+  [
+   "hello world",
+   "hello world",
+   0.0
+  ],
+  [
+   "hello world",
+   "hello word",
+   0.1
+  ],
+  [
+   "Hello, world!",
+   "hello world",
+   0.0
+  ],
+  [
+   "the cat sat",
+   "the cat sat on the mat",
+   0.8888888888888888
+  ],
+  [
+   "",
+   "anything",
+   0.0
+  ],
+  [
+   "something",
+   "",
+   1.0
+  ],
+  [
+   "",
+   "",
+   0.0
+  ],
+  [
+   "我们去公园",
+   "我们去了公园",
+   0.2
+  ],
+  [
+   "Don’t stop",
+   "dont stop",
+   0.1111111111111111
+  ],
+  [
+   "i was twelve years old",
+   "i was thirteen years old",
+   0.3333333333333333
+  ],
+  [
+   "Grüße",
+   "GRÜSSE",
+   0.0
+  ],
+  [
+   "a b c d e f",
+   "f e d c b a",
+   1.0
+  ],
+  [
+   "rock'n'roll",
+   "rock n roll",
+   0.18181818181818182
+  ],
+  [
+   "ab",
+   "ba",
+   1.0
+  ],
+  [
+   "Привет мир",
+   "привет миру",
+   0.1111111111111111
+  ],
+  [
+   "x",
+   "y z",
+   2.0
+  ]
+ ],
+ "word_errors": [
+  [
+   [
+    "HELLO",
+    "WORLD"
+   ],
+   [
+    "HELLO",
+    "WORLD"
+   ],
+   0
+  ],
+  [
+   [
+    "HELLO",
+    "WORLD"
+   ],
+   [
+    "HELLO",
+    "WORD"
+   ],
+   1
+  ],
+  [
+   [
+    "HELLO",
+    "WORLD"
+   ],
+   [
+    "HELLO",
+    "WORLD"
+   ],
+   0
+  ],
+  [
+   [
+    "THE",
+    "CAT",
+    "SAT"
+   ],
+   [
+    "THE",
+    "CAT",
+    "SAT",
+    "ON",
+    "THE",
+    "MAT"
+   ],
+   3
+  ],
+  [
+   [],
+   [
+    "ANYTHING"
+   ],
+   1
+  ],
+  [
+   [
+    "SOMETHING"
+   ],
+   [],
+   1
+  ],
+  [
+   [],
+   [],
+   0
+  ],
+  [
+   [
+    "我们去公园"
+   ],
+   [
+    "我们去了公园"
+   ],
+   1
+  ],
+  [
+   [
+    "DON'T",
+    "STOP"
+   ],
+   [
+    "DONT",
+    "STOP"
+   ],
+   1
+  ],
+  [
+   [
+    "I",
+    "WAS",
+    "TWELVE",
+    "YEARS",
+    "OLD"
+   ],
+   [
+    "I",
+    "WAS",
+    "THIRTEEN",
+    "YEARS",
+    "OLD"
+   ],
+   1
+  ],
+  [
+   [
+    "GRÜSSE"
+   ],
+   [
+    "GRÜSSE"
+   ],
+   0
+  ],
+  [
+   [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F"
+   ],
+   [
+    "F",
+    "E",
+    "D",
+    "C",
+    "B",
+    "A"
+   ],
+   6
+  ],
+  [
+   [
+    "ROCK'N'ROLL"
+   ],
+   [
+    "ROCK",
+    "N",
+    "ROLL"
+   ],
+   3
+  ],
+  [
+   [
+    "AB"
+   ],
+   [
+    "BA"
+   ],
+   1
+  ],
+  [
+   [
+    "ПРИВЕТ",
+    "МИР"
+   ],
+   [
+    "ПРИВЕТ",
+    "МИРУ"
+   ],
+   1
+  ],
+  [
+   [
+    "X"
+   ],
+   [
+    "Y",
+    "Z"
+   ],
+   2
+  ]
+ ]
+}

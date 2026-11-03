@@ -1,8 +1,10 @@
 """Dubbing in the Python studio servers (``/v2/dub/*`` of zonos3_sgl and zonos3_mlx).
 
-``DubRuntime`` keeps the uploaded references and the generated dubs, runs the alignment worker
-(zonos3/workers/dub_align.py in its own venv: Qwen3-ASR, SimAlign, AV-sync), aligns words with the server's FuseAlign
-worker (zonos3.tts.edit_align.FuseAlignWorker) and plans, picks and places the takes (zonos3.dub.plan). The takes are synthesized by the server's scheduler through the ``synthesize``
+``DubRuntime`` keeps the uploaded references and the generated dubs, runs the dubbing worker
+(zonos3/workers/dub_align.py in .venv-asr: SimAlign, AV-sync), transcribes with the server's ASR worker
+(zonos3.tts.edit_align.AsrWorker: Qwen3-ASR), aligns words with the server's FuseAlign worker
+(zonos3.tts.edit_align.FuseAlignWorker; zonos3.tts.edit_align.align_words, with Qwen3-ASR anchors past 30 s) and plans,
+picks and places the takes (zonos3.dub.plan). The takes are synthesized by the server's scheduler through the ``synthesize``
 callable the server hands in: the /v2/generate request path with laci=true and each take's LACI duration target
 (zonos3.tts.laci.DurationTarget), so a dub take can use any studio voice and any steering control. The worker starts
 on first use and again after it died; its calls run in threads, so nothing here blocks the server's event loop.
@@ -36,9 +38,10 @@ import zonos3
 import zonos3.workers
 from zonos3.dub import plan as P
 from zonos3.tts.align_text import align_tokens
-from zonos3.tts.edit_align import FuseAlignError, FuseAlignWorker
+from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, WorkerError, align_words, asr_python, transcribe_audio
 
 DUB_ROOT = Path(__file__).resolve().parents[4]  # the repo root
+WORD_ALIGNER_MODEL = "google-bert/bert-base-multilingual-cased"
 STORE_CAPACITY = 8
 VOICE_MODES = ("source", "studio")
 MAX_REF_WORDS = 20000
@@ -56,12 +59,12 @@ class UnknownId(LookupError):
 
 
 class AlignWorker:
-    """One zonos3/workers/dub_align.py process (the .venv-dub-align interpreter); ``call`` is thread-safe."""
+    """One zonos3/workers/dub_align.py process (the .venv-asr interpreter); ``call`` is thread-safe."""
 
-    def __init__(self, python: str, device: str, asr_model: str, word_aligner_model: str, avsync_home: str | None):
+    def __init__(self, python: str, device: str, word_aligner_model: str, avsync_home: str | None):
         self.script = Path(zonos3.workers.__file__).parent / "dub_align.py"
         if not Path(python).is_file():
-            raise AlignWorkerError(f"alignment interpreter not found: {python} (run tools/setup_dub_align_env.sh)")
+            raise AlignWorkerError(f"alignment interpreter not found: {python} (run tools/setup_asr_env.sh)")
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}
         env["PYTHONPATH"] = str(Path(zonos3.__file__).resolve().parents[1])  # model/src
         env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -71,8 +74,6 @@ class AlignWorker:
             str(self.script),
             "--device",
             device,
-            "--asr-model",
-            asr_model,
             "--word-aligner-model",
             word_aligner_model,
         ]
@@ -113,22 +114,22 @@ class AlignWorker:
 
 @dataclass(frozen=True)
 class WorkerSettings:
-    """Where the alignment worker and AV-sync live, and its models. Defaults: the repo's .venv-dub-align / .avsync
-    (tools/setup_dub_align_env.sh); ZONOS3_DUB_ALIGN_PYTHON / ZONOS3_DUB_AVSYNC_HOME / ZONOS3_DUB_ALIGN_DEVICE override."""
+    """Where the dubbing worker and AV-sync live, and its word aligner. Defaults: the ASR worker's interpreter
+    (``ZONOS3_ASR_PYTHON``, else the repo's .venv-asr) and the repo's .avsync (tools/setup_asr_env.sh);
+    ZONOS3_DUB_AVSYNC_HOME / ZONOS3_ASR_DEVICE override the AV-sync checkout and the device."""
 
-    python: str = str(DUB_ROOT / ".venv-dub-align" / "bin" / "python")
+    python: str = str(DUB_ROOT / ".venv-asr" / "bin" / "python")
     avsync_home: str = str(DUB_ROOT / ".avsync")
     device: str = "cuda"
-    asr_model: str = "Qwen/Qwen3-ASR-1.7B"
-    word_aligner_model: str = "google-bert/bert-base-multilingual-cased"
+    word_aligner_model: str = WORD_ALIGNER_MODEL
 
     @classmethod
     def from_env(cls) -> "WorkerSettings":
         d = cls()
         return cls(
-            python=os.environ.get("ZONOS3_DUB_ALIGN_PYTHON") or d.python,
+            python=asr_python(),
             avsync_home=os.environ.get("ZONOS3_DUB_AVSYNC_HOME") or d.avsync_home,
-            device=os.environ.get("ZONOS3_DUB_ALIGN_DEVICE") or d.device,
+            device=os.environ.get("ZONOS3_ASR_DEVICE") or d.device,
         )
 
     @property
@@ -307,12 +308,14 @@ def decode_upload(path: str) -> tuple[np.ndarray, int]:
 
 
 class DubRuntime:
-    def __init__(self, model: DubModel, synthesize: Synthesize, encode_voice: EncodeVoice, aligner: FuseAlignWorker,
-                 worker: WorkerSettings | None = None):
+    def __init__(self, model: DubModel, synthesize: Synthesize, encode_voice: EncodeVoice, asr: AsrWorker,
+                 aligner: FuseAlignWorker, worker: WorkerSettings | None = None):
         self.model = model
         self.synthesize = synthesize
         self.encode_voice = encode_voice
-        self.aligner = aligner  # the server's FuseAlign worker (shared with speech editing; the server closes it)
+        # the server's ASR and FuseAlign workers (shared with speech editing; the server closes them)
+        self.asr = asr
+        self.aligner = aligner
         self.settings = worker or WorkerSettings.from_env()
         self.rate_edges = [float(x) for x in model.rate_edges]
         self.n_buckets = int(model.n_buckets)
@@ -328,7 +331,7 @@ class DubRuntime:
             if self._worker is not None and self._worker.alive:
                 return self._worker
             s = self.settings
-            self._worker = AlignWorker(s.python, s.device, s.asr_model, s.word_aligner_model,
+            self._worker = AlignWorker(s.python, s.device, s.word_aligner_model,
                                        s.avsync_home if s.avsync_ready else None)
             return self._worker
 
@@ -376,16 +379,21 @@ class DubRuntime:
         return out
 
     def capabilities(self) -> dict:
-        """The dub's capabilities; blocks on the FuseAlign worker's ping (it starts the worker), so run it in a
-        thread."""
+        """The dub's capabilities; blocks on the ASR and FuseAlign workers' pings (they start the workers), so run it
+        in a thread. A worker that is unavailable reports its model as "" and the dub as unavailable."""
         m = self.model
         laci = sorted(c for c, (_, tts) in P.TARGET_LANGUAGES.items() if tts in m.laci_languages)
         try:
+            asr_model = self.asr.model()
+        except WorkerError:
+            asr_model = ""
+        try:
             aligner_model = self.aligner.model()
-        except FuseAlignError:
+        except WorkerError:
             aligner_model = ""
         return {
-            "available": self.settings.installed and bool(aligner_model) and bool(laci) and bool(self.rate_edges),
+            "available": (self.settings.installed and bool(asr_model) and bool(aligner_model) and bool(laci)
+                          and bool(self.rate_edges)),
             "ref_languages": [{"code": c, "name": n} for c, n in P.REF_LANGUAGES.items()],
             "target_languages": [{"code": c, "label": v[0], "tts_language": v[1]} for c, v in P.TARGET_LANGUAGES.items()
                                  if c in laci],
@@ -402,7 +410,7 @@ class DubRuntime:
             "candidate_bucket_offsets": list(P.CANDIDATE_BUCKET_OFFSETS),
             "candidate_seeds": P.CANDIDATE_SEEDS,
             "model": m.name,
-            "asr_model": self.settings.asr_model,
+            "asr_model": asr_model,
             "aligner_model": aligner_model,
             "word_aligner": self.settings.word_aligner_model,
             "align_worker": {"installed": self.settings.installed,
@@ -434,29 +442,32 @@ class DubRuntime:
             raise ValueError(f"unsupported reference language: {ref_lang}")
 
     async def _align(self, items: list[dict]) -> list[list[dict]]:
-        """FuseAlign forced alignment of ``[{audio, text, language}]`` (``language`` a REF_LANGUAGES code) -> per item
-        one ``{word, start, end, presence, placed}`` per ``align_tokens`` token of the text (an unplaced word keeps
-        FuseAlign's fallback times)."""
-        reqs = [{"audio": it["audio"], "tokens": align_tokens(it["text"], it["language"]), "language": it["language"]}
-                for it in items]
-        return await asyncio.to_thread(self.aligner.align, reqs)
+        """FuseAlign forced alignment of ``[{audio, text, language, utterances?}]`` (``language`` a REF_LANGUAGES
+        code; ``utterances`` the long-form anchors of a transcript of the audio) -> per item one ``{word, start, end,
+        presence, placed}`` per ``align_tokens`` token of the text (an unplaced word keeps FuseAlign's fallback times).
+        Long-form items get Qwen3-ASR anchors (``align_words``)."""
+        reqs = [{"audio": it["audio"], "tokens": align_tokens(it["text"], it["language"]),
+                 "language": P.REF_LANGUAGES.get(it["language"]), "utterances": it.get("utterances")} for it in items]
+        return await asyncio.to_thread(align_words, self.asr, self.aligner, reqs)
 
     async def transcribe(self, ref_id: str, ref_lang: str | None) -> dict:
-        """Qwen3-ASR transcript of the reference and its words (FuseAlign) in the detected / given language."""
+        """Qwen3-ASR transcript of the reference (``transcribe_audio``: chunk-wise past 30 s) and its words (FuseAlign,
+        anchored by the transcript's chunks) in the given language, else the detected one: Qwen3-ASR's (past 30 s the
+        first spoken chunk's), its first name when it reports several."""
         ref = self.refs.get(ref_id)
         self._check_ref_lang(ref_lang)
         with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
             wav = Path(tmp) / "ref.wav"
             self._write_wav(wav, ref["audio"], ref["sr"])
-            out = await self._call(
-                "transcribe", audio=str(wav), language=P.REF_LANGUAGES[ref_lang] if ref_lang else None
-            )
-            name = (out.get("language") or "").split(",")[0].strip()
+            out = await asyncio.to_thread(transcribe_audio, self.asr, self.aligner, str(wav),
+                                          P.REF_LANGUAGES[ref_lang] if ref_lang else None)
+            name = out.language.split(",")[0].strip()
             by_name = {n: c for c, n in P.REF_LANGUAGES.items()}
-            lang, text = ref_lang or by_name.get(name), out["text"].strip()
+            lang, text = ref_lang or by_name.get(name), out.text.strip()
             words = []
             if lang and text:
-                items = (await self._align([{"audio": str(wav), "text": text, "language": lang}]))[0]
+                items = (await self._align([{"audio": str(wav), "text": text, "language": lang,
+                                             "utterances": out.utterances}]))[0]
                 words = [{"word": it["word"], "start": it["start"], "end": it["end"]} for it in items]
         return {"text": text, "language": lang, "language_name": name, "words": words}
 
@@ -464,7 +475,7 @@ class DubRuntime:
         """Face track and lip embeddings of the reference's video for the lip-sync step (AV-sync), kept with the
         reference (runs in a request thread)."""
         if not (self.settings.installed and self.settings.avsync_ready):
-            raise ValueError("lip-sync (AV-sync) is not set up on this server; run tools/setup_dub_align_env.sh")
+            raise ValueError("lip-sync (AV-sync) is not set up on this server; run tools/setup_asr_env.sh")
         ref = self.refs.get(ref_id)
         lip_dir = tempfile.TemporaryDirectory(prefix="dub-lips-")  # removed with the last reference / dub using it
         out = Path(lip_dir.name) / "lips.pt"

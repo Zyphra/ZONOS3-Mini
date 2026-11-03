@@ -14,6 +14,10 @@ struct dac_encoder_model {
     };
     std::vector<quantizer> rvq;
 };
+// Longest input the encoder takes: zonos3.tokenizer.dual_reference.prepare_reference's limit. Audio runs in
+// independent 20-second lanes (10 s of left context on continuations), so model memory does not grow with length;
+// callers enforce their own, shorter limits.
+constexpr int DAC_ENCODER_MAX_SECONDS = 600;
 bool dac_encoder_load(dac_encoder_model & m, const char * gguf, bool use_gpu);
 void dac_encoder_free(dac_encoder_model & m);
 bool dac_encode(const dac_encoder_model & m, const ssl_model & teacher, const float * audio,

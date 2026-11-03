@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Alignment worker of the dubbing server (runs in .venv-dub-align; see tools/setup_dub_align_env.sh).
+"""Word alignment and lip-sync worker of the dubbing server (runs in .venv-asr; see tools/setup_asr_env.sh).
 
 Reads one JSON request per stdin line ({"id", "op", ...}) and answers each with one JSON line on stdout, in order, until
 stdin closes: {"id", "status": "ok", ...} or {"id", "status": "error", "error", "message", "invalid"} ("invalid": a
-ValueError, i.e. the input is at fault). Models load once, before the first read; AV-sync's on its first use. Forced
-alignment is FuseAlign's (zonos3/workers/fusealign.py, in the server's interpreter).
+ValueError, i.e. the input is at fault). The word aligner loads once, before the first read; AV-sync on its first use.
+Speech recognition is zonos3/workers/asr.py's and forced alignment FuseAlign's (zonos3/workers/fusealign.py, in the
+server's interpreter).
 
 Ops:
   ping                                        -> {"avsync": bool}
-  transcribe {audio, language|null}           -> {"text", "language"}                      (Qwen3-ASR)
   word_align {src: [str], tgt: [str]}         -> {"links": [[i, j]]}   (SimAlign mBERT, BPE level, itermax; windowed)
   lips_prepare {video, out}                   -> {"start", "end", "track_frames", "video_frames", "tracks"}  (AV-sync)
   lips_sync {lips, audio, out,                -> {"start", "end", "rate", "src_frames", "dp_cost",
@@ -21,16 +21,10 @@ import os
 import sys
 
 import numpy as np
-import soundfile as sf
 import torch
 
 import dub_avsync
 from zonos3.dub import plan
-
-
-def read_audio(path):
-    wav, sr = sf.read(path, dtype="float32", always_2d=False)
-    return wav, sr
 
 
 def side_embeddings(emb, words):
@@ -68,7 +62,6 @@ def word_align(emb, SentenceAligner, src, tgt):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--asr-model", default="Qwen/Qwen3-ASR-1.7B")
     parser.add_argument("--word-aligner-model", default="google-bert/bert-base-multilingual-cased")
     parser.add_argument("--avsync-home", default=None, help="AV-sync checkout with its models in data/")
     args = parser.parse_args()
@@ -79,16 +72,8 @@ def main():
     sys.stdout = sys.stderr
 
     import simalign.simalign
-    from qwen_asr import Qwen3ASRModel
 
     SentenceAligner = simalign.simalign.SentenceAligner
-    asr = Qwen3ASRModel.from_pretrained(
-        args.asr_model,
-        dtype=torch.bfloat16,
-        device_map=args.device,
-        max_inference_batch_size=32,
-        max_new_tokens=1024,
-    )
     emb = simalign.simalign.EmbeddingLoader(model=args.word_aligner_model, device=torch.device(args.device), layer=8)
     avsync = []  # the AV-sync models, loaded on first use
 
@@ -103,9 +88,6 @@ def main():
         op = req["op"]
         if op == "ping":
             return {"avsync": bool(args.avsync_home) and dub_avsync.models_present(args.avsync_home)}
-        if op == "transcribe":
-            r = asr.transcribe(audio=read_audio(req["audio"]), language=req.get("language"))[0]
-            return {"text": r.text, "language": r.language}
         if op == "word_align":
             return word_align(emb, SentenceAligner, req["src"], req["tgt"])
         if op == "lips_prepare":

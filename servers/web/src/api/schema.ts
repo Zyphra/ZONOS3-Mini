@@ -205,7 +205,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** MMS transcript of the audio to edit and its FuseAlign word timings */
+        /** Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings */
         post: operations["editTranscribe"];
         delete?: never;
         options?: never;
@@ -242,7 +242,7 @@ export interface paths {
         /**
          * Edit recorded speech so it says target_text
          * @description Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between
-         *     `original_text` (MMS recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one
+         *     `original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one
          *     span-end-terminated generation; unedited codec frames are kept exactly.
          */
         post: operations["edit"];
@@ -1214,6 +1214,7 @@ export interface components {
             speaker_embedding_cache: boolean;
             speaker_embedding_blend: boolean;
             default_voices_enabled: boolean;
+            /** @description The checkpoint edits speech (span-end and marker rows) and the server has Qwen3-ASR (.venv-asr) and FuseAlign. */
             speech_editing: boolean;
             edit_max_spans: number;
             edit_frame_rate: number | null;
@@ -1305,8 +1306,9 @@ export interface components {
         /**
          * @description One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign
          *     interval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous
-         *     word is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its
-         *     zsa-normalized tokens. Punctuation-only words are left out.
+         *     word is split at its midpoint), `confidence` = FuseAlign's presence probability, and `tokens` = its edit
+         *     tokens (upper-cased; letters, digits and `'` of any script kept, everything else a word break). Punctuation-only
+         *     words are left out.
          */
         EditWord: {
             word: string;
@@ -1318,7 +1320,7 @@ export interface components {
         EditTranscribeRequest: {
             audio_base64: string;
             /**
-             * @description The audio's language (picks the MMS adapter and FuseAlign's tokenization).
+             * @description The audio's language (server code): the Qwen3-ASR recognition language and FuseAlign's tokenization.
              * @default en_us
              */
             language?: string;
@@ -1480,7 +1482,7 @@ export interface components {
         DubCapabilities: {
             /** @description The dub routes are served. */
             enabled: boolean;
-            /** @description The alignment worker is installed and the checkpoint can dub. */
+            /** @description The dub workers are installed (.venv-asr), the ASR and FuseAlign workers answer and the checkpoint can dub. */
             available: boolean;
             ref_languages: components["schemas"]["DubLanguage"][];
             target_languages: components["schemas"]["DubTargetLanguage"][];
@@ -1500,7 +1502,7 @@ export interface components {
             candidate_bucket_offsets: number[];
             candidate_seeds: number;
             model: string;
-            /** @description The reference transcription model (Qwen3-ASR). */
+            /** @description The speech-recognition model of the server's ASR worker (Qwen3-ASR, its ping); empty when the worker cannot start. */
             asr_model: string;
             /** @description The forced aligner's checkpoint (FuseAlign: Zyphra/fusealign/<file> or a local path); empty when its worker cannot start. */
             aligner_model: string;
@@ -1887,7 +1889,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description A helper worker (MMS, FuseAlign, the dub alignment worker) is unavailable. */
+        /** @description A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker) is unavailable. */
         Unavailable: {
             headers: {
                 [name: string]: unknown;

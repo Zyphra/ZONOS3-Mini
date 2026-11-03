@@ -466,8 +466,8 @@ bool dac_encode_diagnostic(const dac_encoder_model & model, const ssl_model & te
                            const float * audio, int n, std::vector<int32_t> & codes,
                            const dac_encoder_dump & dump) {
     codes.clear();
-    if (!model.codec.backend || model.rvq.size()!=10 || !audio || n<=0 || n>60*44100 || !std::all_of(audio,audio+n,[](float v){return std::isfinite(v);})) {
-        fprintf(stderr,"dac-encoder: expected finite nonempty mono 44100 Hz audio, at most 60 seconds\n"); return false;
+    if (!model.codec.backend || model.rvq.size()!=10 || !audio || n<=0 || n>DAC_ENCODER_MAX_SECONDS*44100 || !std::all_of(audio,audio+n,[](float v){return std::isfinite(v);})) {
+        fprintf(stderr,"dac-encoder: expected finite nonempty mono 44100 Hz audio, at most %d seconds\n",DAC_ENCODER_MAX_SECONDS); return false;
     }
     const auto & m=model.codec;
     const int frames=(n+HOP-1)/HOP;

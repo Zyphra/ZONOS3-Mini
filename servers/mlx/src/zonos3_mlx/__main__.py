@@ -52,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="interpreter of the helper workers of model/src/zonos3/workers, each one persistent process: "
                         "text normalization (textnorm.py under <python-src>: NeMo grammars, needs pynini; off without "
                         "this flag) and the FuseAlign forced aligner of speech editing and dubbing (fusealign.py: needs "
-                        "fusealign-hub; default this server's interpreter)")
+                        "fusealign-hub; default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) and "
+                        "the dubbing worker run in .venv-asr (tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)")
     p.add_argument("--laci-heads", nargs="+", default=None, metavar="LANG=PATH",
                    help="LACI alignment heads of a language (repeatable)")
     p.add_argument("--tts-phoneme-lexicon", default=None, help="gold pronunciation lexicon (LMDB) for /v2/phonemize")

@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zonos3.tts.edit_align import FuseAlignWorker, fusealign_installed
+from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
 
 from zonos3_mlx.engine import Engine
 from zonos3_mlx.scheduler import Scheduler
+
+
+def asr_device() -> str | None:
+    """The device of the Qwen3-ASR and dubbing workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on macOS (else the
+    workers' default)."""
+    return os.environ.get("ZONOS3_ASR_DEVICE") or ("mps" if sys.platform == "darwin" else None)
 
 
 @dataclass
@@ -43,10 +51,10 @@ class ServerState:
     default_lock: threading.Lock = field(default_factory=threading.Lock)
     # reference codes of encoded clips, by sha1 of the audio bytes (LRU of 64)
     reference_codes: OrderedDict = field(default_factory=OrderedDict)
-    # speech editing and dubbing: MMS workers (ASR and zsa normalization) by language, and the server's FuseAlign
-    # worker (zonos3/workers/fusealign.py; every forced alignment of both; it starts on the first call)
-    mms_workers: OrderedDict = field(default_factory=OrderedDict)
-    mms_lock: threading.Lock = field(default_factory=threading.Lock)
+    # speech editing and dubbing: the server's ASR worker (zonos3/workers/asr.py, Qwen3-ASR in .venv-asr; every speech
+    # recognition of both) and FuseAlign worker (zonos3/workers/fusealign.py; every forced alignment of both); each
+    # starts on its first call
+    asr: AsrWorker = field(default_factory=lambda: AsrWorker(device=asr_device()))
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     dub_runtime: object | None = None
     dub_slots: asyncio.Semaphore | None = None
@@ -61,8 +69,7 @@ class ServerState:
 
     def close(self) -> None:
         self.scheduler.stop()
-        for worker in self.mms_workers.values():
-            worker.close()
+        self.asr.close()
         if self.dub_runtime is not None:
             self.dub_runtime.close()
         self.aligner.close()

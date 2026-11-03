@@ -7969,178 +7969,154 @@
  },
  {
   "name": "target-plain",
-  "fn": "target_normalize_request",
+  "fn": "target_tokens",
   "args": {
-   "target_text": "Hello, big world",
-   "normalized": [
-    [
-     "HELLO",
-     "BIG",
-     "WORLD"
-    ],
-    [
-     "HELLO"
-    ],
-    [
-     "BIG"
-    ],
-    [
-     "WORLD"
-    ]
-   ]
+   "target_text": "Hello, big world"
   },
-  "expected": {
-   "texts": [
-    "Hello, big world",
-    "Hello,",
-    "big",
-    "world"
+  "expected": [
+   [
+    "HELLO",
+    "BIG",
+    "WORLD"
    ],
-   "assembled": [
-    [
-     "HELLO",
-     "BIG",
-     "WORLD"
-    ],
-    [
-     "HELLO"
-    ],
-    [
-     "BIG"
-    ],
-    [
-     "WORLD"
-    ]
+   [
+    "HELLO"
+   ],
+   [
+    "BIG"
+   ],
+   [
+    "WORLD"
    ]
-  }
+  ]
  },
  {
   "name": "target-group",
-  "fn": "target_normalize_request",
+  "fn": "target_tokens",
   "args": {
-   "target_text": "Hi ʃɪv, howɑɹ you",
-   "normalized": [
-    [
-     "HI"
-    ],
-    [],
-    [
-     "HOW"
-    ],
-    [
-     "YOU"
-    ]
-   ]
+   "target_text": "Hi ʃɪv, howɑɹ you"
   },
-  "expected": {
-   "texts": [
-    "Hi",
-    ",",
-    "how",
-    "you"
+  "expected": [
+   [
+    "HI",
+    "ʃɪv",
+    "HOW",
+    "ɑɹ",
+    "YOU"
    ],
-   "assembled": [
-    [
-     "HI",
-     "ʃɪv",
-     "HOW",
-     "ɑɹ",
-     "YOU"
-    ],
-    [
-     "HI"
-    ],
-    [
-     "ʃɪv"
-    ],
-    [
-     "HOW",
-     "ɑɹ"
-    ],
-    [
-     "YOU"
-    ]
+   [
+    "HI"
+   ],
+   [
+    "ʃɪv"
+   ],
+   [
+    "HOW",
+    "ɑɹ"
+   ],
+   [
+    "YOU"
    ]
-  }
+  ]
  },
  {
   "name": "target-markup",
-  "fn": "target_normalize_request",
+  "fn": "target_tokens",
   "args": {
-   "target_text": "Oh <laugh/> really<sigh/>,  yes",
-   "normalized": [
-    [
-     "OH"
-    ],
-    [
-     "REALLY"
-    ],
-    [],
-    [
-     "YES"
-    ]
-   ]
+   "target_text": "Oh <laugh/> really<sigh/>,  yes"
   },
-  "expected": {
-   "texts": [
-    "Oh",
-    "really",
-    ",",
-    "yes"
+  "expected": [
+   [
+    "OH",
+    "REALLY",
+    "YES"
    ],
-   "assembled": [
-    [
-     "OH",
-     "REALLY",
-     "YES"
-    ],
-    [
-     "OH"
-    ],
-    [],
-    [
-     "REALLY"
-    ],
-    [
-     "YES"
-    ]
+   [
+    "OH"
+   ],
+   [],
+   [
+    "REALLY"
+   ],
+   [
+    "YES"
    ]
-  }
+  ]
  },
  {
   "name": "target-both",
-  "fn": "target_normalize_request",
+  "fn": "target_tokens",
   "args": {
-   "target_text": "a<laugh/>b c",
-   "normalized": [
-    [
-     "B"
-    ],
-    [
-     "C"
-    ]
-   ]
+   "target_text": "a<laugh/>b c"
   },
-  "expected": {
-   "texts": [
-    "b",
-    "c"
+  "expected": [
+   [
+    "a",
+    "B",
+    "C"
    ],
-   "assembled": [
-    [
-     "a",
-     "B",
-     "C"
-    ],
-    [
-     "a",
-     "B"
-    ],
-    [
-     "C"
-    ]
+   [
+    "a",
+    "B"
+   ],
+   [
+    "C"
    ]
-  }
+  ]
+ },
+ {
+  "name": "target-cjk",
+  "fn": "target_tokens",
+  "args": {
+   "target_text": "我们今天 去公园。 日本語、です"
+  },
+  "expected": [
+   [
+    "我们今天",
+    "去公园",
+    "日本語",
+    "です"
+   ],
+   [
+    "我们今天"
+   ],
+   [
+    "去公园"
+   ],
+   [
+    "日本語",
+    "です"
+   ]
+  ]
+ },
+ {
+  "name": "target-quotes",
+  "fn": "target_tokens",
+  "args": {
+   "target_text": "don’t ‘stop’ snake_case 42nd"
+  },
+  "expected": [
+   [
+    "DON'T",
+    "'STOP'",
+    "SNAKE",
+    "CASE",
+    "42ND"
+   ],
+   [
+    "DON'T"
+   ],
+   [
+    "'STOP'"
+   ],
+   [
+    "SNAKE",
+    "CASE"
+   ],
+   [
+    "42ND"
+   ]
+  ]
  },
  {
   "name": "words-ok",
@@ -8605,38 +8581,174 @@
   ]
  },
  {
-  "name": "mms-en_us",
-  "fn": "mms_language",
+  "name": "lang-en_us",
+  "fn": "edit_language",
   "args": {
-   "language": "en_us"
+   "language": "en_us",
+   "supported": [
+    "Chinese",
+    "English",
+    "Cantonese",
+    "French",
+    "German",
+    "Japanese",
+    "Korean",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+    "Russian"
+   ]
   },
-  "expected": "en"
+  "expected": [
+   "en",
+   "English"
+  ]
  },
  {
-  "name": "mms-cmn",
-  "fn": "mms_language",
+  "name": "lang-en_gb",
+  "fn": "edit_language",
   "args": {
-   "language": "cmn"
+   "language": "en_gb",
+   "supported": [
+    "Chinese",
+    "English",
+    "Cantonese",
+    "French",
+    "German",
+    "Japanese",
+    "Korean",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+    "Russian"
+   ]
   },
-  "expected": "zh"
+  "expected": [
+   "en",
+   "English"
+  ]
  },
  {
-  "name": "mms-pt_br",
-  "fn": "mms_language",
+  "name": "lang-cmn",
+  "fn": "edit_language",
   "args": {
-   "language": "pt_br"
+   "language": "cmn",
+   "supported": [
+    "Chinese",
+    "English",
+    "Cantonese",
+    "French",
+    "German",
+    "Japanese",
+    "Korean",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+    "Russian"
+   ]
   },
-  "expected": "pt"
+  "expected": [
+   "zh",
+   "Chinese"
+  ]
  },
  {
-  "name": "mms-xx",
-  "fn": "mms_language",
+  "name": "lang-pt_br",
+  "fn": "edit_language",
   "args": {
-   "language": "xx"
+   "language": "pt_br",
+   "supported": [
+    "Chinese",
+    "English",
+    "Cantonese",
+    "French",
+    "German",
+    "Japanese",
+    "Korean",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+    "Russian"
+   ]
+  },
+  "expected": [
+   "pt",
+   "Portuguese"
+  ]
+ },
+ {
+  "name": "lang-ko",
+  "fn": "edit_language",
+  "args": {
+   "language": "ko",
+   "supported": [
+    "Chinese",
+    "English",
+    "Cantonese",
+    "French",
+    "German",
+    "Japanese",
+    "Korean",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+    "Russian"
+   ]
+  },
+  "expected": [
+   "ko",
+   "Korean"
+  ]
+ },
+ {
+  "name": "lang-xx",
+  "fn": "edit_language",
+  "args": {
+   "language": "xx",
+   "supported": [
+    "Chinese",
+    "English",
+    "Cantonese",
+    "French",
+    "German",
+    "Japanese",
+    "Korean",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+    "Russian"
+   ]
   },
   "expected": {
    "error": "ValueError",
-   "message": "Speech editing does not serve language 'xx' (supported: en_us, fr_fr, de, es, it, pt_br, ja, cmn, ko)."
+   "message": "Speech editing does not serve language 'xx' (supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko)."
+  }
+ },
+ {
+  "name": "lang-unsupported-name",
+  "fn": "edit_language",
+  "args": {
+   "language": "ko",
+   "supported": [
+    "English",
+    "French"
+   ]
+  },
+  "expected": {
+   "error": "ValueError",
+   "message": "Speech editing does not serve language 'ko' (supported: en_us, en_gb, fr_fr)."
+  }
+ },
+ {
+  "name": "lang-none",
+  "fn": "edit_language",
+  "args": {
+   "language": "en_us",
+   "supported": []
+  },
+  "expected": {
+   "error": "ValueError",
+   "message": "Speech editing does not serve language 'en_us' (supported: )."
   }
  },
  {
@@ -8667,5 +8779,3540 @@
    "token": "ÉCOLE"
   },
   "expected": 5
+ },
+ {
+  "name": "normalize-0",
+  "fn": "normalize",
+  "args": {
+   "text": "Hello, world!"
+  },
+  "expected": "HELLO WORLD"
+ },
+ {
+  "name": "tokens-0",
+  "fn": "tokens",
+  "args": {
+   "text": "Hello, world!"
+  },
+  "expected": [
+   "HELLO",
+   "WORLD"
+  ]
+ },
+ {
+  "name": "upper-0",
+  "fn": "upper",
+  "args": {
+   "text": "Hello, world!"
+  },
+  "expected": "HELLO, WORLD!"
+ },
+ {
+  "name": "lower-0",
+  "fn": "lower",
+  "args": {
+   "text": "Hello, world!"
+  },
+  "expected": "hello, world!"
+ },
+ {
+  "name": "normalize-1",
+  "fn": "normalize",
+  "args": {
+   "text": "don’t ‘stop’ ʼtil it‛s_done"
+  },
+  "expected": "DON'T 'STOP' 'TIL IT'S DONE"
+ },
+ {
+  "name": "tokens-1",
+  "fn": "tokens",
+  "args": {
+   "text": "don’t ‘stop’ ʼtil it‛s_done"
+  },
+  "expected": [
+   "DON'T",
+   "'STOP'",
+   "'TIL",
+   "IT'S",
+   "DONE"
+  ]
+ },
+ {
+  "name": "upper-1",
+  "fn": "upper",
+  "args": {
+   "text": "don’t ‘stop’ ʼtil it‛s_done"
+  },
+  "expected": "DON’T ‘STOP’ ʼTIL IT‛S_DONE"
+ },
+ {
+  "name": "lower-1",
+  "fn": "lower",
+  "args": {
+   "text": "don’t ‘stop’ ʼtil it‛s_done"
+  },
+  "expected": "don’t ‘stop’ ʼtil it‛s_done"
+ },
+ {
+  "name": "normalize-2",
+  "fn": "normalize",
+  "args": {
+   "text": "snake_case __x__ a_1"
+  },
+  "expected": "SNAKE CASE X A 1"
+ },
+ {
+  "name": "tokens-2",
+  "fn": "tokens",
+  "args": {
+   "text": "snake_case __x__ a_1"
+  },
+  "expected": [
+   "SNAKE",
+   "CASE",
+   "X",
+   "A",
+   "1"
+  ]
+ },
+ {
+  "name": "upper-2",
+  "fn": "upper",
+  "args": {
+   "text": "snake_case __x__ a_1"
+  },
+  "expected": "SNAKE_CASE __X__ A_1"
+ },
+ {
+  "name": "lower-2",
+  "fn": "lower",
+  "args": {
+   "text": "snake_case __x__ a_1"
+  },
+  "expected": "snake_case __x__ a_1"
+ },
+ {
+  "name": "normalize-3",
+  "fn": "normalize",
+  "args": {
+   "text": "Straße ﬁne ŉ ΐ ǅemal İstanbul"
+  },
+  "expected": "STRASSE FINE ʼN Ι ǄEMAL İSTANBUL"
+ },
+ {
+  "name": "tokens-3",
+  "fn": "tokens",
+  "args": {
+   "text": "Straße ﬁne ŉ ΐ ǅemal İstanbul"
+  },
+  "expected": [
+   "STRASSE",
+   "FINE",
+   "ʼN",
+   "Ι",
+   "ǄEMAL",
+   "İSTANBUL"
+  ]
+ },
+ {
+  "name": "upper-3",
+  "fn": "upper",
+  "args": {
+   "text": "Straße ﬁne ŉ ΐ ǅemal İstanbul"
+  },
+  "expected": "STRASSE FINE ʼN Ϊ́ ǄEMAL İSTANBUL"
+ },
+ {
+  "name": "lower-3",
+  "fn": "lower",
+  "args": {
+   "text": "Straße ﬁne ŉ ΐ ǅemal İstanbul"
+  },
+  "expected": "straße ﬁne ŉ ΐ ǆemal i̇stanbul"
+ },
+ {
+  "name": "normalize-4",
+  "fn": "normalize",
+  "args": {
+   "text": "我们今天去公园。我们 今天"
+  },
+  "expected": "我们今天去公园 我们 今天"
+ },
+ {
+  "name": "tokens-4",
+  "fn": "tokens",
+  "args": {
+   "text": "我们今天去公园。我们 今天"
+  },
+  "expected": [
+   "我们今天去公园",
+   "我们",
+   "今天"
+  ]
+ },
+ {
+  "name": "upper-4",
+  "fn": "upper",
+  "args": {
+   "text": "我们今天去公园。我们 今天"
+  },
+  "expected": "我们今天去公园。我们 今天"
+ },
+ {
+  "name": "lower-4",
+  "fn": "lower",
+  "args": {
+   "text": "我们今天去公园。我们 今天"
+  },
+  "expected": "我们今天去公园。我们 今天"
+ },
+ {
+  "name": "normalize-5",
+  "fn": "normalize",
+  "args": {
+   "text": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+  },
+  "expected": "日本語の文章です はい カタカナ ｶﾀｶﾅ"
+ },
+ {
+  "name": "tokens-5",
+  "fn": "tokens",
+  "args": {
+   "text": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+  },
+  "expected": [
+   "日本語の文章です",
+   "はい",
+   "カタカナ",
+   "ｶﾀｶﾅ"
+  ]
+ },
+ {
+  "name": "upper-5",
+  "fn": "upper",
+  "args": {
+   "text": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+  },
+  "expected": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+ },
+ {
+  "name": "lower-5",
+  "fn": "lower",
+  "args": {
+   "text": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+  },
+  "expected": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+ },
+ {
+  "name": "normalize-6",
+  "fn": "normalize",
+  "args": {
+   "text": "한국어 텍스트입니다!"
+  },
+  "expected": "한국어 텍스트입니다"
+ },
+ {
+  "name": "tokens-6",
+  "fn": "tokens",
+  "args": {
+   "text": "한국어 텍스트입니다!"
+  },
+  "expected": [
+   "한국어",
+   "텍스트입니다"
+  ]
+ },
+ {
+  "name": "upper-6",
+  "fn": "upper",
+  "args": {
+   "text": "한국어 텍스트입니다!"
+  },
+  "expected": "한국어 텍스트입니다!"
+ },
+ {
+  "name": "lower-6",
+  "fn": "lower",
+  "args": {
+   "text": "한국어 텍스트입니다!"
+  },
+  "expected": "한국어 텍스트입니다!"
+ },
+ {
+  "name": "normalize-7",
+  "fn": "normalize",
+  "args": {
+   "text": "Café 123 ٣٤٥ Ⅻ ½ ² ①"
+  },
+  "expected": "CAFÉ 123 ٣٤٥ Ⅻ ½ ² ①"
+ },
+ {
+  "name": "tokens-7",
+  "fn": "tokens",
+  "args": {
+   "text": "Café 123 ٣٤٥ Ⅻ ½ ² ①"
+  },
+  "expected": [
+   "CAFÉ",
+   "123",
+   "٣٤٥",
+   "Ⅻ",
+   "½",
+   "²",
+   "①"
+  ]
+ },
+ {
+  "name": "upper-7",
+  "fn": "upper",
+  "args": {
+   "text": "Café 123 ٣٤٥ Ⅻ ½ ² ①"
+  },
+  "expected": "CAFÉ 123 ٣٤٥ Ⅻ ½ ² ①"
+ },
+ {
+  "name": "lower-7",
+  "fn": "lower",
+  "args": {
+   "text": "Café 123 ٣٤٥ Ⅻ ½ ² ①"
+  },
+  "expected": "café 123 ٣٤٥ ⅻ ½ ² ①"
+ },
+ {
+  "name": "normalize-8",
+  "fn": "normalize",
+  "args": {
+   "text": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α"
+  },
+  "expected": "ὈΔΥΣΣΕΎΣ ΣΑΣ ΣΟΦΣ Σ ΑΣ' ΑΣ Α"
+ },
+ {
+  "name": "tokens-8",
+  "fn": "tokens",
+  "args": {
+   "text": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α"
+  },
+  "expected": [
+   "ὈΔΥΣΣΕΎΣ",
+   "ΣΑΣ",
+   "ΣΟΦΣ",
+   "Σ",
+   "ΑΣ'",
+   "ΑΣ",
+   "Α"
+  ]
+ },
+ {
+  "name": "upper-8",
+  "fn": "upper",
+  "args": {
+   "text": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α"
+  },
+  "expected": "ὈΔΥΣΣΕΎΣ ΣΑΣ ΣΟΦΣ. Σ ΑΣ' ΑΣ.Α"
+ },
+ {
+  "name": "lower-8",
+  "fn": "lower",
+  "args": {
+   "text": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α"
+  },
+  "expected": "ὀδυσσεύς σας σοφς. σ ας' ασ.α"
+ },
+ {
+  "name": "normalize-9",
+  "fn": "normalize",
+  "args": {
+   "text": "हिन्दी भाषा"
+  },
+  "expected": "ह न द भ ष"
+ },
+ {
+  "name": "tokens-9",
+  "fn": "tokens",
+  "args": {
+   "text": "हिन्दी भाषा"
+  },
+  "expected": [
+   "ह",
+   "न",
+   "द",
+   "भ",
+   "ष"
+  ]
+ },
+ {
+  "name": "upper-9",
+  "fn": "upper",
+  "args": {
+   "text": "हिन्दी भाषा"
+  },
+  "expected": "हिन्दी भाषा"
+ },
+ {
+  "name": "lower-9",
+  "fn": "lower",
+  "args": {
+   "text": "हिन्दी भाषा"
+  },
+  "expected": "हिन्दी भाषा"
+ },
+ {
+  "name": "normalize-10",
+  "fn": "normalize",
+  "args": {
+   "text": "  "
+  },
+  "expected": ""
+ },
+ {
+  "name": "tokens-10",
+  "fn": "tokens",
+  "args": {
+   "text": "  "
+  },
+  "expected": []
+ },
+ {
+  "name": "upper-10",
+  "fn": "upper",
+  "args": {
+   "text": "  "
+  },
+  "expected": "  "
+ },
+ {
+  "name": "lower-10",
+  "fn": "lower",
+  "args": {
+   "text": "  "
+  },
+  "expected": "  "
+ },
+ {
+  "name": "normalize-11",
+  "fn": "normalize",
+  "args": {
+   "text": ""
+  },
+  "expected": ""
+ },
+ {
+  "name": "tokens-11",
+  "fn": "tokens",
+  "args": {
+   "text": ""
+  },
+  "expected": []
+ },
+ {
+  "name": "upper-11",
+  "fn": "upper",
+  "args": {
+   "text": ""
+  },
+  "expected": ""
+ },
+ {
+  "name": "lower-11",
+  "fn": "lower",
+  "args": {
+   "text": ""
+  },
+  "expected": ""
+ },
+ {
+  "name": "normalize-12",
+  "fn": "normalize",
+  "args": {
+   "text": "tab\tnew\nline　x y"
+  },
+  "expected": "TAB NEW LINE X Y"
+ },
+ {
+  "name": "tokens-12",
+  "fn": "tokens",
+  "args": {
+   "text": "tab\tnew\nline　x y"
+  },
+  "expected": [
+   "TAB",
+   "NEW",
+   "LINE",
+   "X",
+   "Y"
+  ]
+ },
+ {
+  "name": "upper-12",
+  "fn": "upper",
+  "args": {
+   "text": "tab\tnew\nline　x y"
+  },
+  "expected": "TAB\tNEW\nLINE　X Y"
+ },
+ {
+  "name": "lower-12",
+  "fn": "lower",
+  "args": {
+   "text": "tab\tnew\nline　x y"
+  },
+  "expected": "tab\tnew\nline　x y"
+ },
+ {
+  "name": "normalize-13",
+  "fn": "normalize",
+  "args": {
+   "text": "'quoted' — dash… 'tis"
+  },
+  "expected": "'QUOTED' DASH 'TIS"
+ },
+ {
+  "name": "tokens-13",
+  "fn": "tokens",
+  "args": {
+   "text": "'quoted' — dash… 'tis"
+  },
+  "expected": [
+   "'QUOTED'",
+   "DASH",
+   "'TIS"
+  ]
+ },
+ {
+  "name": "upper-13",
+  "fn": "upper",
+  "args": {
+   "text": "'quoted' — dash… 'tis"
+  },
+  "expected": "'QUOTED' — DASH… 'TIS"
+ },
+ {
+  "name": "lower-13",
+  "fn": "lower",
+  "args": {
+   "text": "'quoted' — dash… 'tis"
+  },
+  "expected": "'quoted' — dash… 'tis"
+ },
+ {
+  "name": "normalize-14",
+  "fn": "normalize",
+  "args": {
+   "text": "Ⓐⓑ ﬀ ﬃ ʰᵃ"
+  },
+  "expected": "FF FFI ʰᵃ"
+ },
+ {
+  "name": "tokens-14",
+  "fn": "tokens",
+  "args": {
+   "text": "Ⓐⓑ ﬀ ﬃ ʰᵃ"
+  },
+  "expected": [
+   "FF",
+   "FFI",
+   "ʰᵃ"
+  ]
+ },
+ {
+  "name": "upper-14",
+  "fn": "upper",
+  "args": {
+   "text": "Ⓐⓑ ﬀ ﬃ ʰᵃ"
+  },
+  "expected": "ⒶⒷ FF FFI ʰᵃ"
+ },
+ {
+  "name": "lower-14",
+  "fn": "lower",
+  "args": {
+   "text": "Ⓐⓑ ﬀ ﬃ ʰᵃ"
+  },
+  "expected": "ⓐⓑ ﬀ ﬃ ʰᵃ"
+ },
+ {
+  "name": "normalize-15",
+  "fn": "normalize",
+  "args": {
+   "text": "Привет, МИР ёЁ"
+  },
+  "expected": "ПРИВЕТ МИР ЁЁ"
+ },
+ {
+  "name": "tokens-15",
+  "fn": "tokens",
+  "args": {
+   "text": "Привет, МИР ёЁ"
+  },
+  "expected": [
+   "ПРИВЕТ",
+   "МИР",
+   "ЁЁ"
+  ]
+ },
+ {
+  "name": "upper-15",
+  "fn": "upper",
+  "args": {
+   "text": "Привет, МИР ёЁ"
+  },
+  "expected": "ПРИВЕТ, МИР ЁЁ"
+ },
+ {
+  "name": "lower-15",
+  "fn": "lower",
+  "args": {
+   "text": "Привет, МИР ёЁ"
+  },
+  "expected": "привет, мир ёё"
+ },
+ {
+  "name": "normalize-16",
+  "fn": "normalize",
+  "args": {
+   "text": "x́ÿ e⃝z"
+  },
+  "expected": "X Y E Z"
+ },
+ {
+  "name": "tokens-16",
+  "fn": "tokens",
+  "args": {
+   "text": "x́ÿ e⃝z"
+  },
+  "expected": [
+   "X",
+   "Y",
+   "E",
+   "Z"
+  ]
+ },
+ {
+  "name": "upper-16",
+  "fn": "upper",
+  "args": {
+   "text": "x́ÿ e⃝z"
+  },
+  "expected": "X́Ÿ E⃝Z"
+ },
+ {
+  "name": "lower-16",
+  "fn": "lower",
+  "args": {
+   "text": "x́ÿ e⃝z"
+  },
+  "expected": "x́ÿ e⃝z"
+ },
+ {
+  "name": "normalize-17",
+  "fn": "normalize",
+  "args": {
+   "text": "ⅠⅡ 𝐀𝟎"
+  },
+  "expected": "ⅠⅡ 𝐀𝟎"
+ },
+ {
+  "name": "tokens-17",
+  "fn": "tokens",
+  "args": {
+   "text": "ⅠⅡ 𝐀𝟎"
+  },
+  "expected": [
+   "ⅠⅡ",
+   "𝐀𝟎"
+  ]
+ },
+ {
+  "name": "upper-17",
+  "fn": "upper",
+  "args": {
+   "text": "ⅠⅡ 𝐀𝟎"
+  },
+  "expected": "ⅠⅡ 𝐀𝟎"
+ },
+ {
+  "name": "lower-17",
+  "fn": "lower",
+  "args": {
+   "text": "ⅠⅡ 𝐀𝟎"
+  },
+  "expected": "ⅰⅱ 𝐀𝟎"
+ },
+ {
+  "name": "normalize-18",
+  "fn": "normalize",
+  "args": {
+   "text": "🙂 emoji 🙂ok"
+  },
+  "expected": "EMOJI OK"
+ },
+ {
+  "name": "tokens-18",
+  "fn": "tokens",
+  "args": {
+   "text": "🙂 emoji 🙂ok"
+  },
+  "expected": [
+   "EMOJI",
+   "OK"
+  ]
+ },
+ {
+  "name": "upper-18",
+  "fn": "upper",
+  "args": {
+   "text": "🙂 emoji 🙂ok"
+  },
+  "expected": "🙂 EMOJI 🙂OK"
+ },
+ {
+  "name": "lower-18",
+  "fn": "lower",
+  "args": {
+   "text": "🙂 emoji 🙂ok"
+  },
+  "expected": "🙂 emoji 🙂ok"
+ },
+ {
+  "name": "normalize-19",
+  "fn": "normalize",
+  "args": {
+   "text": "घ_⁎⁐ľ갬ी'丼"
+  },
+  "expected": "घ Ľ갬 '丼"
+ },
+ {
+  "name": "tokens-19",
+  "fn": "tokens",
+  "args": {
+   "text": "घ_⁎⁐ľ갬ी'丼"
+  },
+  "expected": [
+   "घ",
+   "Ľ갬",
+   "'丼"
+  ]
+ },
+ {
+  "name": "upper-19",
+  "fn": "upper",
+  "args": {
+   "text": "घ_⁎⁐ľ갬ी'丼"
+  },
+  "expected": "घ_⁎⁐Ľ갬ी'丼"
+ },
+ {
+  "name": "lower-19",
+  "fn": "lower",
+  "args": {
+   "text": "घ_⁎⁐ľ갬ी'丼"
+  },
+  "expected": "घ_⁎⁐ľ갬ी'丼"
+ },
+ {
+  "name": "normalize-20",
+  "fn": "normalize",
+  "args": {
+   "text": "トघख़"
+  },
+  "expected": "トघख़"
+ },
+ {
+  "name": "tokens-20",
+  "fn": "tokens",
+  "args": {
+   "text": "トघख़"
+  },
+  "expected": [
+   "トघख़"
+  ]
+ },
+ {
+  "name": "upper-20",
+  "fn": "upper",
+  "args": {
+   "text": "トघख़"
+  },
+  "expected": "トघख़"
+ },
+ {
+  "name": "lower-20",
+  "fn": "lower",
+  "args": {
+   "text": "トघख़"
+  },
+  "expected": "トघख़"
+ },
+ {
+  "name": "normalize-21",
+  "fn": "normalize",
+  "args": {
+   "text": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈"
+  },
+  "expected": "ΣΉ'丬갔Σ 'FFLFFIӃ ƎḼ"
+ },
+ {
+  "name": "tokens-21",
+  "fn": "tokens",
+  "args": {
+   "text": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈"
+  },
+  "expected": [
+   "ΣΉ'丬갔Σ",
+   "'FFLFFIӃ",
+   "ƎḼ"
+  ]
+ },
+ {
+  "name": "upper-21",
+  "fn": "upper",
+  "args": {
+   "text": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈"
+  },
+  "expected": "ΣΉʼ丬갔Σ ‏ 'FFLFFIӃ__ƎḼ⁈"
+ },
+ {
+  "name": "lower-21",
+  "fn": "lower",
+  "args": {
+   "text": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈"
+  },
+  "expected": "σήʼ丬갔σ ‏ 'ﬄﬃӄ__ǝḽ⁈"
+ },
+ {
+  "name": "normalize-22",
+  "fn": "normalize",
+  "args": {
+   "text": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ"
+  },
+  "expected": "갘 걚'Ȍ 객'НΙS' 'ỺFFT ゴ ЂϹϜ"
+ },
+ {
+  "name": "tokens-22",
+  "fn": "tokens",
+  "args": {
+   "text": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ"
+  },
+  "expected": [
+   "갘",
+   "걚'Ȍ",
+   "객'НΙS'",
+   "'ỺFFT",
+   "ゴ",
+   "ЂϹϜ"
+  ]
+ },
+ {
+  "name": "upper-22",
+  "fn": "upper",
+  "args": {
+   "text": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ"
+  },
+  "expected": "갘​걚'Ȍ(객'НΙS’`ʼỺFFT̈ゴ_͹ЂϹϜ"
+ },
+ {
+  "name": "lower-22",
+  "fn": "lower",
+  "args": {
+   "text": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ"
+  },
+  "expected": "갘​걚'ȍ(객'нιs’`ʼỻﬀẗゴ_͹ђϲϝ"
+ },
+ {
+  "name": "normalize-23",
+  "fn": "normalize",
+  "args": {
+   "text": "ẑ걦ᾰ϶ॣ仴"
+  },
+  "expected": "Ẑ걦Ᾰ 仴"
+ },
+ {
+  "name": "tokens-23",
+  "fn": "tokens",
+  "args": {
+   "text": "ẑ걦ᾰ϶ॣ仴"
+  },
+  "expected": [
+   "Ẑ걦Ᾰ",
+   "仴"
+  ]
+ },
+ {
+  "name": "upper-23",
+  "fn": "upper",
+  "args": {
+   "text": "ẑ걦ᾰ϶ॣ仴"
+  },
+  "expected": "Ẑ걦Ᾰ϶ॣ仴"
+ },
+ {
+  "name": "lower-23",
+  "fn": "lower",
+  "args": {
+   "text": "ẑ걦ᾰ϶ॣ仴"
+  },
+  "expected": "ẑ걦ᾰ϶ॣ仴"
+ },
+ {
+  "name": "normalize-24",
+  "fn": "normalize",
+  "args": {
+   "text": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ"
+  },
+  "expected": "Σ'ΖУÙΣST ΣХ丞FFL 각Ѿ 'Ơ"
+ },
+ {
+  "name": "tokens-24",
+  "fn": "tokens",
+  "args": {
+   "text": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ"
+  },
+  "expected": [
+   "Σ'ΖУÙΣST",
+   "ΣХ丞FFL",
+   "각Ѿ",
+   "'Ơ"
+  ]
+ },
+ {
+  "name": "upper-24",
+  "fn": "upper",
+  "args": {
+   "text": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ"
+  },
+  "expected": "⁄゠ΣʼΖУÙΣST ΣХ丞FFL_ 각Ѿ⁬'Ơ"
+ },
+ {
+  "name": "lower-24",
+  "fn": "lower",
+  "args": {
+   "text": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ"
+  },
+  "expected": "⁄゠σʼζуùσﬅ σх丞ﬄ_ 각ѿ⁬'ơ"
+ },
+ {
+  "name": "normalize-25",
+  "fn": "normalize",
+  "args": {
+   "text": "ベʼ’΁ἅ"
+  },
+  "expected": "ベ'' Ἅ"
+ },
+ {
+  "name": "tokens-25",
+  "fn": "tokens",
+  "args": {
+   "text": "ベʼ’΁ἅ"
+  },
+  "expected": [
+   "ベ''",
+   "Ἅ"
+  ]
+ },
+ {
+  "name": "upper-25",
+  "fn": "upper",
+  "args": {
+   "text": "ベʼ’΁ἅ"
+  },
+  "expected": "ベʼ’΁Ἅ"
+ },
+ {
+  "name": "lower-25",
+  "fn": "lower",
+  "args": {
+   "text": "ベʼ’΁ἅ"
+  },
+  "expected": "ベʼ’΁ἅ"
+ },
+ {
+  "name": "normalize-26",
+  "fn": "normalize",
+  "args": {
+   "text": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'"
+  },
+  "expected": "갴亦 FFI Φヤ仛 ठॸӔ걊ख़'ΗŎἊὩϠΣ걡'"
+ },
+ {
+  "name": "tokens-26",
+  "fn": "tokens",
+  "args": {
+   "text": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'"
+  },
+  "expected": [
+   "갴亦",
+   "FFI",
+   "Φヤ仛",
+   "ठॸӔ걊ख़'ΗŎἊὩϠΣ걡'"
+  ]
+ },
+ {
+  "name": "upper-26",
+  "fn": "upper",
+  "args": {
+   "text": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'"
+  },
+  "expected": "갴亦ाFFI⁤Φヤ仛‭ठॸӔ걊ख़'ΗŎἊὩϠΣ걡'"
+ },
+ {
+  "name": "lower-26",
+  "fn": "lower",
+  "args": {
+   "text": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'"
+  },
+  "expected": "갴亦ाﬃ⁤φヤ仛‭ठॸӕ걊ख़'ηŏἂὡϡς걡'"
+ },
+ {
+  "name": "normalize-27",
+  "fn": "normalize",
+  "args": {
+   "text": "'う '갅ẩ ﬀПЪﬂαЬ"
+  },
+  "expected": "'う '갅Ẩ FFПЪFLΑЬ"
+ },
+ {
+  "name": "tokens-27",
+  "fn": "tokens",
+  "args": {
+   "text": "'う '갅ẩ ﬀПЪﬂαЬ"
+  },
+  "expected": [
+   "'う",
+   "'갅Ẩ",
+   "FFПЪFLΑЬ"
+  ]
+ },
+ {
+  "name": "upper-27",
+  "fn": "upper",
+  "args": {
+   "text": "'う '갅ẩ ﬀПЪﬂαЬ"
+  },
+  "expected": "'う '갅Ẩ FFПЪFLΑЬ"
+ },
+ {
+  "name": "lower-27",
+  "fn": "lower",
+  "args": {
+   "text": "'う '갅ẩ ﬀПЪﬂαЬ"
+  },
+  "expected": "'う '갅ẩ ﬀпъﬂαь"
+ },
+ {
+  "name": "normalize-28",
+  "fn": "normalize",
+  "args": {
+   "text": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ"
+  },
+  "expected": "Ȅ ड़ȎῘ 걷 Σ '"
+ },
+ {
+  "name": "tokens-28",
+  "fn": "tokens",
+  "args": {
+   "text": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ"
+  },
+  "expected": [
+   "Ȅ",
+   "ड़ȎῘ",
+   "걷",
+   "Σ",
+   "'"
+  ]
+ },
+ {
+  "name": "upper-28",
+  "fn": "upper",
+  "args": {
+   "text": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ"
+  },
+  "expected": "Ȅ⁑ड़ȎῘ[걷 Σॊʼ"
+ },
+ {
+  "name": "lower-28",
+  "fn": "lower",
+  "args": {
+   "text": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ"
+  },
+  "expected": "ȅ⁑ड़ȏῐ[걷 σॊʼ"
+ },
+ {
+  "name": "normalize-29",
+  "fn": "normalize",
+  "args": {
+   "text": "ﬅӔ"
+  },
+  "expected": "STӔ"
+ },
+ {
+  "name": "tokens-29",
+  "fn": "tokens",
+  "args": {
+   "text": "ﬅӔ"
+  },
+  "expected": [
+   "STӔ"
+  ]
+ },
+ {
+  "name": "upper-29",
+  "fn": "upper",
+  "args": {
+   "text": "ﬅӔ"
+  },
+  "expected": "STӔ"
+ },
+ {
+  "name": "lower-29",
+  "fn": "lower",
+  "args": {
+   "text": "ﬅӔ"
+  },
+  "expected": "ﬅӕ"
+ },
+ {
+  "name": "normalize-30",
+  "fn": "normalize",
+  "args": {
+   "text": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध"
+  },
+  "expected": "仦갾걲Ἦ乖갻 仴乵 FFΤṴध"
+ },
+ {
+  "name": "tokens-30",
+  "fn": "tokens",
+  "args": {
+   "text": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध"
+  },
+  "expected": [
+   "仦갾걲Ἦ乖갻",
+   "仴乵",
+   "FFΤṴध"
+  ]
+ },
+ {
+  "name": "upper-30",
+  "fn": "upper",
+  "args": {
+   "text": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध"
+  },
+  "expected": "゙_​仦갾걲Ἦ乖갻 仴乵_‟FFΤṴध"
+ },
+ {
+  "name": "lower-30",
+  "fn": "lower",
+  "args": {
+   "text": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध"
+  },
+  "expected": "゙_​仦갾걲ἦ乖갻 仴乵_‟ﬀτṵध"
+ },
+ {
+  "name": "normalize-31",
+  "fn": "normalize",
+  "args": {
+   "text": "υﬃỷ’S任갗'Σ갉们"
+  },
+  "expected": "ΥFFIỶ'S任갗'Σ갉们"
+ },
+ {
+  "name": "tokens-31",
+  "fn": "tokens",
+  "args": {
+   "text": "υﬃỷ’S任갗'Σ갉们"
+  },
+  "expected": [
+   "ΥFFIỶ'S任갗'Σ갉们"
+  ]
+ },
+ {
+  "name": "upper-31",
+  "fn": "upper",
+  "args": {
+   "text": "υﬃỷ’S任갗'Σ갉们"
+  },
+  "expected": "ΥFFIỶ’S任갗'Σ갉们"
+ },
+ {
+  "name": "lower-31",
+  "fn": "lower",
+  "args": {
+   "text": "υﬃỷ’S任갗'Σ갉们"
+  },
+  "expected": "υﬃỷ’s任갗'σ갉们"
+ },
+ {
+  "name": "normalize-32",
+  "fn": "normalize",
+  "args": {
+   "text": "ӯる_ Σъ"
+  },
+  "expected": "Ӯる ΣЪ"
+ },
+ {
+  "name": "tokens-32",
+  "fn": "tokens",
+  "args": {
+   "text": "ӯる_ Σъ"
+  },
+  "expected": [
+   "Ӯる",
+   "ΣЪ"
+  ]
+ },
+ {
+  "name": "upper-32",
+  "fn": "upper",
+  "args": {
+   "text": "ӯる_ Σъ"
+  },
+  "expected": "Ӯる_ ΣЪ"
+ },
+ {
+  "name": "lower-32",
+  "fn": "lower",
+  "args": {
+   "text": "ӯる_ Σъ"
+  },
+  "expected": "ӯる_ σъ"
+ },
+ {
+  "name": "normalize-33",
+  "fn": "normalize",
+  "args": {
+   "text": "ẁҦ갯>ὈṂせ ﬃ"
+  },
+  "expected": "ẀҦ갯 ὈṂせ FFI"
+ },
+ {
+  "name": "tokens-33",
+  "fn": "tokens",
+  "args": {
+   "text": "ẁҦ갯>ὈṂせ ﬃ"
+  },
+  "expected": [
+   "ẀҦ갯",
+   "ὈṂせ",
+   "FFI"
+  ]
+ },
+ {
+  "name": "upper-33",
+  "fn": "upper",
+  "args": {
+   "text": "ẁҦ갯>ὈṂせ ﬃ"
+  },
+  "expected": "ẀҦ갯>ὈṂせ FFI"
+ },
+ {
+  "name": "lower-33",
+  "fn": "lower",
+  "args": {
+   "text": "ẁҦ갯>ὈṂせ ﬃ"
+  },
+  "expected": "ẁҧ갯>ὀṃせ ﬃ"
+ },
+ {
+  "name": "normalize-34",
+  "fn": "normalize",
+  "args": {
+   "text": "ḵ¬ϣн–φ“"
+  },
+  "expected": "Ḵ ϢН Φ"
+ },
+ {
+  "name": "tokens-34",
+  "fn": "tokens",
+  "args": {
+   "text": "ḵ¬ϣн–φ“"
+  },
+  "expected": [
+   "Ḵ",
+   "ϢН",
+   "Φ"
+  ]
+ },
+ {
+  "name": "upper-34",
+  "fn": "upper",
+  "args": {
+   "text": "ḵ¬ϣн–φ“"
+  },
+  "expected": "Ḵ¬ϢН–Φ“"
+ },
+ {
+  "name": "lower-34",
+  "fn": "lower",
+  "args": {
+   "text": "ḵ¬ϣн–φ“"
+  },
+  "expected": "ḵ¬ϣн–φ“"
+ },
+ {
+  "name": "normalize-35",
+  "fn": "normalize",
+  "args": {
+   "text": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł"
+  },
+  "expected": "ὫÌFIḸ Ъ'ϷǇイ 간걨且 ȽΝ Ṯ Ł"
+ },
+ {
+  "name": "tokens-35",
+  "fn": "tokens",
+  "args": {
+   "text": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł"
+  },
+  "expected": [
+   "ὫÌFIḸ",
+   "Ъ'ϷǇイ",
+   "간걨且",
+   "ȽΝ",
+   "Ṯ",
+   "Ł"
+  ]
+ },
+ {
+  "name": "upper-35",
+  "fn": "upper",
+  "args": {
+   "text": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł"
+  },
+  "expected": "ὫÌFIḸ҆ ⁉Ъ'ϷǇイ”간걨且_ȽΝ_Ṯ Ł"
+ },
+ {
+  "name": "lower-35",
+  "fn": "lower",
+  "args": {
+   "text": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł"
+  },
+  "expected": "ὣìﬁḹ҆ ⁉ъ'ϸǉイ”간걨且_ƚν_ṯ ł"
+ },
+ {
+  "name": "normalize-36",
+  "fn": "normalize",
+  "args": {
+   "text": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+  },
+  "expected": "れ ॷ 갟仅'FFI' 갈Ếさ"
+ },
+ {
+  "name": "tokens-36",
+  "fn": "tokens",
+  "args": {
+   "text": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+  },
+  "expected": [
+   "れ",
+   "ॷ",
+   "갟仅'FFI'",
+   "갈Ếさ"
+  ]
+ },
+ {
+  "name": "upper-36",
+  "fn": "upper",
+  "args": {
+   "text": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+  },
+  "expected": "れ゛ॷ_갟仅ʼFFI’⁚ँ갈Ếさ"
+ },
+ {
+  "name": "lower-36",
+  "fn": "lower",
+  "args": {
+   "text": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+  },
+  "expected": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+ },
+ {
+  "name": "normalize-37",
+  "fn": "normalize",
+  "args": {
+   "text": "Σर"
+  },
+  "expected": "Σर"
+ },
+ {
+  "name": "tokens-37",
+  "fn": "tokens",
+  "args": {
+   "text": "Σर"
+  },
+  "expected": [
+   "Σर"
+  ]
+ },
+ {
+  "name": "upper-37",
+  "fn": "upper",
+  "args": {
+   "text": "Σर"
+  },
+  "expected": "Σर"
+ },
+ {
+  "name": "lower-37",
+  "fn": "lower",
+  "args": {
+   "text": "Σर"
+  },
+  "expected": "σर"
+ },
+ {
+  "name": "normalize-38",
+  "fn": "normalize",
+  "args": {
+   "text": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋"
+  },
+  "expected": "仫 ' FFIW びへЅΣFFѬṞFFL"
+ },
+ {
+  "name": "tokens-38",
+  "fn": "tokens",
+  "args": {
+   "text": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋"
+  },
+  "expected": [
+   "仫",
+   "'",
+   "FFIW",
+   "びへЅΣFFѬṞFFL"
+  ]
+ },
+ {
+  "name": "upper-38",
+  "fn": "upper",
+  "args": {
+   "text": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋"
+  },
+  "expected": "_仫‫'⁋FFIW_びへЅΣFFѬṞFFL⁋"
+ },
+ {
+  "name": "lower-38",
+  "fn": "lower",
+  "args": {
+   "text": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋"
+  },
+  "expected": "_仫‫'⁋ﬃw_びへѕσﬀѭṟﬄ⁋"
+ },
+ {
+  "name": "normalize-39",
+  "fn": "normalize",
+  "args": {
+   "text": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ"
+  },
+  "expected": "С'Ҁ乣ऱȔΣ'FLいFIΎΘ"
+ },
+ {
+  "name": "tokens-39",
+  "fn": "tokens",
+  "args": {
+   "text": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ"
+  },
+  "expected": [
+   "С'Ҁ乣ऱȔΣ'FLいFIΎΘ"
+  ]
+ },
+ {
+  "name": "upper-39",
+  "fn": "upper",
+  "args": {
+   "text": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ"
+  },
+  "expected": "ोС'Ҁ乣ऱȔΣ'FLいFIΎΘ"
+ },
+ {
+  "name": "lower-39",
+  "fn": "lower",
+  "args": {
+   "text": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ"
+  },
+  "expected": "ोс'ҁ乣ऱȕσ'ﬂいﬁύϑ"
+ },
+ {
+  "name": "normalize-40",
+  "fn": "normalize",
+  "args": {
+   "text": "ऑ"
+  },
+  "expected": "ऑ"
+ },
+ {
+  "name": "tokens-40",
+  "fn": "tokens",
+  "args": {
+   "text": "ऑ"
+  },
+  "expected": [
+   "ऑ"
+  ]
+ },
+ {
+  "name": "upper-40",
+  "fn": "upper",
+  "args": {
+   "text": "ऑ"
+  },
+  "expected": "ऑ"
+ },
+ {
+  "name": "lower-40",
+  "fn": "lower",
+  "args": {
+   "text": "ऑ"
+  },
+  "expected": "ऑ"
+ },
+ {
+  "name": "normalize-41",
+  "fn": "normalize",
+  "args": {
+   "text": "为ῡン"
+  },
+  "expected": "为Ῡン"
+ },
+ {
+  "name": "tokens-41",
+  "fn": "tokens",
+  "args": {
+   "text": "为ῡン"
+  },
+  "expected": [
+   "为Ῡン"
+  ]
+ },
+ {
+  "name": "upper-41",
+  "fn": "upper",
+  "args": {
+   "text": "为ῡン"
+  },
+  "expected": "为Ῡン"
+ },
+ {
+  "name": "lower-41",
+  "fn": "lower",
+  "args": {
+   "text": "为ῡン"
+  },
+  "expected": "为ῡン"
+ },
+ {
+  "name": "normalize-42",
+  "fn": "normalize",
+  "args": {
+   "text": "거_ŒŦ"
+  },
+  "expected": "거 ŒŦ"
+ },
+ {
+  "name": "tokens-42",
+  "fn": "tokens",
+  "args": {
+   "text": "거_ŒŦ"
+  },
+  "expected": [
+   "거",
+   "ŒŦ"
+  ]
+ },
+ {
+  "name": "upper-42",
+  "fn": "upper",
+  "args": {
+   "text": "거_ŒŦ"
+  },
+  "expected": "거_ŒŦ"
+ },
+ {
+  "name": "lower-42",
+  "fn": "lower",
+  "args": {
+   "text": "거_ŒŦ"
+  },
+  "expected": "거_œŧ"
+ },
+ {
+  "name": "normalize-43",
+  "fn": "normalize",
+  "args": {
+   "text": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१"
+  },
+  "expected": "द ЫҌ ӞЃ ƧКFFLƟ१"
+ },
+ {
+  "name": "tokens-43",
+  "fn": "tokens",
+  "args": {
+   "text": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१"
+  },
+  "expected": [
+   "द",
+   "ЫҌ",
+   "ӞЃ",
+   "ƧКFFLƟ१"
+  ]
+ },
+ {
+  "name": "upper-43",
+  "fn": "upper",
+  "args": {
+   "text": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१"
+  },
+  "expected": "‹द‷ ЫҌैӞЃ ƧКFFLƟ१"
+ },
+ {
+  "name": "lower-43",
+  "fn": "lower",
+  "args": {
+   "text": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१"
+  },
+  "expected": "‹द‷ ыҍैӟѓ ƨкﬄɵ१"
+ },
+ {
+  "name": "normalize-44",
+  "fn": "normalize",
+  "args": {
+   "text": "东N丕갩ʼК갑'Σʼ걡"
+  },
+  "expected": "东N丕갩'К갑'Σ'걡"
+ },
+ {
+  "name": "tokens-44",
+  "fn": "tokens",
+  "args": {
+   "text": "东N丕갩ʼК갑'Σʼ걡"
+  },
+  "expected": [
+   "东N丕갩'К갑'Σ'걡"
+  ]
+ },
+ {
+  "name": "upper-44",
+  "fn": "upper",
+  "args": {
+   "text": "东N丕갩ʼК갑'Σʼ걡"
+  },
+  "expected": "东N丕갩ʼК갑'Σʼ걡"
+ },
+ {
+  "name": "lower-44",
+  "fn": "lower",
+  "args": {
+   "text": "东N丕갩ʼК갑'Σʼ걡"
+  },
+  "expected": "东n丕갩ʼк갑'σʼ걡"
+ },
+ {
+  "name": "normalize-45",
+  "fn": "normalize",
+  "args": {
+   "text": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ"
+  },
+  "expected": "Τ갬 乄Ỽ' ѮヴFFIコFFLSTヅFIΣFF"
+ },
+ {
+  "name": "tokens-45",
+  "fn": "tokens",
+  "args": {
+   "text": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ"
+  },
+  "expected": [
+   "Τ갬",
+   "乄Ỽ'",
+   "ѮヴFFIコFFLSTヅFIΣFF"
+  ]
+ },
+ {
+  "name": "upper-45",
+  "fn": "upper",
+  "args": {
+   "text": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ"
+  },
+  "expected": "Τ갬 乄Ỽ'⁃ѮヴFFIコFFLSTヅFIΣFF"
+ },
+ {
+  "name": "lower-45",
+  "fn": "lower",
+  "args": {
+   "text": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ"
+  },
+  "expected": "τ갬 乄ỽ'⁃ѯヴﬃコﬄﬅヅﬁσﬀ"
+ },
+ {
+  "name": "normalize-46",
+  "fn": "normalize",
+  "args": {
+   "text": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ"
+  },
+  "expected": "Ҷ 걬ҞFI걦FL걊 ὫΙ१' 'ゴ"
+ },
+ {
+  "name": "tokens-46",
+  "fn": "tokens",
+  "args": {
+   "text": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ"
+  },
+  "expected": [
+   "Ҷ",
+   "걬ҞFI걦FL걊",
+   "ὫΙ१'",
+   "'ゴ"
+  ]
+ },
+ {
+  "name": "upper-46",
+  "fn": "upper",
+  "args": {
+   "text": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ"
+  },
+  "expected": "Ҷ_ 걬ҞFI걦FL걊‭ὫΙ१’‶’ゴ"
+ },
+ {
+  "name": "lower-46",
+  "fn": "lower",
+  "args": {
+   "text": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ"
+  },
+  "expected": "ҷ_ 걬ҟﬁ걦ﬂ걊‭ᾣ१’‶’ゴ"
+ },
+ {
+  "name": "normalize-47",
+  "fn": "normalize",
+  "args": {
+   "text": " Ҭヸ亵'’"
+  },
+  "expected": "Ҭヸ亵''"
+ },
+ {
+  "name": "tokens-47",
+  "fn": "tokens",
+  "args": {
+   "text": " Ҭヸ亵'’"
+  },
+  "expected": [
+   "Ҭヸ亵''"
+  ]
+ },
+ {
+  "name": "upper-47",
+  "fn": "upper",
+  "args": {
+   "text": " Ҭヸ亵'’"
+  },
+  "expected": " Ҭヸ亵'’"
+ },
+ {
+  "name": "lower-47",
+  "fn": "lower",
+  "args": {
+   "text": " Ҭヸ亵'’"
+  },
+  "expected": " ҭヸ亵'’"
+ },
+ {
+  "name": "normalize-48",
+  "fn": "normalize",
+  "args": {
+   "text": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'"
+  },
+  "expected": "'값Ḫ Σ'Υ'걬 Ḱ걖त Ҟ今'"
+ },
+ {
+  "name": "tokens-48",
+  "fn": "tokens",
+  "args": {
+   "text": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'"
+  },
+  "expected": [
+   "'값Ḫ",
+   "Σ'Υ'걬",
+   "Ḱ걖त",
+   "Ҟ今'"
+  ]
+ },
+ {
+  "name": "upper-48",
+  "fn": "upper",
+  "args": {
+   "text": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'"
+  },
+  "expected": "  '값Ḫ  Σ’Υʼ걬‥Ḱ걖त॓Ҟ今'"
+ },
+ {
+  "name": "lower-48",
+  "fn": "lower",
+  "args": {
+   "text": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'"
+  },
+  "expected": "  '값ḫ  σ’υʼ걬‥ḱ걖त॓ҟ今'"
+ },
+ {
+  "name": "normalize-49",
+  "fn": "normalize",
+  "args": {
+   "text": "҉ペﬂ_M갳ГͰ"
+  },
+  "expected": "ペFL M갳ГͰ"
+ },
+ {
+  "name": "tokens-49",
+  "fn": "tokens",
+  "args": {
+   "text": "҉ペﬂ_M갳ГͰ"
+  },
+  "expected": [
+   "ペFL",
+   "M갳ГͰ"
+  ]
+ },
+ {
+  "name": "upper-49",
+  "fn": "upper",
+  "args": {
+   "text": "҉ペﬂ_M갳ГͰ"
+  },
+  "expected": "҉ペFL_M갳ГͰ"
+ },
+ {
+  "name": "lower-49",
+  "fn": "lower",
+  "args": {
+   "text": "҉ペﬂ_M갳ГͰ"
+  },
+  "expected": "҉ペﬂ_m갳гͱ"
+ },
+ {
+  "name": "normalize-50",
+  "fn": "normalize",
+  "args": {
+   "text": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ"
+  },
+  "expected": "仜 О' ҲFI ἮΙ 为걊ΣΛĪ从 ḖɊ갆 ѸÁ"
+ },
+ {
+  "name": "tokens-50",
+  "fn": "tokens",
+  "args": {
+   "text": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ"
+  },
+  "expected": [
+   "仜",
+   "О'",
+   "ҲFI",
+   "ἮΙ",
+   "为걊ΣΛĪ从",
+   "ḖɊ갆",
+   "ѸÁ"
+  ]
+ },
+ {
+  "name": "upper-50",
+  "fn": "upper",
+  "args": {
+   "text": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ"
+  },
+  "expected": "仜॰О'॑ҲFI ἮΙॆ为걊ΣΛĪ从 ḖɊ갆@ѸÁ"
+ },
+ {
+  "name": "lower-50",
+  "fn": "lower",
+  "args": {
+   "text": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ"
+  },
+  "expected": "仜॰о'॑ҳﬁ ᾖॆ为걊σλī从 ḗɋ갆@ѹá"
+ },
+ {
+  "name": "normalize-51",
+  "fn": "normalize",
+  "args": {
+   "text": "Џ゠ﬅ·’京⁏"
+  },
+  "expected": "Џ ST '京"
+ },
+ {
+  "name": "tokens-51",
+  "fn": "tokens",
+  "args": {
+   "text": "Џ゠ﬅ·’京⁏"
+  },
+  "expected": [
+   "Џ",
+   "ST",
+   "'京"
+  ]
+ },
+ {
+  "name": "upper-51",
+  "fn": "upper",
+  "args": {
+   "text": "Џ゠ﬅ·’京⁏"
+  },
+  "expected": "Џ゠ST·’京⁏"
+ },
+ {
+  "name": "lower-51",
+  "fn": "lower",
+  "args": {
+   "text": "Џ゠ﬅ·’京⁏"
+  },
+  "expected": "џ゠ﬅ·’京⁏"
+ },
+ {
+  "name": "normalize-52",
+  "fn": "normalize",
+  "args": {
+   "text": "yʼ걃业Σ"
+  },
+  "expected": "Y'걃业Σ"
+ },
+ {
+  "name": "tokens-52",
+  "fn": "tokens",
+  "args": {
+   "text": "yʼ걃业Σ"
+  },
+  "expected": [
+   "Y'걃业Σ"
+  ]
+ },
+ {
+  "name": "upper-52",
+  "fn": "upper",
+  "args": {
+   "text": "yʼ걃业Σ"
+  },
+  "expected": "Yʼ걃业Σ"
+ },
+ {
+  "name": "lower-52",
+  "fn": "lower",
+  "args": {
+   "text": "yʼ걃业Σ"
+  },
+  "expected": "yʼ걃业σ"
+ },
+ {
+  "name": "normalize-53",
+  "fn": "normalize",
+  "args": {
+   "text": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ"
+  },
+  "expected": "ͺ よ ビĻNẆFF亍ΩΙ갛ѲẼ え Θよ"
+ },
+ {
+  "name": "tokens-53",
+  "fn": "tokens",
+  "args": {
+   "text": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ"
+  },
+  "expected": [
+   "ͺ",
+   "よ",
+   "ビĻNẆFF亍ΩΙ갛ѲẼ",
+   "え",
+   "Θよ"
+  ]
+ },
+ {
+  "name": "upper-53",
+  "fn": "upper",
+  "args": {
+   "text": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ"
+  },
+  "expected": "ͺ_⁮὿よ›ビĻNẆFF亍ΩΙ갛ѲẼ_え″_Θよ"
+ },
+ {
+  "name": "lower-53",
+  "fn": "lower",
+  "args": {
+   "text": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ"
+  },
+  "expected": "ͺ_⁮὿よ›ビļnẇﬀ亍ῳ갛ѳẽ_え″_θよ"
+ },
+ {
+  "name": "normalize-54",
+  "fn": "normalize",
+  "args": {
+   "text": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ"
+  },
+  "expected": "Ϋ亽 FFL Δヲ क 갠'갖丶FFIΣ"
+ },
+ {
+  "name": "tokens-54",
+  "fn": "tokens",
+  "args": {
+   "text": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ"
+  },
+  "expected": [
+   "Ϋ亽",
+   "FFL",
+   "Δヲ",
+   "क",
+   "갠'갖丶FFIΣ"
+  ]
+ },
+ {
+  "name": "upper-54",
+  "fn": "upper",
+  "args": {
+   "text": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ"
+  },
+  "expected": "Ϋ亽἞‧FFL⁑¸Δヲ_क_갠ʼ갖丶FFIΣ"
+ },
+ {
+  "name": "lower-54",
+  "fn": "lower",
+  "args": {
+   "text": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ"
+  },
+  "expected": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃς"
+ },
+ {
+  "name": "normalize-55",
+  "fn": "normalize",
+  "args": {
+   "text": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_"
+  },
+  "expected": "FLセҰぢ'Οच仃亮걒ẄFFI'' ッ Ђॱ갮Ἴ'"
+ },
+ {
+  "name": "tokens-55",
+  "fn": "tokens",
+  "args": {
+   "text": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_"
+  },
+  "expected": [
+   "FLセҰぢ'Οच仃亮걒ẄFFI''",
+   "ッ",
+   "Ђॱ갮Ἴ'"
+  ]
+ },
+ {
+  "name": "upper-55",
+  "fn": "upper",
+  "args": {
+   "text": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_"
+  },
+  "expected": "FLセҰぢ'Οच仃亮걒ẄFFIʼʼ ッ&Ђॱ갮Ἴ‘_"
+ },
+ {
+  "name": "lower-55",
+  "fn": "lower",
+  "args": {
+   "text": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_"
+  },
+  "expected": "ﬂセұぢ'οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮ἴ‘_"
+ },
+ {
+  "name": "normalize-56",
+  "fn": "normalize",
+  "args": {
+   "text": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N"
+  },
+  "expected": "ЕὙ丫FI仕FIӒΙ 丨 FFҶẪ N"
+ },
+ {
+  "name": "tokens-56",
+  "fn": "tokens",
+  "args": {
+   "text": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N"
+  },
+  "expected": [
+   "ЕὙ丫FI仕FIӒΙ",
+   "丨",
+   "FFҶẪ",
+   "N"
+  ]
+ },
+ {
+  "name": "upper-56",
+  "fn": "upper",
+  "args": {
+   "text": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N"
+  },
+  "expected": "ЕὙ丫FI仕FIӒΪ͂丨΋FFҶẪ N"
+ },
+ {
+  "name": "lower-56",
+  "fn": "lower",
+  "args": {
+   "text": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N"
+  },
+  "expected": "еὑ丫ﬁ仕ﬁӓῗ丨΋ﬀҷẫ n"
+ },
+ {
+  "name": "normalize-57",
+  "fn": "normalize",
+  "args": {
+   "text": "仗갍ʼ"
+  },
+  "expected": "仗갍'"
+ },
+ {
+  "name": "tokens-57",
+  "fn": "tokens",
+  "args": {
+   "text": "仗갍ʼ"
+  },
+  "expected": [
+   "仗갍'"
+  ]
+ },
+ {
+  "name": "upper-57",
+  "fn": "upper",
+  "args": {
+   "text": "仗갍ʼ"
+  },
+  "expected": "仗갍ʼ"
+ },
+ {
+  "name": "lower-57",
+  "fn": "lower",
+  "args": {
+   "text": "仗갍ʼ"
+  },
+  "expected": "仗갍ʼ"
+ },
+ {
+  "name": "normalize-58",
+  "fn": "normalize",
+  "args": {
+   "text": "ねろӺ'ϢΈऄ걙"
+  },
+  "expected": "ねろӺ'ϢΈऄ걙"
+ },
+ {
+  "name": "tokens-58",
+  "fn": "tokens",
+  "args": {
+   "text": "ねろӺ'ϢΈऄ걙"
+  },
+  "expected": [
+   "ねろӺ'ϢΈऄ걙"
+  ]
+ },
+ {
+  "name": "upper-58",
+  "fn": "upper",
+  "args": {
+   "text": "ねろӺ'ϢΈऄ걙"
+  },
+  "expected": "ねろӺ'ϢΈऄ걙"
+ },
+ {
+  "name": "lower-58",
+  "fn": "lower",
+  "args": {
+   "text": "ねろӺ'ϢΈऄ걙"
+  },
+  "expected": "ねろӻ'ϣέऄ걙"
+ },
+ {
+  "name": "cer-0",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Hello, world!",
+   "hypothesis": "don’t ‘stop’ ʼtil it‛s_done"
+  },
+  "expected": 2.0
+ },
+ {
+  "name": "verify-text-0",
+  "fn": "verify",
+  "args": {
+   "reference": "Hello, world!",
+   "hypothesis": "Straße ﬁne ŉ ΐ ǅemal İstanbul"
+  },
+  "expected": {
+   "word_errors": 6,
+   "ref_words": 2,
+   "cer": 2.5
+  }
+ },
+ {
+  "name": "cer-1",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "don’t ‘stop’ ʼtil it‛s_done",
+   "hypothesis": "snake_case __x__ a_1"
+  },
+  "expected": 0.9130434782608695
+ },
+ {
+  "name": "verify-text-1",
+  "fn": "verify",
+  "args": {
+   "reference": "don’t ‘stop’ ʼtil it‛s_done",
+   "hypothesis": "  "
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 5,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-2",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "snake_case __x__ a_1",
+   "hypothesis": "Straße ﬁne ŉ ΐ ǅemal İstanbul"
+  },
+  "expected": 1.8333333333333333
+ },
+ {
+  "name": "verify-text-2",
+  "fn": "verify",
+  "args": {
+   "reference": "snake_case __x__ a_1",
+   "hypothesis": "ⅠⅡ 𝐀𝟎"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 5,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-3",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Straße ﬁne ŉ ΐ ǅemal İstanbul",
+   "hypothesis": "我们今天去公园。我们 今天"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-3",
+  "fn": "verify",
+  "args": {
+   "reference": "Straße ﬁne ŉ ΐ ǅemal İstanbul",
+   "hypothesis": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ"
+  },
+  "expected": {
+   "word_errors": 6,
+   "ref_words": 6,
+   "cer": 0.9629629629629629
+  }
+ },
+ {
+  "name": "cer-4",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "我们今天去公园。我们 今天",
+   "hypothesis": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+  },
+  "expected": 1.6363636363636365
+ },
+ {
+  "name": "verify-text-4",
+  "fn": "verify",
+  "args": {
+   "reference": "我们今天去公园。我们 今天",
+   "hypothesis": "υﬃỷ’S任갗'Σ갉们"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.1818181818181819
+  }
+ },
+ {
+  "name": "cer-5",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ",
+   "hypothesis": "한국어 텍스트입니다!"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-5",
+  "fn": "verify",
+  "args": {
+   "reference": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ",
+   "hypothesis": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-6",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "한국어 텍스트입니다!",
+   "hypothesis": "Café 123 ٣٤٥ Ⅻ ½ ² ①"
+  },
+  "expected": 1.5555555555555556
+ },
+ {
+  "name": "verify-text-6",
+  "fn": "verify",
+  "args": {
+   "reference": "한국어 텍스트입니다!",
+   "hypothesis": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 2,
+   "cer": 2.4444444444444446
+  }
+ },
+ {
+  "name": "cer-7",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Café 123 ٣٤٥ Ⅻ ½ ² ①",
+   "hypothesis": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α"
+  },
+  "expected": 1.5714285714285714
+ },
+ {
+  "name": "verify-text-7",
+  "fn": "verify",
+  "args": {
+   "reference": "Café 123 ٣٤٥ Ⅻ ½ ² ①",
+   "hypothesis": "yʼ걃业Σ"
+  },
+  "expected": {
+   "word_errors": 7,
+   "ref_words": 7,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-8",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α",
+   "hypothesis": "हिन्दी भाषा"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-8",
+  "fn": "verify",
+  "args": {
+   "reference": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α",
+   "hypothesis": "Hello, world!"
+  },
+  "expected": {
+   "word_errors": 7,
+   "ref_words": 7,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-9",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "हिन्दी भाषा",
+   "hypothesis": "  "
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-9",
+  "fn": "verify",
+  "args": {
+   "reference": "हिन्दी भाषा",
+   "hypothesis": "Café 123 ٣٤٥ Ⅻ ½ ² ①"
+  },
+  "expected": {
+   "word_errors": 7,
+   "ref_words": 5,
+   "cer": 2.8
+  }
+ },
+ {
+  "name": "cer-10",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "  ",
+   "hypothesis": ""
+  },
+  "expected": 0.0
+ },
+ {
+  "name": "verify-text-10",
+  "fn": "verify",
+  "args": {
+   "reference": "  ",
+   "hypothesis": "Ⓐⓑ ﬀ ﬃ ʰᵃ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 0,
+   "cer": 0.0
+  }
+ },
+ {
+  "name": "cer-11",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "",
+   "hypothesis": "tab\tnew\nline　x y"
+  },
+  "expected": 0.0
+ },
+ {
+  "name": "verify-text-11",
+  "fn": "verify",
+  "args": {
+   "reference": "",
+   "hypothesis": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 0,
+   "cer": 0.0
+  }
+ },
+ {
+  "name": "cer-12",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "tab\tnew\nline　x y",
+   "hypothesis": "'quoted' — dash… 'tis"
+  },
+  "expected": 1.25
+ },
+ {
+  "name": "verify-text-12",
+  "fn": "verify",
+  "args": {
+   "reference": "tab\tnew\nline　x y",
+   "hypothesis": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 5,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-13",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "'quoted' — dash… 'tis",
+   "hypothesis": "Ⓐⓑ ﬀ ﬃ ʰᵃ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-13",
+  "fn": "verify",
+  "args": {
+   "reference": "'quoted' — dash… 'tis",
+   "hypothesis": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł"
+  },
+  "expected": {
+   "word_errors": 6,
+   "ref_words": 3,
+   "cer": 1.0625
+  }
+ },
+ {
+  "name": "cer-14",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Ⓐⓑ ﬀ ﬃ ʰᵃ",
+   "hypothesis": "Привет, МИР ёЁ"
+  },
+  "expected": 1.5714285714285714
+ },
+ {
+  "name": "verify-text-14",
+  "fn": "verify",
+  "args": {
+   "reference": "Ⓐⓑ ﬀ ﬃ ʰᵃ",
+   "hypothesis": "거_ŒŦ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-15",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Привет, МИР ёЁ",
+   "hypothesis": "x́ÿ e⃝z"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-15",
+  "fn": "verify",
+  "args": {
+   "reference": "Привет, МИР ёЁ",
+   "hypothesis": "҉ペﬂ_M갳ГͰ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-16",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "x́ÿ e⃝z",
+   "hypothesis": "ⅠⅡ 𝐀𝟎"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-16",
+  "fn": "verify",
+  "args": {
+   "reference": "x́ÿ e⃝z",
+   "hypothesis": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 4.0
+  }
+ },
+ {
+  "name": "cer-17",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ⅠⅡ 𝐀𝟎",
+   "hypothesis": "🙂 emoji 🙂ok"
+  },
+  "expected": 1.75
+ },
+ {
+  "name": "verify-text-17",
+  "fn": "verify",
+  "args": {
+   "reference": "ⅠⅡ 𝐀𝟎",
+   "hypothesis": "我们今天去公园。我们 今天"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 2,
+   "cer": 2.75
+  }
+ },
+ {
+  "name": "cer-18",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "🙂 emoji 🙂ok",
+   "hypothesis": "घ_⁎⁐ľ갬ी'丼"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-18",
+  "fn": "verify",
+  "args": {
+   "reference": "🙂 emoji 🙂ok",
+   "hypothesis": ""
+  },
+  "expected": {
+   "word_errors": 2,
+   "ref_words": 2,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-19",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "घ_⁎⁐ľ갬ी'丼",
+   "hypothesis": "トघख़"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-19",
+  "fn": "verify",
+  "args": {
+   "reference": "घ_⁎⁐ľ갬ी'丼",
+   "hypothesis": "🙂 emoji 🙂ok"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.4
+  }
+ },
+ {
+  "name": "cer-20",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "トघख़",
+   "hypothesis": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈"
+  },
+  "expected": 5.333333333333333
+ },
+ {
+  "name": "verify-text-20",
+  "fn": "verify",
+  "args": {
+   "reference": "トघख़",
+   "hypothesis": "ベʼ’΁ἅ"
+  },
+  "expected": {
+   "word_errors": 2,
+   "ref_words": 1,
+   "cer": 1.3333333333333333
+  }
+ },
+ {
+  "name": "cer-21",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈",
+   "hypothesis": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-21",
+  "fn": "verify",
+  "args": {
+   "reference": "ΣΉʼ丬갔Σ ‏ 'ﬄﬃӄ__ƎḼ⁈",
+   "hypothesis": "ӯる_ Σъ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 0.9375
+  }
+ },
+ {
+  "name": "cer-22",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ",
+   "hypothesis": "ẑ걦ᾰ϶ॣ仴"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-22",
+  "fn": "verify",
+  "args": {
+   "reference": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ",
+   "hypothesis": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ"
+  },
+  "expected": {
+   "word_errors": 6,
+   "ref_words": 6,
+   "cer": 0.8421052631578947
+  }
+ },
+ {
+  "name": "cer-23",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ẑ걦ᾰ϶ॣ仴",
+   "hypothesis": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ"
+  },
+  "expected": 4.5
+ },
+ {
+  "name": "verify-text-23",
+  "fn": "verify",
+  "args": {
+   "reference": "ẑ걦ᾰ϶ॣ仴",
+   "hypothesis": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 2,
+   "cer": 3.5
+  }
+ },
+ {
+  "name": "cer-24",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ",
+   "hypothesis": "ベʼ’΁ἅ"
+  },
+  "expected": 0.8888888888888888
+ },
+ {
+  "name": "verify-text-24",
+  "fn": "verify",
+  "args": {
+   "reference": "⁄゠ΣʼζУùΣﬅ Σх丞ﬄ_ 각Ѿ⁬'Ơ",
+   "hypothesis": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 4,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-25",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ベʼ’΁ἅ",
+   "hypothesis": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'"
+  },
+  "expected": 5.25
+ },
+ {
+  "name": "verify-text-25",
+  "fn": "verify",
+  "args": {
+   "reference": "ベʼ’΁ἅ",
+   "hypothesis": "don’t ‘stop’ ʼtil it‛s_done"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 2,
+   "cer": 5.25
+  }
+ },
+ {
+  "name": "cer-26",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'",
+   "hypothesis": "'う '갅ẩ ﬀПЪﬂαЬ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-26",
+  "fn": "verify",
+  "args": {
+   "reference": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'",
+   "hypothesis": "ὈΔΥΣΣΕΎΣ ΣΑΣ σοφΣ. Σ ΑΣ' ΑΣ.Α"
+  },
+  "expected": {
+   "word_errors": 7,
+   "ref_words": 4,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-27",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "'う '갅ẩ ﬀПЪﬂαЬ",
+   "hypothesis": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-27",
+  "fn": "verify",
+  "args": {
+   "reference": "'う '갅ẩ ﬀПЪﬂαЬ",
+   "hypothesis": "Привет, МИР ёЁ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-28",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ",
+   "hypothesis": "ﬅӔ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-28",
+  "fn": "verify",
+  "args": {
+   "reference": "Ȅ⁑ड़Ȏῐ[걷 Σॊʼ",
+   "hypothesis": "갘​걚'Ȍ(객'нΙS’`ʼỺﬀẗゴ_͹ЂϲϜ"
+  },
+  "expected": {
+   "word_errors": 6,
+   "ref_words": 5,
+   "cer": 2.5714285714285716
+  }
+ },
+ {
+  "name": "cer-29",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ﬅӔ",
+   "hypothesis": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध"
+  },
+  "expected": 4.333333333333333
+ },
+ {
+  "name": "verify-text-29",
+  "fn": "verify",
+  "args": {
+   "reference": "ﬅӔ",
+   "hypothesis": "ﬅӔ"
+  },
+  "expected": {
+   "word_errors": 0,
+   "ref_words": 1,
+   "cer": 0.0
+  }
+ },
+ {
+  "name": "cer-30",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध",
+   "hypothesis": "υﬃỷ’S任갗'Σ갉们"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-30",
+  "fn": "verify",
+  "args": {
+   "reference": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध",
+   "hypothesis": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-31",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "υﬃỷ’S任갗'Σ갉们",
+   "hypothesis": "ӯる_ Σъ"
+  },
+  "expected": 0.9230769230769231
+ },
+ {
+  "name": "verify-text-31",
+  "fn": "verify",
+  "args": {
+   "reference": "υﬃỷ’S任갗'Σ갉们",
+   "hypothesis": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 1,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-32",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ӯる_ Σъ",
+   "hypothesis": "ẁҦ갯>ὈṂせ ﬃ"
+  },
+  "expected": 2.25
+ },
+ {
+  "name": "verify-text-32",
+  "fn": "verify",
+  "args": {
+   "reference": "ӯる_ Σъ",
+   "hypothesis": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ"
+  },
+  "expected": {
+   "word_errors": 7,
+   "ref_words": 2,
+   "cer": 4.5
+  }
+ },
+ {
+  "name": "cer-33",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ẁҦ갯>ὈṂせ ﬃ",
+   "hypothesis": "ḵ¬ϣн–φ“"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-33",
+  "fn": "verify",
+  "args": {
+   "reference": "ẁҦ갯>ὈṂせ ﬃ",
+   "hypothesis": "仗갍ʼ"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-34",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ḵ¬ϣн–φ“",
+   "hypothesis": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł"
+  },
+  "expected": 4.25
+ },
+ {
+  "name": "verify-text-34",
+  "fn": "verify",
+  "args": {
+   "reference": "ḵ¬ϣн–φ“",
+   "hypothesis": "日本語の文章です、はい。カタカナ ｶﾀｶﾅ"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 3,
+   "cer": 4.5
+  }
+ },
+ {
+  "name": "cer-35",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł",
+   "hypothesis": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ"
+  },
+  "expected": 0.9411764705882353
+ },
+ {
+  "name": "verify-text-35",
+  "fn": "verify",
+  "args": {
+   "reference": "ὫìﬁḸ҆ ⁉Ъ'ϸǉイ”간걨且_Ƚν_ṯ ł",
+   "hypothesis": "tab\tnew\nline　x y"
+  },
+  "expected": {
+   "word_errors": 6,
+   "ref_words": 6,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-36",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ",
+   "hypothesis": "Σर"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-36",
+  "fn": "verify",
+  "args": {
+   "reference": "れ゛ॷ_갟仅ʼﬃ’⁚ँ갈ếさ",
+   "hypothesis": "घ_⁎⁐ľ갬ी'丼"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 0.9166666666666666
+  }
+ },
+ {
+  "name": "cer-37",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Σर",
+   "hypothesis": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋"
+  },
+  "expected": 8.0
+ },
+ {
+  "name": "verify-text-37",
+  "fn": "verify",
+  "args": {
+   "reference": "Σर",
+   "hypothesis": "갴亦ाﬃ⁤Φヤ仛‭ठॸӔ걊ख़'ηŎἊὡϠΣ걡'"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 1,
+   "cer": 10.5
+  }
+ },
+ {
+  "name": "cer-38",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋",
+   "hypothesis": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ"
+  },
+  "expected": 0.8235294117647058
+ },
+ {
+  "name": "verify-text-38",
+  "fn": "verify",
+  "args": {
+   "reference": "_仫‫'⁋ﬃW_びへѕΣﬀѬṟﬄ⁋",
+   "hypothesis": "ẁҦ갯>ὈṂせ ﬃ"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 0.8823529411764706
+  }
+ },
+ {
+  "name": "cer-39",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ",
+   "hypothesis": "ऑ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-39",
+  "fn": "verify",
+  "args": {
+   "reference": "ोС'ҁ乣ऱȕΣ'ﬂいﬁύϑ",
+   "hypothesis": "ऑ"
+  },
+  "expected": {
+   "word_errors": 1,
+   "ref_words": 1,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-40",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ऑ",
+   "hypothesis": "为ῡン"
+  },
+  "expected": 3.0
+ },
+ {
+  "name": "verify-text-40",
+  "fn": "verify",
+  "args": {
+   "reference": "ऑ",
+   "hypothesis": " Ҭヸ亵'’"
+  },
+  "expected": {
+   "word_errors": 1,
+   "ref_words": 1,
+   "cer": 5.0
+  }
+ },
+ {
+  "name": "cer-41",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "为ῡン",
+   "hypothesis": "거_ŒŦ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-41",
+  "fn": "verify",
+  "args": {
+   "reference": "为ῡン",
+   "hypothesis": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 1,
+   "cer": 5.333333333333333
+  }
+ },
+ {
+  "name": "cer-42",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "거_ŒŦ",
+   "hypothesis": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१"
+  },
+  "expected": 4.0
+ },
+ {
+  "name": "verify-text-42",
+  "fn": "verify",
+  "args": {
+   "reference": "거_ŒŦ",
+   "hypothesis": "snake_case __x__ a_1"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 2,
+   "cer": 4.0
+  }
+ },
+ {
+  "name": "cer-43",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१",
+   "hypothesis": "东N丕갩ʼК갑'Σʼ걡"
+  },
+  "expected": 0.9166666666666666
+ },
+ {
+  "name": "verify-text-43",
+  "fn": "verify",
+  "args": {
+   "reference": "‹द‷ Ыҍैӟѓ ƨКﬄƟ१",
+   "hypothesis": "हिन्दी भाषा"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 4,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-44",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "东N丕갩ʼК갑'Σʼ걡",
+   "hypothesis": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ"
+  },
+  "expected": 1.8181818181818181
+ },
+ {
+  "name": "verify-text-44",
+  "fn": "verify",
+  "args": {
+   "reference": "东N丕갩ʼК갑'Σʼ걡",
+   "hypothesis": "x́ÿ e⃝z"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 1,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-45",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ",
+   "hypothesis": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ"
+  },
+  "expected": 0.8181818181818182
+ },
+ {
+  "name": "verify-text-45",
+  "fn": "verify",
+  "args": {
+   "reference": "Τ갬 乄Ỽ'⁃ѯヴﬃコﬄﬅヅﬁΣﬀ",
+   "hypothesis": "ẑ걦ᾰ϶ॣ仴"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-46",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ",
+   "hypothesis": " Ҭヸ亵'’"
+  },
+  "expected": 0.8666666666666667
+ },
+ {
+  "name": "verify-text-46",
+  "fn": "verify",
+  "args": {
+   "reference": "ҷ_ 걬Ҟﬁ걦ﬂ걊‭ᾫ१’‶’ゴ",
+   "hypothesis": "゙_​仦갾걲Ἦ乖갻 仴乵_‟ﬀΤṴध"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-47",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": " Ҭヸ亵'’",
+   "hypothesis": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'"
+  },
+  "expected": 2.4
+ },
+ {
+  "name": "verify-text-47",
+  "fn": "verify",
+  "args": {
+   "reference": " Ҭヸ亵'’",
+   "hypothesis": "Σर"
+  },
+  "expected": {
+   "word_errors": 1,
+   "ref_words": 1,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-48",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'",
+   "hypothesis": "҉ペﬂ_M갳ГͰ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-48",
+  "fn": "verify",
+  "args": {
+   "reference": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'",
+   "hypothesis": "东N丕갩ʼК갑'Σʼ걡"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 0.9285714285714286
+  }
+ },
+ {
+  "name": "cer-49",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "҉ペﬂ_M갳ГͰ",
+   "hypothesis": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ"
+  },
+  "expected": 2.5714285714285716
+ },
+ {
+  "name": "verify-text-49",
+  "fn": "verify",
+  "args": {
+   "reference": "҉ペﬂ_M갳ГͰ",
+   "hypothesis": "Џ゠ﬅ·’京⁏"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 2,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-50",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ",
+   "hypothesis": "Џ゠ﬅ·’京⁏"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-50",
+  "fn": "verify",
+  "args": {
+   "reference": "仜॰о'॑Ҳﬁ ᾖॆ为걊ΣλĪ从 ḖɊ갆@ѸÁ",
+   "hypothesis": "ねろӺ'ϢΈऄ걙"
+  },
+  "expected": {
+   "word_errors": 7,
+   "ref_words": 7,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-51",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Џ゠ﬅ·’京⁏",
+   "hypothesis": "yʼ걃业Σ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-51",
+  "fn": "verify",
+  "args": {
+   "reference": "Џ゠ﬅ·’京⁏",
+   "hypothesis": "한국어 텍스트입니다!"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.8
+  }
+ },
+ {
+  "name": "cer-52",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "yʼ걃业Σ",
+   "hypothesis": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ"
+  },
+  "expected": 3.4
+ },
+ {
+  "name": "verify-text-52",
+  "fn": "verify",
+  "args": {
+   "reference": "yʼ걃业Σ",
+   "hypothesis": "'quoted' — dash… 'tis"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 1,
+   "cer": 3.0
+  }
+ },
+ {
+  "name": "cer-53",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ",
+   "hypothesis": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-53",
+  "fn": "verify",
+  "args": {
+   "reference": "ͺ_⁮὿よ›ビļnẇﬀ亍ῼ갛Ѳẽ_え″_θよ",
+   "hypothesis": "トघख़"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 5,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-54",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ",
+   "hypothesis": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_"
+  },
+  "expected": 1.25
+ },
+ {
+  "name": "verify-text-54",
+  "fn": "verify",
+  "args": {
+   "reference": "ϋ亽἞‧ﬄ⁑¸δヲ_क_갠ʼ갖丶ﬃΣ",
+   "hypothesis": "'う '갅ẩ ﬀПЪﬂαЬ"
+  },
+  "expected": {
+   "word_errors": 5,
+   "ref_words": 5,
+   "cer": 0.9375
+  }
+ },
+ {
+  "name": "cer-55",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_",
+   "hypothesis": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N"
+  },
+  "expected": 0.9130434782608695
+ },
+ {
+  "name": "verify-text-55",
+  "fn": "verify",
+  "args": {
+   "reference": "ﬂセҰぢ'Οच仃亮걒ẅﬃʼʼ ッ&ђॱ갮Ἴ‘_",
+   "hypothesis": "ḵ¬ϣн–φ“"
+  },
+  "expected": {
+   "word_errors": 3,
+   "ref_words": 3,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-56",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N",
+   "hypothesis": "仗갍ʼ"
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "verify-text-56",
+  "fn": "verify",
+  "args": {
+   "reference": "ЕὙ丫ﬁ仕ﬁӒῗ丨΋ﬀҷẫ N",
+   "hypothesis": "为ῡン"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 1.0
+  }
+ },
+ {
+  "name": "cer-57",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "仗갍ʼ",
+   "hypothesis": "ねろӺ'ϢΈऄ걙"
+  },
+  "expected": 2.3333333333333335
+ },
+ {
+  "name": "verify-text-57",
+  "fn": "verify",
+  "args": {
+   "reference": "仗갍ʼ",
+   "hypothesis": "  '값Ḫ  σ’Υʼ걬‥ḱ걖त॓ҟ今'"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 1,
+   "cer": 4.333333333333333
+  }
+ },
+ {
+  "name": "cer-same",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "Hello world",
+   "hypothesis": "hello, WORLD!"
+  },
+  "expected": 0.0
+ },
+ {
+  "name": "cer-empty-ref",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "—",
+   "hypothesis": "abc"
+  },
+  "expected": 0.0
+ },
+ {
+  "name": "cer-empty-hyp",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "abc",
+   "hypothesis": "..."
+  },
+  "expected": 1.0
+ },
+ {
+  "name": "cer-cjk",
+  "fn": "char_error_rate",
+  "args": {
+   "reference": "我们今天去公园",
+   "hypothesis": "我们明天去公园。"
+  },
+  "expected": 0.14285714285714285
+ },
+ {
+  "name": "word-errors-same",
+  "fn": "word_errors",
+  "args": {
+   "reference": [
+    "A",
+    "B"
+   ],
+   "hypothesis": [
+    "A",
+    "B"
+   ]
+  },
+  "expected": 0
+ },
+ {
+  "name": "word-errors-sub",
+  "fn": "word_errors",
+  "args": {
+   "reference": [
+    "A",
+    "B",
+    "C"
+   ],
+   "hypothesis": [
+    "A",
+    "X",
+    "C"
+   ]
+  },
+  "expected": 1
+ },
+ {
+  "name": "word-errors-ins-del",
+  "fn": "word_errors",
+  "args": {
+   "reference": [
+    "A",
+    "B",
+    "C"
+   ],
+   "hypothesis": [
+    "B",
+    "C",
+    "D",
+    "E"
+   ]
+  },
+  "expected": 3
+ },
+ {
+  "name": "word-errors-empty-ref",
+  "fn": "word_errors",
+  "args": {
+   "reference": [],
+   "hypothesis": [
+    "A"
+   ]
+  },
+  "expected": 1
+ },
+ {
+  "name": "word-errors-empty-hyp",
+  "fn": "word_errors",
+  "args": {
+   "reference": [
+    "A",
+    "B"
+   ],
+   "hypothesis": []
+  },
+  "expected": 2
+ },
+ {
+  "name": "word-errors-both-empty",
+  "fn": "word_errors",
+  "args": {
+   "reference": [],
+   "hypothesis": []
+  },
+  "expected": 0
+ },
+ {
+  "name": "verify-text-cjk",
+  "fn": "verify",
+  "args": {
+   "reference": "我们 今天 去 公园",
+   "hypothesis": "我们今天去公园"
+  },
+  "expected": {
+   "word_errors": 4,
+   "ref_words": 4,
+   "cer": 0.0
+  }
  }
 ]

@@ -94,7 +94,7 @@ def expected(original, target, regions_seconds):
 
 def test_expected_fill_scales_the_region_by_its_text_length():
     original = ["i", "was", "twelve", "years", "old"]
-    # re-say: the region's own length; "twelve" -> "thirteen": 8 / 6 of it (zsa token characters)
+    # re-say: the region's own length; "twelve" -> "thirteen": 8 / 6 of it (edit token characters)
     assert expected(original, "i was twelve years old", [[2.0, 3.0]]) == pytest.approx([1.0])
     assert expected(original, "i was thirteen years old", [[2.0, 3.0]]) == pytest.approx([8 / 6])
     # the region holds "was twelve" (word midpoints), and a deletion shrinks it to "was"
@@ -128,68 +128,56 @@ def test_bad_original_words_are_refused(words, message):
 
 
 def test_corrected_word_timings_move_expected_lengths_and_windows():
-    """MMS stretched "raised" over a pause; the corrected word lies inside the region."""
+    """The aligner stretched "raised" over a pause; the corrected word lies inside the region."""
     from zonos3.tts.edit_align import edit_words, expected_fill_seconds
 
     text = "i was born and raised near minneapolis".split()
-    mms = _given(("i", 2.24, 2.35), ("was", 2.35, 2.53), ("born", 2.53, 2.83), ("and", 2.83, 2.99),
+    stretched = _given(("i", 2.24, 2.35), ("was", 2.35, 2.53), ("born", 2.53, 2.83), ("and", 2.83, 2.99),
                  ("raised", 3.05, 4.40), ("near", 4.40, 4.64), ("minneapolis", 4.64, 5.53))
-    fixed = [dict(w, end=3.30) if w["word"] == "raised" else w for w in mms]
+    fixed = [dict(w, end=3.30) if w["word"] == "raised" else w for w in stretched]
     span = seconds_to_spans([[3.0, 3.35]], 100, FPS)
     word_tokens = [tokens(w) for w in text]
     plans = []
-    for given in (mms, fixed):
+    for given in (stretched, fixed):
         words = edit_words(given, word_tokens, [t for ts in word_tokens for t in ts], duration=6.0)
         plans.append((expected_fill_seconds(span, words, text, word_tokens, frame_rate=FPS),
                       plan_edit_windows(span, words, text, word_tokens, total_frames=100, frame_rate=FPS,
                                         context_seconds=0.5)[0]))
-    (mms_expected, mms_window), (fixed_expected, fixed_window) = plans
-    assert mms_expected == [0.0] and fixed_expected == pytest.approx([span[0][1] / FPS])   # "raised" now counts
-    assert mms_window.end == round(4.40 * FPS) and fixed_window.end == round((3.30 + 4.40) / 2 * FPS)
+    (stretched_expected, stretched_window), (fixed_expected, fixed_window) = plans
+    assert stretched_expected == [0.0] and fixed_expected == pytest.approx([span[0][1] / FPS])   # "raised" now counts
+    assert stretched_window.end == round(4.40 * FPS) and fixed_window.end == round((3.30 + 4.40) / 2 * FPS)
 
 
 GROUP = "\ue000θɝtin\ue001"
 
 
-def _norm(text):
-    return tokens(text)
-
-
 def test_a_pronunciation_group_is_one_target_word():
-    """MMS normalize would upper-case the IPA and split at private-use markers or tie bars; a group
-    is kept as one token of its own, its length its IPA symbol count."""
-    from zonos3.tts.edit_align import expected_fill_seconds, target_normalize_request, token_chars
+    """The edit tokens' normalize would upper-case the IPA and split at private-use markers or tie bars; a
+    group is kept as one token of its own, its length its IPA symbol count."""
+    from zonos3.tts.edit_align import expected_fill_seconds, target_tokens, token_chars
 
     target = f"i was {GROUP}, years old"
-    texts, assemble = target_normalize_request(target)
-    assert "\ue000" not in "".join(texts)
-    normalized = assemble([_norm(t) for t in texts])
+    normalized = target_tokens(target)
     assert normalized[0] == ["I", "WAS", GROUP, "YEARS", "OLD"] and normalized[3] == [GROUP]
     assert token_chars(GROUP) == pytest.approx(5 * 1.4)   # IPA symbols in letter-equivalents
     original = ["i", "was", "twelve", "years", "old"]
     spans = seconds_to_spans([[2.0, 3.0]], len(original) * FPS, FPS)
     (seconds,) = expected_fill_seconds(spans, clip(original), target.split(), normalized[1:], frame_rate=FPS)
     assert seconds == pytest.approx(5 * 1.4 / 6)   # "twelve" (6 letters) -> 5 IPA symbols = 7 letters
-    plain_texts, plain_assemble = target_normalize_request("i was twelve")
-    assert plain_texts == ["i was twelve", "i", "was", "twelve"]
+    assert target_tokens("i was twelve") == [["I", "WAS", "TWELVE"], ["I"], ["WAS"], ["TWELVE"]]
 
 
 def test_window_text_keeps_groups_as_typed():
     original = [f"w{k}" for k in range(30)]
     target = " ".join(original).replace("w20", GROUP)
-    texts, assemble = target_normalize_request_tokens(target)
+    from zonos3.tts.edit_align import target_tokens
+
+    normalized = target_tokens(target)
     words = clip(original)
     spans = seconds_to_spans([[20.0, 21.0]], 450, FPS)
-    (window,) = plan_edit_windows(spans, words, target.split(), assemble[1:], total_frames=450, frame_rate=FPS,
+    (window,) = plan_edit_windows(spans, words, target.split(), normalized[1:], total_frames=450, frame_rate=FPS,
                                   context_seconds=2.0, target_text=target)
     assert window.text == f"w18 w19 {GROUP} w21 w22"
-
-
-def target_normalize_request_tokens(target):
-    from zonos3.tts.edit_align import target_normalize_request
-
-    texts, assemble = target_normalize_request(target)
-    return texts, assemble([_norm(t) for t in texts])
 
 
 @pytest.mark.parametrize("heard, errors, word", [

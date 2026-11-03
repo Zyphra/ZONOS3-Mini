@@ -54,7 +54,7 @@ export interface Version {
 export interface Doc {
   name: string;
   source: Source;
-  /** The clip's language (server code): every MMS call (transcription, alignment, verify) uses its adapter. */
+  /** The clip's language (server code): every speech-recognition and alignment call (transcription, alignment, verify) uses it. */
   language: string;
   versions: Version[];
   current: number;
@@ -187,10 +187,10 @@ export async function wavOf(pcm: Float32Array, sr: number): Promise<string> {
 export const clipLanguages = signal<Record<string, string>>({});
 const clipKey = (s: Source, seconds: number) => `${s.kind}:${s.label}:${seconds.toFixed(2)}`;
 
-/** Languages whose MMS adapter answered this session; the first call in another one waits for it to load. */
-const warmed = new Set<string>(['en_us']);
-/** A busy label that says when the language's alignment model is loading (about half a minute) rather than hanging. */
-export const mmsLabel = (language: string, label: string) => (warmed.has(language) ? label : `Loading ${langLabel(language)} alignment (first use: about half a minute), then ${label.charAt(0).toLowerCase()}${label.slice(1)}`);
+/** Whether a speech-editing call answered this session: the server's first one loads its speech recognition. */
+let asrWarmed = false;
+/** A busy label that says the server may be loading its speech recognition (about half a minute) rather than hanging. */
+export const asrLabel = (label: string) => (asrWarmed ? label : `${label} (the server's first use loads speech recognition: about half a minute)`);
 
 /** Open a clip; `language` (server code) defaults to the one last used for this clip, else the project's language. */
 export async function openClip(source: Source, pcm: Float32Array, sr: number, knownText?: string | null, language?: string): Promise<boolean> {
@@ -209,15 +209,14 @@ export async function openClip(source: Source, pcm: Float32Array, sr: number, kn
   if (busy.value) return false;
   const had = doc.value && doc.value.versions.length > 1;
   const p = projectSettings.value.language;
-  // Speech editing has one English adapter: UK English clips edit as US English.
   const lang = language ?? clipLanguages.value[clipKey(source, dur)] ?? (EDIT_LANGUAGES.includes(p) ? p : 'en_us');
-  busy.value = { label: mmsLabel(lang, knownText ? 'Aligning the transcript…' : 'Transcribing…'), started: performance.now() };
+  busy.value = { label: asrLabel(knownText ? 'Aligning the transcript…' : 'Transcribing…'), started: performance.now() };
   genError.value = null;
   act.value = 'edit';
   try {
     const b64 = await wavOf(pcm, sr);
     const a = knownText?.trim() ? await api.align(b64, knownText.trim(), lang) : await api.transcribe(b64, lang);
-    warmed.add(lang);
+    asrWarmed = true;
     const v: Version = { id: uid(), label: 'Original', pcm, sr, b64, duration: a.duration || dur, transcript: a.text, words: a.words, alignedWords: a.words, automatic: !knownText?.trim() };
     player.stop();
     docs.reset({ name: source.label, source, language: lang, versions: [v], current: 0 });
@@ -637,7 +636,7 @@ export async function generate() {
   const target = text.value.trim();
   const req = requestFor(v, target, list.map((r) => ({ start: seconds(r.start), end: seconds(r.end), values: r.values })), v.b64, v.transcript, adjustedCount.value ? v.words : undefined);
   ctrl = new AbortController();
-  busy.value = { label: mmsLabel(req.language ?? 'en_us', `Generating ${req.num_takes} take${req.num_takes === 1 ? '' : 's'}…`), started: performance.now() };
+  busy.value = { label: asrLabel(`Generating ${req.num_takes} take${req.num_takes === 1 ? '' : 's'}…`), started: performance.now() };
   genError.value = null;
   player.stop();
   try {
@@ -695,7 +694,7 @@ export async function retryRegion(k: number) {
   // The take says the target; its pronunciation groups, as heard, describe its audio.
   const req = requestFor(v, g.target, [{ start: t.edited[k][0], end: t.edited[k][1], values: r?.values ?? {} }], t.b64, spokenOf(g, t));
   ctrl = new AbortController();
-  busy.value = { label: mmsLabel(req.language ?? 'en_us', `Regenerating region ${k + 1}…`), started: performance.now() };
+  busy.value = { label: asrLabel(`Regenerating region ${k + 1}…`), started: performance.now() };
   genError.value = null;
   player.stop();
   try {
@@ -843,10 +842,10 @@ export async function setLanguage(language: string) {
   const d = doc.value;
   const v = version.value;
   if (!d || !v || busy.value || language === d.language) return;
-  busy.value = { label: mmsLabel(language, v.automatic ? 'Transcribing…' : 'Aligning the transcript…'), started: performance.now() };
+  busy.value = { label: asrLabel(v.automatic ? 'Transcribing…' : 'Aligning the transcript…'), started: performance.now() };
   try {
     const a = v.automatic ? await api.transcribe(v.b64, language) : await api.align(v.b64, v.transcript, language);
-    warmed.add(language);
+    asrWarmed = true;
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words };
     docs.apply({ ...d, language, versions: d.versions.map((x, i) => (i === d.current ? nv : x)) });
     clipLanguages.value = { ...clipLanguages.value, [clipKey(d.source, d.versions[0].pcm.length / d.versions[0].sr)]: language };
@@ -863,7 +862,7 @@ export async function saveFix(corrected: string) {
   const d = doc.value;
   const v = version.value;
   if (!d || !v || !corrected.trim()) return;
-  busy.value = { label: mmsLabel(d.language, 'Re-aligning…'), started: performance.now() };
+  busy.value = { label: asrLabel('Re-aligning…'), started: performance.now() };
   try {
     const a = await api.align(v.b64, corrected.trim(), d.language);
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words, automatic: false };

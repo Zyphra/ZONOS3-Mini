@@ -132,56 +132,70 @@ class FakeAligner:
         self.closed = True
 
 
-def fake_mms(calls: list[dict]):
-    """The MMS worker: a fixed transcript, and each normalized text upper-cased per word."""
+class FakeAsr:
+    """The server's ASR worker: a fixed transcript for every item."""
 
-    async def mms_one(state, request, language):
-        calls.append({**request, "language": language})
-        if request["op"] == "transcribe":
-            return {"id": request["id"], "text": "hello there world", "tokens": ["HELLO", "THERE", "WORLD"]}
-        assert request["op"] == "normalize", request
-        return {"id": request["id"], "normalized": [t.upper().split() for t in request["normalize"]]}
+    installed = True
 
-    return mms_one
+    def __init__(self):
+        self.items: list[dict] = []
+        self.closed = False
+
+    def model(self) -> str:
+        return "Qwen/fake-asr"
+
+    def languages(self) -> list[str]:
+        return ["English", "French", "Chinese"]
+
+    def transcribe(self, items):
+        self.items += items
+        return [{"text": "hello there world", "language": item["language"] or "English"} for item in items]
+
+    def close(self):
+        self.closed = True
 
 
 def test_edit_transcribe_and_align_time_words_with_fusealign(client, monkeypatch):
-    from zonos3_mlx.server import edit
-
-    aligner, calls = FakeAligner(), []
-    monkeypatch.setattr(client.app.state.zonos3, "aligner", aligner)
-    monkeypatch.setattr(edit, "mms_one", fake_mms(calls))
+    state = client.app.state.zonos3
+    aligner, asr = FakeAligner(), FakeAsr()
+    monkeypatch.setattr(state, "aligner", aligner)
+    monkeypatch.setattr(state, "asr", asr)
     r = client.post("/v2/edit/transcribe", json={"audio_base64": wav_b64(), "language": "fr_fr"})
     assert r.status_code == 200, r.text
     assert r.json()["text"] == "hello there world" and r.json()["duration"] == pytest.approx(2.0)
     assert [(w["word"], w["tokens"], w["confidence"]) for w in r.json()["words"]] == [
         ("hello", ["HELLO"], 0.5), ("there", ["THERE"], 0.5), ("world", ["WORLD"], 0.5)]
-    assert aligner.items[0]["tokens"] == ["hello", "there", "world"] and aligner.items[0]["language"] == "fr"
-    assert [c["op"] for c in calls] == ["transcribe", "normalize"]
+    assert [(it.get("start"), it["language"]) for it in asr.items] == [(None, "French")]  # 2 s: one whole-clip item
+    assert aligner.items[0] == {"audio": aligner.items[0]["audio"], "tokens": ["hello", "there", "world"]}
 
     aligner.items.clear()
     r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "我们 去公园。", "language": "cmn"})
     assert r.status_code == 200, r.text
-    assert aligner.items[0]["tokens"] == ["我", "们", "去", "公", "园。"] and aligner.items[0]["language"] == "zh"
+    assert aligner.items[0]["tokens"] == ["我", "们", "去", "公", "园。"] and "utterances" not in aligner.items[0]
     assert [w["word"] for w in r.json()["words"]] == ["我", "们", "去", "公", "园。"]
-    assert all(c["op"] != "align" for c in calls)  # MMS only transcribes and normalizes
+    assert len(asr.items) == 1  # aligning a short clip needs no recognition
+
+    r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "hello", "language": "ko"})
+    assert r.status_code == 400 and r.json()["detail"].startswith("Speech editing does not serve language 'ko'")
 
 
-def test_dub_shares_the_server_fusealign_worker(client, monkeypatch):
+def test_dub_shares_the_server_asr_and_fusealign_workers(client, monkeypatch):
     state = client.app.state.zonos3
-    aligner = FakeAligner()
+    aligner, asr = FakeAligner(), FakeAsr()
     monkeypatch.setattr(state, "aligner", aligner)
+    monkeypatch.setattr(state, "asr", asr)
     monkeypatch.setattr(state, "dub_runtime", None)
     caps = client.get("/v2/dub/capabilities").json()
-    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors"
-    assert state.dub_runtime.aligner is aligner
+    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors" and caps["asr_model"] == "Qwen/fake-asr"
+    assert state.dub_runtime.aligner is aligner and state.dub_runtime.asr is asr
 
 
-def test_shutdown_closes_the_fusealign_worker(files):
-    aligner = FakeAligner()
+def test_shutdown_closes_the_asr_and_fusealign_workers(files):
+    aligner, asr = FakeAligner(), FakeAsr()
     with make_client(files, batch=1) as c:
         c.app.state.zonos3.aligner = aligner
-    assert aligner.closed
+        c.app.state.zonos3.asr = asr
+    assert aligner.closed and asr.closed
 
 
 def test_phonemize_marks_pronunciations_outside_the_phone_inventory(client):

@@ -230,11 +230,12 @@ shifts, lip-warp scores; MP4 export needs the server. `?dub=0` shows the screen 
 
 ## Edit screen
 
-Every edit call sends the clip's `language` (server code: en_us, fr_fr, de, es, it, pt_br, ja, cmn, ko); it picks
-the MMS adapter for transcription, alignment, windowing and the take check. A dub track opens in the dub's language;
-other clips use the language last chosen for them (the picker next to the title, default US English; switching
-re-aligns or re-transcribes the version, one undo step). The first call in a language loads its model (about half a
-minute): the status says so rather than looking stuck. An unsupported language shows the server's message.
+Every edit call sends the clip's `language` (server code: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko); it picks
+the speech-recognition (Qwen3-ASR) language and the alignment tokenization for transcription, alignment, windowing and
+the take check. A dub track opens in the dub's language; other clips use the language last chosen for them (the picker
+next to the title, default US English; switching re-aligns or re-transcribes the version, one undo step). The server's
+first speech-editing call loads the recognition model (about half a minute): the status says so rather than looking
+stuck. An unsupported language shows the server's message.
 
 
 Transcript-first editing:

@@ -1,14 +1,16 @@
 // Dubbing (/v2/dub/*): a port of model/src/zonos3/dub/runtime.py (DubRuntime) and the /v2/dub routes of
 // zonos3_sgl/server/api_server.py over dub-plan (zonos3/dub/plan.py). The references and dubs live in two small LRU
-// stores; the alignment worker (<python-src>/zonos3/workers/dub_align.py in the .venv-dub-align interpreter: Qwen3-ASR,
-// SimAlign, AV-sync) is a JsonLinesWorker started on first use and again after it died; word timings come from the
-// server's FuseAlign worker (server/fusealign.h); every take is a LACI /v2/generate request on the scheduler
-// (plan_laci_take) with the take's duration target.
+// stores; the dubbing worker (<python-src>/zonos3/workers/dub_align.py in the .venv-asr interpreter: SimAlign word
+// links, AV-sync) is a JsonLinesWorker started on first use and again after it died; transcripts come from the
+// server's ASR worker (server/asr.h: Qwen3-ASR) and word timings from its FuseAlign worker (server/fusealign.h), both
+// through server/edit_align.h (Qwen3-ASR anchors past 30 s); every take is a LACI /v2/generate request on the
+// scheduler (plan_laci_take) with the take's duration target.
 #include "compat.h"
 
 #include "server/dub.h"
 
 #include "server/capabilities.h"
+#include "server/edit_align.h"
 #include "server/generate.h"
 #include "server/http.h"
 #include "server/phonemize.h"
@@ -49,8 +51,8 @@ constexpr size_t MAX_REF_WORDS = 20000;
 const char * const GROUP_OPEN = "\xEE\x80\x80";   // U+E000
 const char * const GROUP_CLOSE = "\xEE\x80\x81";  // U+E001
 
-// runtime.py error classes: UnknownId -> 404, AlignWorkerError -> 503, ValueError (std::invalid_argument) -> 400,
-// RuntimeError (std::runtime_error) -> 500 (_dub_call).
+// runtime.py error classes: UnknownId -> 404, AlignWorkerError -> 503, the ASR / FuseAlign WorkerUnavailable -> 503,
+// ValueError (std::invalid_argument) -> 400, RuntimeError (std::runtime_error) -> 500 (_dub_call).
 struct UnknownId : std::exception {
     const char * what() const noexcept override { return "unknown id"; }
 };
@@ -270,10 +272,10 @@ std::vector<double> rate_edges(const ServerState & s) {
     return out;
 }
 
-// model/src/zonos3/dub/runtime.py WorkerSettings.from_env: the alignment worker's interpreter, AV-sync home and models.
+// model/src/zonos3/dub/runtime.py WorkerSettings.from_env: the dubbing worker's interpreter (the ASR worker's:
+// ZONOS3_ASR_PYTHON, else <repo>/.venv-asr), AV-sync home, device and word aligner.
 struct WorkerSettings {
     std::string python, avsync_home, device;
-    std::string asr_model = "Qwen/Qwen3-ASR-1.7B";
     std::string word_aligner_model = "google-bert/bert-base-multilingual-cased";
 
     static WorkerSettings from_env(const ServerState & s) {
@@ -283,9 +285,9 @@ struct WorkerSettings {
             return v && *v ? std::string(v) : d;
         };
         WorkerSettings w;
-        w.python = env("ZONOS3_DUB_ALIGN_PYTHON", (repo / ".venv-dub-align" / "bin" / "python").lexically_normal().string());
+        w.python = env("ZONOS3_ASR_PYTHON", (repo / ".venv-asr" / "bin" / "python").lexically_normal().string());
         w.avsync_home = env("ZONOS3_DUB_AVSYNC_HOME", (repo / ".avsync").lexically_normal().string());
-        w.device = env("ZONOS3_DUB_ALIGN_DEVICE", "cuda");
+        w.device = env("ZONOS3_ASR_DEVICE", "cuda");
         return w;
     }
     bool installed() const { std::error_code ec; return fs::is_regular_file(python, ec); }
@@ -439,12 +441,12 @@ int text_bytes(const std::string & text) {
 
 class AlignWorker {
 public:
-    // One zonos3/workers/dub_align.py process; call() is thread-safe (the JsonLinesWorker serializes calls).
+    // One zonos3/workers/dub_align.py process (word alignment and lip-sync); call() is thread-safe (the
+    // JsonLinesWorker serializes calls).
     AlignWorker(const ServerState & s, const WorkerSettings & w) {
-        if (!w.installed()) throw AlignWorkerError("alignment interpreter not found: " + w.python + " (run tools/setup_dub_align_env.sh)");
+        if (!w.installed()) throw AlignWorkerError("alignment interpreter not found: " + w.python + " (run tools/setup_asr_env.sh)");
         std::vector<std::string> argv{w.python, (fs::path(s.python_src) / "zonos3" / "workers" / "dub_align.py").string(),
-                                      "--device", w.device, "--asr-model", w.asr_model,
-                                      "--word-aligner-model", w.word_aligner_model};
+                                      "--device", w.device, "--word-aligner-model", w.word_aligner_model};
         if (w.avsync_ready()) { argv.push_back("--avsync-home"); argv.push_back(w.avsync_home); }
         std::map<std::string, std::optional<std::string>> env{{"PYTHONPATH", s.python_src},
                                                               {"PYTHONDONTWRITEBYTECODE", std::string("1")},
@@ -564,11 +566,13 @@ public:
         json ref_languages = json::array();
         for (const auto & [c, n] : dubplan::REF_LANGUAGES) ref_languages.push_back({{"code", c}, {"name", n}});
         const bool running = running_;
-        const std::string aligner = aligner_model();   // starts the FuseAlign worker; "" when it cannot run
+        // the ASR and FuseAlign workers' pings (they start the workers); "" when one cannot run
+        const std::string asr = asr_model();
+        const std::string aligner = aligner_model();
         json offsets = json::array();
         for (int o : dubplan::CANDIDATE_BUCKET_OFFSETS) offsets.push_back(o);
         return {
-            {"available", settings_.installed() && !aligner.empty() && !laci.empty() && !edges_.empty()},
+            {"available", settings_.installed() && !asr.empty() && !aligner.empty() && !laci.empty() && !edges_.empty()},
             {"ref_languages", ref_languages},
             {"target_languages", target_languages},
             {"max_ref_seconds", dubplan::MAX_REF_SECONDS},
@@ -584,7 +588,7 @@ public:
             {"candidate_bucket_offsets", offsets},
             {"candidate_seeds", dubplan::CANDIDATE_SEEDS},
             {"model", fs::path(s_.model_path).filename().string()},
-            {"asr_model", settings_.asr_model},
+            {"asr_model", asr},
             {"aligner_model", aligner},
             {"word_aligner", settings_.word_aligner_model},
             {"align_worker", {{"installed", settings_.installed()}, {"running", running}}},
@@ -611,27 +615,30 @@ public:
         return {{"ref_id", ref_id}, {"duration", duration}, {"sample_rate", sr}};
     }
 
+    // Qwen3-ASR transcript of the reference (transcribe_audio: chunk-wise past 30 s) and its words (FuseAlign, anchored
+    // by the transcript's chunks) in the given language, else the detected one: Qwen3-ASR's (past 30 s the first
+    // spoken chunk's), its first name when it reports several.
     json transcribe(const std::string & ref_id, const std::optional<std::string> & ref_lang) {
         auto ref = refs.get(ref_id);
         check_ref_lang(ref_lang);
         TempDir tmp("dub-");
         const std::string wav = tmp.file("ref.wav");
         write_float_wav(wav, ref->audio, ref->sr);
-        const json out = call("transcribe", {{"audio", wav}, {"language", ref_lang ? json(ref_language_name(*ref_lang)) : json()}});
-        std::string name = out.contains("language") && out["language"].is_string() ? out["language"].get<std::string>() : "";
-        name = strip(name.substr(0, name.find(',')));
+        const Transcript out = transcribe_audio(s_, wav, ref->duration,
+                                                ref_lang ? std::optional<std::string>(ref_language_name(*ref_lang)) : std::nullopt);
+        const std::string name = strip(out.language.substr(0, out.language.find(',')));
         std::optional<std::string> lang = ref_lang;
         if (!lang)
             for (const auto & [c, n] : dubplan::REF_LANGUAGES) if (n == name) { lang = c; break; }
-        const std::string text = strip(out["text"].get<std::string>());
+        const std::string text = strip(out.text);
         json words = json::array();
-        if (lang && !text.empty()) words = public_words(align({{wav, text, *lang}})[0]);
+        if (lang && !text.empty()) words = public_words(align({{wav, ref->duration, text, *lang, out.utterances}})[0]);
         return {{"text", text}, {"language", lang ? json(*lang) : json()}, {"language_name", name}, {"words", words}};
     }
 
     void check_lips_ready() const {
         if (!(settings_.installed() && settings_.avsync_ready()))
-            value_error("lip-sync (AV-sync) is not set up on this server; run tools/setup_dub_align_env.sh");
+            value_error("lip-sync (AV-sync) is not set up on this server; run tools/setup_asr_env.sh");
     }
 
     // Face track and lip embeddings of the reference's video (AV-sync), kept with the reference.
@@ -676,7 +683,7 @@ public:
             TempDir tmp("dub-");
             const std::string wav = tmp.file("ref.wav");
             write_float_wav(wav, ref->audio, ref->sr);
-            words = public_words(align({{wav, ref_text, ref_lang}})[0]);
+            words = public_words(align({{wav, ref->duration, ref_text, ref_lang, std::nullopt}})[0]);
             if (words.empty()) value_error("the forced aligner returned no words; check the transcript and its language");
         }
 
@@ -982,15 +989,24 @@ private:
         }
     }
 
-    // FuseAlign word timings of each (audio, text, Whisper-style REF_LANGUAGES code): the words of
-    // zonos3.tts.align_text.align_tokens, per item [{word, start, end, placed}].
-    struct AlignJob { std::string audio, text, lang; };
+    // FuseAlign word timings of each (audio of `seconds`, text, Whisper-style REF_LANGUAGES code, utterances: the
+    // long-form anchors of a transcript of the audio): the words of zonos3.tts.align_text.align_tokens, per item
+    // [{word, start, end, placed}]. Long-form items get Qwen3-ASR anchors (align_words).
+    struct AlignJob {
+        std::string audio;
+        double seconds = 0;
+        std::string text, lang;
+        std::optional<std::vector<FuseAlignUtterance>> utterances;
+    };
     std::vector<json> align(const std::vector<AlignJob> & jobs) {
-        if (!s_.aligner) throw FuseAlignError("word timings need the FuseAlign worker: start the server with --worker-python");
-        std::vector<FuseAlignItem> items;
-        for (const auto & j : jobs) items.push_back({j.audio, aligntext::align_tokens(j.text, j.lang), j.lang});
+        std::vector<AlignWordsItem> items;
+        for (const auto & j : jobs) {
+            const std::string name = ref_language_name(j.lang);   // P.REF_LANGUAGES.get(code)
+            items.push_back({j.audio, j.seconds, aligntext::align_tokens(j.text, j.lang),
+                             name.empty() ? std::nullopt : std::optional<std::string>(name), j.utterances});
+        }
         std::vector<json> out;
-        for (const auto & words : s_.aligner->align(items)) {
+        for (const auto & words : align_words(s_, items)) {
             json item = json::array();
             for (const auto & w : words)
                 item.push_back({{"word", w.word}, {"start", w.start}, {"end", w.end}, {"placed", w.placed}});
@@ -1008,10 +1024,19 @@ private:
 
     // The FuseAlign checkpoint (the worker's ping; starts it); empty when the worker cannot run.
     std::string aligner_model() {
-        if (!s_.aligner) return "";
         try {
-            return s_.aligner->model();
-        } catch (const FuseAlignError & e) {
+            return fusealign_worker(s_).model();
+        } catch (const WorkerUnavailable & e) {
+            fprintf(stderr, "zonos3-server: %s\n", e.what());
+            return "";
+        }
+    }
+
+    // The ASR model (the worker's ping; starts it); empty when the worker cannot run.
+    std::string asr_model() {
+        try {
+            return asr_worker(s_).model();
+        } catch (const WorkerUnavailable & e) {
             fprintf(stderr, "zonos3-server: %s\n", e.what());
             return "";
         }
@@ -1243,7 +1268,8 @@ private:
             for (size_t i : valid) {
                 const std::string path = tmp.file("take" + std::to_string(i) + ".wav");
                 write_float_wav(path, takes[i].audio, dubplan::SAMPLE_RATE);
-                reqs.push_back({path, spoken_text(jobs[i].text), dub.target_lang});
+                reqs.push_back({path, (double) takes[i].audio.size() / dubplan::SAMPLE_RATE, spoken_text(jobs[i].text),
+                                dub.target_lang, std::nullopt});
             }
             if (!reqs.empty()) {
                 const auto res = align(reqs);
@@ -1499,10 +1525,10 @@ auto dub_call(F && f) -> decltype(f()) {
         throw;
     } catch (const UnknownId &) {
         fail(404, "unknown ref_id/dub_id; upload or generate again");
-    } catch (const FuseAlignError & e) {
-        fail(503, std::string("forced aligner: ") + e.what());
     } catch (const AlignWorkerError & e) {
         fail(503, std::string("alignment worker: ") + e.what());
+    } catch (const WorkerUnavailable & e) {   // the ASR / FuseAlign worker is unavailable (the message says which)
+        fail(503, e.what());
     } catch (const std::invalid_argument & e) {
         fail(400, e.what());
     } catch (const std::runtime_error & e) {

@@ -52,39 +52,40 @@ fills][marker]` and splices the fills into the untouched codec frames;
 `servers/sgl/scripts/edit_speech.py` wraps it (`--span START END` in seconds, or spans
 from a word diff over FuseAlign timings; `--max-context-seconds` / `--context-seconds` as below).
 
-Speech editing needs MMS of z-speech-alignment (recognition and zsa token normalization):
-clone `git@github.com:Zyphra/z-speech-alignment.git`, run `uv sync` in it and point
-`ZSA_ROOT` at the checkout. Word timings come from FuseAlign (`fusealign-hub`, installed
-in the workspace by `uv sync`; its checkpoint is the private Hugging Face repo
-`Zyphra/fusealign`).
+Speech editing needs Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`, recognition) in its own venv:
+`bash tools/setup_asr_env.sh` once creates `.venv-asr`. Word timings come from FuseAlign
+(`fusealign-hub`, installed in the workspace by `uv sync`; its checkpoint is the private
+Hugging Face repo `Zyphra/fusealign`). Transcripts are compared as edit tokens
+(`zonos3.tts.textmatch`: upper-cased, every letter or digit of any script and `'` kept,
+everything else a word break).
 
 ```bash
-ZSA_ROOT=<z-speech-alignment checkout> SERVE_MODEL=<edit checkpoint> \
+SERVE_MODEL=<edit checkpoint> \
 STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
 ```
 
-`/v2/capabilities` then reports `speech_editing: true` (the checkpoint, `ZSA_ROOT` and
-an importable `fusealign_hub`), `edit_max_spans` (3), `edit_frame_rate` (15),
+`/v2/capabilities` then reports `speech_editing: true` (the checkpoint, the `.venv-asr`
+interpreter and an importable `fusealign_hub`), `edit_max_spans` (3), `edit_frame_rate` (15),
 `edit_max_seconds` and `edit_align_max_seconds` (150, the longest clip transcribed and
 aligned, which every windowed edit needs); on other checkpoints
 `speech_editing` is false and the edit endpoints answer 400. A `<voice>.txt`
 next to a default voice becomes its `transcript` in `GET /v2/speakers`.
 
-- `POST /v2/edit/transcribe` `{audio_base64}`: MMS greedy transcript, `duration`
-  and `words` (`word`, `start`, `end`, `confidence`, zsa-normalized `tokens`): the
+- `POST /v2/edit/transcribe` `{audio_base64}`: Qwen3-ASR transcript, `duration`
+  and `words` (`word`, `start`, `end`, `confidence`, edit `tokens`): the
   transcript's words placed by FuseAlign.
 - `POST /v2/edit/align` `{audio_base64, text}`: FuseAlign forced alignment, same fields.
   The words are the whitespace words of the text (in ja and cmn one per character or
   Latin run, `zonos3.tts.align_text.align_tokens`); `confidence` is FuseAlign's
   presence probability, a word it did not place keeps its fallback interval, an
   overlap between neighbours is split at its midpoint (so the words pass as
-  `original_words`), and a punctuation-only word (no zsa tokens) is left out.
+  `original_words`), and a punctuation-only word (no edit tokens) is left out.
 - `POST /v2/edit` `{audio_base64, target_text}` regenerates the edited regions.
   Regions come from `spans` (`[start, end]` seconds in the original, ascending,
   at most `edit_max_spans`) or, without them, from a word diff of `original_text`
-  (MMS transcript when omitted) against the target. Optional: `margin_seconds`,
+  (Qwen3-ASR transcript when omitted) against the target. Optional: `margin_seconds`,
   `max_span_seconds` (30), the `/v2/generate` sampling fields, `seed` (take `k`
-  uses `seed + k`), `num_takes` (1-4), `verify` (MMS WER/CER and FuseAlign words per take),
+  uses `seed + k`), `num_takes` (1-4), `verify` (Qwen3-ASR WER/CER and FuseAlign words per take),
   `speaker_embedding` (default on: the clip's embedding fills the speaker row;
   `false` leaves it out), `condition_buckets` / `condition_values`, `language`,
   `text_normalization`. The response holds `spans`, `original_text`, `words`,
@@ -93,7 +94,7 @@ next to a default voice becomes its `transcript` in `GET /v2/speakers`.
   hit `max_span_seconds`).
 - `min_fill_ratio` (0.7; 0 = off): the span-end token is masked until a fill
   reaches that share of its region's `expected_seconds`, the region's length
-  scaled by the target / original text length (zsa token characters) of the
+  scaled by the target / original text length (edit token characters) of the
   words in it, read from the FuseAlign alignment of `original_text` (sent → aligned on
   every clip); without `original_text` the region's own length. The
   sampler masks the stop id per codebook while generated frame s < `min_frames`
@@ -104,13 +105,13 @@ next to a default voice becomes its `transcript` in `GET /v2/speakers`.
   transcribe word objects in order, timings checked or corrected by the caller):
   replace the server's FuseAlign alignment of `original_text` for windows, expected
   fill lengths and the word diff, and come back as `words`. They must spell
-  `original_text` (zsa tokens; missing `tokens` come from the MMS worker's
-  `normalize` op, no alignment), with finite, ascending, non-overlapping times,
+  `original_text` (edit tokens; missing `tokens` are the word's edit tokens, no
+  alignment), with finite, ascending, non-overlapping times,
   `start < end`, inside the clip; otherwise 400.
 - Clips longer than `max_context_seconds` (16, at most 20) are edited on
   windows: each region plus `context_seconds` (4) of unedited audio per side,
   cut halfway between the aligned words of the original (`original_text`, else
-  the MMS transcript); an edge inside a changed block of the original → target
+  the Qwen3-ASR transcript); an edge inside a changed block of the original → target
   word diff moves out to the block edge, and overlapping windows merge. A
   window's fill prompts hold only its codes and its stretch of the target text;
   every fill splices into the full clip, decoded once, with the full clip's
@@ -131,22 +132,26 @@ The frontend runs an edit through the process pipeline: the tokenizer encodes
 the audio (`TTSEncodeAudioMsg`) and builds each fill prompt
 (`TTSTokenizeMsg.edit_*`), the scheduler generates it with `end_token="span"`,
 the detokenizer returns its rows as codes (`TTSCodesReply`), and the tokenizer
-decodes the spliced frames (`TTSDecodeCodesMsg`). MMS-1B-all runs in persistent
-workers (`model/src/zonos3/workers/zsa_mms.py`: `transcribe`, `normalize`), one per
-language adapter: `language` of `/v2/edit`, `/v2/edit/transcribe` and `/v2/edit/align`
-(server codes; en_us, fr_fr, de, es, it, pt_br, ja, cmn, ko map to the Whisper-style
-codes of zsa's `WHISPER_TO_MMS` adapters, others are a 400) picks it for every MMS call
-of the request (transcription, normalization, verify) and FuseAlign's tokenization; at
-most `ZONOS3_MMS_MAX_WORKERS` (default 2) stay resident, least recently used first.
-They run under the isolated z-speech-alignment interpreter: `ZSA_ROOT` (required, no
-default; without it the edit endpoints fail with "Speech editing needs ZSA_ROOT") and
-`ZSA_PYTHON` (default `$ZSA_ROOT/.venv/bin/python`) locate it, `HF_HUB_OFFLINE=1` (the
-model and its adapters must be cached), `ZONOS3_MMS_DEVICE` picks the device (default
-`cuda:0` when available). FuseAlign runs in one persistent worker per server
-(`model/src/zonos3/workers/fusealign.py` under the server's interpreter, shared with
-dubbing), started on its first call and restarted once when it exits;
-`ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0` when available). Clips over
-30 s are aligned long-form (Whisper large-v3 anchors, in the request's language).
+decodes the spliced frames (`TTSDecodeCodesMsg`). Qwen3-ASR runs in one persistent
+worker per server (`model/src/zonos3/workers/asr.py`: `ping`, `transcribe`; shared with
+dubbing) under the `.venv-asr` interpreter (`ZONOS3_ASR_PYTHON`, default
+`.venv-asr/bin/python`; `HF_HUB_OFFLINE=1`, so the model must be cached; `ZONOS3_ASR_DEVICE`
+picks the device, default `cuda:0` when available). `language` of `/v2/edit`,
+`/v2/edit/transcribe` and `/v2/edit/align` (server codes) picks the Qwen3-ASR language
+of every recognition of the request (transcription, verify) and FuseAlign's tokenization
+(`zonos3.tts.edit_align.EDIT_LANGUAGES`: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn
+and ko, each served when the ASR worker supports its language; others are a 400).
+FuseAlign runs in one persistent worker per server (`model/src/zonos3/workers/fusealign.py`
+under the server's interpreter, shared with dubbing); `ZONOS3_FUSEALIGN_DEVICE` picks its
+device (default `cuda:0` when available). Both workers start on their first call and
+restart once when they exit; an unavailable worker is a 503, input it refuses a 400.
+Clips over 30 s (or texts over 1022 UTF-8 bytes) are aligned long-form: the FuseAlign
+worker's `segments` cuts the clip into Silero VAD speech chunks of at most 25 s, Qwen3-ASR
+transcribes each (in the request's language), and the timed chunk transcripts anchor
+FuseAlign's long-form routing; a clip over 30 s that the server transcribes itself is
+transcribed chunk by chunk the same way (chunk texts joined with a space, without one in
+ja / zh / yue) and its chunks anchor the alignment that follows. FuseAlign's built-in
+Whisper anchoring is never used.
 Explicit spans on clips up to `max_context_seconds`, without `verify` and without
 `original_text` (or with `min_fill_ratio` 0), need neither worker.
 
@@ -352,9 +357,9 @@ the frozen release LM, not on the edit fine-tune. `PHONEME_LEXICON`
   groups sent to a checkpoint without phoneme tokens (`/v2/generate`,
   `/v1/audio/speech`, `/v2/edit` `target_text`).
 - **Groups in edits** (edit checkpoint with phoneme tokens). `/v2/edit`
-  `target_text` takes groups; `original_text` / `original_words` stay plain. MMS
-  normalization would mangle a group (IPA upper-cased, the markers and tie bars
-  become word breaks, so `t͡ʃiːz` reads `T ƩIːZ`), so a group never goes to MMS: it
+  `target_text` takes groups; `original_text` / `original_words` stay plain. The edit
+  tokens' normalization would mangle a group (IPA upper-cased, the markers and tie bars
+  become word breaks, so `t͡ʃiːz` reads `T ƩIːZ`), so a group is never normalized: it
   is one target token of its own in the word diff, windows and expected fill length
   (its length = its IPA symbols × 1.4 letter-equivalents,
   `GROUP_LETTERS_PER_SYMBOL`), and window texts keep it as typed, so fill prompts
@@ -443,8 +448,8 @@ twin N rows` from the scheduler).
   inside a marker never open or close a span that also covers words (markers inside stay in), a span over a marker
   alone keeps the marker's tokens.
 - */v2/edit*: `tag_cfg_scale` other than 1.0 is refused. Markup in `target_text` (and `original_text`) is allowed:
-  markers ride in the model's prompt text but never reach MMS or FuseAlign (word diff, alignment, verify): each marker is a
-  target piece with no zsa tokens, `<laugh />` is canonicalized to `<laugh/>`, and `original_text` in the response
+  markers ride in the model's prompt text but never reach Qwen3-ASR or FuseAlign (word diff, alignment, verify): each
+  marker is a target piece with no edit tokens, `<laugh />` is canonicalized to `<laugh/>`, and `original_text` in the response
   is the markup-free text the workers read. A marker alone between unchanged words is therefore no edit (400 "target text
   equals the original transcript") unless `spans` place it; a marker inside an edited region rides with the fill.
 - *Dubbing*: target texts may carry markup (LACI runs at tag CFG 1); markers count no bytes for the segment's
@@ -820,7 +825,7 @@ duration target) → best fit placed on the timeline → optional AV-sync lip wa
 segment, with per-segment direction (`segments[k].controls`) and pronunciation groups in target texts.
 
 ```bash
-bash tools/setup_dub_align_env.sh   # once: .venv-dub-align (Qwen3-ASR, SimAlign) + .avsync (AV-sync); FuseAlign comes with `uv sync`
+bash tools/setup_asr_env.sh   # once: .venv-asr (Qwen3-ASR, SimAlign) + .avsync (AV-sync); FuseAlign comes with `uv sync`
 STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh
 ```
 

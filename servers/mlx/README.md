@@ -38,11 +38,11 @@ flags are appended. `python -m zonos3_mlx --help` lists the flags.
   before `uv sync`; the checkpoint downloads from [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) on
   first use): one worker per server, started on the first alignment. `ZONOS3_FUSEALIGN_DEVICE` picks its torch
   device; without it the worker takes `cuda:0` when available, else the CPU, so it runs on the CPU on macOS.
-- **Speech editing** needs an edit checkpoint, FuseAlign and `ZSA_ROOT` = a
-  [z-speech-alignment](https://github.com/Zyphra/z-speech-alignment) checkout with its uv environment (MMS-1B-all
-  transcribes clips and normalizes zsa tokens, one worker per language; `ZONOS3_MMS_DEVICE`, `ZONOS3_MMS_MAX_WORKERS`);
-  **dubbing** FuseAlign and the alignment worker of `tools/setup_dub_align_env.sh` (Qwen3-ASR, SimAlign, AV-sync;
-  `ZONOS3_DUB_ALIGN_DEVICE`, default `mps`). MMS and the dub alignment worker run in their own interpreters.
+  Recordings over 30 s are aligned long-form on Qwen3-ASR transcripts of their speech chunks (never Whisper).
+- **Speech recognition** (speech editing and dubbing) is Qwen3-ASR in `.venv-asr` (`bash tools/setup_asr_env.sh`
+  once): one worker per server (`ZONOS3_ASR_PYTHON` overrides the interpreter; `ZONOS3_ASR_DEVICE`, default `mps` on
+  macOS). **Speech editing** needs an edit checkpoint, FuseAlign and `.venv-asr`; **dubbing** FuseAlign and `.venv-asr`
+  (its SimAlign word aligner and AV-sync lip-sync run in a second worker on the same device).
 
 ## Tools
 

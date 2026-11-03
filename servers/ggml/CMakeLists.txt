@@ -116,8 +116,8 @@ target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp)
 target_sources(zonos3 PRIVATE src/zonos3-accent.cpp src/zonos3-emotion.cpp)
 # --- end graph features ---
 
-# --- Speech editing (plan 7.11): port of model/src/zonos3/tts/edit.py and the edit_align.py planning ---
-target_sources(zonos3 PRIVATE src/zonos3-edit.cpp)
+# --- Speech editing (plan 7.11): port of model/src/zonos3/tts/edit.py, the edit_align.py planning and textmatch.py ---
+target_sources(zonos3 PRIVATE src/zonos3-edit.cpp src/zonos3-textmatch.cpp)
 # --- end speech editing ---
 
 add_executable(zonos3-cli src/main.cpp)
@@ -176,6 +176,7 @@ endif()
 # Everything of the server but main(): zonos3-server and the embedding zonos3-app share it.
 add_library(zonos3-server-core STATIC
     src/server/http.cpp src/server/schema.cpp src/server/util.cpp src/server/workers.cpp src/server/textnorm.cpp src/server/fusealign.cpp
+    src/server/asr.cpp src/server/edit_align.cpp
     src/server/scheduler.cpp src/server/speakers.cpp src/server/generate.cpp src/server/capabilities.cpp
     src/server/projects.cpp src/server/phonemize.cpp src/server/edit.cpp src/server/dub.cpp)
 target_include_directories(zonos3-server-core PUBLIC src vendor ${CMAKE_CURRENT_BINARY_DIR}/generated)

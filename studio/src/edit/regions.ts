@@ -12,7 +12,7 @@
 import { parsePron, xsampaToIpa } from '../lib/pron';
 import { parseTags } from '../lib/tags';
 
-/** An aligned word (`/v2/edit/align`, `/v2/edit/transcribe`): seconds, and its zsa-normalized tokens. */
+/** An aligned word (`/v2/edit/align`, `/v2/edit/transcribe`): seconds, and its edit tokens. */
 export interface Word {
   word: string;
   start: number;
@@ -39,7 +39,7 @@ export interface PlannedRegion {
 
 export const MIN_GAP_FRAMES = 5;
 
-// zsa textmatch.normalize + split: curly quotes fold to ', '_' separates, everything but letters, digits and '
+// The server's edit tokens (zonos3.tts.textmatch.tokens): curly quotes fold to ', '_' separates, everything but letters, digits and '
 // is a separator.
 const QUOTES = /[\u2018\u2019\u201b\u02bc]/g;
 const NON_TOKEN = /[^\p{L}\p{N}']+/gu;
@@ -58,7 +58,7 @@ export const isGroupToken = (t: string) => t.startsWith(OPEN);
 const TAG = '\ue002';
 /**
  * A nonverbal-tag token: part of the diff (a tag inserted between unchanged words plans a region there, so it is
- * rendered), never heard by speech recognition (the server keeps markers out of MMS and FuseAlign).
+ * rendered), never heard by speech recognition (the server keeps markers out of Qwen3-ASR and FuseAlign).
  */
 export const isTagToken = (t: string) => t.startsWith(TAG);
 
@@ -101,7 +101,7 @@ function chunks(text: string, groups: boolean): Chunk[] {
   return out;
 }
 
-/** zsa-normalized tokens; with `groups`, each "(X-SAMPA)" group is one token (sent-form groups always are). */
+/** Edit tokens; with `groups`, each "(X-SAMPA)" group is one token (sent-form groups always are). */
 export function normalizeTokens(text: string, groups = false): string[] {
   return chunks(text, groups).flatMap((c) => c.tokens);
 }

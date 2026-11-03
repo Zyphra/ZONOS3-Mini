@@ -126,17 +126,17 @@ const STOCK =
 
 const MISHEAR: Record<string, string> = { a: 'the', the: 'a', to: 'too', for: 'four', I: 'eye', when: 'then', how: 'now', read: 'red', line: 'lime', short: 'sort', sound: 'found' };
 
-/** The server's MMS adapters: one worker per language, loaded on first use (about half a minute). */
-const loaded = new Set<string>(['en_us']);
-async function mms(language: string, signal?: AbortSignal) {
+/** The server's language check (zonos3.tts.edit_align.edit_language); its speech recognition loads on first use. */
+let loaded = false;
+async function asr(language: string, signal?: AbortSignal) {
   if (!EDIT_LANGUAGES.includes(language)) throw new ApiError(400, `Speech editing does not serve language '${language}' (supported: ${EDIT_LANGUAGES.join(', ')}).`);
-  if (loaded.has(language)) return;
+  if (loaded) return;
   await wait(2500, signal);
-  loaded.add(language);
+  loaded = true;
 }
 
 export async function transcribe(b64: string, language = 'en_us'): Promise<Alignment> {
-  await mms(language);
+  await asr(language);
   const { pcm, sr, duration } = decode(b64);
   if (duration > 150) throw new ApiError(400, `Alignment supports clips up to 150 s (this one is ${duration.toFixed(1)} s).`);
   await wait(500 + duration * 40);
@@ -163,7 +163,7 @@ export async function transcribe(b64: string, language = 'en_us'): Promise<Align
 }
 
 export async function align(b64: string, text: string, language = 'en_us'): Promise<Alignment> {
-  await mms(language);
+  await asr(language);
   const { pcm, sr, duration } = decode(b64);
   if (duration > 150) throw new ApiError(400, `Alignment supports clips up to 150 s (this one is ${duration.toFixed(1)} s).`);
   if (!normalizeTokens(text).length) throw new ApiError(400, 'text has no words to align.');
@@ -266,7 +266,7 @@ function groupsHeard(target: string, heard: { ipa: string; heard: string | null 
 }
 
 export async function edit(spec: ControlsSpec, caps: EditCaps, req: EditRequest, signal?: AbortSignal): Promise<EditResponse> {
-  await mms(req.language ?? 'en_us', signal);
+  await asr(req.language ?? 'en_us', signal);
   const src = decode(req.audio_base64);
   validate(spec, caps, req, src.duration);
   const fps = caps.edit_frame_rate;

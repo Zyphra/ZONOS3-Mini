@@ -76,7 +76,9 @@ void usage(const char * a0) {
         "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
         "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and the FuseAlign forced\n"
         "                      aligner of speech editing and dubbing (fusealign.py: needs fusealign-hub installed),\n"
-        "                      each one persistent worker\n"
+        "                      each one persistent worker. Speech recognition (asr.py, Qwen3-ASR) runs in its own\n"
+        "                      interpreter: ZONOS3_ASR_PYTHON (default <repo>/.venv-asr/bin/python, set up by\n"
+        "                      tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE picks its device)\n"
         "  --steer PATH        steering directions (steer.gguf) for request controls and /v2/controls\n"
         "  --emotion-directions PATH   emotion directions (emotion.gguf)\n"
         "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
@@ -214,7 +216,17 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         }
         s.text_normalizer = std::make_unique<TextNormalizer>(s.worker_python, s.python_src);
         s.aligner = std::make_unique<FuseAligner>(s.worker_python, s.python_src);
+        // edit_align.fusealign_installed, asked of the worker's interpreter once (the speech_editing capability)
+        std::string err;
+        s.fusealign_installed = run_process({s.worker_python, "-c",
+                                             "import importlib.util, sys; "
+                                             "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"}, err) == 0;
+        if (!s.fusealign_installed)
+            fprintf(stderr, "zonos3-server: warning: %s has no fusealign_hub; speech editing and dubbing are off\n",
+                    s.worker_python.c_str());
     }
+    if (!s.python_src.empty() && mp_file_exists(s.python_src + "/zonos3/workers/asr.py"))
+        s.asr = std::make_unique<AsrWorker>(s.python_src);
     if (!projects_dir.empty()) {
         try {
             s.projects = std::make_unique<ProjectStore>(projects_dir);
@@ -326,6 +338,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     stop_reference_reaper(s);
     if (s.text_normalizer) s.text_normalizer->close();
     if (s.aligner) s.aligner->close();
+    if (s.asr) s.asr->close();
     if (ctl) ctl->svr = nullptr;   // svr is about to go out of scope
     if (!bound) { fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port); return 1; }
     // listen_after_bind() returns true on a graceful stop() and false only if the accept loop died on a real error.

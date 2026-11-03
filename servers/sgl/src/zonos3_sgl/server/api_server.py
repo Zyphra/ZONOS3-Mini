@@ -13,11 +13,9 @@ import re
 import secrets
 import subprocess
 import tempfile
-import threading
 import time
 import uuid
 import wave
-from collections import OrderedDict
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -50,24 +48,24 @@ from zonos3.tts.audio import (
 )
 from zonos3.tts.conditioning import _model_tts_max_tokens, _resolve_tts_max_tokens
 from zonos3.tts.edit import edit_marker_rows, extract_fill, splice_edit, validate_edit_spans
-from zonos3.tts.align_text import align_tokens
+from zonos3.tts import textmatch
 from zonos3.tts.edit_align import (
     GROUP_OPEN,
-    ZSA_ROOT,
-    FuseAlignError,
+    AsrWorker,
     FuseAlignWorker,
-    MMSWorker,
-    mms_language,
-    aligned_words,
+    WorkerError,
     canonical_markup,
     diff_spans,
+    edit_aligned_words,
+    edit_language,
     edit_words,
     expected_fill_seconds,
     fill_groups,
     fusealign_installed,
     plan_edit_windows,
     seconds_to_spans,
-    target_normalize_request,
+    target_tokens,
+    transcribe_audio,
     whole_clip_window,
     wildcard_verify,
 )
@@ -123,15 +121,14 @@ _DEFAULT_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _EMOTION_DIRECTIONS_CACHE: Dict[str, "EmotionDirections | None"] = {}
 # Loaded per-speaker emotion strength calibration, keyed by directory.
 _EMOTION_CALIBRATION_CACHE: Dict[str, "EmotionCalibration | None"] = {}
-# Speech editing: the longest clip transcribed (MMS) and aligned (FuseAlign) per request, and the clip limit.
+# Speech editing: the longest clip transcribed (Qwen3-ASR) and aligned (FuseAlign) per request, and the clip limit.
 _EDIT_ALIGN_MAX_SECONDS = 150.0
 # A clip longer than max_context_seconds (at most 20 s) is edited on windows planned over its aligned
 # word timings, so the alignment limit bounds every edit.
 _EDIT_MAX_SECONDS = _EDIT_ALIGN_MAX_SECONDS
-# MMS workers (ASR and zsa token normalization) by language (edit_align.mms_language), least recently used first; at
-# most ZONOS3_MMS_MAX_WORKERS (default 2) stay resident, each holds MMS-1B-all on the GPU.
-_MMS_WORKERS: "OrderedDict[str, MMSWorker]" = OrderedDict()
-_MMS_WORKER_LOCK = threading.Lock()
+# The server's ASR worker (zonos3/workers/asr.py: Qwen3-ASR in .venv-asr; ZONOS3_ASR_PYTHON / ZONOS3_ASR_DEVICE):
+# every speech recognition of speech editing and dubbing. It starts on the first call.
+_ASR = AsrWorker()
 # The server's FuseAlign worker (zonos3/workers/fusealign.py in this interpreter; ZONOS3_FUSEALIGN_DEVICE picks its
 # device): every forced alignment of speech editing and dubbing. It starts on the first call.
 _FUSEALIGN = FuseAlignWorker()
@@ -1655,8 +1652,7 @@ async def lifespan(_: FastAPI):
     # shutdown code here
     if _GLOBAL_STATE is not None:
         _GLOBAL_STATE.shutdown()
-    for worker in _MMS_WORKERS.values():
-        worker.close()
+    _ASR.close()
     if _DUB_RUNTIME is not None:
         _DUB_RUNTIME.close()
     _FUSEALIGN.close()
@@ -2222,8 +2218,8 @@ async def tts_capabilities():
         "speaker_embedding_cache": _model_supports_speaker(state.config),   # cached clips for raw-reference models too
         "speaker_embedding_blend": _model_supports_speaker_embedding(state.config),
         "default_voices_enabled": bool(_default_voice_root(state.config)),
-        # editing needs the checkpoint's span-end/marker rows, MMS (ZSA_ROOT) and FuseAlign (fusealign_hub)
-        "speech_editing": _model_supports_editing(state.config) and bool(ZSA_ROOT) and fusealign_installed(),
+        # editing needs the checkpoint's span-end/marker rows, Qwen3-ASR (.venv-asr) and FuseAlign (fusealign_hub)
+        "speech_editing": _model_supports_editing(state.config) and _ASR.installed and fusealign_installed(),
         "edit_max_spans": (
             _edit_max_spans(state.config) if _model_supports_editing(state.config) else 0
         ),
@@ -2346,63 +2342,40 @@ def _require_editing(config: ServerArgs) -> None:
         )
 
 
-def _mms_worker(language: str) -> MMSWorker:
-    """The server's MMS process of ``language`` (an MMS worker code; device from ZONOS3_MMS_DEVICE), restarted after it
-    dies; the least recently used one closes beyond ZONOS3_MMS_MAX_WORKERS."""
-    with _MMS_WORKER_LOCK:
-        worker = _MMS_WORKERS.get(language)
-        if worker is None or not worker.alive:
-            worker = _MMS_WORKERS[language] = MMSWorker(os.environ.get("ZONOS3_MMS_DEVICE") or None, language)
-        _MMS_WORKERS.move_to_end(language)
-        cap = max(1, int(os.environ.get("ZONOS3_MMS_MAX_WORKERS", "2")))
-        while len(_MMS_WORKERS) > cap:
-            _, old = _MMS_WORKERS.popitem(last=False)
-            threading.Thread(target=old.close, daemon=True).start()  # an in-flight run finishes first (its lock)
-        return worker
-
-
-def _edit_language(language: str) -> str:
-    """The worker language (Whisper-style code) of a request's ``language`` (HTTP 400 for one editing does not serve)."""
+async def _edit_worker(fn, *args):
+    """A blocking ASR / FuseAlign call of zonos3.tts.edit_align in a thread: HTTP 503 when a worker is unavailable
+    (``WorkerError``), 400 when the input is at fault (``ValueError``); the messages are the workers' clients'."""
     try:
-        return mms_language(_normalize_tts_request_language(language))
+        return await asyncio.to_thread(fn, *args)
+    except WorkerError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def _mms_one(request: dict, language: str) -> dict:
-    """One MMS worker request (transcribe / normalize); HTTP 503 when the worker is unavailable, 400 when it fails."""
+async def _edit_language(language: str) -> tuple[str, str]:
+    """``(Whisper-style code, Qwen3-ASR name)`` of a request's ``language`` (edit_align.edit_language over the ASR
+    worker's languages; HTTP 400 for one editing does not serve)."""
     try:
-        (response,) = await asyncio.to_thread(lambda: _mms_worker(language).run([request]))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=f"MMS is unavailable: {exc}") from exc
-    if "error" in response:
-        raise HTTPException(status_code=400, detail=f"MMS {request['op']} failed: {response['error']}")
-    return response
-
-
-async def _fusealign(items: list[dict]) -> list[list[dict]]:
-    """FuseAlign words of ``[{audio, tokens, language}]`` (the server's worker; HTTP 503 when it is unavailable)."""
-    try:
-        return await asyncio.to_thread(_FUSEALIGN.align, items)
-    except FuseAlignError as exc:
-        raise HTTPException(status_code=503, detail=f"FuseAlign alignment is unavailable: {exc}") from exc
+        normalized = _normalize_tts_request_language(language)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"FuseAlign alignment failed: {exc}") from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    supported = await _edit_worker(_ASR.languages)
+    try:
+        return edit_language(normalized, supported)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def _edit_aligned_words(audio_path: str, text: str, language: str, normalize: list[str] = ()):
-    """The words of ``text`` in the audio (FuseAlign over ``align_tokens``) with their zsa tokens, and the zsa tokens
-    of each ``normalize`` text (the same MMS normalize call). ``language`` is the worker language."""
-    tokens = align_tokens(text, language)
-    normalizing = _mms_one({"id": "words", "op": "normalize", "normalize": list(normalize) + tokens}, language)
-    if tokens:
-        aligned, normalized = await asyncio.gather(
-            _fusealign([{"audio": audio_path, "tokens": tokens, "language": language}]), normalizing
-        )
-    else:
-        aligned, normalized = [[]], await normalizing
-    normalized = normalized["normalized"]
-    return aligned_words(aligned[0], normalized[len(normalize):]), normalized[: len(normalize)]
+async def _edit_transcribe(audio_path: str, language: tuple[str, str]):
+    """Qwen3-ASR transcript of a clip in the edit's language (edit_align.transcribe_audio: chunk-wise past 30 s)."""
+    return await _edit_worker(transcribe_audio, _ASR, _FUSEALIGN, audio_path, language[1])
+
+
+async def _edit_aligned_words(audio_path: str, text: str, language: tuple[str, str], utterances=None):
+    """The words of ``text`` in the clip with their edit tokens (edit_align.edit_aligned_words; ``utterances``: the
+    long-form anchors of a transcript of the same clip)."""
+    return await _edit_worker(edit_aligned_words, _ASR, _FUSEALIGN, audio_path, text, language, utterances)
 
 
 def _edit_frame_rate(config: ServerArgs) -> float:
@@ -2417,7 +2390,7 @@ def _edit_frame_rate(config: ServerArgs) -> float:
 
 
 def _write_edit_audio(audio_bytes: bytes, directory: str, max_seconds: float) -> tuple[str, float]:
-    """Decode uploaded audio like the codec path does and store it as WAV for the MMS and FuseAlign workers."""
+    """Decode uploaded audio like the codec path does and store it as WAV for the ASR and FuseAlign workers."""
     waveform, sample_rate = _decode_audio_bytes(audio_bytes)
     duration = waveform.shape[-1] / sample_rate
     if duration > max_seconds:
@@ -2497,7 +2470,7 @@ def _edit_uses_speaker_row(config: ServerArgs, req: EditRequest) -> bool:
 
 @app.post("/v2/edit/transcribe")
 async def tts_edit_transcribe(req: EditTranscribeRequest):
-    """MMS greedy transcript of the audio to edit and its words' FuseAlign timings."""
+    """Qwen3-ASR transcript of the audio to edit (chunk-wise past 30 s) and its words' FuseAlign timings."""
     state = get_global_state()
     _require_editing(state.config)
     with tempfile.TemporaryDirectory() as tmp:
@@ -2506,15 +2479,15 @@ async def tts_edit_transcribe(req: EditTranscribeRequest):
             path, duration = _write_edit_audio(audio, tmp, _EDIT_ALIGN_MAX_SECONDS)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        language = _edit_language(req.language)
-        text = (await _mms_one({"id": "original", "op": "transcribe", "audio": path}, language))["text"]
-        words, _ = await _edit_aligned_words(path, text, language)
-    return {"text": text, "duration": duration, "words": _public_words(words)}
+        language = await _edit_language(req.language)
+        transcript = await _edit_transcribe(path, language)
+        words = await _edit_aligned_words(path, transcript.text, language, transcript.utterances)
+    return {"text": transcript.text, "duration": duration, "words": _public_words(words)}
 
 
 @app.post("/v2/edit/align")
 async def tts_edit_align(req: EditAlignRequest):
-    """FuseAlign forced alignment of the audio to ``text``: word timings, presences (``confidence``) and zsa tokens."""
+    """FuseAlign forced alignment of the audio to ``text``: word timings, presences (``confidence``) and edit tokens."""
     state = get_global_state()
     _require_editing(state.config)
     text = req.text.strip()
@@ -2526,7 +2499,7 @@ async def tts_edit_align(req: EditAlignRequest):
             path, duration = _write_edit_audio(audio, tmp, _EDIT_ALIGN_MAX_SECONDS)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        words, _ = await _edit_aligned_words(path, text, _edit_language(req.language))
+        words = await _edit_aligned_words(path, text, await _edit_language(req.language))
     return {"text": text, "duration": duration, "words": _public_words(words)}
 
 
@@ -2554,9 +2527,10 @@ async def tts_edit(req: EditRequest):
     n_codebooks = int(config.tts_n_codebooks)
     frame_rate = _edit_frame_rate(config)
     # Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt
-    # text and never reach MMS or FuseAlign (word diff, alignment, verify; target_normalize_request).
+    # text and never reach the ASR or FuseAlign (word diff, alignment, verify; target_tokens).
     target_text = canonical_markup(req.target_text.strip())
     plain_target_text = strip_nonverbal_markup(target_text)
+    edit_lang = await _edit_language(req.language)  # every ASR and FuseAlign call of the edit
     with tempfile.TemporaryDirectory() as tmp:
         try:
             if not target_text:
@@ -2566,7 +2540,6 @@ async def tts_edit(req: EditRequest):
                 raise ValueError("original_words needs the original_text they spell.")
             region_doses = _edit_region_doses(config, req)
             language = _normalize_tts_request_language(req.language)
-            worker_lang = mms_language(language)  # every MMS and FuseAlign call of the edit
             use_speaker_row = _edit_uses_speaker_row(config, req)
             if use_speaker_row and not _model_supports_speaker_embedding(config):
                 raise ValueError("speaker_embedding needs a checkpoint with a speaker-embedding row.")
@@ -2595,52 +2568,40 @@ async def tts_edit(req: EditRequest):
         codes = encoded.codes
         # Longer clips are windowed and every fill gets a minimum length; both read word timings
         # of the original (the caller's original_words, else a FuseAlign alignment) and the target
-        # words' zsa tokens. Without original_text, a short clip with explicit spans is not
+        # words' edit tokens. Without original_text, a short clip with explicit spans is not
         # transcribed: its regions' own lengths are expected.
         windowed = len(codes) / frame_rate > req.max_context_seconds
         target_words = target_text.split()
-        # Pronunciation groups never reach MMS: each is one target token (target_normalize_request).
-        target_texts, assemble_target = target_normalize_request(target_text)
+        # [target tokens, tokens of each target word]; a pronunciation group is one target token (target_tokens).
+        normalized_target = target_tokens(target_text)
         original_text, words = req.original_text, None
         if original_text:
             original_text = strip_nonverbal_markup(original_text)  # what the workers read (and the response reports)
         if req.original_words is not None:
             given = [w.model_dump() for w in req.original_words]
-            missing = [k for k, w in enumerate(given) if w["tokens"] is None]
-            normalized = (await _mms_one({
-                "id": "original_words",
-                "op": "normalize",
-                "normalize": [original_text] + target_texts + [given[k]["word"] for k in missing],
-            }, worker_lang))["normalized"]
-            for k, tokens in zip(missing, normalized[1 + len(target_texts):]):
-                given[k]["tokens"] = tokens
+            for w in given:
+                if w["tokens"] is None:
+                    w["tokens"] = textmatch.tokens(w["word"])
             try:
-                words = edit_words(given, [w["tokens"] for w in given], normalized[0], duration=duration)
+                words = edit_words(given, [w["tokens"] for w in given], textmatch.tokens(original_text),
+                                   duration=duration)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            # the layout of the target's normalize: the target text, then each target word
-            response = {"normalized": assemble_target(normalized[1: 1 + len(target_texts)])}
         elif req.spans is None or windowed or (req.min_fill_ratio > 0 and original_text):
+            utterances = None
             if not original_text:
-                original_text = (await _mms_one(
-                    {"id": "original", "op": "transcribe", "audio": original_path}, worker_lang))["text"]
-            words, normalized = await _edit_aligned_words(original_path, original_text, worker_lang, target_texts)
-            response = {"normalized": assemble_target(normalized)}
+                transcript = await _edit_transcribe(original_path, edit_lang)
+                original_text, utterances = transcript.text, transcript.utterances
+            words = await _edit_aligned_words(original_path, original_text, edit_lang, utterances)
         # verify with pronunciation groups: the reference's tokens, each group a wildcard word
-        verify_reference = None
-        if req.verify and GROUP_OPEN in target_text:
-            if words is not None:
-                verify_reference = response["normalized"][0]
-            else:
-                verify_reference = assemble_target((await _mms_one(
-                    {"id": "target", "op": "normalize", "normalize": target_texts}, worker_lang))["normalized"])[0]
+        verify_reference = normalized_target[0] if req.verify and GROUP_OPEN in target_text else None
         try:
             if req.spans is not None:
                 spans = seconds_to_spans(req.spans, len(codes), frame_rate)
             else:
                 spans = diff_spans(
                     words,
-                    response["normalized"][0],
+                    normalized_target[0],
                     total_frames=len(codes),
                     frame_rate=frame_rate,
                     margin_seconds=req.margin_seconds,
@@ -2653,7 +2614,7 @@ async def tts_edit(req: EditRequest):
                     spans,
                     words,
                     target_words,
-                    response["normalized"][1:],
+                    normalized_target[1:],
                     total_frames=len(codes),
                     frame_rate=frame_rate,
                     context_seconds=req.context_seconds,
@@ -2661,7 +2622,7 @@ async def tts_edit(req: EditRequest):
                 )
             if words is not None:
                 expected = expected_fill_seconds(
-                    spans, words, target_words, response["normalized"][1:], frame_rate=frame_rate
+                    spans, words, target_words, normalized_target[1:], frame_rate=frame_rate
                 )
             else:
                 expected = [length / frame_rate for _, length in spans]
@@ -2742,32 +2703,31 @@ async def tts_edit(req: EditRequest):
             if req.verify:
                 edited_path = os.path.join(tmp, f"take{k}.wav")
                 sf.write(edited_path, edited, 44100, subtype="FLOAT")
+                # The take's transcript (Qwen3-ASR) and its anchors for the alignment of the take's words.
+                transcript = await _edit_transcribe(edited_path, edit_lang)
                 if verify_reference is None:
-                    asr, (aligned, _) = await asyncio.gather(
-                        _mms_one({"id": f"take{k}", "op": "transcribe", "audio": edited_path,
-                                  "reference": plain_target_text}, worker_lang),
-                        _edit_aligned_words(edited_path, plain_target_text, worker_lang),
-                    )
+                    scored = textmatch.verify(plain_target_text, transcript.text)
                     verify = {
-                        "asr_text": asr["text"],
-                        "wer": asr["word_errors"] / max(1, asr["ref_words"]),
-                        "cer": asr["cer"],
+                        "asr_text": transcript.text,
+                        "wer": scored["word_errors"] / max(1, scored["ref_words"]),
+                        "cer": scored["cer"],
                     }
-                    take_words = _public_words(aligned)
+                    take_words = _public_words(await _edit_aligned_words(
+                        edited_path, plain_target_text, edit_lang, transcript.utterances))
                 else:
                     # Groups are wildcard words: any one recognized word matches; the take's words
                     # come from aligning the target with each group replaced by the word heard.
-                    asr = await _mms_one({"id": f"take{k}", "op": "transcribe", "audio": edited_path}, worker_lang)
-                    scored = wildcard_verify(verify_reference, asr["tokens"])
+                    scored = wildcard_verify(verify_reference, textmatch.tokens(transcript.text))
                     verify = {
-                        "asr_text": asr["text"],
+                        "asr_text": transcript.text,
                         "wer": scored["word_errors"] / max(1, scored["ref_words"]),
                         "cer": scored["cer"],
                         "groups": scored["groups"],
                     }
                     heard_text = fill_groups(plain_target_text, [g["heard"] for g in scored["groups"]])
                     if heard_text:
-                        take_words = _public_words((await _edit_aligned_words(edited_path, heard_text, worker_lang))[0])
+                        take_words = _public_words(await _edit_aligned_words(
+                            edited_path, heard_text, edit_lang, transcript.utterances))
             wav = io.BytesIO()
             sf.write(wav, edited, 44100, subtype="PCM_16", format="WAV")
             edited_regions, shift = [], 0
@@ -2803,8 +2763,8 @@ async def tts_edit(req: EditRequest):
 
 
 # ----------------------------------------------------------------------------- dubbing (zonos3.dub, docs/laci_dub.md)
-# The studio's Dub screen: references, the alignment worker (own venv; ZONOS3_DUB_ALIGN_* env) and the dub plan live in
-# zonos3.dub.runtime; every take is a /v2/generate request on this server's scheduler with laci=true and the take's
+# The studio's Dub screen: references, the dubbing worker (.venv-asr; ZONOS3_ASR_PYTHON) and the dub plan live in
+# zonos3.dub.runtime, which shares the server's ASR and FuseAlign workers with speech editing; every take is a /v2/generate request on this server's scheduler with laci=true and the take's
 # LACI duration target, so dub takes use studio voices, steering controls and pronunciation groups.
 _DUB_RUNTIME = None
 _DUB_TAKE_SLOTS: asyncio.Semaphore | None = None
@@ -2866,6 +2826,7 @@ def _dub_runtime():
             ),
             _dub_synthesize,
             _dub_encode_voice,
+            _ASR,
             _FUSEALIGN,
         )
     return _DUB_RUNTIME
@@ -2892,8 +2853,8 @@ async def _dub_call(awaitable):
         raise HTTPException(status_code=404, detail="unknown ref_id/dub_id; upload or generate again") from None
     except AlignWorkerError as exc:
         raise HTTPException(status_code=503, detail=f"alignment worker: {exc}") from exc
-    except FuseAlignError as exc:
-        raise HTTPException(status_code=503, detail=f"forced aligner: {exc}") from exc
+    except WorkerError as exc:  # the ASR / FuseAlign worker is unavailable (the message says which)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

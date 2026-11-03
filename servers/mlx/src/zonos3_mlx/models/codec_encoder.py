@@ -29,6 +29,9 @@ from zonos3_mlx.models.ssl_teacher import SSLTeacher
 
 ARCH = "mossdual_encoder"
 LANE, CONTEXT, HOP, INTERNAL_HOP = 300, 150, 2940, 2944
+# zonos3.tokenizer.dual_reference.prepare_reference's limit (dac-encoder.h DAC_ENCODER_MAX_SECONDS); the lanes keep
+# memory independent of length, and callers pass their own, shorter limit.
+MAX_SECONDS = 600
 
 
 def _snake(x: mx.array, alpha: mx.array, inv_alpha: mx.array) -> mx.array:
@@ -177,7 +180,10 @@ class CodecEncoder:
 
     # ------------------------------------------------------------------------------------------------ public
     def encode(self, pcm44100: np.ndarray, *, max_seconds: float = 60.0) -> np.ndarray:
-        """Mono 44.1 kHz PCM -> ordinary codes [frames, 10] int32 (frames = ceil(samples / 2940))."""
+        """Mono 44.1 kHz PCM -> ordinary codes [frames, 10] int32 (frames = ceil(samples / 2940)), cut to whole
+        codec frames at ``max_seconds`` (at most MAX_SECONDS)."""
+        if not 0 < max_seconds <= MAX_SECONDS:
+            raise ValueError(f"Codec input limit must be in (0, {MAX_SECONDS}] seconds")
         audio = np.asarray(pcm44100, dtype=np.float32)
         limit = int(math.floor(max_seconds * 44100 / HOP)) * HOP
         audio = audio[:limit]

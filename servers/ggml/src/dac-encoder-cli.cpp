@@ -32,8 +32,8 @@ int main(int argc, char ** argv) {
     if (audio_path.size()>=4 && audio_path.substr(audio_path.size()-4)==".npy") {
         std::vector<int64_t> shape;
         if (!npy::load_f32(audio_path,audio,shape) || !(shape.size()==1 || (shape.size()==2 && shape[0]==1))) { fprintf(stderr,"PCM NPY must be F32 [samples] or [1,samples] at 44100 Hz\n"); return 1; }
-    } else audio=audio_decode_file(audio_path.c_str(),44100,60);
-    if (audio.empty() || audio.size()>60u*44100u) { fprintf(stderr,"reference must contain 1..2646000 mono samples\n"); return 1; }
+    } else audio=audio_decode_file(audio_path.c_str(),44100,DAC_ENCODER_MAX_SECONDS);
+    if (audio.empty() || audio.size()>(size_t)DAC_ENCODER_MAX_SECONDS*44100) { fprintf(stderr,"reference must contain 1..%d mono samples\n",DAC_ENCODER_MAX_SECONDS*44100); return 1; }
     if (!dir.empty()) {
         std::error_code ec;
         std::filesystem::create_directories(dir,ec);

@@ -1,6 +1,7 @@
 #include "zonos3-edit.h"
 
 #include "zonos3-markup.h"
+#include "zonos3-textmatch.h"
 
 #include <array>
 #include <algorithm>
@@ -53,27 +54,6 @@ std::u32string cps(const std::string & s) {
 bool py_space(uint32_t c) {
     return (c >= 0x09 && c <= 0x0D) || (c >= 0x1C && c <= 0x20) || c == 0x85 || c == 0xA0 || c == 0x1680 ||
            (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000;
-}
-
-// str.lower() for the scripts MMS transcripts use (Latin, Greek, Cyrillic).
-uint32_t py_lower(uint32_t c) {
-    if (c >= 'A' && c <= 'Z') return c + 32;
-    if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32;
-    if (c >= 0x100 && c <= 0x137 && !(c & 1)) return c + 1;
-    if (c >= 0x139 && c <= 0x148 && (c & 1)) return c + 1;
-    if (c >= 0x14A && c <= 0x177 && !(c & 1)) return c + 1;
-    if (c == 0x178) return 0xFF;
-    if (c >= 0x179 && c <= 0x17E && (c & 1)) return c + 1;
-    if (c >= 0x391 && c <= 0x3AB && c != 0x3A2) return c + 32;
-    if (c >= 0x410 && c <= 0x42F) return c + 32;
-    if (c >= 0x400 && c <= 0x40F) return c + 80;
-    return c;
-}
-
-std::string lower(const std::string & s) {
-    std::string out;
-    for (size_t i = 0; i < s.size();) put_cp(out, py_lower(next_cp(s, i)));
-    return out;
 }
 
 size_t cp_len(const std::string & s) {
@@ -245,22 +225,24 @@ std::vector<int32_t> splice_edit(const std::vector<int32_t> & codes, int n_codeb
 
 // ---------------------------------------------------------------------------------------------------- edit_align.py
 
-static const std::vector<std::pair<std::string, std::string>> & mms_languages() {
-    static const std::vector<std::pair<std::string, std::string>> m = {
-        {"en_us", "en"}, {"fr_fr", "fr"}, {"de", "de"}, {"es", "es"}, {"it", "it"},
-        {"pt_br", "pt"}, {"ja", "ja"}, {"cmn", "zh"}, {"ko", "ko"}};
+// EDIT_LANGUAGES (dict order): server code -> (Whisper-style code, Qwen3-ASR name).
+static const std::vector<std::pair<std::string, std::pair<std::string, std::string>>> & edit_languages() {
+    static const std::vector<std::pair<std::string, std::pair<std::string, std::string>>> m = {
+        {"en_us", {"en", "English"}}, {"en_gb", {"en", "English"}}, {"fr_fr", {"fr", "French"}},
+        {"de", {"de", "German"}},     {"es", {"es", "Spanish"}},    {"it", {"it", "Italian"}},
+        {"pt_br", {"pt", "Portuguese"}}, {"ja", {"ja", "Japanese"}}, {"cmn", {"zh", "Chinese"}},
+        {"ko", {"ko", "Korean"}}};
     return m;
 }
 
-std::optional<std::string> mms_language(const std::string & language) {
-    for (const auto & [k, v] : mms_languages()) if (k == language) return v;
-    return std::nullopt;
-}
-
-std::string mms_language_error(const std::string & language) {
-    std::vector<std::string> keys;
-    for (const auto & kv : mms_languages()) keys.push_back(kv.first);
-    return "Speech editing does not serve language " + repr(language) + " (supported: " + join(keys, ", ") + ").";
+std::pair<std::string, std::string> edit_language(const std::string & language, const std::vector<std::string> & supported) {
+    std::vector<std::string> served;
+    for (const auto & [k, v] : edit_languages())
+        if (std::find(supported.begin(), supported.end(), v.second) != supported.end()) served.push_back(k);
+    if (std::find(served.begin(), served.end(), language) == served.end())
+        value_error("Speech editing does not serve language " + repr(language) + " (supported: " + join(served, ", ") + ").");
+    for (const auto & [k, v] : edit_languages()) if (k == language) return v;
+    value_error("unreachable");
 }
 
 std::vector<std::string> split_words(const std::string & text) {
@@ -321,41 +303,25 @@ static std::vector<std::string> word_pieces(const std::string & word) {
     return out;
 }
 
-TargetNormalize target_normalize_request(const std::string & target_text) {
-    TargetNormalize out;
+std::vector<std::vector<std::string>> target_tokens(const std::string & target_text) {
     const auto words = split_words(target_text);
+    std::vector<std::vector<std::string>> out;
     if (target_text.find(GROUP_OPEN) == std::string::npos && !zonos3_has_nonverbal_markup(target_text)) {
-        out.texts.push_back(target_text);
-        out.texts.insert(out.texts.end(), words.begin(), words.end());
+        out.push_back(zonos3_textmatch::tokens(target_text));
+        for (const auto & w : words) out.push_back(zonos3_textmatch::tokens(w));
         return out;
     }
-    out.plain = false;
-    for (const auto & w : words) out.pieces.push_back(word_pieces(w));
-    for (const auto & word : out.pieces)
-        for (const auto & piece : word)
-            if (!is_group_token(piece) && !is_marker_token(piece)) out.texts.push_back(piece);
-    return out;
-}
-
-std::vector<std::vector<std::string>> TargetNormalize::assemble(
-        const std::vector<std::vector<std::string>> & normalized) const {
-    if (plain) return normalized;
-    size_t next = 0;
     std::vector<std::vector<std::string>> word_tokens;
-    for (const auto & word : pieces) {
+    for (const auto & w : words) {
         std::vector<std::string> tokens;
-        for (const auto & piece : word) {
+        for (const auto & piece : word_pieces(w)) {
             if (is_group_token(piece)) tokens.push_back(piece);
             else if (is_marker_token(piece)) {}
-            else {
-                if (next >= normalized.size()) value_error("the MMS normalize answered too few texts");
-                tokens.insert(tokens.end(), normalized[next].begin(), normalized[next].end());
-                ++next;
-            }
+            else for (auto & t : zonos3_textmatch::tokens(piece)) tokens.push_back(std::move(t));
         }
         word_tokens.push_back(std::move(tokens));
     }
-    std::vector<std::vector<std::string>> out(1);
+    out.emplace_back();
     for (const auto & t : word_tokens) out[0].insert(out[0].end(), t.begin(), t.end());
     out.insert(out.end(), word_tokens.begin(), word_tokens.end());
     return out;
@@ -560,7 +526,7 @@ EditWindow whole_clip_window(const std::vector<Span> & spans, int total_frames, 
 
 namespace {
 
-// WordDiff: the original's aligned words against the target's whitespace words, diffed over their zsa tokens.
+// WordDiff: the original's aligned words against the target's whitespace words, diffed over their edit tokens.
 struct WordDiff {
     const std::vector<AlignedWord> & words;
     std::vector<int> orig_start{0}, tgt_start{0};
@@ -789,7 +755,7 @@ std::string fill_groups(const std::string & text, const std::vector<std::optiona
         out += text.substr(cursor, a - cursor);
         if (next >= heard.size()) value_error("fill_groups: fewer heard words than groups");
         const auto & h = heard[next++];
-        if (h) out += lower(*h);
+        if (h) out += zonos3_textmatch::py_lower(*h);
         cursor = b;
     }
     out += text.substr(cursor);

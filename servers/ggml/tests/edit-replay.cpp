@@ -1,9 +1,11 @@
-// edit-replay: run one src/zonos3-edit.h function on a JSON request {"fn", "args"} read from stdin and print the
-// result as JSON (matrices as nested lists, tuples as lists). A ValueError prints {"error": "ValueError", "message"}.
-// Parity against model/src/zonos3/tts/{edit,edit_align}.py: servers/ggml/tests/parity/test_ggml_edit.py, which also
+// edit-replay: run one src/zonos3-edit.h or src/zonos3-textmatch.h function on a JSON request {"fn", "args"} read from
+// stdin and print the result as JSON (matrices as nested lists, tuples as lists). A ValueError prints {"error":
+// "ValueError", "message"}. Parity against model/src/zonos3/tts/{edit,edit_align,textmatch}.py and Python's
+// str.upper()/str.lower(): servers/ggml/tests/parity/test_ggml_edit.py, which also
 // writes tests/fixtures/edit-replay/cases.json; `edit-replay --cases <file>` (ctest) replays those cases and prints
 // PASS when every answer equals the recorded Python one.
 #include "zonos3-edit.h"
+#include "zonos3-textmatch.h"
 
 #include "json.hpp"
 
@@ -151,10 +153,7 @@ json call(const std::string & fn, const json & a) {
         return fill_groups(a.at("text").get<std::string>(), heard);
     }
     if (fn == "canonical_markup") return canonical_markup(a.at("text").get<std::string>());
-    if (fn == "target_normalize_request") {
-        const TargetNormalize t = target_normalize_request(a.at("target_text").get<std::string>());
-        return {{"texts", t.texts}, {"assembled", t.assemble(a.at("normalized").get<Lists>())}};
-    }
+    if (fn == "target_tokens") return target_tokens(a.at("target_text").get<std::string>());
     if (fn == "edit_words") {
         std::vector<WordIn> ws;
         for (const auto & w : a.at("words")) {
@@ -175,14 +174,28 @@ json call(const std::string & fn, const json & a) {
                           w.at("presence").get<double>()});
         return words_json(aligned_words(ws, a.at("word_tokens").get<Lists>()));
     }
-    if (fn == "mms_language") {
-        const std::string lang = a.at("language").get<std::string>();
-        const auto code = mms_language(lang);
-        if (!code) throw std::invalid_argument(mms_language_error(lang));
-        return *code;
+    if (fn == "edit_language") {
+        const auto [code, name] = edit_language(a.at("language").get<std::string>(),
+                                                a.at("supported").get<std::vector<std::string>>());
+        return json::array({code, name});
     }
     if (fn == "split_words") return split_words(a.at("text").get<std::string>());
     if (fn == "token_chars") return token_chars(a.at("token").get<std::string>());
+    if (fn == "normalize") return zonos3_textmatch::normalize(a.at("text").get<std::string>());
+    if (fn == "tokens") return zonos3_textmatch::tokens(a.at("text").get<std::string>());
+    if (fn == "char_error_rate")
+        return zonos3_textmatch::char_error_rate(a.at("reference").get<std::string>(), a.at("hypothesis").get<std::string>());
+    if (fn == "word_errors")
+        return zonos3_textmatch::word_errors(a.at("reference").get<std::vector<std::string>>(),
+                                             a.at("hypothesis").get<std::vector<std::string>>());
+    if (fn == "upper") return zonos3_textmatch::py_upper(a.at("text").get<std::string>());
+    if (fn == "lower") return zonos3_textmatch::py_lower(a.at("text").get<std::string>());
+    if (fn == "verify") {   // textmatch.verify
+        const std::string ref = a.at("reference").get<std::string>(), hyp = a.at("hypothesis").get<std::string>();
+        const auto ref_tokens = zonos3_textmatch::tokens(ref);
+        return {{"word_errors", zonos3_textmatch::word_errors(ref_tokens, zonos3_textmatch::tokens(hyp))},
+                {"ref_words", ref_tokens.size()}, {"cer", zonos3_textmatch::char_error_rate(ref, hyp)}};
+    }
     throw std::runtime_error("unknown fn " + fn);
 }
 

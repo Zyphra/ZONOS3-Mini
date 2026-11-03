@@ -2,9 +2,9 @@
 
 Every take is a /v2/generate request with laci=true and the take's LACI duration target, so dub takes use studio
 voices, steering controls and pronunciation groups; the source voice's prompt clip is encoded with the MLX reference
-encoder. Word timings come from the server's FuseAlign worker (shared with speech editing); the alignment worker
-(Qwen3-ASR, SimAlign, AV-sync) runs in its own venv (ZONOS3_DUB_ALIGN_PYTHON; ZONOS3_DUB_ALIGN_DEVICE, default mps
-here).
+encoder. Transcripts come from the server's ASR worker (Qwen3-ASR) and word timings from its FuseAlign worker (both
+shared with speech editing); the dubbing worker (SimAlign, AV-sync) runs in .venv-asr with the ASR worker
+(ZONOS3_ASR_PYTHON; ZONOS3_ASR_DEVICE, default mps on macOS).
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import re
 import tempfile
 from pathlib import Path
@@ -34,7 +33,7 @@ from zonos3_mlx.engine import LaciTake
 from zonos3_mlx.server import capabilities as caps
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.generate import JobRun, plan_generate
-from zonos3_mlx.server.state import ServerState
+from zonos3_mlx.server.state import ServerState, asr_device
 
 logger = logging.getLogger("zonos3_mlx.server")
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
@@ -70,8 +69,8 @@ def runtime(state: ServerState):
         modes = speakers.checkpoint_modes(state)
         bundle = state.engine.bundle
         settings = WorkerSettings.from_env()
-        if not os.environ.get("ZONOS3_DUB_ALIGN_DEVICE"):
-            settings = WorkerSettings(python=settings.python, avsync_home=settings.avsync_home, device="mps")
+        if asr_device() is not None:
+            settings = WorkerSettings(python=settings.python, avsync_home=settings.avsync_home, device=asr_device())
         model = DubModel(
             name=Path(state.options.model_path).name, rate_edges=tuple(caps.dub_rate_edges(state)),
             n_buckets=state.config.condition_n_buckets if state.config.condition_count else 0,
@@ -88,7 +87,7 @@ def runtime(state: ServerState):
         async def encode_voice(audio, sample_rate):
             return await encode_voice_prompt(state, audio, sample_rate)
 
-        state.dub_runtime = DubRuntime(model, synthesize, encode_voice, state.aligner, settings)
+        state.dub_runtime = DubRuntime(model, synthesize, encode_voice, state.asr, state.aligner, settings)
     return state.dub_runtime
 
 
@@ -193,7 +192,7 @@ async def upload(request: Request, name: str, directory: str) -> Path:
 async def call(awaitable):
     """Run a DubRuntime call, mapping its errors to HTTP statuses."""
     from zonos3.dub.runtime import AlignWorkerError, UnknownId
-    from zonos3.tts.edit_align import FuseAlignError
+    from zonos3.tts.edit_align import WorkerError
 
     try:
         return await awaitable
@@ -201,8 +200,8 @@ async def call(awaitable):
         raise HTTPException(status_code=404, detail="unknown ref_id/dub_id; upload or generate again") from None
     except AlignWorkerError as exc:
         raise HTTPException(status_code=503, detail=f"alignment worker: {exc}") from exc
-    except FuseAlignError as exc:
-        raise HTTPException(status_code=503, detail=f"forced aligner: {exc}") from exc
+    except WorkerError as exc:  # the ASR / FuseAlign worker is unavailable (the message says which)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

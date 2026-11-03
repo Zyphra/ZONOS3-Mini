@@ -43,10 +43,10 @@ std::vector<int32_t> splice_edit(const std::vector<int32_t> & codes, int n_codeb
                                  const std::vector<std::vector<int32_t>> & fills);
 
 // ---------------------------------------------------------------------------------------------------- edit_align.py
-// Server language code -> the Whisper-style code of the edit's workers (MMS_LANGUAGES: the MMS adapter, FuseAlign's
-// tokenization and long-form anchoring); nullopt for a language speech editing does not serve.
-std::optional<std::string> mms_language(const std::string & language);
-std::string mms_language_error(const std::string & language);   // the ValueError message of mms_language
+// EDIT_LANGUAGES: server language code -> (the Whisper-style code the edit's words are tokenized by, align_tokens; the
+// Qwen3-ASR language name its recognition is forced to). edit_language serves the entries whose Qwen3-ASR name is in
+// `supported` (the ASR worker's languages) and throws the ValueError message for any other language.
+std::pair<std::string, std::string> edit_language(const std::string & language, const std::vector<std::string> & supported);
 
 struct AlignedWord {
     std::string word;
@@ -60,15 +60,10 @@ double token_chars(const std::string & token);
 bool is_marker_token(const std::string & token);
 std::string canonical_markup(const std::string & text);
 
-// target_normalize_request: the texts to send to the MMS normalize and how to assemble the answer into
-// [target tokens, tokens of target word 0, of word 1, ...] over the whitespace words of the target.
-struct TargetNormalize {
-    std::vector<std::string> texts;
-    bool plain = true;                                 // texts = [target] + words
-    std::vector<std::vector<std::string>> pieces;      // per whitespace word (when not plain)
-    std::vector<std::vector<std::string>> assemble(const std::vector<std::vector<std::string>> & normalized) const;
-};
-TargetNormalize target_normalize_request(const std::string & target_text);
+// target_tokens: [target tokens, tokens of target word 0, of word 1, ...] over the whitespace words of the target
+// (zonos3_textmatch::tokens); with groups or markup only the plain pieces between them are normalized, each group is a
+// token and each nonverbal marker none.
+std::vector<std::vector<std::string>> target_tokens(const std::string & target_text);
 
 std::vector<Span> seconds_to_spans(const std::vector<std::pair<double, double>> & pairs, int total_frames,
                                    double frame_rate);
@@ -81,12 +76,12 @@ struct EditDiff { std::vector<Span> spans; std::vector<int> new_target_tokens; }
 EditDiff diff_spans(const std::vector<AlignedWord> & words, const std::vector<std::string> & target_tokens,
                     int total_frames, double frame_rate, double margin_seconds, int min_gap_frames, int max_spans);
 
-// edit_words: caller-supplied word timings ({word, start, end, confidence}) with their zsa tokens, checked.
+// edit_words: caller-supplied word timings ({word, start, end, confidence}) with their edit tokens, checked.
 struct WordIn { std::string word; double start = 0, end = 0; std::optional<double> confidence; };
 std::vector<AlignedWord> edit_words(const std::vector<WordIn> & words,
                                     const std::vector<std::vector<std::string>> & word_tokens,
                                     const std::vector<std::string> & original_tokens, double duration);
-// aligned_words: FuseAlign's words (confidence = presence) with each word's zsa tokens; words without tokens
+// aligned_words: FuseAlign's words (confidence = presence) with each word's edit tokens; words without tokens
 // (punctuation only) are dropped, then each overlap of neighbours is split at its midpoint (in order). Throws when the
 // lists differ in length.
 std::vector<AlignedWord> aligned_words(const std::vector<WordIn> & words,

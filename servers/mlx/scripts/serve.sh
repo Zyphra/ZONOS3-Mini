@@ -13,8 +13,10 @@
 #                               venv's interpreter; ZONOS3_FUSEALIGN_DEVICE, default cpu on macOS)
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
 #   DUB=1                       serve the studio's Dub screen: LACI heads for every dub language from LACI_HEADS_DIR
-#                               (default laci_heads/) and the alignment worker of tools/setup_dub_align_env.sh
-#                               (Qwen3-ASR, SimAlign, AV-sync; ZONOS3_DUB_ALIGN_DEVICE defaults to mps here)
+#                               (default laci_heads/) and the word aligner / AV-sync of tools/setup_asr_env.sh
+# Speech recognition (speech editing and dubbing) is Qwen3-ASR in .venv-asr (tools/setup_asr_env.sh); ZONOS3_ASR_PYTHON,
+# ZONOS3_ASR_DEVICE (default mps on macOS) and ZONOS3_DUB_AVSYNC_HOME override its interpreter, its device and the
+# AV-sync checkout.
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -34,11 +36,6 @@ elif [[ "${DUB:-0}" == 1 ]]; then
     laci_en="$laci_dir/zonos3_mini_mect60k_heads.json"
     laci_args=(--laci-heads "cmn=$laci_dir/zonos3_mini_mect60k_heads_zh.json")
     for lang in en_us fr_fr de es it pt_br ja ko; do laci_args+=("$lang=$laci_en"); done
-fi
-if [[ "${DUB:-0}" == 1 ]]; then
-    export ZONOS3_DUB_ALIGN_PYTHON="${ZONOS3_DUB_ALIGN_PYTHON:-$repo_root/.venv-dub-align/bin/python}"
-    export ZONOS3_DUB_AVSYNC_HOME="${ZONOS3_DUB_AVSYNC_HOME:-$repo_root/.avsync}"
-    export ZONOS3_DUB_ALIGN_DEVICE="${ZONOS3_DUB_ALIGN_DEVICE:-mps}"
 fi
 studio_projects="${ZONOS3_STUDIO_PROJECTS:-}"
 exec uv run --locked --package zonos3-mlx --group phonemize python -m zonos3_mlx "$model" \

@@ -30,6 +30,24 @@ class FakeAligner:
                 for it in items]
 
 
+class FakeAsr:
+    """The server's ASR worker: one fixed transcript per item."""
+
+    def __init__(self, text="bonjour tout le monde", language="French"):
+        self.items: list[dict] = []
+        self.text, self.language = text, language
+
+    def model(self) -> str:
+        return "Qwen/fake-asr"
+
+    def languages(self) -> list[str]:
+        return ["English", "French", "Chinese"]
+
+    def transcribe(self, items):
+        self.items += items
+        return [{"text": self.text, "language": it["language"] or self.language} for it in items]
+
+
 class Fake:
     def __init__(self, source_voice=True, studio_voices=True, rate_scales=None):
         self.requests: list[list[dict]] = []
@@ -39,8 +57,8 @@ class Fake:
                            studio_voices=studio_voices, source_voice=source_voice,
                            raw_controls=frozenset({"identity.gender"}), phoneme_groups=True,
                            rate_scales=rate_scales or {})
-        self.aligner = FakeAligner()
-        self.rt = R.DubRuntime(model, self.synthesize, self.encode_voice, self.aligner,
+        self.aligner, self.asr = FakeAligner(), FakeAsr()
+        self.rt = R.DubRuntime(model, self.synthesize, self.encode_voice, self.asr, self.aligner,
                                R.WorkerSettings(python="/nonexistent"))
 
         async def call(op, **payload):
@@ -242,19 +260,26 @@ def test_pronunciation_groups_read_as_ipa_and_count_letters():
     assert R.text_bytes(text) == round(len(b"Hi ") + 1.4 * 5 + 1)
 
 
-def test_edit_worker_language_maps_dub_languages_and_refuses_the_rest():
-    from zonos3.tts.edit_align import mms_language
+def test_edit_language_maps_server_codes_to_the_asr_languages_and_refuses_the_rest():
+    from zonos3.tts.edit_align import EDIT_LANGUAGES, edit_language
 
-    assert [mms_language(c) for c in ("en_us", "fr_fr", "pt_br", "cmn")] == ["en", "fr", "pt", "zh"]
-    with pytest.raises(ValueError, match="does not serve language 'ar'"):
-        mms_language("ar")
+    supported = FakeAsr().languages()
+    assert [edit_language(c, supported) for c in ("en_us", "en_gb", "fr_fr", "cmn")] == [
+        ("en", "English"), ("en", "English"), ("fr", "French"), ("zh", "Chinese")]
+    with pytest.raises(ValueError, match=r"does not serve language 'ar' \(supported: en_us, en_gb, fr_fr, cmn\)\."):
+        edit_language("ar", supported)
+    with pytest.raises(ValueError, match="does not serve language 'de'"):  # a table entry the ASR does not offer
+        edit_language("de", supported)
+    for code, name in EDIT_LANGUAGES.values():
+        assert P.REF_LANGUAGES[code] == name  # the dub's code -> Qwen3-ASR table agrees
 
 
 def test_takes_and_reference_are_aligned_by_fusealign_tokens():
     f = Fake()
     f.generate(segments=[{"ref_start": 0.5, "ref_end": 1.5, "target_text": "Hi \ue000ʃɪvɑn\ue001 <laugh/>!", "bucket": None}])
-    assert f.aligner.items and all(it["tokens"] == ["Hi", "ʃɪvɑn", "!"] and it["language"] == "fr"
+    assert f.aligner.items and all(it["tokens"] == ["Hi", "ʃɪvɑn", "!"] and "utterances" not in it
                                    for it in f.aligner.items)
+    assert f.asr.items == []  # short takes: no recognition anchors
 
     async def call(op, **payload):
         assert op == "word_align", op
@@ -264,10 +289,10 @@ def test_takes_and_reference_are_aligned_by_fusealign_tokens():
     f.aligner.items.clear()
     out = asyncio.run(f.rt.analyze({"ref_id": f.ref_id, "ref_text": "我们 去公园。", "ref_lang": "zh",
                                     "target_text": "On y va.", "target_lang": "fr", "min_pause_s": 0.3}))
-    assert f.aligner.items[0]["tokens"] == ["我", "们", "去", "公", "园。"] and f.aligner.items[0]["language"] == "zh"
+    assert f.aligner.items[0]["tokens"] == ["我", "们", "去", "公", "园。"] and set(f.aligner.items[0]) == {"audio", "tokens"}
     assert out["ref_words"][0] == {"word": "我", "start": 0.1, "end": 0.9}
     caps = f.rt.capabilities()
-    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors"
+    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors" and caps["asr_model"] == "Qwen/fake-asr"
     assert [lang["code"] for lang in caps["ref_languages"]] == list(P.REF_LANGUAGES)
 
 
@@ -328,3 +353,30 @@ def test_server_take_on_an_extended_scale_carries_its_bucket_and_deltas(monkeypa
     row_only = TTSTokenizeMsg(uid=2, text="Oui.", sampling_params=TTSSamplingParams())
     A._dub_take_rate_steering(config, row_only, {**job, "bucket": 5, "rate_scale": None})
     assert row_only.laci_rate_edges is None and row_only.speaker_emotion_delta is None
+
+
+def test_transcribe_uses_the_asr_worker_and_detects_the_language():
+    f = Fake()
+    out = asyncio.run(f.rt.transcribe(f.ref_id, None))  # 4 s: one whole-clip recognition, language detected
+    assert out == {"text": "bonjour tout le monde", "language": "fr", "language_name": "French",
+                   "words": [{"word": w, "start": 0.1, "end": 0.9} for w in ("bonjour", "tout", "le", "monde")]}
+    assert [(it["language"], it.get("start")) for it in f.asr.items] == [(None, None)]
+    assert set(f.aligner.items[0]) == {"audio", "tokens"}
+    f.asr.items.clear()
+    asyncio.run(f.rt.transcribe(f.ref_id, "en"))
+    assert [it["language"] for it in f.asr.items] == ["English"]
+
+
+def test_dub_is_unavailable_without_the_asr_worker():
+    from zonos3.tts.edit_align import AsrError
+
+    f = Fake()
+    f.rt.settings = R.WorkerSettings(python=__file__)  # an interpreter that "exists"
+
+    def down():
+        raise AsrError("ASR is unavailable: the ASR worker exited with code 1")
+
+    assert f.rt.capabilities()["available"]
+    f.asr.model = down
+    caps = f.rt.capabilities()
+    assert caps["asr_model"] == "" and not caps["available"]

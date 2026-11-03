@@ -8,8 +8,8 @@ optional post-processing step (AV-sync) then time-warps the dub onto the speaker
 ## Setup (once)
 
 ```bash
-bash tools/setup_dub_align_env.sh   # .venv-dub-align: qwen-asr 0.0.6 (transformers 4.57.6) + simalign; downloads the weights;
-                                      # AV-sync at a pinned commit in .avsync/ with its SyncNet and S3FD models (re-runnable)
+bash tools/setup_asr_env.sh   # .venv-asr: qwen-asr 0.0.6 (transformers 4.57.6) + simalign; downloads the weights;
+                              # AV-sync at a pinned commit in .avsync/ with its SyncNet and S3FD models (re-runnable)
 ```
 
 ## Run
@@ -17,9 +17,9 @@ bash tools/setup_dub_align_env.sh   # .venv-dub-align: qwen-asr 0.0.6 (transform
 One server: the studio server (`python -m zonos3_sgl`, `zonos3_sgl/server/api_server.py`) hosts `/v2/dub/*`. `DUB=1` in
 `servers/sgl/scripts/serve.sh` passes `--laci-heads` for every dub target language (the heads selected on lm/mect_60k in
 `laci_heads/`: `zonos3_mini_mect60k_heads_zh.json` for `cmn`, `zonos3_mini_mect60k_heads.json` for the rest;
-`LACI_HEADS_DIR` / `LACI_HEADS` override) and points the server at the alignment worker and AV-sync
-(`ZONOS3_DUB_ALIGN_PYTHON`, `ZONOS3_DUB_AVSYNC_HOME`, `ZONOS3_DUB_ALIGN_DEVICE`; defaults: the repo's `.venv-dub-align`,
-`.avsync`, `cuda`):
+`LACI_HEADS_DIR` / `LACI_HEADS` override). The speech-recognition worker (Qwen3-ASR, shared with speech editing), the
+dubbing worker (SimAlign, AV-sync) and AV-sync's checkout are found through `ZONOS3_ASR_PYTHON`, `ZONOS3_ASR_DEVICE` and
+`ZONOS3_DUB_AVSYNC_HOME` (defaults: the repo's `.venv-asr`, `cuda`, `.avsync`):
 
 ```bash
 STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh      # open http://127.0.0.1:1919/ -> Dub
@@ -30,9 +30,12 @@ Every take is a `/v2/generate` request on the server's scheduler (`api_server._d
 take's LACI duration target (`TTSTokenizeMsg.laci_target_frames` / `laci_adjust_rate` -> `zonos3.tts.laci.DurationTarget`
 in the scheduler), its speaking-rate bucket in the condition rows (the others unknown), the release sampling defaults,
 speaker CFG 1 (LACI's constraint), and its voice. The LACI record comes back on the request's final `TTSAudioReply`.
-At most twice `--max-running-requests` takes are in flight, so studio requests interleave with a dub. The alignment
-worker (`model/src/zonos3/workers/dub_align.py`, own venv) starts on the first call that needs it (transcribe / analyze /
-generate / lips) and again after it died; it shares the server's GPU.
+At most twice `--max-running-requests` takes are in flight, so studio requests interleave with a dub. The server's ASR
+worker (`model/src/zonos3/workers/asr.py`, `.venv-asr`; transcribe and long-form anchors) and the dubbing worker
+(`model/src/zonos3/workers/dub_align.py`, `.venv-asr`; word alignment and lips) start on the first call that needs them
+and again after they died; they share the server's GPU. A reference over 30 s is transcribed chunk by chunk (Silero VAD
+speech chunks of at most 25 s; chunk texts joined with a space, without one in ja / zh / yue; with `ref_lang` unset the
+language is the first spoken chunk's), and its chunk transcripts anchor FuseAlign's long-form alignment of it.
 
 Voices and direction (`zonos3/dub/runtime.py`): `voice: {mode: "source"}` (default) clones the reference speaker from
 its own audio (raw reference prefix codes of the clip from the first source-voice segment, up to 20 s);
@@ -146,5 +149,5 @@ bytes -> face track for lip-sync), `POST /v2/dub/mux/{dub_id}?name=` (raw video 
 `X-TTS-Session-ID` for the session's saved voices; every route but capabilities and mux accepts `X-Keepalive: 1`
 ([api.md](api.md#headers)). The schemas are in [api/openapi.yaml](../api/openapi.yaml). Errors: 400 invalid input, 404
 unknown `ref_id` / `dub_id` (the server keeps the last 8 of each), 422 schema violations (unknown fields included), 503
-alignment worker failure. Tests: `model/tests/test_dub_plan.py` (planning), `servers/sgl/tests/test_dub_runtime.py`
+an unavailable worker (ASR, FuseAlign or the dubbing worker). Tests: `model/tests/test_dub_plan.py` (planning), `servers/sgl/tests/test_dub_runtime.py`
 (voices, controls, regenerate, `ref_words`, groups).

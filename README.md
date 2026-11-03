@@ -77,7 +77,7 @@ the GGUF files, see [servers/web/README.md](servers/web/README.md)).
 | `PHONEME_LEXICON` | Gold pronunciation lexicon directory (`--tts-phoneme-lexicon`) for `POST /v2/phonemize` |
 | `ZONOS3_STUDIO_PROJECTS` | Shared studio project store (`--studio-projects-dir`); empty (default) keeps projects in the browser |
 | `LACI_HEADS` | `"lang=path ..."` LACI alignment heads (`--laci-heads`) |
-| `DUB` | `1` serves the studio's Dub screen: LACI heads for every dub language from `LACI_HEADS_DIR` (default `laci_heads/`) and the alignment worker of `tools/setup_dub_align_env.sh` |
+| `DUB` | `1` serves the studio's Dub screen: LACI heads for every dub language from `LACI_HEADS_DIR` (default `laci_heads/`) and the word aligner / AV-sync of `tools/setup_asr_env.sh` |
 
 ## Generate
 
@@ -165,17 +165,22 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
 
 ### Feature prerequisites
 
-- **Speech editing** needs an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `ZSA_ROOT` pointing at a
-  [z-speech-alignment](https://github.com/Zyphra/z-speech-alignment) checkout with its uv environment (`uv sync` in
-  it; MMS recognition and token normalization; `ZSA_PYTHON` overrides its interpreter) and FuseAlign (`fusealign-hub`
-  in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
+- **Speech recognition** (speech editing and dubbing) is Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`) in its own venv:
+  `bash tools/setup_asr_env.sh` once creates `.venv-asr` (qwen-asr pins its own transformers; also SimAlign, the
+  weights and the AV-sync checkout `.avsync` for dubbing). One worker process per server
+  (`model/src/zonos3/workers/asr.py`) starts on first use; `ZONOS3_ASR_PYTHON` overrides its interpreter (default
+  `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU).
+- **Speech editing** needs an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `.venv-asr` and FuseAlign
+  (`fusealign-hub` in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
 - **Phoneme input** and **nonverbal tags** need checkpoints merged with the phoneme / NV rows
   (`tools/add_text_extra_rows.py`) and `PHONEME_LEXICON=<lexicon dir>`.
-- **Dubbing** needs `tools/setup_dub_align_env.sh` once (Qwen3-ASR, SimAlign, AV-sync) and FuseAlign (as for speech
-  editing), then `DUB=1 servers/sgl/scripts/serve.sh`.
+- **Dubbing** needs `.venv-asr` (as for speech editing; its SimAlign word aligner and AV-sync lip-sync run in a
+  second worker, `model/src/zonos3/workers/dub_align.py`) and FuseAlign, then `DUB=1 servers/sgl/scripts/serve.sh`.
 - **Forced alignment** (FuseAlign, speech editing and dubbing) runs in one worker process per server
   (`model/src/zonos3/workers/fusealign.py`, the workspace interpreter), started on first use;
-  `ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0`, else CPU).
+  `ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0`, else CPU). Recordings over 30 s (or transcripts over
+  1022 UTF-8 bytes) are aligned long-form, anchored by Qwen3-ASR transcripts of their voice-activity chunks (at most
+  25 s each); FuseAlign's built-in Whisper anchoring is never used.
 - **Accent adapters** need `--accent-adapters <dir>`.
 
 Lingua training checkpoints are converted with `tools/convert_lingua_checkpoint.py`.

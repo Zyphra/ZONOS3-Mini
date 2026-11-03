@@ -4,22 +4,35 @@
 Runs with the workspace interpreter and ``PYTHONPATH=<model/src>``. Reads one JSON request per stdin line and answers
 each with one JSON line on stdout, in order, until stdin closes: ``{"id", "status": "ok", ...}`` or ``{"id", "status":
 "error", "error", "message", "invalid"}`` ("invalid": a ValueError, i.e. the input is at fault). The model loads on
-the first ``align``, so ``ping`` answers at once.
+the first ``align``, so ``ping`` (and ``segments``, which needs only Silero VAD) answer without it.
 
 Ops:
   ping                                          -> {"model": checkpoint id (Zyphra/fusealign/<file>, or the local path)}
-  align {items: [{audio, tokens, language}]}    -> {"results": [{"words": [{word, start, end, presence, placed}]}]}
+  segments {items: [{audio}]}                   -> {"results": [{"chunks": [[start, end], ...]}]}
+  align {items: [{audio, tokens, utterances?}]} -> {"results": [{"words": [{word, start, end, presence, placed}]}]}
 
-``audio`` is the path of any sound file soundfile reads (channels are averaged), ``tokens`` the words to place
-(zonos3.tts.align_text.align_tokens; the worker never segments) and ``language`` the Whisper language of a recording
-over 30 s (long-form anchoring; null auto-detects). Each item gets one word per token, in order, with times in
-seconds; an unplaced word keeps FuseAlign's fallback times.
+``audio`` is the path of any sound file soundfile reads (channels are averaged).
+
+``segments`` cuts a recording into the pieces speech recognition transcribes for long-form anchors: Silero VAD speech
+regions (``fusealign_hub.vad.speech_regions`` of the 16 kHz mono audio, in seconds) packed greedily, in order, into
+chunks spanning (first region start .. last region end) at most ``CHUNK_SECONDS``; a region longer than that is split
+into the fewest equal parts of at most ``CHUNK_SECONDS``, each a chunk of its own. No speech gives no chunks.
+
+``align`` places ``tokens`` (the words, zonos3.tts.align_text.align_tokens; the worker never segments): one word per
+token, in order, with times in seconds; an unplaced word keeps FuseAlign's fallback times. ``utterances``
+(``[{text, start, end}]``, speech recognition of the recording's ``segments`` chunks) are the approximate word times a
+recording over 30 s or a transcript over ``fusealign_hub`` MAX_TEXT_BYTES is routed by (``guide_words``); without
+them such an item falls back to FuseAlign's VAD character-time map. FuseAlign's built-in Whisper anchoring never runs.
 """
 import argparse
 import json
+import math
 import os
 import sys
 from typing import Callable, Iterable, TextIO
+
+CHUNK_SECONDS = 25.0
+SAMPLE_RATE = 16000
 
 
 def read_mono(path: str):
@@ -29,33 +42,94 @@ def read_mono(path: str):
     return data.mean(axis=1), int(sr)
 
 
-def align(aligner, items: list) -> list[dict]:
-    """Per item ``{"words": [...]}``; items sharing a sample rate and language share batched forwards."""
+def pack_regions(regions: list[tuple[float, float]], limit: float = CHUNK_SECONDS) -> list[list[float]]:
+    """Speech regions ``(start, end)`` in time order -> chunks ``[start, end]`` (see ``segments`` above)."""
+    chunks: list[list[float]] = []
+    current: list[float] | None = None
+    for start, end in regions:
+        start, end = float(start), float(end)
+        if end - start > limit:
+            if current is not None:
+                chunks.append(current)
+                current = None
+            n = math.ceil((end - start) / limit)
+            step = (end - start) / n
+            chunks.extend([start + i * step, end if i == n - 1 else start + (i + 1) * step] for i in range(n))
+        elif current is not None and end - current[0] <= limit:
+            current[1] = end
+        else:
+            if current is not None:
+                chunks.append(current)
+            current = [start, end]
+    if current is not None:
+        chunks.append(current)
+    return chunks
+
+
+def _items(op: str, items, fields: set[str]) -> list[dict]:
     if not isinstance(items, list):
-        raise ValueError("align: items must be a list")
-    clips = []
+        raise ValueError(f"{op}: items must be a list")
     for k, item in enumerate(items):
         if not isinstance(item, dict) or not isinstance(item.get("audio"), str):
-            raise ValueError(f"align: items[{k}] needs an audio path")
-        tokens, language = item.get("tokens"), item.get("language")
+            raise ValueError(f"{op}: items[{k}] needs an audio path")
+        unknown = set(item) - fields
+        if unknown:
+            raise ValueError(f"{op}: items[{k}] has unknown fields {sorted(unknown)}")
+    return items
+
+
+def segments(items, speech_regions: Callable) -> list[dict]:
+    """Per item ``{"chunks": [[start, end], ...]}``; ``speech_regions(wav16k)`` is ``fusealign_hub.vad.speech_regions``
+    (``[{start, end}]`` seconds)."""
+    import torch
+    import torchaudio
+
+    results = []
+    for item in _items("segments", items, {"audio"}):
+        data, sr = read_mono(item["audio"])
+        wav = torch.from_numpy(data)
+        if sr != SAMPLE_RATE:
+            wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE)
+        regions = [(r["start"], r["end"]) for r in speech_regions(wav)]
+        results.append({"chunks": pack_regions(regions)})
+    return results
+
+
+def align(aligner, items, guide_words: Callable) -> list[dict]:
+    """Per item ``{"words": [...]}``; items sharing a sample rate share batched forwards. ``guide_words`` is
+    ``fusealign_hub.longform.guide_words``."""
+    clips = []
+    for k, item in enumerate(_items("align", items, {"audio", "tokens", "utterances"})):
+        tokens, utterances = item.get("tokens"), item.get("utterances")
         if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
             raise ValueError(f"align: items[{k}].tokens must be a list of strings")
-        if language is not None and not isinstance(language, str):
-            raise ValueError(f"align: items[{k}].language must be a string or null")
-        clips.append((*read_mono(item["audio"]), tokens, language))
-    groups: dict[tuple[int, str | None], list[int]] = {}
-    for k, (_, sr, _, language) in enumerate(clips):
-        groups.setdefault((sr, language), []).append(k)
+        if utterances is not None and not (isinstance(utterances, list) and all(
+                isinstance(u, dict) and isinstance(u.get("text"), str)
+                and all(isinstance(u.get(key), (int, float)) and not isinstance(u.get(key), bool)
+                        for key in ("start", "end")) for u in utterances)):
+            raise ValueError(f"align: items[{k}].utterances must be a list of {{text, start, end}}")
+        # Never None: FuseAlign runs Whisper for a long-form item without approximate word times.
+        anchors = guide_words(utterances) if utterances is not None else []
+        clips.append((*read_mono(item["audio"]), tokens, anchors))
+    groups: dict[int, list[int]] = {}
+    for k, (_, sr, _, _) in enumerate(clips):
+        groups.setdefault(sr, []).append(k)
     results: list[dict] = [{"words": []} for _ in clips]
-    for (sr, language), ks in groups.items():
-        out = aligner.align_batch([clips[k][0] for k in ks], sr, [clips[k][2] for k in ks], language=language)
+    for sr, ks in groups.items():
+        out = aligner.align_batch([clips[k][0] for k in ks], sr, [clips[k][2] for k in ks],
+                                  asr_words=[clips[k][3] for k in ks], language=None)
         for k, words in zip(ks, out):
             results[k] = {"words": [{"word": w.word, "start": float(w.start), "end": float(w.end),
                                      "presence": float(w.presence), "placed": bool(w.placed)} for w in words]}
     return results
 
 
-def serve(lines: Iterable[str], out: TextIO, model_id: str, load: Callable[[], object]) -> None:
+def no_whisper(*_args, **_kwargs):
+    raise RuntimeError("FuseAlign's Whisper anchoring is disabled: long-form anchors come from Qwen3-ASR utterances")
+
+
+def serve(lines: Iterable[str], out: TextIO, model_id: str, load: Callable[[], object],
+          speech_regions: Callable, guide_words: Callable) -> None:
     """Answer the requests of ``lines`` on ``out``; ``load()`` builds the aligner on the first ``align``."""
     aligner = None
     for line in lines:
@@ -68,10 +142,13 @@ def serve(lines: Iterable[str], out: TextIO, model_id: str, load: Callable[[], o
             op = request.get("op")
             if op == "ping":
                 response = {"model": model_id}
+            elif op == "segments":
+                response = {"results": segments(request.get("items"), speech_regions)}
             elif op == "align":
                 if aligner is None:
                     aligner = load()
-                response = {"results": align(aligner, request.get("items"))}
+                    aligner.whisper_words = no_whisper  # a guard: anchors are always supplied
+                response = {"results": align(aligner, request.get("items"), guide_words)}
             else:
                 raise ValueError(f"unknown op {op!r}")
             response.update(id=rid, status="ok")
@@ -97,10 +174,13 @@ def main() -> None:
     import torch
     from fusealign_hub import load_aligner
     from fusealign_hub.aligner import CHECKPOINT_FILE, HF_REPO
+    from fusealign_hub.longform import guide_words
+    from fusealign_hub.vad import speech_regions
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
     model_id = args.checkpoint or f"{HF_REPO}/{CHECKPOINT_FILE}"
-    serve(sys.stdin, protocol, model_id, lambda: load_aligner(args.checkpoint, device=device))
+    serve(sys.stdin, protocol, model_id, lambda: load_aligner(args.checkpoint, device=device),
+          speech_regions, guide_words)
 
 
 if __name__ == "__main__":
