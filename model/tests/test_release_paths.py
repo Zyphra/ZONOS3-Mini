@@ -56,4 +56,4 @@ def test_release_registries_are_consistent():
     assert e["decoder"]["campaign"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/heads/")
     spk = json.loads((root / "speaker_encoder_registry.json").read_text())
     assert spk["ownmect_s2"]["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/speaker_encoders/ownmect_s2/")   # MECT60K_SWITCH_20261022
-    assert release.RELEASE_LM.endswith("/lm/mect_60k")
+    assert release.RELEASE_LM.endswith("/lm/rate30_20k_r2grpo")   # R2GRPO_SWITCH_20261103

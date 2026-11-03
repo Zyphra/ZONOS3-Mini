@@ -96,7 +96,7 @@ function validateTagCfg(text: string, scale: number, speakerCfg: number, control
 }
 
 /** zonos3.tts.plan resolve_condition_buckets (R3): explicit ids win, raw values map through the edges, anything else is
- *  unknown. */
+ *  unknown (the row's bucket count n; ids 0..n-1 are buckets). */
 export function resolveConditionBuckets(e: Engine, body: Body): number[] {
   const hp = e.hp;
   const buckets = isSet(body, 'condition_buckets') ? body.condition_buckets : null;
@@ -106,7 +106,7 @@ export function resolveConditionBuckets(e: Engine, body: Body): number[] {
     if (nonEmpty(buckets) || nonEmpty(values)) fail(400, 'This checkpoint has no condition rows (loudness / fmax / speaking rate)');
     return [];
   }
-  const names = hp.condNames, nBuckets = hp.nCondBuckets;
+  const names = hp.condNames;
   const asMap = (raw: unknown, what: string): Map<string, unknown> => {
     const out = new Map<string, unknown>();
     if (raw === null) return out;
@@ -125,7 +125,7 @@ export function resolveConditionBuckets(e: Engine, body: Body): number[] {
   };
   const ids = asMap(buckets, 'condition_buckets'), vals = asMap(values, 'condition_values');
   return names.map((name, i) => {
-    const id = ids.get(name), val = vals.get(name);
+    const id = ids.get(name), val = vals.get(name), nBuckets = hp.condBucketCounts[i];
     if (id !== undefined && id !== null) {
       const b = Number(id);
       if (b < 0 || b > nBuckets) fail(400, `condition_buckets[${name}] must be in [0, ${nBuckets - 1}] or ${nBuckets} (= unknown)`);
@@ -339,7 +339,7 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   p.prompt = build(p.text, 'could not build the prompt');
   if (p.cfgKind === 'speaker') {
     try {
-      p.twin = buildCfgTwin(p.prompt, e.hp.nCondBuckets);
+      p.twin = buildCfgTwin(p.prompt, e.hp.condBucketCounts);
     } catch {
       fail(400, 'could not build the speaker-CFG twin prompt');
     }
@@ -381,7 +381,7 @@ function attachProbe(e: Engine, p: Plan): { probe: Probe | null; follower: SpanF
   let rates: RateBuckets | null = null;
   const hp = e.hp;
   hp.condNames.forEach((name, i) => {
-    if (name === 'speaking_rate' && hp.condEdges[i]?.length) rates = new RateBuckets(i, hp.condEdges[i].slice(), hp.nCondBuckets);
+    if (name === 'speaking_rate' && hp.condEdges[i]?.length) rates = new RateBuckets(i, hp.condEdges[i].slice(), hp.condBucketCounts[i]);
   });
   const laci = as400(() => new LaciSession({
     heads: p.laci!, cfg: defaultLaciConfig(), prefillRows, seed: p.sp.seed, maxTokens: p.maxFrames, nCodebooks: NCB,

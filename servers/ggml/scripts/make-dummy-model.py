@@ -59,15 +59,18 @@ EOA_ID      = CODEBOOK
 PAD_ID      = CODEBOOK + 1
 TEXT_VOCAB  = 8196
 
-# --- speaker / condition tokens (real names, edges, units and silence frame of the Mini release) ---
+# --- speaker / condition tokens (real names, edges, units and silence frame of the release LMs; per-table bucket
+# counts and speaking-rate edges of zonos3-rate30-20k-r2grpo) ---
 SPEAKER_DIM = 192
-N_BUCKETS = 10
+COND_BUCKET_COUNTS = [10, 10, 30]
 COND_NAMES = ["loudness", "fmax", "speaking_rate"]
 COND_UNITS = ["LUFS", "Hz", "utf-8 bytes per second"]
 COND_EDGES = {
     "loudness": [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
     "fmax": [7578.125, 8000.0, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
-    "speaking_rate": [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208],
+    "speaking_rate": [6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196,
+                      14.53, 14.887, 15.193, 15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069,
+                      19.818, 20.816, 22.286, 24.722, 29.25],
 }
 SILENCE_FRAME = [1918, 746, 3544, 234, 1267, 2914, 3944, 2849, 326, 1337]
 
@@ -104,12 +107,12 @@ def main():
 
     rng = np.random.default_rng(0)
 
-    def rnd(*shape):
+    def rnd(*shape, gen=None):
         # small init so a 4-layer random net stays numerically tame (no NaN/Inf
         # through the RMS norms and the tanh logit softcap). 1-D tensors (norms,
         # biases, temp, router bias) keep f32; matrices store f16 to halve the
         # committed fixture, mirroring the real converter's storage scheme.
-        x = (rng.standard_normal(shape) * 0.02)
+        x = ((gen or rng).standard_normal(shape) * 0.02)
         return x.astype(np.float32 if len(shape) == 1 else np.float16)
 
     w = GGUFWriter(args.out, ARCH)
@@ -149,7 +152,7 @@ def main():
     w.add_uint32(f"{ARCH}.tokenizer.eos", 3)
     w.add_uint32(f"{ARCH}.speaker.embedding_length", SPEAKER_DIM)
     w.add_uint32(f"{ARCH}.condition.count", len(COND_NAMES))
-    w.add_uint32(f"{ARCH}.condition.bucket_count", N_BUCKETS)
+    w.add_array(f"{ARCH}.condition.bucket_counts", COND_BUCKET_COUNTS)
     w.add_array(f"{ARCH}.condition.names", COND_NAMES)
     w.add_array(f"{ARCH}.condition.units", COND_UNITS)
     for name in COND_NAMES:
@@ -167,8 +170,14 @@ def main():
     w.add_tensor("attnres_q.weight",   rnd(2 * N_LAYER + 1, DIM))
     w.add_tensor("speaker_proj.weight", rnd(DIM, SPEAKER_DIM))
     w.add_tensor("speaker_proj.bias",   rnd(DIM))
-    for i in range(len(COND_NAMES)):
-        w.add_tensor(f"cond_embd.{i}.weight", rnd(N_BUCKETS + 1, DIM))
+    # The first 11 rows of each table come from the main stream and rows beyond them from their own, so every other
+    # weight is independent of the bucket counts.
+    extra_rng = np.random.default_rng(1)
+    for i, n in enumerate(COND_BUCKET_COUNTS):
+        table = rnd(min(n + 1, 11), DIM)
+        if n + 1 > 11:
+            table = np.concatenate([table, rnd(n + 1 - 11, DIM, gen=extra_rng)])
+        w.add_tensor(f"cond_embd.{i}.weight", table)
 
     for L in range(N_LAYER):
         b = f"blk.{L}."

@@ -28,8 +28,9 @@ def condition_tokens(state: ServerState) -> dict | None:
     if c.condition_count == 0:
         return None
     names = list(c.condition_names)
-    return {"enabled": True, "names": names, "flags": {}, "count": c.condition_count, "n_buckets": c.condition_n_buckets,
-                "unknown_index": c.condition_n_buckets,
+    counts = dict(zip(names, (int(n) for n in c.condition_bucket_counts)))
+    return {"enabled": True, "names": names, "flags": {}, "count": c.condition_count, "bucket_counts": counts,
+                "unknown_ids": dict(counts),
                 "edges": {n: [float(v) for v in c.condition_edges.get(n, ())] for n in names},
                 "units": {n: c.condition_units[n] for n in names if n in c.condition_units},
                 "layout": "[reference prefix | speaker row]" + "".join(f"[{n}]" for n in names) + " BOS text EOS"}

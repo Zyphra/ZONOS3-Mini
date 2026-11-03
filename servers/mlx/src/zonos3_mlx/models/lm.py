@@ -57,7 +57,7 @@ class LMConfig:
     gdn_kernel: int
     speaker_embedding_dim: int
     condition_count: int
-    condition_n_buckets: int
+    condition_bucket_counts: tuple[int, ...]  # per condition row: ids 0..n-1, n = unknown (table has n + 1 rows)
     condition_names: tuple[str, ...]
     condition_units: dict[str, str]
     condition_edges: dict[str, tuple[float, ...]]
@@ -91,6 +91,10 @@ class LMConfig:
         spec = json.loads(f.meta(_key("text_tokenizer_spec")))
         spec["path"] = str(_cache_tokenizer(f.meta(_key("tokenizer.json"))))
         span_end = f.meta(_key("span_end_id"), None)
+        condition_count = int(f.meta(_key("condition.count")))
+        counts = f.meta(_key("condition.bucket_counts"), None)  # legacy GGUFs: one u32 condition.bucket_count
+        counts = (tuple(int(n) for n in counts) if counts is not None
+                  else (int(f.meta(_key("condition.bucket_count"))),) * condition_count)
         return cls(
             n_layers=int(f.meta(_key("block_count"))),
             max_seqlen=int(f.meta(_key("context_length"))),
@@ -113,8 +117,8 @@ class LMConfig:
             gdn_head_dim=int(f.meta(_key("gdn.head_dim"))),
             gdn_kernel=int(f.meta(_key("gdn.conv_kernel"))),
             speaker_embedding_dim=int(f.meta(_key("speaker.embedding_length"))),
-            condition_count=int(f.meta(_key("condition.count"))),
-            condition_n_buckets=int(f.meta(_key("condition.bucket_count"))),
+            condition_count=condition_count,
+            condition_bucket_counts=counts,
             condition_names=names,
             condition_units=dict(zip(names, units)),
             condition_edges={n: tuple(float(v) for v in f.meta(_key(f"condition.edges.{n}"))) for n in names},

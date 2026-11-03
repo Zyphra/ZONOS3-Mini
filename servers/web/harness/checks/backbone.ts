@@ -3,7 +3,7 @@
 import { Backbone, LOGITS, NCB, VOCAB, type ProbeInput } from '../../src/backbone';
 import { fetchJson, loadModel } from '../../src/gpu/weights';
 import { locateTextSpan, probeReduce } from '../../src/probe';
-import type { Conditioning } from '../../src/prompt';
+import { conditionBucketCounts, type Conditioning } from '../../src/prompt';
 import { argmax, cosine, maxAbs, type Check, type Ctx } from './util';
 
 const W = 11;
@@ -18,6 +18,7 @@ interface Fixture {
   full: Int32Array;          // prompt + generated rows [69][11]
   n0: number;
   cond: Conditioning;
+  unknown: number[];         // per-table unknown bucket ids (the bucket counts)
   logits: Float32Array;      // [50][LOGITS]: row 0 prompt, row k decode step k
   probe: Float32Array;       // [49][2]
   probeIn: ProbeInput;
@@ -38,9 +39,10 @@ function load(ctx: Ctx): Promise<Fixture> {
     const heads = (await fetchJson<{ heads: { layer: number; head: number }[] }>(new URL('laci/zonos3_mini_mect60k_heads.json', ctx.base).href)).heads;
     const span = locateTextSpan(ids);
     if (!span) throw new Error('ids.npy has no BOS..EOS text span');
-    const bb = new Backbone(ctx.gpu, await loadModel(ctx.gpu, ctx.base, 'backbone'), STEER_SOURCES);
+    const model = await loadModel(ctx.gpu, ctx.base, 'backbone');
+    const bb = new Backbone(ctx.gpu, model, STEER_SOURCES);
     return {
-      bb, ids, full, n0: idsNpy.shape[0], cond,
+      bb, ids, full, n0: idsNpy.shape[0], cond, unknown: conditionBucketCounts(model.meta),
       logits: (await ctx.npy('logits.npy')).data, probe: (await ctx.npy('probe.npy')).data,
       probeIn: { textStart: span.start, textLen: span.len, heads: heads.map(h => ({ layer: h.layer, head: h.head })), windows: [] },
     };
@@ -139,7 +141,7 @@ export const checks: Record<string, Check> = {
     const ref = await decode(f);
     // (a) slot 1 holds the CFG twin (speaker row dropped, unknown buckets) and steps interleaved with slot 0.
     const twinIds = f.ids.slice(W);
-    const twinCond: Conditioning = { speakerRow: -1, speaker: null, conditionRow: 0, buckets: [10, 10, 10] };
+    const twinCond: Conditioning = { speakerRow: -1, speaker: null, conditionRow: 0, buckets: f.unknown.slice() };
     await f.bb.prefill(0, f.ids, f.cond);
     const tw = await f.bb.prefill(1, twinIds, twinCond);
     const n = 8;

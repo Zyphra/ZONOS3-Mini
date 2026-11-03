@@ -60,7 +60,7 @@ servers/sgl/scripts/serve.sh
 
 The launcher sources `servers/sgl/scripts/env.sh` (CUDA toolchain, the TileLang gated-DeltaNet backend and the five
 `ZONOS3_USE_TRAINING_*` exact-mode kernels) and serves the release LM
-`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k` on `127.0.0.1:1919` with `--attention-backend fa --cache-type
+`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo` on `127.0.0.1:1919` with `--attention-backend fa --cache-type
 naive`, two running requests and CUDA graphs. Extra server flags are appended (e.g. `servers/sgl/scripts/serve.sh --port 1920`).
 The first start JIT-compiles kernels and builds the text-normalization grammar cache, which takes several minutes.
 On Apple Silicon, `servers/mlx/scripts/serve.sh` serves the GGUF files of `Zyphra/ZONOS3_Mini_GGUF` on the same port
@@ -121,7 +121,7 @@ from zonos3_sgl.tts import TTSLLM, TTSSamplingParams
 
 # The server's settings: FlashAttention, per-request (naive) cache, and half the GPU for the KV cache so the codec
 # encoder and decoder fit next to it.
-tts = TTSLLM(model_path="hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k",
+tts = TTSLLM(model_path="hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo",
              attention_backend="fa", cache_type="naive", memory_ratio=0.5)
 
 result = tts.generate_one("Hello from the offline Python API.", TTSSamplingParams(seed=42), language="en_us")
@@ -142,7 +142,7 @@ The offline path applies the server's text normalization and conditioning (speak
 for both servers. It runs on CPU or GPU:
 
 ```bash
-uv run python -m zonos3.reference --model hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k \
+uv run python -m zonos3.reference --model hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo \
   --text "Hello from the reference." -o ref.wav --device cuda
 ```
 

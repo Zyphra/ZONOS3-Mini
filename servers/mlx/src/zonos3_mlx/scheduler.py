@@ -228,7 +228,8 @@ class Scheduler:
         c = self.config
         names = list(c.condition_names)
         edges = c.condition_edges.get("speaking_rate")
-        rates = (RateBuckets(names.index("speaking_rate"), tuple(edges), c.condition_n_buckets)
+        rates = (RateBuckets(names.index("speaking_rate"), tuple(edges),
+                             c.condition_bucket_counts[names.index("speaking_rate")])
                  if c.condition_count and "speaking_rate" in names and edges else None)
         take, duration, bucket, rate_deltas = plan.laci_take, None, None, None
         if take is not None:

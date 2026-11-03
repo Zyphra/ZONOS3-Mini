@@ -91,13 +91,15 @@ forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`ed
    it never moves the bucket. Generate and Regenerate both use it.
 
    **Extended speaking-rate scale** ([guide: Extended speaking-rate buckets](guide.md#extended-speaking-rate-buckets)): where the steering bundle's
-   `rate_extension` measured them safe for the target language, the row's buckets 0-9 continue with tempo-steered
+   `rate_extension` measured them safe for the target language, the `lm/mect_60k` row's buckets 0-9 continue with tempo-steered
    buckets below 0 (−1, −2, …) and above 9 (10, 11, …): the rate row unknown plus a calibrated `delivery.tempo` dose,
    added to the take's own controls. The auto bucket, the candidate offsets, pace retakes and the one-slower truncation
    retake all move on the language's scale (`plan.RateScale`, `laci.RateBuckets.first`); a retake across the row's end
    switches the condition row (row bucket <-> unknown) and the take's steering delta (`laci_rate_*` on the take's
    request: the scale and the delta in every bucket). Rows report `bucket` / `final_bucket` on that scale. Languages
-   without steered buckets (and servers whose bundle has no `rate_extension`) take exactly the row-only path.
+   without steered buckets (and servers whose bundle has no `rate_extension`, or a `rate_extension` measured on other
+   speaking-rate edges than the checkpoint's, as on the default `lm/rate30_20k_r2grpo` with buckets 0-29) take exactly
+   the row-only path.
 
    Regenerate makes new takes for one segment with the given seed, text and bucket, and optionally a new `voice` and
    `controls` (omitted: the segment's; `controls: {}` clears its own direction); an empty text silences the segment.

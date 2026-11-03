@@ -5,7 +5,7 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 
 | Network | GGUF | Notes |
 | --- | --- | --- |
-| LM backbone | `zonos3-qat.gguf` (default) or `zonos3-f16.gguf` | GDN + global attention, Full AttnRes, latent MoE; Q4_0 / Q8_0 blocks become MLX affine-quantized weights, bit-exact |
+| LM backbone | `zonos3-ptq.gguf` (default, `lm/rate30_20k_r2grpo`), `zonos3-qat.gguf` (previous `lm/mect_60k`, `SERVE_MODEL`) or `zonos3-f16.gguf` | GDN + global attention, Full AttnRes, latent MoE; Q4_0 / Q8_0 blocks become MLX affine-quantized weights, bit-exact; per-table condition bucket counts |
 | Codec decoder | `zac.gguf` | causal multi-resolution iSTFT head, 44.1 kHz |
 | Speaker encoder | `spk-encoder.gguf` | MECT-B2 + ASTP, 192-d embeddings (`speaker_mode=embedding`) |
 | Reference encoder | `zac-encoder.gguf` + `ssl-teacher.gguf` | raw-reference cloning and speech editing; the BF16 autocast recipe of the release; loaded on first use, freed after `--reference-idle-unload` idle seconds |

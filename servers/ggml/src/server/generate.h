@@ -85,7 +85,7 @@ std::vector<std::string> server_accents(const ServerState & s);
 // R4 zonos3.languages.normalize (body["language"], default en_us).
 std::string resolve_language(const nlohmann::json & body);
 // R3 zonos3.tts.plan.resolve_condition_buckets (condition_buckets / condition_values): one bucket per condition row,
-// n_cond_buckets = unknown.
+// hp.cond_bucket_counts[i] = unknown.
 std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const nlohmann::json & body);
 // The tokenizer's TTSTextNormalizer step: `text` unchanged unless requested and a normalizer runs; a worker failure is
 // a 500 "text normalization failed: ...".

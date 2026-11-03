@@ -27,9 +27,10 @@ struct zonos3_hparams {
     // Layer 0 is dense; later layers use the stored top-k.
     std::vector<int32_t> expert_used;
     // Speaker-embedding row and condition rows (loudness, fmax, speaking_rate).
-    uint32_t speaker_dim = 0, n_cond = 0, n_cond_buckets = 0;
+    uint32_t speaker_dim = 0, n_cond = 0;
+    std::vector<uint32_t> cond_bucket_counts; // [n_cond]: table i has cond_bucket_counts[i] + 1 rows, id cond_bucket_counts[i] = unknown
     std::vector<std::string> cond_names, cond_units;
-    std::vector<std::vector<float>> cond_edges; // [n_cond][n_cond_buckets - 1], strictly increasing
+    std::vector<std::vector<float>> cond_edges; // [n_cond][cond_bucket_counts[i] - 1], strictly increasing
     std::vector<int32_t> silence_frame;          // [n_codebooks] audio-silence frame
     // Text rows beyond the padding row (text_embd rows = text_vocab + 1 + text_extra_tokens): speech-edit marker rows
     // (text_vocab + 1 + j) then the phoneme block (tokenizer.phonemes), per zonos3/tts/{edit,superbpe}.py.
@@ -68,7 +69,7 @@ struct zonos3_model {
     ggml_tensor * text_embd = nullptr, * output_norm = nullptr, * output = nullptr;
     ggml_tensor * attnres_q = nullptr; // [width, 2*layers+1], one query per sublayer and final mix.
     ggml_tensor * speaker_proj_w = nullptr, * speaker_proj_b = nullptr;
-    std::vector<ggml_tensor *> cond_embd; // [n_embd, n_cond_buckets + 1] each; last column = unknown
+    std::vector<ggml_tensor *> cond_embd; // [n_embd, cond_bucket_counts[i] + 1] each; last column = unknown
     zonos3_tokenizer tok;
     std::vector<zonos3_layer> layers;
     ggml_context * ctx_w = nullptr;
@@ -95,7 +96,7 @@ struct zonos3_conditioning {
     int speaker_row = -1;              // replaced by speaker_proj·speaker + bias; -1 = none
     std::vector<float> speaker;        // [hp.speaker_dim] when speaker_row >= 0
     int condition_row = -1;            // first of hp.n_cond rows; row i replaced by cond_embd[i][buckets[i]]
-    std::vector<int32_t> buckets;      // [hp.n_cond], each 0..hp.n_cond_buckets (n_cond_buckets = unknown)
+    std::vector<int32_t> buckets;      // [hp.n_cond], each 0..hp.cond_bucket_counts[i] (cond_bucket_counts[i] = unknown)
     // Optional, default off:
     int accent = -1;                  // accent adapter of model.accents for these rows (prefill/extend/uncached
     float accent_strength = 0.0f;     // forward): y += strength * adapter; -1 or strength 0 = none

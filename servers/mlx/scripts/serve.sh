@@ -4,7 +4,7 @@
 # default_voices/. Companions (zac, spk-encoder, zac-encoder, ssl-teacher, steer, accents) are picked up
 # next to the backbone. Overrides:
 #   MODELS_DIR                  directory holding the GGUFs (default servers/ggml/models)
-#   SERVE_MODEL                 backbone GGUF (default $MODELS_DIR/zonos3-qat.gguf)
+#   SERVE_MODEL                 backbone GGUF (default $MODELS_DIR/zonos3-ptq.gguf)
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)
 #   PHONEME_LEXICON             gold pronunciation lexicon (--tts-phoneme-lexicon: POST /v2/phonemize)
 #   ZONOS3_STUDIO_PROJECTS      shared studio project store (--studio-projects-dir); empty keeps projects in the browser
@@ -22,7 +22,7 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 cd "$repo_root"
 models="${MODELS_DIR:-$repo_root/servers/ggml/models}"
-model="${SERVE_MODEL:-$models/zonos3-qat.gguf}"
+model="${SERVE_MODEL:-$models/zonos3-ptq.gguf}"
 if [[ ! -f "$model" ]]; then
     echo "missing $model: hf download Zyphra/ZONOS3_Mini_GGUF --local-dir $models" >&2
     exit 1

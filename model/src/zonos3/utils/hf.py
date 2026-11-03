@@ -103,10 +103,13 @@ class Zonos3Config:
     quality_dropout: Optional[dict[str, float]] = None
     # Condition rows of the srcmix-cond3 finetunes (2026-10-15): three all-pad rows between the voice conditioning
     # (reference prefix or speaker row) and BOS whose hidden states are replaced by learned bucket embeddings, one
-    # table per condition with condition_n_buckets + 1 rows (the last = unknown). condition_edges are the bucket
-    # edges (bucket i = [edge_{i-1}, edge_i)) the converter copies from the run's configs/condition_edges.json.
+    # table per condition with condition_n_buckets + 1 rows (the last = unknown); the rate30 finetunes (2026-10-30)
+    # carry one count per table in condition_bucket_counts (table i: counts[i] + 1 rows, id counts[i] = unknown).
+    # condition_edges are the bucket edges (bucket i = [edge_{i-1}, edge_i)) the converter copies from the run's
+    # configs/condition_edges.json.
     condition_tokens_enabled: bool = False
     condition_n_buckets: int = 10
+    condition_bucket_counts: Optional[list[int]] = None
     condition_count: int = 3
     condition_names: Optional[list[str]] = None
     condition_edges: Optional[dict[str, list[float]]] = None
@@ -165,6 +168,8 @@ class Zonos3Config:
             }
         if self.condition_names is not None:
             self.condition_names = [str(item) for item in self.condition_names]
+        if self.condition_bucket_counts is not None:
+            self.condition_bucket_counts = [int(item) for item in self.condition_bucket_counts]
         if self.condition_edges is not None:
             self.condition_edges = {
                 str(name): [float(x) for x in (edges or [])] for name, edges in self.condition_edges.items()

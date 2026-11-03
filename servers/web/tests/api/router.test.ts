@@ -157,7 +157,7 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(cond.cond.speakerRow).toBe(0);
     expect(twin.slot).toBe(1);
     expect(twin.rows).toBe(cond.rows - 1);
-    expect(twin.cond.buckets).toEqual([10, 10, 10]);
+    expect(twin.cond.buckets).toEqual(engine.hp.condBucketCounts);
   });
 
   it('controls CFG runs the same prompt as an unsteered twin', async () => {

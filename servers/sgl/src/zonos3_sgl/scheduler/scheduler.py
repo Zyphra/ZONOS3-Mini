@@ -200,6 +200,18 @@ def _apply_cold_start_delay_mask(
         next_tokens[row, step + 1 : n_codebooks] = int(audio_pad_id)
 
 
+def _speaking_rate_buckets(model_config, condition_unknowns: Tuple[int, ...]):
+    """The checkpoint's speaking-rate condition row as a LACI RateBuckets (its own table's bucket count), or None."""
+    from zonos3.tts.laci import RateBuckets  # local import: zonos3.tts imports this module
+
+    names = list(getattr(model_config, "condition_names", None) or [])
+    edges = (getattr(model_config, "condition_edges", None) or {}).get("speaking_rate")
+    if not condition_unknowns or "speaking_rate" not in names or not edges:
+        return None
+    index = names.index("speaking_rate")
+    return RateBuckets(index, tuple(float(e) for e in edges), int(condition_unknowns[index]))
+
+
 class TTSScheduler(SchedulerIOMixin):
     """Scheduler for TTS multi-codebook generation."""
 
@@ -234,13 +246,15 @@ class TTSScheduler(SchedulerIOMixin):
         self.sample_fp32_logits = sample_logits_in_fp32(model_config)
         self.speaker_embedding_dim = int(getattr(model_config, "speaker_embedding_dim", 0))
         self.speaker_embedding_codec = getattr(model_config, "speaker_embedding_codec", None)
-        # Condition rows (cond3 finetunes): tables per condition, the id n_buckets = unknown.
+        # Condition rows (cond3 finetunes): one table per condition, its id condition_bucket_counts[i] = unknown.
         self.condition_count = (
             int(getattr(model_config, "condition_count", 0) or 0)
             if getattr(model_config, "condition_tokens_enabled", False)
             else 0
         )
-        self.condition_unknown = int(getattr(model_config, "condition_n_buckets", 10) or 10)
+        self.condition_unknowns = (
+            tuple(int(n) for n in model_config.condition_bucket_counts) if self.condition_count else ()
+        )
         self.speaker_background_token_enabled = bool(
             getattr(model_config, "speaker_background_token_enabled", False)
         )
@@ -298,7 +312,7 @@ class TTSScheduler(SchedulerIOMixin):
         self._stats_tokens = 0
 
         # LACI (zonos3.tts.laci): alignment-head specs by language key, the live requests by uid.
-        from zonos3.tts.laci import LaciConfig, LaciHeads, RateBuckets  # local import: zonos3.tts imports this module
+        from zonos3.tts.laci import LaciConfig, LaciHeads  # local import: zonos3.tts imports this module
 
         self.laci_config = LaciConfig()
         self.laci_heads = {key: LaciHeads.load(path) for key, path in config.laci_heads.items()}
@@ -306,12 +320,7 @@ class TTSScheduler(SchedulerIOMixin):
         # Duration targets (TTSUserMsg.laci_target_frames) regenerate a missed take in another speaking-rate bucket: the
         # checkpoint's speaking-rate condition row, and a cache that never serves a prompt prefix with stale condition
         # rows (the continuation re-prefills its prompt with the new ids).
-        names = list(getattr(model_config, "condition_names", None) or [])
-        edges = (getattr(model_config, "condition_edges", None) or {}).get("speaking_rate")
-        self.laci_rates = (
-            RateBuckets(names.index("speaking_rate"), tuple(float(e) for e in edges), self.condition_unknown)
-            if self.condition_count and "speaking_rate" in names and edges else None
-        )
+        self.laci_rates = _speaking_rate_buckets(model_config, self.condition_unknowns)
         self.laci_rate_switch = config.cache_type == "naive"
 
     def _process_last_data(
@@ -751,7 +760,7 @@ class TTSScheduler(SchedulerIOMixin):
             cfg_twin_spec = speaker_cfg_twin(
                 msg, input_ids, n_codebooks=self.n_codebooks, audio_pad_id=self.audio_pad_id, text_vocab=self.text_vocab,
                 speaker_token_position=speaker_token_position, condition_values=condition_values,
-                condition_token_start=condition_token_start, condition_unknown=self.condition_unknown,
+                condition_token_start=condition_token_start, condition_unknowns=self.condition_unknowns,
             ) if speaker_cfg else None
             twin_input_ids = (
                 cfg_twin_spec.input_ids if speaker_cfg else plain_input_ids if tag_cfg else input_ids

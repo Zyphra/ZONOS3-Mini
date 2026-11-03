@@ -75,7 +75,6 @@ std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json
         return {};
     }
     const auto & names = hp.cond_names;
-    const int n_buckets = (int) hp.n_cond_buckets;
     auto as_map = [&](const json & raw, const char * what) {
         std::map<std::string, json> out;
         if (raw.is_null()) return out;
@@ -99,6 +98,7 @@ std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json
     std::vector<int32_t> out;
     for (size_t i = 0; i < names.size(); ++i) {
         const std::string & name = names[i];
+        const int n_buckets = (int) hp.cond_bucket_counts[i];
         auto id = ids.find(name);
         auto val = vals.find(name);
         int bucket;
@@ -632,7 +632,7 @@ std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, c
         zonos3_laci::RateBuckets rates;
         rates.index = index;
         rates.edges = sc.edges;
-        rates.n_buckets = (int) hp.n_cond_buckets;
+        rates.n_buckets = (int) hp.cond_bucket_counts[index];
         rates.first = sc.first;
         if (!(rates.first <= sc.bucket && sc.bucket <= rates.last()))
             fail(400, "speaking-rate bucket " + std::to_string(sc.bucket) + " is outside the scale [" +

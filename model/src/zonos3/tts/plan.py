@@ -92,7 +92,7 @@ class RulesContext(Protocol):
     codebook_size: int
     hidden_size: int  # the hidden-delta width per steered source
     condition_names: Sequence[str]  # the condition rows in prompt order; empty without condition rows
-    condition_n_buckets: int  # bucket ids 0..n-1, n = unknown
+    condition_bucket_counts: Sequence[int]  # per condition row: ids 0..n-1, n = unknown
     condition_edges: Mapping[str, Sequence[float]]  # raw value -> bucket edges per name
     condition_flags: Mapping[str, Mapping]  # flag rows: name -> {"values": [...]} (default [0, 1])
     speaker_modes: Sequence[str]  # "reference" (the prefix) and / or "embedding" (the speaker row), default first
@@ -173,9 +173,9 @@ def resolve_speaker_mode(modes: Sequence[str], value: str | None) -> str | None:
 def resolve_condition_buckets(ctx: RulesContext, buckets, values) -> list[int] | None:
     """R3: the bucket id of every condition row. Explicit ids win, raw values map through the edges (bucket i =
     [edge_{i-1}, edge_i), the training loader's bisect_right) or, on a flag row, to ``1 if value >= 0.5 else 0``;
-    anything else is unknown (``condition_n_buckets``). None for a checkpoint without condition rows, which refuses a
-    request that names any."""
-    names, n_buckets = list(ctx.condition_names), int(ctx.condition_n_buckets)
+    anything else is unknown (the row's bucket count, ``condition_bucket_counts[i]``). None for a checkpoint without
+    condition rows, which refuses a request that names any."""
+    names = list(ctx.condition_names)
     if not names:
         if buckets not in (None, {}, []) or values not in (None, {}, []):
             raise ValueError(NO_CONDITION_ROWS)
@@ -198,7 +198,8 @@ def resolve_condition_buckets(ctx: RulesContext, buckets, values) -> list[int] |
     ids_by_name = as_map(buckets, "condition_buckets")
     values_by_name = as_map(values, "condition_values")
     out = []
-    for name in names:
+    for i, name in enumerate(names):
+        n_buckets = int(ctx.condition_bucket_counts[i])
         if ids_by_name.get(name) is not None:
             try:
                 bucket = int(ids_by_name[name])
@@ -621,7 +622,7 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
         spec = speaker_cfg_twin(msg, t, n_codebooks=ctx.n_codebooks, audio_pad_id=ctx.audio_pad_id,
                                 text_vocab=ctx.text_vocab, speaker_token_position=max(rows.speaker_row, 0),
                                 condition_values=rules.condition_ids, condition_token_start=rows.condition_token_start,
-                                condition_unknown=ctx.condition_n_buckets)
+                                condition_unknowns=tuple(ctx.condition_bucket_counts))
         twin = Branch(spec.input_ids.to(torch.int32), None, -1, spec.condition_values, spec.condition_token_start)
     elif rules.cfg_kind == "tag":
         twin = replace(cond, input_ids=rows.with_text(tagged, rows_of(strip_nonverbal_markup(text))).to(torch.int32))

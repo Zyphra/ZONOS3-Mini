@@ -186,14 +186,14 @@ _CONDITION_LAYOUT = "[reference prefix | speaker row][loudness][fmax][speaking_r
 
 
 def _condition_spec(config: ServerArgs) -> dict | None:
-    """The checkpoint's condition rows (loudness / fmax / speaking-rate buckets): names, bucket count, edges; None
-    when the model has none."""
+    """The checkpoint's condition rows (loudness / fmax / speaking-rate buckets): names, per-name bucket counts (the
+    count is the unknown id), edges; None when the model has none."""
     model_config = config.model_config
     if not getattr(model_config, "condition_tokens_enabled", False):
         return None
     names = [str(item) for item in (getattr(model_config, "condition_names", None) or ("loudness", "fmax", "speaking_rate"))]
     count = int(getattr(model_config, "condition_count", len(names)) or len(names))
-    n_buckets = int(getattr(model_config, "condition_n_buckets", 10) or 10)
+    counts = dict(zip(names[:count], (int(n) for n in model_config.condition_bucket_counts)))
     edges = {
         str(name): [float(x) for x in (values or ())]
         for name, values in (getattr(model_config, "condition_edges", None) or {}).items()
@@ -205,8 +205,8 @@ def _condition_spec(config: ServerArgs) -> dict | None:
         names=names[:count],
         flags={name: flags[name] for name in names[:count] if name in flags},
         count=count,
-        n_buckets=n_buckets,
-        unknown_index=n_buckets,
+        bucket_counts=counts,
+        unknown_ids=dict(counts),
         edges=edges,
         units=dict(getattr(model_config, "condition_units", None) or {}),
         layout="[reference prefix | speaker row]" + "".join(f"[{name}]" for name in names[:count]) + " BOS text EOS",
@@ -328,7 +328,7 @@ class _RulesContext:
 
     @functools.cached_property
     def _conditions(self) -> dict:
-        return _condition_spec(self.config) or dict(names=[], n_buckets=0, edges={}, flags={})
+        return _condition_spec(self.config) or dict(names=[], bucket_counts={}, unknown_ids={}, edges={}, flags={})
 
     @property
     def n_codebooks(self) -> int:
@@ -347,8 +347,8 @@ class _RulesContext:
         return self._conditions["names"]
 
     @property
-    def condition_n_buckets(self) -> int:
-        return self._conditions["n_buckets"]
+    def condition_bucket_counts(self) -> tuple[int, ...]:
+        return tuple(self.config.model_config.condition_bucket_counts)
 
     @property
     def condition_edges(self) -> dict:
@@ -2000,7 +2000,7 @@ def _dub_runtime():
             DubModel(
                 name=Path(str(config.model_path)).name,
                 rate_edges=tuple(_dub_rate_edges(config)),
-                n_buckets=int(spec["n_buckets"]) if spec else 0,
+                n_buckets=int(spec["bucket_counts"].get("speaking_rate", 0)) if spec else 0,
                 laci_languages=frozenset(getattr(config, "laci_heads", None) or {}),
                 studio_voices=_model_supports_speaker_embedding(config),
                 source_voice=_model_uses_speaker_reference_prefix(config),

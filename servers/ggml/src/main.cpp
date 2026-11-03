@@ -56,8 +56,8 @@ static void usage(const char * a0) {
         "  --save-speaker-embedding <out.npy> saves the [192] embedding (--clone or --speaker-embedding)\n"
         "  --save-reference <out.npy> saves encoded reference codes\n"
         "  --loudness <LUFS> --fmax <Hz> --speaking-rate <bytes/s>  condition values (bucketed by the model)\n"
-        "  --condition-buckets <a,b,c> explicit buckets 0..9 (10 = unknown) for loudness,fmax,speaking-rate;\n"
-        "      wins per name over the values above; omitted conditions are unknown\n"
+        "  --condition-buckets <a,b,c> explicit buckets per condition, 0..count-1 (count = unknown) with the model's counts\n"
+        "      for loudness,fmax,speaking-rate; wins per name over the values above; omitted conditions are unknown\n"
         "  --cfg-scale <s> speaker CFG scale, default 1 (off; needs a speaker source; --tts only)\n"
         "  --silence-prefill <n> codec-silence frames appended to the prompt, 0..%d (default %d)\n"
         "  --headroom-db <db> output attenuation 0..24 for decoded wavs (default: decoder's value; --tts only)\n"
@@ -383,7 +383,7 @@ static bool parse_finite(const char * s, double & v) {
     return end != s && *end == '\0' && std::isfinite(v);
 }
 
-// "a,b,c": exactly three integers in 0..10 (10 = unknown).
+// "a,b,c": exactly three integers in 0..1024 (the model's per-table count = unknown; zonos3_build_prompt range-checks).
 static bool parse_condition_buckets(const std::string & s, int out[3]) {
     size_t pos = 0;
     for (int k = 0; k < 3; ++k) {
@@ -392,7 +392,7 @@ static bool parse_condition_buckets(const std::string & s, int out[3]) {
         const std::string tok = s.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
         char * end = nullptr;
         const long v = tok.empty() ? -1 : strtol(tok.c_str(), &end, 10);
-        if (tok.empty() || *end != '\0' || v < 0 || v > 10) return false;
+        if (tok.empty() || *end != '\0' || v < 0 || v > 1024) return false;
         out[k] = (int) v;
         pos = comma + 1;
     }
@@ -750,9 +750,9 @@ int main(int argc, char ** argv) {
         }
         cond_have[k] = true;
     }
-    int bucket_id[3] = { 10, 10, 10 };
+    int bucket_id[3] = { -1, -1, -1 };
     if (!buckets_arg.empty() && !parse_condition_buckets(buckets_arg, bucket_id)) {
-        fprintf(stderr, "error: --condition-buckets needs 3 comma-separated integers in 0..10\n"); return 1;
+        fprintf(stderr, "error: --condition-buckets needs 3 comma-separated non-negative integers\n"); return 1;
     }
     float cfg_scale = 1.0f;
     if (!cfg_arg.empty()) {
@@ -987,14 +987,14 @@ int main(int argc, char ** argv) {
     if (use_embedding) reference_opt.speaker_embedding = speaker_embedding.data();
     reference_opt.silence_prefill_frames = silence_prefill;
     if (have_conditions) {
-        // Per name: an explicit bucket 0..9 wins; otherwise the value flag is bucketed; otherwise unknown.
+        // Per name: an explicit bucket wins; otherwise the value flag is bucketed; otherwise unknown.
         static const char * const names[3] = { "loudness", "fmax", "speaking_rate" };
-        reference_opt.condition_buckets.assign(model.hp.n_cond, (int32_t) model.hp.n_cond_buckets);
+        reference_opt.condition_buckets.assign(model.hp.cond_bucket_counts.begin(), model.hp.cond_bucket_counts.end());
         for (int k = 0; k < 3; ++k) {
             const int idx = zonos3_condition_index(model, names[k]);
             if (idx < 0) { fprintf(stderr, "error: model has no '%s' condition\n", names[k]); zonos3_model_free(model); return 1; }
-            int b = (int) model.hp.n_cond_buckets;
-            if (bucket_id[k] != 10) b = bucket_id[k];
+            int b = (int) model.hp.cond_bucket_counts[idx];
+            if (bucket_id[k] >= 0) b = bucket_id[k];
             else if (cond_have[k]) b = zonos3_condition_bucket(model, idx, cond_value[k]);
             if (b < 0) { fprintf(stderr, "error: %s must be a finite number\n", cond_flag[k]); zonos3_model_free(model); return 1; }
             reference_opt.condition_buckets[idx] = b;

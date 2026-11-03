@@ -4,7 +4,7 @@
     python -m zonos3_mlx.tools embed spk-encoder.gguf audio.wav emb.npy [--dump-dir D]
     python -m zonos3_mlx.tools ssl ssl-teacher.gguf (--audio A | --features F --mask M) --out D
     python -m zonos3_mlx.tools encode zac-encoder.gguf ssl-teacher.gguf audio.mp3 codes.npy
-    python -m zonos3_mlx.tools generate zonos3-qat.gguf "Text." out.wav [--seed S] [--dump-codes codes.npy]
+    python -m zonos3_mlx.tools generate zonos3-ptq.gguf "Text." out.wav [--seed S] [--dump-codes codes.npy]
 
 Outputs are the golden names of tools/dump_golden.py, for tools/compare_golden.py.
 """

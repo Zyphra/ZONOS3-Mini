@@ -1,9 +1,9 @@
 """Weights-backed offline<->server parity (loads the real model; GPU).
 
-Skipped unless ZONOS3_TEST_MODEL points at a checkpoint (e.g. "hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k").
+Skipped unless ZONOS3_TEST_MODEL points at a checkpoint (e.g. "hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo").
 Run with:
 
-    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k CUDA_VISIBLE_DEVICES=2 \
+    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo CUDA_VISIBLE_DEVICES=2 \
         PYTHONPATH=.../ZONOS3-offline-paritiy/python \
         python -m pytest -o addopts="" tests/misc/test_offline_parity_gpu.py -q
 
@@ -26,7 +26,7 @@ pytestmark = [
     pytest.mark.skipif(not MODEL, reason="set ZONOS3_TEST_MODEL to run (loads weights)"),
 ]
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 VOICE = os.path.join(REPO, "default_voices", "AmericanFemale.mp3")
 TEXT = "Call me at 123 Main Street."
 SEED = 12345

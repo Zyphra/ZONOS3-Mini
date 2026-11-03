@@ -198,7 +198,7 @@ class ReferenceContext:
         self.audio_pad_id, self.text_vocab, self.span_end_id = c.audio_pad_id, c.text_vocab, c.span_end_id
         self.hidden_size = c.dim
         self.max_seqlen = self.max_frames = c.max_seqlen
-        self.condition_names, self.condition_n_buckets = c.condition_names, c.condition_n_buckets
+        self.condition_names, self.condition_bucket_counts = c.condition_names, c.condition_bucket_counts
         self.condition_edges, self.condition_flags = c.condition_edges, {}
         # the reference's architecture always has the speaker row
         self.speaker_modes = (["reference"] if c.speaker_reference_prefix_enabled else []) + ["embedding"]
@@ -587,7 +587,7 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
     c = lm.config
     names = list(c.condition_names)
     edges = c.condition_edges.get("speaking_rate")
-    rates = (RateBuckets(names.index("speaking_rate"), tuple(edges), c.condition_n_buckets)
+    rates = (RateBuckets(names.index("speaking_rate"), tuple(edges), c.condition_bucket_counts[names.index("speaking_rate")])
              if c.condition_count and "speaking_rate" in names and edges else None)
     width = c.n_codebooks + 1
     prefill = plan.prefill_rows if plan.prefill_rows is not None else torch.zeros((0, width), dtype=torch.int32)

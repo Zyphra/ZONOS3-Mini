@@ -74,4 +74,16 @@ describe('request rules', () => {
     const bad = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', speaker_reference_codes: codes, stream: false });
     expect(bad.json()).toEqual({ detail: 'speaker_reference_codes must be codec ids in [0, 4095]' });
   });
+
+  it('R3: each condition row has its own bucket count (speaking_rate: 30)', async () => {
+    const buckets = async (body: Record<string, unknown>) => (await plan({ text: 'Hello there.', ...body })).prompt.cond.buckets;
+    expect(await buckets({})).toEqual([10, 10, 30]);
+    expect(await buckets({ condition_buckets: { speaking_rate: 29 } })).toEqual([10, 10, 29]);
+    expect(await buckets({ condition_buckets: { speaking_rate: 30 } })).toEqual([10, 10, 30]);
+    expect(await buckets({ condition_values: { speaking_rate: 29.25 } })).toEqual([10, 10, 29]);
+    expect(await buckets({ condition_values: { speaking_rate: 6.0 } })).toEqual([10, 10, 0]);
+    const bad = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', condition_buckets: { speaking_rate: 31 }, stream: false });
+    expect(bad.status).toBe(400);
+    expect(bad.json()).toEqual({ detail: 'condition_buckets[speaking_rate] must be in [0, 29] or 30 (= unknown)' });
+  });
 });

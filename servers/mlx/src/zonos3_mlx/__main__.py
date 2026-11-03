@@ -23,7 +23,7 @@ from zonos3_mlx import paths
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m zonos3_mlx", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("model", help="backbone GGUF (zonos3-qat.gguf / zonos3-f16.gguf)")
+    p.add_argument("model", help="backbone GGUF (zonos3-ptq.gguf / zonos3-f16.gguf)")
     for flag, help_ in (("--zac", "codec decoder (zac.gguf)"),
                         ("--spk-encoder", "speaker encoder for speaker-embedding cloning of audio voices"),
                         ("--zac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),

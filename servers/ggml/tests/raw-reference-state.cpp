@@ -229,8 +229,9 @@ static bool rows_equal(const zonos3_prompt & a, int a0, const zonos3_prompt & b,
 static bool prompt_contract(zonos3_model & model, const std::vector<float> & speaker) {
     const auto & hp = model.hp;
     const int ncb = (int) hp.n_codebooks, W = ncb + 1, frames = 3, ncond = (int) hp.n_cond;
-    const int unknown = (int) hp.n_cond_buckets;
+    const std::vector<int32_t> unknown(hp.cond_bucket_counts.begin(), hp.cond_bucket_counts.end());
     REQUIRE(ncb == 10 && hp.codebook_size >= 32 && ncond == 3 && speaker.size() == hp.speaker_dim, "model geometry");
+    REQUIRE((unknown == std::vector<int32_t>{10, 10, 30}), "per-table bucket counts");
     const std::string text = "raw reference test";
     const auto tokens = zonos3_tokenize(model.tok, text);
     std::vector<int32_t> codes(frames * ncb);
@@ -250,7 +251,7 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
             plain.prefill_frames == limits.silence_prefill_default_frames, "plain metadata");
     REQUIRE(plain0.prefill_frames == 0, "silence 0 disables prefill");
     REQUIRE(plain.cond.speaker_row == -1 && plain.cond.condition_row == 0 && plain.cond.buckets.size() == 3, "plain cond");
-    for (int b : plain.cond.buckets) REQUIRE(b == unknown, "plain buckets are unknown");
+    REQUIRE(plain.cond.buckets == unknown, "plain buckets are unknown");
     for (int r = 0; r < ncond; ++r) REQUIRE(all_pad_row(model, plain, r), "condition rows are all-pad");
     for (int t = 0; t < text_rows; ++t) {
         for (int cb = 0; cb < ncb; ++cb) REQUIRE(plain.ids[(size_t) (ncond + t) * W + cb] == (int32_t) hp.audio_pad_id, "text rows have pad audio");
@@ -324,8 +325,16 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "embedding + reference must be rejected");
     o = zonos3_prompt_options(); o.condition_buckets = {1, 2};
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "bucket count");
-    o.condition_buckets = {1, 2, unknown + 1};
+    o.condition_buckets = {1, 2, unknown[2] + 1};
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "bucket range");
+    o.condition_buckets = {1, 2, 31};
+    REQUIRE(!zonos3_build_prompt(model, text, o, bad), "speaking_rate 31 is out of range");
+    o.condition_buckets = {11, 2, 3};
+    REQUIRE(!zonos3_build_prompt(model, text, o, bad), "loudness 11 is out of range");
+    o.condition_buckets = {1, 2, 29};
+    REQUIRE(zonos3_build_prompt(model, text, o, bad), "speaking_rate 29 is a real bucket");
+    o.condition_buckets = {1, 2, 30};
+    REQUIRE(zonos3_build_prompt(model, text, o, bad), "speaking_rate 30 is unknown");
     o.condition_buckets = {1, -1, 2};
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "negative bucket");
     o = zonos3_prompt_options(); o.silence_prefill_frames = limits.silence_prefill_max_frames + 1;
@@ -383,7 +392,7 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     REQUIRE(zonos3_build_cfg_twin(model, emb, twin), "embedding twin");
     REQUIRE(twin.n_rows == emb.n_rows - 1 && twin.speaker_rows == 0 && twin.prefill_frames == emb.prefill_frames, "twin geometry");
     REQUIRE(twin.cond.speaker_row == -1 && twin.cond.condition_row == 0 && twin.cond.speaker.empty(), "twin cond rows");
-    for (int b : twin.cond.buckets) REQUIRE(b == unknown, "twin buckets unknown");
+    REQUIRE(twin.cond.buckets == unknown, "twin buckets unknown");
     REQUIRE(twin.cond.buckets.size() == 3 && rows_equal(twin, 0, emb, 1, twin.n_rows, W), "twin keeps conditions, text and silence rows");
     std::vector<float> tids(twin.ids.begin(), twin.ids.end());
     REQUIRE(zonos3_check_conditioning(model, tids.data(), twin.n_rows, twin.cond), "twin conditioning is coverable");

@@ -763,9 +763,9 @@ static bool cond_shape_ok(const zonos3_model & m, const zonos3_conditioning & c)
         if (c.buckets.size() != hp.n_cond) {
             fprintf(stderr, "zonos3: expected %u condition buckets\n", hp.n_cond); return false;
         }
-        for (uint32_t i = 0; i < hp.n_cond; ++i) if (c.buckets[i] < 0 || c.buckets[i] > (int32_t) hp.n_cond_buckets) {
+        for (uint32_t i = 0; i < hp.n_cond; ++i) if (c.buckets[i] < 0 || c.buckets[i] > (int32_t) hp.cond_bucket_counts[i]) {
             fprintf(stderr, "zonos3: condition bucket %d for %s outside 0..%u (%u = unknown)\n",
-                    c.buckets[i], hp.cond_names[i].c_str(), hp.n_cond_buckets - 1, hp.n_cond_buckets);
+                    c.buckets[i], hp.cond_names[i].c_str(), hp.cond_bucket_counts[i] - 1, hp.cond_bucket_counts[i]);
             return false;
         }
     }

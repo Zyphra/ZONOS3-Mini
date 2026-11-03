@@ -4,7 +4,8 @@ Registries, configs and the server's default --model-path may name files and fol
 ``hf://<owner>/<repo>/<path inside the repo>``. ``resolve_file`` / ``resolve_dir_or_local`` fetch them into the local HF cache
 (``HF_HOME``; ``HF_TOKEN`` or a stored login is needed while the repo is private) and return local paths; plain local paths pass
 through unchanged, so the cluster servers keep running from their local registries. Default repo: ``ZONOS3_RELEASE_REPO``
-(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/mect_60k`` (MECT60K_SWITCH_20261022: was ``lm/fullenc_120k``).
+(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (R2GRPO_SWITCH_20261103: was ``lm/mect_60k``,
+which was ``lm/fullenc_120k`` before MECT60K_SWITCH_20261022).
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 PREFIX = "hf://"
 RELEASE_REPO = os.environ.get("ZONOS3_RELEASE_REPO", "Zyphra/ZONOS3_Mini_release_ckpts")
-RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/mect_60k")
+RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/rate30_20k_r2grpo")
 RELEASE_CODEC_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/codec_registry.json"
 RELEASE_SPEAKER_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/speaker_encoder_registry.json"
 

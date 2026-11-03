@@ -611,7 +611,7 @@ def export_laci(laci, out):
 
 # --------------------------------------------------------------------------- main
 
-MODEL_FILES = ("zonos3-qat.gguf", "zac.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + COMPANIONS
+MODEL_FILES = ("zonos3-ptq.gguf", "zac.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + COMPANIONS
 
 
 def main():
@@ -627,7 +627,7 @@ def main():
             raise SystemExit(f"missing {path}: hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models")
     m = a.models
     os.makedirs(a.out, exist_ok=True)
-    export_backbone(os.path.join(m, "zonos3-qat.gguf"), a.out)
+    export_backbone(os.path.join(m, "zonos3-ptq.gguf"), a.out)
     export_zac(os.path.join(m, "zac.gguf"), a.out)
     export_encoder(os.path.join(m, "zac-encoder.gguf"), a.out)
     export_teacher(os.path.join(m, "ssl-teacher.gguf"), a.out)

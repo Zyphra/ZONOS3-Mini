@@ -11,6 +11,7 @@ from dataclasses import replace
 
 import torch
 
+from zonos3.condition_buckets import check_ids
 from zonos3.reference.lm import Zonos3LM
 from zonos3.reference.synth import Sampling, generate_rows, prompt_builder
 from zonos3.tts.edit import edit_marker_rows, edit_prompt_tokens, extract_fill, validate_edit_spans
@@ -48,9 +49,8 @@ def generate_edit_fill(
     validate_edit_spans(spans, len(codes), max_spans)
     if codes.ndim != 2 or codes.shape[1] != c.n_codebooks or bool(((codes < 0) | (codes >= c.codebook_size)).any()):
         raise ValueError("Invalid input codec frames")
-    values = [c.condition_n_buckets] * c.condition_count if condition_values is None else [int(v) for v in condition_values]
-    if len(values) != c.condition_count or any(not 0 <= v <= c.condition_n_buckets for v in values):
-        raise ValueError(f"condition_values needs {c.condition_count} ids in [0, {c.condition_n_buckets}]")
+    values = list(c.condition_bucket_counts) if condition_values is None else condition_values
+    values = check_ids(values, c.condition_bucket_counts, "condition_values")
     lead = [builder.condition_rows(c.condition_count)]
     if speaker_embedding is not None:
         lead.insert(0, builder.speaker_slot())

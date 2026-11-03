@@ -2,7 +2,8 @@
 """Build every zonos3.cpp GGUF from the PyTorch modules of the `zonos3` model package.
 
     T="uv run --package zonos3-tools python tools/convert_gguf.py"
-    $T lm RELEASE/lm/mect_60k [--outtype f32|f16|q8_0] [--silence-frame J] -o zonos3-f16.gguf
+    $T lm RELEASE/lm/rate30_20k_r2grpo [--outtype f32|f16|q8_0] [--silence-frame J] -o zonos3-f16.gguf
+    $T lm RELEASE/lm/rate30_20k_r2grpo --outtype q4_0-exp-q8_0-mix -o zonos3-ptq.gguf   (PTQ)
     $T lm lm/mect_60k_q4q8_qat -o zonos3-qat.gguf               (QAT directory: bake.json present)
     $T codec-decoder RELEASE/autoencoder/generator.pt --head RELEASE/autoencoder/heads/full_mr -o zac.gguf
     $T codec-encoder RELEASE/autoencoder/generator.pt -o zac-encoder.gguf
@@ -43,15 +44,18 @@ def _finish(writer: GGUFWriter, progress: bool = False) -> None:
 
 # ===================================================================================================== lm
 
-LM_DOC = """Export a ZONOS3 Mini LM directory (release lm/mect_60k, a derived edit / NV / phoneme checkpoint, or the
-Q4_0-expert/Q8_0-mixer QAT derivative) to zonos3 GGUF.
+LM_DOC = """Export a ZONOS3 Mini LM directory (release lm/mect_60k or lm/rate30_20k_r2grpo, a derived edit / NV /
+phoneme checkpoint, or the Q4_0-expert/Q8_0-mixer QAT derivative) to zonos3 GGUF.
 
 The directory holds params.json and model.pth (zonos3.reference.lm.Zonos3LM.load: strict) plus the tokenizer named by
 params.text_tokenizer_spec.path; conversion.json and config.yaml are validated when present. QAT directories
 (bake.json present, step 3462) hold BF16 weights already fake-quantized by the QAT forward: routed experts on the Q4_0
 grid, GDN in_proj and attention wq/wkv/wo/gater on the Q8_0 grid. They export only with --outtype q4_0-exp-q8_0-mix
 (the default for them), which stores exactly those tensors as Q4_0/Q8_0 and the rest F16/F32; other directories
-export with f32|f16|q8_0 (default f16). The silence frame defaults to
+export with f32|f16|q8_0 (default f16), or with q4_0-exp-q8_0-mix, which quantizes the same tensors post-training
+(round to nearest from the checkpoint weights; general.name gains " Q4_0-expert/Q8_0-mixer PTQ"). The condition
+tables' bucket counts (params condition_bucket_counts, else condition_n_buckets for every table) are written as
+zonos3.condition.bucket_counts. The silence frame defaults to
 <lm_dir>/../../registries/silence_frame_<audio_codec>.json; pass --silence-frame when the directory sits elsewhere.
 The silence frame (codec-silence prefill), condition edges/units, the tokenizer and the tokenizer spec are embedded
 verbatim. Checkpoints fine-tuned on nonverbal markup (zonos3.tts.markup.trained_on_tags: a config.yaml data source with
@@ -62,7 +66,7 @@ ARCH = "zonos3"
 MODEL_NAME = "bingua2-gdn-fullattnres-sbpe8k-375k-zv3ft-srcmix-cond3-mect-60k-20261015"
 GENERAL_NAME = "ZONOS3 Mini srcmix-cond3-mect-60k step 60000"
 RELEASE_STEP = 60000
-QAT_OUTTYPE = "q4_0-exp-q8_0-mix"
+MIX_OUTTYPE = "q4_0-exp-q8_0-mix"
 QAT_STEP = 3462
 QAT_GENERAL_NAME = "ZONOS3 Mini srcmix-cond3-mect-60k Q4_0-expert/Q8_0-mixer QAT step 3462"
 QAT_COUNTS = {"q4_0": 20, "q8_0": 26}
@@ -179,7 +183,7 @@ def read_json(path):
         return json.load(f)
 
 
-def validate_conditions(model, n_buckets):
+def validate_conditions(model, bucket_counts):
     if model.get("condition_names") != CONDITION_NAMES:
         unsupported("params.condition_names", model.get("condition_names"))
     edges, units = model.get("condition_edges"), model.get("condition_units")
@@ -188,9 +192,9 @@ def validate_conditions(model, n_buckets):
     if not isinstance(units, dict) or set(units) != set(CONDITION_NAMES) \
             or not all(isinstance(units[n], str) and units[n] for n in CONDITION_NAMES):
         unsupported("params.condition_units", units)
-    for name in CONDITION_NAMES:
+    for name, count in zip(CONDITION_NAMES, bucket_counts):
         values = edges[name]
-        if (not isinstance(values, list) or len(values) != n_buckets - 1
+        if (not isinstance(values, list) or len(values) != count - 1
                 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
                 or any(b <= a for a, b in zip(values, values[1:]))):
             unsupported(f"params.condition_edges.{name}", values)
@@ -215,7 +219,7 @@ class LMSource:
     params: dict       # params.json "model" table
     tokenizer: str     # tokenizer JSON text
     spec: dict         # params.text_tokenizer_spec
-    meta: dict         # name, qat, conditions, silence_frame, speaker_dim, n_buckets, tag_cfg_trained
+    meta: dict         # name, qat, conditions, silence_frame, speaker_dim, bucket_counts, tag_cfg_trained
 
 
 def load_lm(lm_dir, silence_frame=None) -> LMSource:
@@ -255,7 +259,7 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
     cfg = Zonos3LMConfig.from_params(params)
     if cfg.n_codebooks != 10 or cfg.condition_count != len(CONDITION_NAMES):
         unsupported("n_codebooks/condition_count", (cfg.n_codebooks, cfg.condition_count))
-    conditions = validate_conditions(params, cfg.condition_n_buckets)
+    conditions = validate_conditions(params, cfg.condition_bucket_counts)
     if params.get("speaker_reference_max_seconds") != SPEAKER_REFERENCE_MAX_SECONDS:
         unsupported("params.speaker_reference_max_seconds", params.get("speaker_reference_max_seconds"))
     spec = params.get("text_tokenizer_spec")
@@ -284,7 +288,7 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
         step = conversion.get("checkpoint_step") if conversion else None
         name = f"ZONOS3 {run}" + (f" step {step}" if step is not None else "")
     meta = {"name": name, "qat": qat, "conditions": conditions, "silence_frame": [int(v) for v in frame],
-            "speaker_dim": cfg.speaker_embedding_dim, "n_buckets": cfg.condition_n_buckets,
+            "speaker_dim": cfg.speaker_embedding_dim, "bucket_counts": list(cfg.condition_bucket_counts),
             "tag_cfg_trained": trained_on_tags(lm_dir)}
     return LMSource(model, params, raw.decode("utf-8"), spec, meta)
 
@@ -308,17 +312,32 @@ def qat_targets(bake, sd):
     return targets
 
 
+def mix_targets(sd):
+    """{GGUF tensor name: "q4_0"|"q8_0"} of a plain directory under --outtype q4_0-exp-q8_0-mix: the tensors the QAT
+    forward quantizes (QAT_TARGETS), rounded to nearest from the checkpoint's weights (post-training quantization)."""
+    sources = {src: names for src, names in QAT_TARGETS.values()}
+    targets = {}
+    for key in sd:
+        layer, _, rest = key.removeprefix("layers.").partition(".")
+        if key.startswith("layers.") and layer.isdigit() and rest in sources:
+            for name in sources[rest]:
+                targets[f"blk.{layer}.{name}"] = "q4_0" if ".experts." in rest else "q8_0"
+    if not targets:
+        unsupported("Q4_0-expert/Q8_0-mixer targets", 0)
+    return targets
+
+
 def is_high_precision(name):
     return (name in ("output.weight", "text_embd.weight", "attnres_q.weight", "speaker_proj.weight")
             or name.startswith(("audio_embd.", "cond_embd.")) or name.endswith(".router.weight")
             or name.endswith(".gdn_in.weight"))
 
 
-def pick_qtype(name, ndim, ne0, outtype, qat=None):
+def pick_qtype(name, ndim, ne0, outtype, targets=None):
     if ndim <= 1 or name.endswith(".gdn_conv.weight"):
         return "f32"
-    if outtype == QAT_OUTTYPE:
-        scheme = qat.get(name)
+    if outtype == MIX_OUTTYPE:
+        scheme = targets.get(name)
         if scheme:
             if ne0 % 32:
                 raise ValueError(f"{name}: row length {ne0} is not a multiple of the 32-element quant block")
@@ -409,14 +428,15 @@ def write_lm_metadata(writer, src: LMSource, outtype):
             "codebook_size": c.codebook_size, "audio_vocab": c.audio_vocab, "eoa_id": c.eoa_id,
             "audio_pad_id": c.audio_pad_id, "text_vocab": c.text_vocab, "gdn.head_count": GDN_HEADS,
             "gdn.head_dim": GDN_HEAD_DIM, "gdn.conv_kernel": GDN_KERNEL,
-            "speaker.embedding_length": meta["speaker_dim"], "condition.count": c.condition_count,
-            "condition.bucket_count": meta["n_buckets"]}
+            "speaker.embedding_length": meta["speaker_dim"], "condition.count": c.condition_count}
     for key, value in ints.items():
         writer.add_uint32(f"{ARCH}.{key}", value)
     for key, value in {"rope.freq_base": c.rope_theta, "attention.layer_norm_rms_epsilon": c.norm_eps,
                        "attention.qk_norm_epsilon": 1e-6, "logit_softcap": c.loss_softcap}.items():
         writer.add_float32(f"{ARCH}.{key}", float(value))
     writer.add_array(f"{ARCH}.expert_used_count_per_layer", [0] + [c.moe_topk] * (c.n_layers - 1))
+    # one bucket count per condition table (table i: counts[i] + 1 rows, id counts[i] = unknown)
+    writer.add_array(f"{ARCH}.condition.bucket_counts", [int(n) for n in meta["bucket_counts"]])
     for key, value in {"codec": "mossdual", "moe.balancing": "quantile",
                        "attention.pattern": src.params["attention_pattern"], "residual.type": "full_attnres",
                        "tokenizer.json": src.tokenizer}.items():
@@ -434,23 +454,24 @@ def write_lm_metadata(writer, src: LMSource, outtype):
         writer.add_uint32(f"{ARCH}.span_end_id", c.span_end_id)
     if meta["tag_cfg_trained"]:
         writer.add_bool(f"{ARCH}.tag_cfg_trained", True)
-    writer.add_file_type({"f32": 0, "f16": 1, "q8_0": 7, QAT_OUTTYPE: 2}[outtype])
+    writer.add_file_type({"f32": 0, "f16": 1, "q8_0": 7, MIX_OUTTYPE: 2}[outtype])
 
 
 def cmd_lm(args, parser):
     src = load_lm(args.lm_dir, args.silence_frame)
     qat = src.meta["qat"]
-    args.outtype = args.outtype or (QAT_OUTTYPE if qat else "f16")
-    if qat and args.outtype != QAT_OUTTYPE:
-        parser.error(f"{args.lm_dir} is a Q4_0-expert/Q8_0-mixer QAT checkpoint; export it with --outtype {QAT_OUTTYPE}")
-    if not qat and args.outtype == QAT_OUTTYPE:
-        parser.error(f"--outtype {QAT_OUTTYPE} requires a QAT directory (bake.json)")
+    args.outtype = args.outtype or (MIX_OUTTYPE if qat else "f16")
+    if qat and args.outtype != MIX_OUTTYPE:
+        parser.error(f"{args.lm_dir} is a Q4_0-expert/Q8_0-mixer QAT checkpoint; export it with --outtype {MIX_OUTTYPE}")
+    targets = qat if qat else mix_targets(src.model.state_dict()) if args.outtype == MIX_OUTTYPE else None
+    if targets is not None and not qat:
+        src.meta["name"] += " Q4_0-expert/Q8_0-mixer PTQ"
     writer = GGUFWriter(args.out, ARCH)
     write_lm_metadata(writer, src, args.outtype)
     counts, inexact, seen = {}, 0, set()
     for name, tensor in mapped_tensors(src.model):
-        qtype = pick_qtype(name, tensor.ndim, tensor.shape[-1], args.outtype, qat)
-        inexact += add_tensor(writer, name, tensor, qtype, baked=name in (qat or {}))
+        qtype = pick_qtype(name, tensor.ndim, tensor.shape[-1], args.outtype, targets)
+        inexact += add_tensor(writer, name, tensor, qtype, baked=bool(qat) and name in qat)
         seen.add(name)
         label = qtype if isinstance(qtype, str) else qtype.name.lower()
         counts[label] = counts.get(label, 0) + 1
@@ -1498,8 +1519,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("lm_dir", help="release directory lm/mect_60k, a derived checkpoint, or a QAT-baked directory (bake.json)")
     p.add_argument("--silence-frame", help="silence-frame registry JSON (default <lm_dir>/../../registries/silence_frame_<audio_codec>.json)")
     p.add_argument("-o", "--out", required=True)
-    p.add_argument("--outtype", choices=("f32", "f16", "q8_0", QAT_OUTTYPE),
-                   help=f"default f16 (release) or {QAT_OUTTYPE} (QAT directory; the only valid type for it)")
+    p.add_argument("--outtype", choices=("f32", "f16", "q8_0", MIX_OUTTYPE),
+                   help=f"default f16 (plain directory) or {MIX_OUTTYPE} (QAT directory; the only valid type for it). "
+                        f"{MIX_OUTTYPE} on a plain directory quantizes the same tensors post-training (round to nearest)")
 
     p = command("codec-decoder", CODEC_DECODER_DOC, cmd_codec_decoder)
     p.add_argument("generator", help="autoencoder/generator.pt")

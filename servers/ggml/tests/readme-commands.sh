@@ -74,7 +74,7 @@ pass "--tts --zac -> WAV"
 
 # speaker-embedding conditioning: speaker row + condition buckets + speaker CFG (two-slot twin) + silence prefill
 out="$("$CLI" "$MODEL" --tts "ci speaker" "$WORK/s.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
-  --loudness -23 --condition-buckets 10,3,10 --cfg-scale 1.5 --silence-prefill 3 --max 16 --greedy --zac "$ZAC" 2>&1)" \
+  --condition-buckets 4,3,29 --cfg-scale 1.5 --silence-prefill 3 --max 16 --greedy --zac "$ZAC" 2>&1)" \
   || { echo "$out"; fail "--tts --speaker-embedding (cfg) exited nonzero"; }
 is_riff "$WORK/s.wav" || fail "--tts --speaker-embedding did not write a RIFF WAV"
 pass "--tts --speaker-embedding --cfg-scale -> WAV"
@@ -164,6 +164,9 @@ pass "/v2/health"
 caps="$(curl -fsS "$BASE/v2/capabilities")"
 echo "$caps" | grep -q '"n_codebooks"' || fail "/v2/capabilities missing n_codebooks"
 echo "$caps" | grep -q '"speaker_modes"' || fail "/v2/capabilities missing speaker_modes"
+for key in bucket_counts unknown_ids; do
+  echo "$caps" | grep -Eq "\"$key\": ?\\{[^}]*\"speaking_rate\": ?30" || fail "/v2/capabilities $key lacks speaking_rate 30"
+done
 pass "/v2/capabilities"
 
 # buffered WAV (README curl example)

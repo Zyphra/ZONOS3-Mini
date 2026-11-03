@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 GPU_DEFAULT=cpu   # CI stamps this to "gpu" in the vulkan/metal release archives
-ZONOS3_QUANT="${ZONOS3_QUANT:-qat}"
+ZONOS3_QUANT="${ZONOS3_QUANT:-ptq}"
 ZONOS3_MODEL_DIR="${ZONOS3_MODEL_DIR:-$SCRIPT_DIR/models}"
 ZONOS3_HOST="${ZONOS3_HOST:-127.0.0.1}"
 ZONOS3_PORT="${ZONOS3_PORT:-1919}"
@@ -23,7 +23,7 @@ EXTRA_ARGS=()
 usage() {
     cat <<EOF
 usage: $0 [options] [-- <extra zonos3-server args>]
-  --quant Q      backbone file models/zonos3-Q.gguf (default qat)
+  --quant Q      backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
   --cpu | --gpu  backend (archive default: $GPU_DEFAULT)
   --host H       bind address (default $ZONOS3_HOST)
   --port P       port (default $ZONOS3_PORT)

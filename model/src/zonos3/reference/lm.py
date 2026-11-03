@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from zonos3.condition_buckets import bucket_counts
 from zonos3.tts.probe import Head, clip_window, probe_weight, readout
 
 GDN_HEADS, GDN_HEAD_DIM, GDN_KERNEL = 4, 128, 4
@@ -101,7 +102,7 @@ class Zonos3LMConfig:
     speaker_reference_prefix_enabled: bool
     speaker_reference_max_seconds: float
     condition_count: int
-    condition_n_buckets: int
+    condition_bucket_counts: tuple[int, ...]  # per condition table: ids 0..n-1, n = unknown
     condition_names: tuple[str, ...]
     condition_edges: dict[str, tuple[float, ...]]
     condition_units: dict[str, str]
@@ -192,13 +193,17 @@ class Zonos3LMConfig:
         ffn_mult = float(p["ffn_dim_multiplier"])
         moe_mult = float(p.get("moe_ffn_dim_multiplier") or ffn_mult)
         names = tuple(str(n) for n in p.get("condition_names") or ())
-        count, n_buckets = int(p["condition_count"]), int(p["condition_n_buckets"])
+        count = int(p["condition_count"])
         if len(names) != count:
             _unsupported("condition_names", names)
+        try:
+            counts = bucket_counts(count, int(p["condition_n_buckets"]), p.get("condition_bucket_counts"))
+        except ValueError:
+            _unsupported("condition_bucket_counts", p.get("condition_bucket_counts"))
         edges = {str(k): tuple(float(v) for v in vs) for k, vs in (p.get("condition_edges") or {}).items()}
         for name, values in edges.items():
-            if len(values) != n_buckets - 1 or not all(math.isfinite(v) for v in values) \
-                    or any(b <= a for a, b in zip(values, values[1:])):
+            if name not in names or len(values) != counts[names.index(name)] - 1 \
+                    or not all(math.isfinite(v) for v in values) or any(b <= a for a, b in zip(values, values[1:])):
                 _unsupported(f"condition_edges.{name}", values)
         return cls(
             n_layers=n_layers, dim=dim, head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads,
@@ -213,7 +218,7 @@ class Zonos3LMConfig:
             speaker_embedding_codec=p.get("speaker_embedding_codec"),
             speaker_reference_prefix_enabled=bool(p.get("speaker_reference_prefix_enabled", False)),
             speaker_reference_max_seconds=float(p.get("speaker_reference_max_seconds", 30.0)),
-            condition_count=count, condition_n_buckets=n_buckets, condition_names=names, condition_edges=edges,
+            condition_count=count, condition_bucket_counts=counts, condition_names=names, condition_edges=edges,
             condition_units={str(k): str(v) for k, v in (p.get("condition_units") or {}).items()},
             audio_codec=str(p.get("audio_codec", "")),
         )
@@ -377,7 +382,7 @@ class Zonos3LM(nn.Module):
         self.block_attnres_queries = _param(c.n_sources, c.dim)
         self.speaker_projection = _linear(c.speaker_embedding_dim, c.dim, bias=True)
         self.condition_embeddings = nn.ModuleList(
-            nn.Embedding(c.condition_n_buckets + 1, c.dim).requires_grad_(False) for _ in range(c.condition_count)
+            nn.Embedding(n + 1, c.dim).requires_grad_(False) for n in c.condition_bucket_counts
         )
         self.root: Path | None = None  # checkpoint directory (set by load)
         self._capture: dict | None = None

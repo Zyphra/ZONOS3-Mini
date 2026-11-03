@@ -1467,7 +1467,7 @@
         }
       },
       "ConditionBuckets": {
-        "description": "Condition-row bucket ids per name (`loudness`, `fmax`, `speaking_rate`: 0..n_buckets-1, null = unknown) as an\nobject, or a list in the checkpoint's order. Refused (400) on checkpoints without condition rows.\n",
+        "description": "Condition-row bucket ids per name (`loudness`, `fmax`, `speaking_rate`: 0..n-1 with n =\ncondition_tokens.bucket_counts[name], null = unknown) as an object, or a list in the checkpoint's order.\nRefused (400) on checkpoints without condition rows.\n",
         "oneOf": [
           {
             "type": "object",
@@ -2816,8 +2816,8 @@
           "names",
           "flags",
           "count",
-          "n_buckets",
-          "unknown_index",
+          "bucket_counts",
+          "unknown_ids",
           "edges",
           "units",
           "layout"
@@ -2841,11 +2841,19 @@
           "count": {
             "type": "integer"
           },
-          "n_buckets": {
-            "type": "integer"
+          "bucket_counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Buckets per condition name (ids 0..n-1; n = unknown)"
           },
-          "unknown_index": {
-            "type": "integer"
+          "unknown_ids": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "The unknown id per condition name (= its bucket count)"
           },
           "edges": {
             "type": "object",
@@ -4076,7 +4084,8 @@
             }
           },
           "n_buckets": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Bucket count of the checkpoint's speaking-rate condition table"
           },
           "buckets": {
             "type": "array",

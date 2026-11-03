@@ -19,6 +19,7 @@ from zonos3_sgl.message.tts import TTSSamplingParams
 from zonos3_sgl.scheduler import SchedulerConfig
 from zonos3_sgl.scheduler.scheduler import TTSScheduler
 from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
+from zonos3.condition_buckets import check_ids
 from zonos3.generation import SAMPLE_RATE
 from zonos3.tts import plan
 from zonos3.tts.conditioning import default_quality_buckets
@@ -650,12 +651,8 @@ class TTSLLM(TTSScheduler):
             # scheduler's speaker slot (offline path) shifts them by one more row
             condition_values, condition_token_start = None, -1
             if self.condition_count:
-                ids = cond_ids if cond_ids is not None else [self.condition_unknown] * self.condition_count
-                if len(ids) != self.condition_count or any(not 0 <= int(b) <= self.condition_unknown for b in ids):
-                    raise ValueError(
-                        f"condition_buckets needs {self.condition_count} ids in [0, {self.condition_unknown}] ({self.condition_unknown} = unknown)"
-                    )
-                condition_values, condition_token_start = [int(b) for b in ids], 0
+                ids = cond_ids if cond_ids is not None else list(self.condition_unknowns)
+                condition_values, condition_token_start = check_ids(ids, self.condition_unknowns), 0
                 input_ids = torch.cat(
                     (self._prompt_builder.condition_rows(self.condition_count, dtype=input_ids.dtype), input_ids), dim=0
                 )

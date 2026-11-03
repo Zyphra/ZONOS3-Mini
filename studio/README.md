@@ -247,7 +247,7 @@ The fifth screen dubs a source into one of the server's target languages (`/v2/d
   member or any library voice — for the whole dub, overridable per segment (`voice: {mode: "source"}` / `{mode:
   "studio", speaker_embedding_id, controls}`).
 - **Segments.** Reference span and text, target text, speaking-rate bucket (auto shows the bucket of the text's
-  rate; a set one pins every candidate; past the model's 10 row buckets the scale continues with steered buckets,
+  rate; a set one pins every candidate; past the model's row buckets the scale continues with steered buckets,
   “slower−n” / “faster+n · pace” with their nominal rate, reached by pace steering and listed only for target
   languages they were measured safe for and, the slower ones, for studio voices only (a cloned source voice lost
   words there) — `/v2/dub/capabilities.buckets`; a pin the segment's language or voice no longer offers goes back to

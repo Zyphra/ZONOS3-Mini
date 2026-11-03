@@ -10,7 +10,8 @@ export const EOA = 4096;
 export const CODEBOOK_SIZE = 4096;
 
 export interface ModelHp {
-  nCodebooks: number; audioPad: number; textVocab: number; nCond: number; nCondBuckets: number;
+  nCodebooks: number; audioPad: number; textVocab: number; nCond: number;
+  condBucketCounts: number[];   // per condition row: ids 0..n-1, n = unknown
   condNames: string[]; condEdges: number[][]; silenceFrame: number[]; speakerDim: number; contextLength: number;
   condUnits: string[];          // condition.units (capabilities)
   textTokenizerSpec: string;    // text_tokenizer_spec JSON (capabilities)
@@ -38,6 +39,12 @@ function nums(meta: Record<string, unknown>, key: string): number[] {
   return v.map(Number);
 }
 
+/** condition.bucket_counts, or the legacy scalar condition.bucket_count repeated per condition row. */
+export function conditionBucketCounts(meta: Record<string, unknown>): number[] {
+  if (Array.isArray(meta['condition.bucket_counts'])) return nums(meta, 'condition.bucket_counts');
+  return new Array<number>(num(meta, 'condition.count')).fill(num(meta, 'condition.bucket_count'));
+}
+
 export function modelHp(meta: Record<string, unknown>): ModelHp {
   const names = meta['condition.names'];
   if (!Array.isArray(names) || names.some(x => typeof x !== 'string')) throw new Error('backbone: missing meta condition.names');
@@ -47,7 +54,7 @@ export function modelHp(meta: Record<string, unknown>): ModelHp {
     audioPad: num(meta, 'audio_pad_id'),
     textVocab: num(meta, 'text_vocab'),
     nCond: num(meta, 'condition.count'),
-    nCondBuckets: num(meta, 'condition.bucket_count'),
+    condBucketCounts: conditionBucketCounts(meta),
     condNames,
     condEdges: condNames.map(n => nums(meta, `condition.edges.${n}`)),
     silenceFrame: nums(meta, 'silence_frame'),
@@ -79,11 +86,12 @@ export function buildPrompt(
     for (let i = 0; i < model.speakerDim; i++)
       if (!Number.isFinite(spk[i])) throw new Error('speaker embedding contains a non-finite value');
   }
-  const buckets = opt.buckets.length ? opt.buckets.slice() : new Array<number>(model.nCond).fill(model.nCondBuckets);
+  const buckets = opt.buckets.length ? opt.buckets.slice() : model.condBucketCounts.slice();
   if (buckets.length !== model.nCond) throw new Error(`expected ${model.nCond} condition buckets`);
   for (let i = 0; i < model.nCond; i++) {
-    if (buckets[i] < 0 || buckets[i] > model.nCondBuckets)
-      throw new Error(`condition bucket ${buckets[i]} for ${model.condNames[i]} outside 0..${model.nCondBuckets - 1} (${model.nCondBuckets} = unknown)`);
+    const n = model.condBucketCounts[i];
+    if (buckets[i] < 0 || buckets[i] > n)
+      throw new Error(`condition bucket ${buckets[i]} for ${model.condNames[i]} outside 0..${n - 1} (${n} = unknown)`);
   }
   const ids = tok.encode(text);
   const referenceRows = refFrames ? refFrames + ncb - 1 : 0;
@@ -117,7 +125,7 @@ export function buildPrompt(
   };
 }
 
-export function buildCfgTwin(p: Prompt, nBuckets: number): Prompt {
+export function buildCfgTwin(p: Prompt, counts: number[]): Prompt {
   if (p.speakerRows <= 0) throw new Error('speaker CFG needs a speaker prompt (speaker embedding or reference)');
   if (p.speakerRows >= p.nRows || p.ids.length !== p.nRows * W) throw new Error('inconsistent prompt for speaker CFG');
   return {
@@ -127,7 +135,7 @@ export function buildCfgTwin(p: Prompt, nBuckets: number): Prompt {
     prefillFrames: p.prefillFrames,
     cond: {
       speakerRow: -1, speaker: null, conditionRow: p.cond.conditionRow - p.speakerRows,
-      buckets: new Array<number>(p.cond.buckets.length).fill(nBuckets),
+      buckets: counts.slice(),
     },
   };
 }

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 from zonos3.utils.moe_topk import normalize_special_topk_layers, resolve_layer_topk
+from zonos3.condition_buckets import bucket_counts
 
 
 @dataclass(frozen=True)
@@ -119,9 +120,10 @@ class ModelConfig:
     quality_num_buckets: int = 0
     quality_features: tuple[str, ...] = ()
     quality_buckets: Dict[str, tuple[str, ...]] | None = None
-    # Condition rows (loudness / fmax / speaking-rate buckets) of the cond3 finetunes; see utils/hf.py.
+    # Condition rows (loudness / fmax / speaking-rate buckets) of the cond3 finetunes; see utils/hf.py. One bucket
+    # count per table (ids 0..n-1, n = unknown); () without condition rows.
     condition_tokens_enabled: bool = False
-    condition_n_buckets: int = 10
+    condition_bucket_counts: tuple[int, ...] = ()
     condition_count: int = 3
     condition_names: tuple[str, ...] = ()
     condition_edges: Dict[str, tuple[float, ...]] | None = None
@@ -309,7 +311,15 @@ class ModelConfig:
             span_end_id=None if span_end_id is None else int(span_end_id),
             loss_softcap=config.loss_softcap,
             condition_tokens_enabled=bool(getattr(config, "condition_tokens_enabled", False)),
-            condition_n_buckets=int(getattr(config, "condition_n_buckets", 10) or 10),
+            condition_bucket_counts=(
+                bucket_counts(
+                    int(getattr(config, "condition_count", 3) or 3),
+                    int(getattr(config, "condition_n_buckets", 10) or 10),
+                    getattr(config, "condition_bucket_counts", None),
+                )
+                if getattr(config, "condition_tokens_enabled", False)
+                else ()
+            ),
             condition_count=int(getattr(config, "condition_count", 3) or 3),
             condition_names=tuple(str(item) for item in (getattr(config, "condition_names", None) or ())),
             condition_edges={

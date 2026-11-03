@@ -30,7 +30,8 @@ C = 2                                   # codebooks
 PAD = 1025
 RATE, QUALITY, BACKGROUND, ACCURATE = 2, (2,), 2, 1
 TEXT_VOCAB = BYTE_TEXT_VOCAB_SIZE + RATE + sum(QUALITY) + BACKGROUND + ACCURATE
-CONDITIONS, UNKNOWN = 3, 10
+CONDITIONS, UNKNOWNS = 3, (10, 10, 30)  # per-table unknown ids (condition_bucket_counts)
+UNKNOWN = UNKNOWNS[1]
 SILENCE_FRAMES = 3
 TAGGED = "Hello <laugh/> there <shouting> friend! </shouting>"
 
@@ -139,7 +140,7 @@ def _tokenize(monkeypatch, tmp_path, messages, *, normalizer=None):
         n_codebooks=C, audio_pad_id=PAD, audio_codec="matched", text_vocab=TEXT_VOCAB,
         speaking_rate_num_buckets=RATE, quality_bucket_counts=list(QUALITY), quality_buckets=[1],
         speaker_background_num_buckets=BACKGROUND, accurate_mode_num_buckets=ACCURATE,
-        condition_count=CONDITIONS, condition_n_buckets=UNKNOWN, model_path=str(tmp_path),
+        condition_count=CONDITIONS, condition_bucket_counts=UNKNOWNS, model_path=str(tmp_path),
     )
     return sent
 
@@ -174,7 +175,7 @@ def _scheduler(max_seq_len=200, prefill_budget=1000, tables=4):
     s.laci_heads, s.laci_requests = {}, {}
     s.speaking_rate_num_buckets, s.quality_bucket_counts = RATE, list(QUALITY)
     s.speaker_background_num_buckets, s.accurate_mode_num_buckets = BACKGROUND, ACCURATE
-    s.condition_count, s.condition_unknown = CONDITIONS, UNKNOWN
+    s.condition_count, s.condition_unknowns = CONDITIONS, UNKNOWNS
     return s
 
 

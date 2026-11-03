@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 $GPU_DEFAULT = 'cpu'   # CI stamps this to 'gpu' in the vulkan release archive
 $ScriptDir = $PSScriptRoot
 
-if (-not $Quant)    { $Quant    = if ($env:ZONOS3_QUANT)     { $env:ZONOS3_QUANT }     else { 'qat' } }
+if (-not $Quant)    { $Quant    = if ($env:ZONOS3_QUANT)     { $env:ZONOS3_QUANT }     else { 'ptq' } }
 $ModelDir           = if ($env:ZONOS3_MODEL_DIR)             { $env:ZONOS3_MODEL_DIR } else { Join-Path $ScriptDir 'models' }
 if (-not $BindHost) { $BindHost = if ($env:ZONOS3_HOST)      { $env:ZONOS3_HOST }      else { '127.0.0.1' } }
 if (-not $Port)     { $Port     = if ($env:ZONOS3_PORT)      { [int]$env:ZONOS3_PORT } else { 1919 } }
@@ -34,7 +34,7 @@ if ($Gpu) { $GpuMode = 'gpu' }
 if ($Help) {
     Write-Host @"
 usage: start-zonos3.bat [options] [extra zonos3-server args]
-  -Quant Q     backbone file models/zonos3-Q.gguf (default qat)
+  -Quant Q     backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
   -Cpu | -Gpu  backend (archive default: $GPU_DEFAULT)
   -BindHost H  bind address (default 127.0.0.1)
   -Port P      port (default 1919)

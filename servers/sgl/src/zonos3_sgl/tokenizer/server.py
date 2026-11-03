@@ -6,7 +6,7 @@ import multiprocessing as mp
 import os
 import threading
 from types import SimpleNamespace
-from typing import List
+from typing import List, Sequence
 
 import torch
 from zonos3_sgl.message import (
@@ -26,6 +26,7 @@ from zonos3_sgl.message import (
     TTSUserMsg,
 )
 from zonos3.generation import SAMPLE_RATE
+from zonos3.condition_buckets import check_ids
 from zonos3.tts import plan
 from zonos3.tts.markup import strip_nonverbal_markup
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
@@ -110,7 +111,7 @@ def tokenize_worker(
     speaker_reference_max_seconds: float = 30.0,
     span_end_id: int | None = None,
     condition_count: int = 0,
-    condition_n_buckets: int = 10,
+    condition_bucket_counts: Sequence[int] = (),
     model_path: str = "",
 ) -> None:
     send_backend = ZmqPushQueue(backend_addr, create=False, encoder=BaseBackendMsg.encoder)
@@ -243,12 +244,8 @@ def tokenize_worker(
                     condition_values = None
                     requested_buckets = getattr(msg, "condition_buckets", None)
                     if condition_count > 0:
-                        buckets = list(requested_buckets) if requested_buckets is not None else [condition_n_buckets] * condition_count
-                        if len(buckets) != condition_count or any(not 0 <= int(b) <= condition_n_buckets for b in buckets):
-                            raise ValueError(
-                                f"condition_buckets needs {condition_count} ids in [0, {condition_n_buckets}] ({condition_n_buckets} = unknown)"
-                            )
-                        condition_values = [int(b) for b in buckets]
+                        buckets = list(requested_buckets) if requested_buckets is not None else list(condition_bucket_counts)
+                        condition_values = check_ids(buckets, condition_bucket_counts)
                     elif requested_buckets is not None:
                         raise ValueError("This checkpoint has no condition rows (loudness / fmax / speaking rate)")
                     # Reference prefix codes: inline codes cut to the reference limit, else the encoded reference clip.

@@ -8,8 +8,8 @@
     --greedy --probe-heads --dump-probe` against `Zonos3LM.forward(probe=ProbeSpec)` teacher-forced on the rows ggml
     generated: identical argmax per decode step, centroids within 0.05 text rows.
 
-Inputs (skipped when absent): the release directory ``ZONOS3_RELEASE`` (default
-/data/groups/audio/gabriel/hf_release_zonos3mini_20261020, its lm/mect_60k) and the GGUF converted from it,
+Inputs (skipped when absent): the backbone checkpoint directory ``ZONOS3_TEST_MODEL`` (default
+/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted) and the GGUF converted from it,
 ``ZONOS3_GGUF`` (default servers/ggml/models/zonos3-f16.gguf, `convert_gguf.py lm --outtype f16`).
 
     uv run --package zonos3-tools pytest servers/ggml/tests/parity/test_ggml_golden.py --ggml-build servers/ggml/build -s
@@ -31,12 +31,12 @@ REPO = Path(__file__).resolve().parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 
-RELEASE = Path(os.environ.get("ZONOS3_RELEASE", "/data/groups/audio/gabriel/hf_release_zonos3mini_20261020"))
-LM_DIR = RELEASE / "lm" / "mect_60k"
+LM_DIR = Path(os.environ.get(
+    "ZONOS3_TEST_MODEL", "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted"))
 GGUF = Path(os.environ.get("ZONOS3_GGUF", REPO / "servers" / "ggml" / "models" / "zonos3-f16.gguf"))
 SPEAKER = REPO / "servers" / "ggml" / "tests" / "fixtures" / "speaker-embedding.npy"
 HEADS = REPO / "laci_heads" / "zonos3_mini_mect60k_heads.json"
-BUCKETS = [3, 5, 10]
+BUCKETS = [3, 5, 29]
 GOLDEN_TEXT = "The quick brown fox jumps."
 PROBE_TEXT = "Alignment heads follow the text one word at a time, from the first syllable to the last."
 PROBE_FRAMES = 60
@@ -45,7 +45,7 @@ PROBE_FRAMES = 60
 @pytest.fixture(scope="module")
 def release():
     if not (LM_DIR / "params.json").is_file():
-        pytest.skip(f"no release checkpoint at {LM_DIR} (set ZONOS3_RELEASE)")
+        pytest.skip(f"no backbone checkpoint at {LM_DIR} (set ZONOS3_TEST_MODEL)")
     if not GGUF.is_file():
         pytest.skip(f"no backbone GGUF at {GGUF} (set ZONOS3_GGUF)")
 

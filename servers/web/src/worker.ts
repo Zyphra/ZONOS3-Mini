@@ -89,7 +89,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   let spk: Promise<SpeakerEncoder> | null = null;
   let ref: Promise<RefEncoder> | null = null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-qat.gguf', backbone, codec: zac, tokenizer,
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: zac, tokenizer,
     steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci,
     voices, headroomDb: Number(zacw.meta.headroom_db ?? 3),
     async embedSpeaker(pcm) {

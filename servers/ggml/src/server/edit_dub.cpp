@@ -101,8 +101,12 @@ json dub_model(const ServerState & s) {
         extension = {{"direction", e.direction}, {"row_edges", e.row_edges}, {"below", e.below}, {"above", e.above},
                      {"doses", doses}, {"reference_sides", e.reference_sides}};
     }
+    int rate_buckets = 0;   // the speaking-rate table's bucket count (0 without that row)
+    const auto & hp = s.model.hp;
+    for (size_t i = 0; i < hp.cond_names.size() && i < hp.cond_bucket_counts.size(); ++i)
+        if (hp.cond_names[i] == "speaking_rate") rate_buckets = (int) hp.cond_bucket_counts[i];
     return {{"name", fs::path(s.model_path).filename().string()}, {"rate_edges", speaking_rate_edges(s)},
-            {"n_buckets", (int) s.model.hp.n_cond_buckets}, {"laci_languages", laci_languages(s)},
+            {"n_buckets", rate_buckets}, {"laci_languages", laci_languages(s)},
             {"studio_voices", has("embedding")}, {"source_voice", has("reference")}, {"raw_controls", raw},
             {"phoneme_groups", !phoneme_capabilities(s)["phoneme_tokens"].is_null()}, {"rate_extension", extension}};
 }

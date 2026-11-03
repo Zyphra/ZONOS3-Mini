@@ -12,7 +12,7 @@ reference checkpoint needed).
 
 Backbones (each skipped when its GGUF or checkpoint is absent):
 - ``release``: the GGUF ``ZONOS3_GGUF`` (default servers/ggml/models/zonos3-f16.gguf) and the checkpoint it was
-  converted from, ``ZONOS3_TEST_MODEL`` (default the Mini release's lm/mect_60k);
+  converted from, ``ZONOS3_TEST_MODEL`` (default zonos3-rate30-20k-r2grpo's converted checkpoint);
 - ``phonemes``: a phoneme-token backbone (runs the ``phoneme_groups`` entry), ``ZONOS3_PHONEME_GGUF`` (default
   servers/ggml/models/zonos3-phonemes-f16.gguf) converted from ``ZONOS3_PHONEME_MODEL`` (default
   /data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k)::
@@ -39,7 +39,7 @@ MODELS = REPO / "servers" / "ggml" / "models"
 BACKBONES = {
     "release": (Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
                 os.environ.get("ZONOS3_TEST_MODEL",
-                               "/data/groups/audio/gabriel/hf_release_zonos3mini_20261020/lm/mect_60k")),
+                               "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted")),
     "phonemes": (Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "zonos3-phonemes-f16.gguf")),
                  os.environ.get("ZONOS3_PHONEME_MODEL",
                                 "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k")),

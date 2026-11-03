@@ -75,7 +75,7 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
   const voices = JSON.parse(readFileSync(models + 'voices/voices.json', 'utf8')) as { id: string; label: string; file: string }[];
   const backbone = new StubBackbone(steer.sources, opts.frames);
   const engine: Engine = {
-    hp, modelFile: 'zonos3-qat.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
     steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
     voices: voices.map(v => ({ ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) })),
     headroomDb: 3,
@@ -85,15 +85,18 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
   return { api: new Api(engine, 1000), engine, backbone };
 }
 
-/** Release-like checkpoint hyper-parameters (ZONOS3 Mini): three condition rows of 10 buckets, the speaker row, no
- *  phoneme tokens. */
+/** Release-like checkpoint hyper-parameters (ZONOS3 Mini, zonos3-rate30-20k-r2grpo): condition rows of 10, 10 and 30
+ *  buckets, the speaker row, no phoneme tokens. */
 const RELEASE_HP: ModelHp = {
-  nCodebooks: NCB, audioPad: 4097, textVocab: 8196, nCond: 3, nCondBuckets: 10,
+  nCodebooks: NCB, audioPad: 4097, textVocab: 8196, nCond: 3, condBucketCounts: [10, 10, 30],
   condNames: ['loudness', 'fmax', 'speaking_rate'],
   condEdges: [
     [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
     [7578.125, 8000, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
-    [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208],
+    [
+      6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196, 14.53, 14.887, 15.193,
+      15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069, 19.818, 20.816, 22.286, 24.722, 29.25,
+    ],
   ],
   silenceFrame: [1918, 746, 3544, 234, 1267, 2914, 3944, 2849, 326, 1337], speakerDim: 192, contextLength: 32768,
   condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', tagCfgTrained: false,
@@ -106,7 +109,7 @@ export function bareApi(): StubSet {
   const hp = RELEASE_HP;
   const backbone = new StubBackbone([]);
   const engine: Engine = {
-    hp, modelFile: 'zonos3-qat.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),
     voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) }],
     headroomDb: 3,

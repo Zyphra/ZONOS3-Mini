@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PyTorch golden dumps for the ggml port, one subcommand per release component.
 
-    tools/dump_golden.py lm              RELEASE/lm/mect_60k -o OUT [--text TEXT | --input-ids ids.npy] ...
+    tools/dump_golden.py lm              RELEASE/lm/rate30_20k_r2grpo -o OUT [--text TEXT | --input-ids ids.npy] ...
     tools/dump_golden.py codec-decoder   --generator G --head-dir H codes.npy -o OUT [--compare cpp.npy]
     tools/dump_golden.py codec-encoder   --generator G --audio A -o OUT [--compare codes.npy]
     tools/dump_golden.py ssl-teacher     --teacher DIR (--audio A | --pcm44100 X | --features F) -o OUT
@@ -32,7 +32,7 @@ import torch
 
 LM_DOC = """CPU PyTorch oracle for the ZONOS3 Mini release LM (GDN/global + FullAttnRes backbone).
 
-python tools/dump_golden.py lm RELEASE/lm/mect_60k -o out/mini/golden
+python tools/dump_golden.py lm RELEASE/lm/rate30_20k_r2grpo -o out/mini/golden
   [--text TEXT | --input-ids ids.npy]
   [--speaker-embedding emb.npy | --reference-codes codes.npy] [--condition-buckets a,b,c]
   [--silence-prefill N] [--silence-frame registry.json]
@@ -72,13 +72,15 @@ def load_speaker_embedding(path, dim):
     return vec
 
 
-def parse_buckets(text, count, n_buckets):
+def parse_buckets(text, counts):
     try:
         values = [int(v) for v in text.split(",")]
     except ValueError:
         values = []
-    if len(values) != count or any(not 0 <= v <= n_buckets for v in values):
-        raise ValueError(f"--condition-buckets needs {count} comma-separated integers in 0..{n_buckets} ({n_buckets} = unknown)")
+    counts = [int(n) for n in counts]
+    if len(values) != len(counts) or any(not 0 <= v <= n for v, n in zip(values, counts)):
+        raise ValueError(f"--condition-buckets needs {len(counts)} comma-separated integers, each in 0..count for the "
+                         f"bucket counts {counts} (count = unknown)")
     return values
 
 
@@ -90,8 +92,8 @@ def build_prompt(params, meta, tokenizer_json, text, reference_codes=None, speak
         raise ValueError("a speaker embedding and a reference prefix are mutually exclusive")
     if not 0 <= silence_prefill <= 30:
         raise ValueError("silence prefill must be 0..30 frames")
-    pad, text_vocab, n_cond, unknown = params["audio_pad_id"], params["text_vocab"], params["condition_count"], meta["n_buckets"]
-    buckets = [unknown] * n_cond if buckets is None else list(buckets)
+    pad, text_vocab = params["audio_pad_id"], params["text_vocab"]
+    buckets = list(meta["bucket_counts"]) if buckets is None else list(buckets)
     tokenizer = Tokenizer.from_str(tokenizer_json)
     text_ids = [2] + [i + 4 for i in tokenizer.encode(text, add_special_tokens=False).ids] + [3]
     text_rows = np.full((len(text_ids), 11), pad, dtype=np.int64)
@@ -116,7 +118,7 @@ def build_prompt(params, meta, tokenizer_json, text, reference_codes=None, speak
         for cb in range(10):
             if k - cb >= 0:
                 silence[k, cb] = meta["silence_frame"][cb]
-    rows = np.concatenate(leading + [np.repeat(allpad, n_cond, 0), text_rows, silence])
+    rows = np.concatenate(leading + [np.repeat(allpad, len(meta["bucket_counts"]), 0), text_rows, silence])
     cond = {"speaker_row": speaker_row, "speaker_embedding": speaker, "condition_row": speaker_rows,
             "condition_buckets": buckets, "speaker_rows": speaker_rows, "prefill_frames": silence_prefill}
     return rows, cond
@@ -148,8 +150,8 @@ def load_cond(path, params, meta):
         cond["speaker_embedding"] = np.asarray(doc["speaker_embedding"], dtype=np.float32)
         if cond["speaker_embedding"].shape != (meta["speaker_dim"],) or not np.isfinite(cond["speaker_embedding"]).all():
             raise ValueError(f"{path}: invalid speaker embedding")
-    if len(cond["condition_buckets"]) != params["condition_count"] \
-            or any(not 0 <= b <= meta["n_buckets"] for b in cond["condition_buckets"]):
+    if len(cond["condition_buckets"]) != len(meta["bucket_counts"]) \
+            or any(not 0 <= b <= n for b, n in zip(cond["condition_buckets"], meta["bucket_counts"])):
         raise ValueError(f"{path}: invalid condition buckets")
     return cond
 
@@ -242,13 +244,14 @@ def save_captures(out, captures, ids, cond=None):
 
 
 def add_lm_arguments(parser):
-    parser.add_argument("lm_dir", help="release directory lm/mect_60k")
+    parser.add_argument("lm_dir", help="LM directory (release lm/rate30_20k_r2grpo or lm/mect_60k)")
     parser.add_argument("--silence-frame", help="silence-frame registry JSON (default: release registries/)")
     parser.add_argument("--text", "--prompt", dest="text", default="Hello, world.")
     parser.add_argument("--input-ids", help="NPY [tokens,11] for exact prompt/continuation replay (reads X.cond.json)")
     parser.add_argument("--reference-codes", help="ordinary NPY [frames,10] codes prepended with delays")
     parser.add_argument("--speaker-embedding", help="float32 NPY [192] speaker embedding (speaker row)")
-    parser.add_argument("--condition-buckets", help="a,b,c bucket ids 0..10 (10 = unknown); default all unknown")
+    parser.add_argument("--condition-buckets",
+                        help="a,b,c bucket ids per table (0..count-1, count = unknown); default all unknown")
     parser.add_argument("--silence-prefill", type=int, help="codec-silence rows after EOS (default 3, 0..30)")
     parser.add_argument("-o", "--out", required=True)
     parser.add_argument("--dtype", choices=("f32", "bf16"), default="f32")
@@ -296,7 +299,7 @@ def run_lm(args, parser):
             print(f"warning: {cond_path(args.input_ids)} missing; no speaker/condition rows are replaced")
     else:
         speaker = load_speaker_embedding(args.speaker_embedding, meta["speaker_dim"]) if args.speaker_embedding else None
-        buckets = parse_buckets(args.condition_buckets, params["condition_count"], meta["n_buckets"]) if args.condition_buckets else None
+        buckets = parse_buckets(args.condition_buckets, meta["bucket_counts"]) if args.condition_buckets else None
         silence = 3 if args.silence_prefill is None else args.silence_prefill
         ids, cond = build_prompt(params, meta, src.tokenizer, args.text, args.reference_codes, speaker, buckets, silence)
     if np.any(ids[:, :10] < 0) or np.any(ids[:, :10] >= config.audio_vocab) or np.any(ids[:, 10] < 0) \

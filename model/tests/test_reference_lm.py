@@ -79,6 +79,16 @@ def test_unsupported_architecture_is_refused():
     config = Zonos3LMConfig.from_params(dict(TINY, text_extra_tokens=3, span_end_id=CODEBOOK + 2))
     assert config.text_rows == TEXT_VOCAB + 4 and config.audio_vocab == CODEBOOK + 3
 
+def test_per_table_bucket_counts_size_each_condition_table():
+    rate30 = dict(TINY, condition_bucket_counts=[4, 4, 6],
+                  condition_edges={**TINY["condition_edges"], "speaking_rate": [8.0, 10.0, 12.0, 15.0, 20.0]})
+    model = Zonos3LM(Zonos3LMConfig.from_params(rate30))
+    assert [e.weight.shape[0] for e in model.condition_embeddings] == [5, 5, 7]
+    # the edges of a table follow that table's count, not the shared condition_n_buckets
+    with pytest.raises(ValueError, match=r"condition_edges\.speaking_rate"):
+        Zonos3LMConfig.from_params(dict(rate30, condition_edges=TINY["condition_edges"]))
+
+
 
 @pytest.mark.parametrize("k", [1, 3, 5])
 def test_prefill_equals_prefill_plus_decode_steps(k):

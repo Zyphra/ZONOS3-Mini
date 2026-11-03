@@ -9,7 +9,7 @@ import torch
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 from zonos3_sgl.core import TTSBatch, TTSReq  # noqa: E402
 from zonos3_sgl.message.tts import TTSSamplingParams  # noqa: E402
-from zonos3_sgl.scheduler.scheduler import TTSScheduler  # noqa: E402
+from zonos3_sgl.scheduler.scheduler import TTSScheduler, _speaking_rate_buckets  # noqa: E402
 from zonos3.server.schemas import GenerateRequest, SpeechRequest  # noqa: E402
 from zonos3.tts import plan  # noqa: E402
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig  # noqa: E402
@@ -19,14 +19,22 @@ EDGES = {
     "fmax": [7578.125, 8000.0, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
     "speaking_rate": [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208],
 }
+# the default LM's speaking-rate row (zonos3-rate30-20k-r2grpo, condition_bucket_counts [10, 10, 30])
+RATE30_EDGES = [6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196, 14.53,
+                14.887, 15.193, 15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069, 19.818, 20.816,
+                22.286, 24.722, 29.25]
 
 
-def cfg(enabled=True, edges=EDGES):
+def cfg(enabled=True, edges=EDGES, counts=(10, 10, 10)):
     return SimpleNamespace(model_config=SimpleNamespace(
-        condition_tokens_enabled=enabled, condition_n_buckets=10, condition_count=3,
+        condition_tokens_enabled=enabled, condition_bucket_counts=counts if enabled else (), condition_count=3,
         condition_names=("loudness", "fmax", "speaking_rate"), condition_edges=edges,
         condition_units={"loudness": "LUFS", "fmax": "Hz", "speaking_rate": "utf-8 bytes per second"},
         speaker_reference_prefix_enabled=True, speaker_enabled=True, speaker_embedding_dim=256, audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000"))
+
+
+def cfg_rate30():
+    return cfg(edges={**EDGES, "speaking_rate": RATE30_EDGES}, counts=(10, 10, 30))
 
 
 def resolve(config, buckets, values):
@@ -44,9 +52,12 @@ def test_condition_rows_are_all_pad_rows_with_the_text_pad():
 
 def test_capabilities_describe_the_rows_and_models_without_them_report_none():
     spec = api_server._condition_spec(cfg())
-    assert spec["names"] == ["loudness", "fmax", "speaking_rate"] and spec["n_buckets"] == 10 and spec["unknown_index"] == 10
+    assert spec["names"] == ["loudness", "fmax", "speaking_rate"]
+    assert spec["bucket_counts"] == spec["unknown_ids"] == {"loudness": 10, "fmax": 10, "speaking_rate": 10}
     assert spec["edges"]["fmax"][1] == 8000.0 and spec["units"]["loudness"] == "LUFS"
     assert api_server._condition_spec(cfg(enabled=False)) is None
+    rate30 = api_server._condition_spec(cfg_rate30())
+    assert rate30["bucket_counts"] == rate30["unknown_ids"] == {"loudness": 10, "fmax": 10, "speaking_rate": 30}
 
 
 def test_explicit_ids_raw_values_and_unknown_defaults():
@@ -80,6 +91,19 @@ def test_bad_requests_are_refused():
         resolve(cfg(edges={}), None, {"loudness": -20.0})
 
 
+def test_rate30_checkpoint_has_its_own_speaking_rate_count():
+    c = cfg_rate30()
+    assert resolve(c, None, None) == [10, 10, 30]
+    assert resolve(c, {"speaking_rate": 29}, None) == [10, 10, 29]
+    assert resolve(c, None, {"speaking_rate": 99.0}) == [10, 10, 29]
+    with pytest.raises(ValueError, match=r"must be in \[0, 29\] or 30 \(= unknown\)"):
+        resolve(c, {"speaking_rate": 31}, None)
+    # LACI's speaking-rate scale (duration targets) spans the row's 30 buckets; unknown is 30, not 10
+    rates = _speaking_rate_buckets(c.model_config, (10, 10, 30))
+    assert rates.index == 2 and rates.n_buckets == 30 and rates.row(10) == 10 and rates.row(30) == 30
+    assert _speaking_rate_buckets(cfg(enabled=False).model_config, ()) is None
+
+
 def make_req(values, start, cached_len, device_len):
     ids = torch.full((device_len, 11), 4097, dtype=torch.int32)
     ids[:, 10] = 8196
@@ -89,10 +113,10 @@ def make_req(values, start, cached_len, device_len):
     return req
 
 
-def scheduler_stub(count=3, unknown=10):
+def scheduler_stub(count=3, unknowns=(10, 10, 10)):
     s = TTSScheduler.__new__(TTSScheduler)
     s.condition_count = count
-    s.condition_unknown = unknown
+    s.condition_unknowns = unknowns if count else ()
     s.device = torch.device("cpu")
     return s
 
@@ -125,7 +149,7 @@ def test_scheduler_gathers_only_the_rows_inside_each_extend_span():
 # ---------------------------------------------------------------- flag rows (the encode-start finetunes, 2026-10-17)
 def cfg_flag():
     return SimpleNamespace(model_config=SimpleNamespace(
-        condition_tokens_enabled=True, condition_n_buckets=10, condition_count=4,
+        condition_tokens_enabled=True, condition_bucket_counts=(10, 10, 10, 10), condition_count=4,
         condition_names=("loudness", "fmax", "speaking_rate", "encode_start"), condition_edges=EDGES,
         condition_units={"loudness": "LUFS", "fmax": "Hz", "speaking_rate": "utf-8 bytes per second", "encode_start": "flag"},
         condition_flags={"encode_start": {"values": [0, 1], "labels": {"0": "mid-file crop", "1": "genuine encode start"}, "max_frames": 0}},

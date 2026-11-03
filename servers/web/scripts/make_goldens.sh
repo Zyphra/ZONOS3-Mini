@@ -15,14 +15,14 @@ E=servers/ggml/tests/fixtures/speaker-embedding.npy
 O=servers/web/public/goldens
 TEXT="Hello from the browser engine."
 mkdir -p "$O"
-"$B/zonos3-cli" "$M/zonos3-qat.gguf" --cpu --speaker-embedding "$E" --condition-buckets 3,5,10 --silence-prefill 3 \
+"$B/zonos3-cli" "$M/zonos3-ptq.gguf" --cpu --speaker-embedding "$E" --condition-buckets 3,5,30 --silence-prefill 3 \
   --build-prompt "$TEXT" "$O/ids.npy"
-"$B/zonos3-cli" "$M/zonos3-qat.gguf" --cpu --speaker-embedding "$E" --condition-buckets 3,5,10 \
+"$B/zonos3-cli" "$M/zonos3-ptq.gguf" --cpu --speaker-embedding "$E" --condition-buckets 3,5,30 \
   --tts "$TEXT" "$O/tts.npy" --seed 1 --max 60 --dump-ids "$O/full_ids.npy" --dump-logits "$O/logits.npy" \
   --probe-heads laci_heads/zonos3_mini_mect60k_heads.json --dump-probe "$O/probe.npy"
 # --validate reads the conditioning from full_ids.cond.json (written by --dump-ids)
-"$B/zonos3-cli" "$M/zonos3-qat.gguf" --cpu --validate "$O/full_ids.npy" "$O/validate"
-"$BM/zonos3-cli" "$M/zonos3-qat.gguf" --gpu --validate "$O/full_ids.npy" "$O/validate_metal"
+"$B/zonos3-cli" "$M/zonos3-ptq.gguf" --cpu --validate "$O/full_ids.npy" "$O/validate"
+"$BM/zonos3-cli" "$M/zonos3-ptq.gguf" --gpu --validate "$O/full_ids.npy" "$O/validate_metal"
 "$B/zac-cli" "$M/zac.gguf" "$O/tts.npy" "$O/zac_audio.npy" --cpu
 "$B/spk-encoder-cli" "$M/spk-encoder.gguf" --audio default_voices/AmericanFemale.mp3 "$O/spk.npy" --dump-dir "$O/spk" --cpu
 # The exact 44.1 kHz PCM the CLI's ffmpeg decode produced (audio-decode.cpp flags), for speaker_embed_pcm.

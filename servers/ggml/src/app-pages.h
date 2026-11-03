@@ -57,7 +57,7 @@ static const char * ZONOS3_APP_SETUP_PAGE = R"html(
 
     <div id="manual-view">
       <label>Backbone model (.gguf)</label>
-      <div class="row"><input type="text" id="model_in" placeholder="zonos3-qat.gguf">
+      <div class="row"><input type="text" id="model_in" placeholder="zonos3-ptq.gguf">
         <button onclick="browse('model')">Browse&hellip;</button></div>
       <label>ZAC decoder (.gguf)</label>
       <div class="row"><input type="text" id="zac_in" placeholder="zac.gguf">

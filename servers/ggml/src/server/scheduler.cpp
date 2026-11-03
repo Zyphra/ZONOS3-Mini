@@ -230,7 +230,7 @@ void attach_probe(const ServerState & s, ReqJob & job) {
                 zonos3_laci::RateBuckets rb;
                 rb.index = (int) i;
                 rb.edges.assign(hp.cond_edges[i].begin(), hp.cond_edges[i].end());
-                rb.n_buckets = (int) hp.n_cond_buckets;
+                rb.n_buckets = (int) hp.cond_bucket_counts[i];
                 p.rates = rb;
             }
     } else if (gr.laci_bucket && !(p.rates->first <= *gr.laci_bucket && *gr.laci_bucket <= p.rates->last())) {

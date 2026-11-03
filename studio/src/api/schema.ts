@@ -529,8 +529,9 @@ export interface components {
             };
         };
         /**
-         * @description Condition-row bucket ids per name (`loudness`, `fmax`, `speaking_rate`: 0..n_buckets-1, null = unknown) as an
-         *     object, or a list in the checkpoint's order. Refused (400) on checkpoints without condition rows.
+         * @description Condition-row bucket ids per name (`loudness`, `fmax`, `speaking_rate`: 0..n-1 with n =
+         *     condition_tokens.bucket_counts[name], null = unknown) as an object, or a list in the checkpoint's order.
+         *     Refused (400) on checkpoints without condition rows.
          */
         ConditionBuckets: {
             [key: string]: number | null;
@@ -1108,8 +1109,14 @@ export interface components {
                 [key: string]: Record<string, unknown>;
             };
             count: number;
-            n_buckets: number;
-            unknown_index: number;
+            /** @description Buckets per condition name (ids 0..n-1; n = unknown) */
+            bucket_counts: {
+                [key: string]: number;
+            };
+            /** @description The unknown id per condition name (= its bucket count) */
+            unknown_ids: {
+                [key: string]: number;
+            };
             edges: {
                 [key: string]: number[];
             };
@@ -1454,6 +1461,7 @@ export interface components {
             sample_rate: number;
             frame_rate: number;
             rate_edges: number[];
+            /** @description Bucket count of the checkpoint's speaking-rate condition table */
             n_buckets: number;
             buckets: components["schemas"]["DubBucket"][];
             candidate_bucket_offsets: number[];

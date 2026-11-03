@@ -39,16 +39,17 @@ export const ACCENT_ADAPTERS: string[] = [];
 function conditionTokens(e: Engine): unknown {
   const hp = e.hp;
   if (hp.nCond === 0) return null;
-  const edges: Record<string, number[]> = {}, units: Record<string, string> = {};
+  const edges: Record<string, number[]> = {}, units: Record<string, string> = {}, counts: Record<string, number> = {};
   let layout = '[reference prefix | speaker row]';
   hp.condNames.forEach((name, i) => {
     edges[name] = (hp.condEdges[i] ?? []).map(floatDecimal);
+    counts[name] = hp.condBucketCounts[i];
     if (i < hp.condUnits.length) units[name] = hp.condUnits[i];
     layout += `[${name}]`;
   });
   return {
-    enabled: true, names: hp.condNames, flags: {}, count: hp.nCond, n_buckets: hp.nCondBuckets,
-    unknown_index: hp.nCondBuckets, edges, units, layout: layout + ' BOS text EOS',
+    enabled: true, names: hp.condNames, flags: {}, count: hp.nCond, bucket_counts: counts,
+    unknown_ids: { ...counts }, edges, units, layout: layout + ' BOS text EOS',
   };
 }
 
@@ -140,7 +141,7 @@ export function dubCapabilities(e: Engine): Record<string, unknown> {
     sample_rate: SAMPLE_RATE,
     frame_rate: 15.0,
     rate_edges: rate >= 0 ? (hp.condEdges[rate] ?? []).map(floatDecimal) : [],
-    n_buckets: hp.nCondBuckets,
+    n_buckets: rate >= 0 ? hp.condBucketCounts[rate] : 0,
     buckets: [],
     candidate_bucket_offsets: [0, -1, 1, -2, 2],
     candidate_seeds: 2,

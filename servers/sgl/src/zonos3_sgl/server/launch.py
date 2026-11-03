@@ -116,7 +116,7 @@ def launch_server(run_shell: bool = False) -> None:
                 if getattr(server_args.model_config, "condition_tokens_enabled", False)
                 else 0
             ),
-            "condition_n_buckets": int(getattr(server_args.model_config, "condition_n_buckets", 10) or 10),
+            "condition_bucket_counts": list(server_args.model_config.condition_bucket_counts),
             "model_path": server_args.model_path,
         }
 

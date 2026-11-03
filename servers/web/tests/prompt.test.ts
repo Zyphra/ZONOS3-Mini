@@ -1,14 +1,22 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseNpyF32 } from '../src/npy';
-import { AUDIO_PAD, buildCfgTwin, buildPrompt, conditionBucket, modelHp, NCB, prefillCodes, TEXT_PAD, W, type ModelHp } from '../src/prompt';
+import {
+  AUDIO_PAD, buildCfgTwin, buildPrompt, conditionBucket, conditionBucketCounts, modelHp, NCB, prefillCodes, TEXT_PAD, W,
+  type ModelHp,
+} from '../src/prompt';
 import { createTokenizer } from '../src/tokenizer';
 
 const tok = createTokenizer();
 const silence = [1918, 746, 3544, 2300, 11, 12, 13, 14, 15, 16];
+const RATE_EDGES = [
+  6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196, 14.53, 14.887, 15.193,
+  15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069, 19.818, 20.816, 22.286, 24.722, 29.25,
+];
 const hp: ModelHp = {
-  nCodebooks: 10, audioPad: 4097, textVocab: 8196, nCond: 3, nCondBuckets: 10, condNames: ['loudness', 'fmax', 'speaking_rate'],
-  condEdges: [[1, 2, 3], [1, 2, 3], [1, 2, 3]], silenceFrame: silence, speakerDim: 192, contextLength: 32768,
+  nCodebooks: 10, audioPad: 4097, textVocab: 8196, nCond: 3, condBucketCounts: [10, 10, 30],
+  condNames: ['loudness', 'fmax', 'speaking_rate'],
+  condEdges: [[1, 2, 3], [1, 2, 3], RATE_EDGES], silenceFrame: silence, speakerDim: 192, contextLength: 32768,
   condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', tagCfgTrained: false, nEmbd: 1024, nLayer: 11,
 };
 const row = (ids: Int32Array, r: number) => Array.from(ids.subarray(r * W, r * W + W));
@@ -46,7 +54,7 @@ describe('buildPrompt', () => {
     const p = buildPrompt(tok, 'Hi', { referenceCodes: ref, buckets: [], silencePrefill: 0 }, hp);
     expect(p.speakerRows).toBe(11);
     expect(p.cond.conditionRow).toBe(11);
-    expect(p.cond.buckets).toEqual([10, 10, 10]);
+    expect(p.cond.buckets).toEqual([10, 10, 30]);
     expect(row(p.ids, 0)).toEqual([0, ...new Array<number>(9).fill(AUDIO_PAD), TEXT_PAD]);
     expect(row(p.ids, 10)[9]).toBe(19);
     expect(() => buildPrompt(tok, 'Hi', { referenceCodes: ref, speakerEmbedding: new Float32Array(192), buckets: [], silencePrefill: 0 }, hp))
@@ -57,14 +65,28 @@ describe('buildPrompt', () => {
     expect(() => buildPrompt(tok, 'Hi', { buckets: [], silencePrefill: 31 }, hp)).toThrow('silence prefill must be 0..30 frames');
   });
 
+  it('checks each condition row against its own bucket count', () => {
+    expect(buildPrompt(tok, 'Hi', { buckets: [1, 2, 29], silencePrefill: 0 }, hp).cond.buckets).toEqual([1, 2, 29]);
+    expect(buildPrompt(tok, 'Hi', { buckets: [1, 2, 30], silencePrefill: 0 }, hp).cond.buckets).toEqual([1, 2, 30]);
+    expect(() => buildPrompt(tok, 'Hi', { buckets: [1, 2, 31], silencePrefill: 0 }, hp))
+      .toThrow('condition bucket 31 for speaking_rate outside 0..29 (30 = unknown)');
+    expect(() => buildPrompt(tok, 'Hi', { buckets: [11, 2, 3], silencePrefill: 0 }, hp))
+      .toThrow('condition bucket 11 for loudness outside 0..9 (10 = unknown)');
+  });
+
+  it('reads per-table bucket counts, falling back to the legacy scalar', () => {
+    expect(conditionBucketCounts({ 'condition.count': 3, 'condition.bucket_counts': [10, 10, 30] })).toEqual([10, 10, 30]);
+    expect(conditionBucketCounts({ 'condition.count': 3, 'condition.bucket_count': 10 })).toEqual([10, 10, 10]);
+  });
+
   it('builds the CFG twin without speaker rows', () => {
     const p = buildPrompt(tok, 'Hi', { speakerEmbedding: new Float32Array(192), buckets: [1, 2, 3], silencePrefill: 2 }, hp);
-    const t = buildCfgTwin(p, 10);
+    const t = buildCfgTwin(p, hp.condBucketCounts);
     expect(t.nRows).toBe(p.nRows - 1);
     expect(t.speakerRows).toBe(0);
     expect(t.cond.speakerRow).toBe(-1);
     expect(t.cond.conditionRow).toBe(0);
-    expect(t.cond.buckets).toEqual([10, 10, 10]);
+    expect(t.cond.buckets).toEqual([10, 10, 30]);
     expect(Array.from(t.ids)).toEqual(Array.from(p.ids.subarray(W)));
   });
 

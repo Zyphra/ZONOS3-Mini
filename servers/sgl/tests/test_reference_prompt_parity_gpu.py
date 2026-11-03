@@ -2,7 +2,7 @@
 
 Skipped unless ZONOS3_TEST_MODEL points at a checkpoint, e.g.
 
-    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k uv run pytest -m gpu \
+    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo uv run pytest -m gpu \
         servers/sgl/tests/test_reference_prompt_parity_gpu.py
 
 The sgl side resolves each request with the request rules (zonos3.tts.plan) on api_server's rules context, builds the

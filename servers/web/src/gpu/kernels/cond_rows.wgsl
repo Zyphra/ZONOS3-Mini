@@ -1,7 +1,7 @@
 // Conditioning rows (zonos3-graph.cpp build_graph): the summed embedding of the row at absolute position dyn.a + t is
 // replaced by the projected speaker row (pos == speaker_row) or cond_embd.i[bucket_i] (pos == condition_row + i).
 // cond (u32 words): speaker_row i32, condition_row i32, n_cond, bucket[3], 0, 0, then the projected speaker row f32[1024].
-// Tables are f16 [11][1024] packed in u32. One thread per column, grid [4, n].
+// Tables are f16 [count_i + 1][1024] packed in u32 (the JS side checks bucket_i <= count_i). One thread per column, grid [4, n].
 struct P { n: u32 }
 @group(0) @binding(0) var<storage, read_write> emb: array<f32>;
 @group(0) @binding(1) var<storage, read> cond: array<u32>;

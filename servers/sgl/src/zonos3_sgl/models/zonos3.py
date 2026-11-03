@@ -1124,16 +1124,16 @@ class Zonos3ForCausalLM(BaseOP):
             else None
         )
         # Condition rows of the cond3 finetunes (loudness / fmax / speaking rate): one table per condition with
-        # condition_n_buckets + 1 rows (the last = unknown), checkpoint keys condition_embeddings.{i}.weight. The rows
-        # listed in TTSBatch.condition_rows get their input embedding replaced before emb_norm, like the speaker row.
+        # condition_bucket_counts[i] + 1 rows (the last = unknown), checkpoint keys condition_embeddings.{i}.weight. The
+        # rows listed in TTSBatch.condition_rows get their input embedding replaced before emb_norm, like the speaker row.
         self.condition_embeddings = (
             OPList(
                 [
                     VocabParallelEmbedding(
-                        num_embeddings=int(config.condition_n_buckets) + 1,
+                        num_embeddings=int(n) + 1,
                         embedding_dim=config.hidden_size,
                     )
-                    for _ in range(int(config.condition_count))
+                    for n in config.condition_bucket_counts
                 ]
             )
             if getattr(config, "condition_tokens_enabled", False)

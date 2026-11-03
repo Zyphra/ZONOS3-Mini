@@ -14,7 +14,7 @@ import { Builder, type Program } from './gpu/program';
 import { ropeTable } from './gpu/rope';
 import type { Model } from './gpu/weights';
 import { clipWindow } from './probe';
-import type { Conditioning } from './prompt';
+import { conditionBucketCounts, type Conditioning } from './prompt';
 
 export const N_LAYER = 11;
 export const D = 1024;
@@ -43,8 +43,6 @@ export const CHUNK = 256;
 export const PROBE_LMAX = 2048;
 const SPK_DIM = 192;
 const N_COND = 3;
-/** cond_embd rows per condition: buckets 0..9 plus the unknown row 10. */
-const N_BUCKETS = 10;
 const AUDIO_PAD = 4097;
 const TEXT_PAD = 8196;
 /** Global attention layers in probe order. */
@@ -78,7 +76,7 @@ function isPadRow(ids: Int32Array, r: number): boolean {
 }
 
 /** zonos3_check_conditioning + features_ok (speaker delta). */
-function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condNames: string[]): void {
+function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condNames: string[], counts: number[]): void {
   const padRow = (row: number) => {
     if (row < 0 || row >= n || !isPadRow(ids, row)) throw new Error(`zonos3: conditioning row ${row} is not an all-pad row`);
   };
@@ -90,8 +88,9 @@ function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condName
   if (c.conditionRow >= 0) {
     if (c.buckets.length !== N_COND) throw new Error(`zonos3: expected ${N_COND} condition buckets`);
     for (let i = 0; i < N_COND; i++) {
-      if (!Number.isInteger(c.buckets[i]) || c.buckets[i] < 0 || c.buckets[i] > N_BUCKETS)
-        throw new Error(`zonos3: condition bucket ${c.buckets[i]} for ${condNames[i]} outside 0..${N_BUCKETS - 1} (${N_BUCKETS} = unknown)`);
+      const nb = counts[i];
+      if (!Number.isInteger(c.buckets[i]) || c.buckets[i] < 0 || c.buckets[i] > nb)
+        throw new Error(`zonos3: condition bucket ${c.buckets[i]} for ${condNames[i]} outside 0..${nb - 1} (${nb} = unknown)`);
       padRow(c.conditionRow + i);
     }
   }
@@ -103,11 +102,16 @@ function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condName
   }
 }
 
-function checkMeta(meta: Record<string, unknown>): void {
+/** Validates the backbone meta; returns the per-table condition bucket counts (cond_embd.i has counts[i] + 1 rows). */
+function checkMeta(meta: Record<string, unknown>): number[] {
+  let counts: number[] = [];
+  try { counts = conditionBucketCounts(meta); } catch { /* reported below */ }
   if (meta['general.architecture'] !== 'zonos3' || meta['residual.type'] !== 'full_attnres' ||
       meta['attention.pattern'] !== 'gdn3_global1' || Number(meta['speaker.embedding_length']) !== SPK_DIM ||
-      Number(meta['condition.count']) !== N_COND || Number(meta['condition.bucket_count']) !== N_BUCKETS)
+      Number(meta['condition.count']) !== N_COND || counts.length !== N_COND ||
+      counts.some(n => !Number.isInteger(n) || n < 2))
     throw new Error('backbone: unsupported model; re-export with pnpm export');
+  return counts;
 }
 
 /** Per-step alignment probe (slot 0 decode): readout heads (weight 1) and ACI windows (unclipped text indices). */
@@ -138,9 +142,10 @@ export class Backbone {
   private chunkLogits: [GPUBuffer, GPUBuffer];
   nPast: [number, number] = [0, 0];
   private condNames: string[];
+  private condBucketCounts: number[];
 
   constructor(private gpu: Gpu, private w: Model, steerSources: number[]) {
-    checkMeta(w.meta);
+    this.condBucketCounts = checkMeta(w.meta);
     const names = w.meta['condition.names'];
     this.condNames = Array.isArray(names) ? names.map(String) : [];
     for (let i = 0; i < steerSources.length; i++) {
@@ -350,7 +355,7 @@ export class Backbone {
     const n0 = ids.length / 11;
     if (!Number.isInteger(n0) || n0 < 1) throw new Error('empty prompt');
     if (n0 > CAP) throw new Error(`prompt has ${n0} rows; maximum is ${CAP}`);
-    checkConditioning(ids, n0, cond, this.condNames);
+    checkConditioning(ids, n0, cond, this.condNames, this.condBucketCounts);
     const gpu = this.gpu;
     const chunk = opts.capture ? n0 : Math.max(1, opts.chunk ?? CHUNK);
     const adhoc = new Map<number, { prog: Program; ids: GPUBuffer; logits: GPUBuffer; caps: Capture[] | null }>();

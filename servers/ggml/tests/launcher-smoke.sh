@@ -75,7 +75,7 @@ stop_launcher() {
 
 echo "== launcher: local models =="
 mkdir -p "$WORK/models"
-cp "$MODEL" "$WORK/models/zonos3-qat.gguf"
+cp "$MODEL" "$WORK/models/zonos3-ptq.gguf"
 cp "$ZAC"   "$WORK/models/zac.gguf"
 run_launcher
 pass "local models -> server up"

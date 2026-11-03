@@ -41,7 +41,8 @@ def runtime(state: ServerState):
             settings = WorkerSettings(python=settings.python, avsync_home=settings.avsync_home, device=asr_device())
         model = DubModel(
             name=Path(state.options.model_path).name, rate_edges=tuple(caps.dub_rate_edges(state)),
-            n_buckets=state.config.condition_n_buckets if state.config.condition_count else 0,
+            n_buckets=(state.config.condition_bucket_counts[state.config.condition_names.index("speaking_rate")]
+                       if "speaking_rate" in state.config.condition_names else 0),
             laci_languages=state.engine.laci_languages, studio_voices="embedding" in modes,
             source_voice="reference" in modes,
             raw_controls=frozenset(did for did, d in (bundle.directions.items() if bundle is not None else ())

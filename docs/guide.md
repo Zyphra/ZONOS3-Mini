@@ -286,8 +286,9 @@ browser.
 
 ### ZONOS3 Mini release (`lm/mect_60k`)
 
-The release LM `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k` serves accent
-adapters with `servers/sgl/scripts/serve.sh --accent-adapters <adapter dir>`, with the release
+The release LM `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k` (the default LM before
+`lm/rate30_20k_r2grpo`; the adapters were trained on it) serves accent adapters with
+`SERVE_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k servers/sgl/scripts/serve.sh --accent-adapters <adapter dir>`, with the release
 decoder (full-size causal MR iSTFT head) and the speaker encoder from
 `model/src/zonos3/registries/`. The server takes the encoder named by the model's `params.json`
 (`speaker_embedding_codec: ownmect_s2`), and checks its sha256 at load.
@@ -312,7 +313,7 @@ compares against.
 
 ## Pronunciation input (phoneme tokens)
 
-The ZONOS3 Mini release LM with E2-TTS "X2" pronunciation control: a word can be
+The ZONOS3 Mini release LM `lm/mect_60k` with E2-TTS "X2" pronunciation control: a word can be
 written as its IPA. The model is the release LM plus phoneme tokens trained on it
 in lingua (`apps/zonos/configs/z3m_mect60k_phoneme_tokens.yaml`, see
 `lingua/apps/zonos/PHONEMES.md`): 138 text rows after the padding row, a group
@@ -853,10 +854,12 @@ The pace control (`delivery.tempo`, hidden L9.attn) can stand in for the speakin
 
 #### Extended speaking-rate buckets
 
-Dubs plan and retake over the row's ten buckets plus **tempo-steered buckets** that continue them: −1, −2, … below
+Dubs plan and retake over the `lm/mect_60k` row's ten buckets plus **tempo-steered buckets** that continue them: −1, −2, … below
 bucket 0 and 10, 11, … above bucket 9, each the rate row unknown plus a `delivery.tempo` dose, only as far as measured
 safe per target language. The kept scale is the bundle's `rate_extension` block (also
-`steering/ears_styles_mect60k/eval/rate_extension.json`).
+`steering/ears_styles_mect60k/eval/rate_extension.json`). It holds only for the row edges it was measured on: on a
+checkpoint with other speaking-rate edges (the default `lm/rate30_20k_r2grpo`, 30 buckets) the server drops it with a
+warning and dubs take the row-only path.
 
 - **Nominal edges** continue the row's at its mean geometric step (×1.097): bucket 0 becomes [9.22, 10.12) B/s,
   −1 [8.41, 9.22), … and 9 becomes [21.21, 23.26), 10 [23.26, 25.52), …; a language's lowest / highest bucket stays

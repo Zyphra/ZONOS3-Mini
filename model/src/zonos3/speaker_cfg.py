@@ -4,6 +4,7 @@ condition rows): the training-side evaluation generator's twin. guided = uncond 
 from __future__ import annotations
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 import torch
 
@@ -53,7 +54,7 @@ class SpeakerCfgTwin:
 
 def speaker_cfg_twin(msg, input_ids: torch.Tensor, *, n_codebooks: int, audio_pad_id: int, text_vocab: int,
                      speaker_token_position: int, condition_values: list[int] | None, condition_token_start: int,
-                     condition_unknown: int) -> SpeakerCfgTwin:
+                     condition_unknowns: Sequence[int]) -> SpeakerCfgTwin:
     """Everything the scheduler needs for the speaker-CFG twin of a request: the prompt without its speaker conditioning,
     no speaker embedding (the caller drops it), and on condition-row models all-unknown rows shifted back by the removed
     rows. Identical for both paths to the evaluation generator's twin."""
@@ -61,7 +62,9 @@ def speaker_cfg_twin(msg, input_ids: torch.Tensor, *, n_codebooks: int, audio_pa
                                     speaker_token_position=speaker_token_position, text_vocab=text_vocab)
     removed = int(len(input_ids) - len(twin_ids))
     if condition_values is not None:
-        values: list[int] | None = [int(condition_unknown)] * len(condition_values)
+        if len(condition_unknowns) != len(condition_values):
+            raise ValueError("Speaker CFG twin: one unknown id per condition row")
+        values: list[int] | None = [int(u) for u in condition_unknowns]
         start = int(condition_token_start) - removed
         if start < 0:
             raise ValueError('Speaker CFG twin: the condition rows would start before the prompt')

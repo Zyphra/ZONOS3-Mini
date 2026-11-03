@@ -154,8 +154,8 @@ class Engine:
         self.reference_idle_unload = float(reference_idle_unload)
         c = self.config
         self.n_codebooks, self.codebook_size, self.hidden_size = c.n_codebooks, c.codebook_size, c.dim
-        self.condition_names, self.condition_n_buckets, self.condition_edges = (
-            c.condition_names, c.condition_n_buckets, c.condition_edges)
+        self.condition_names, self.condition_bucket_counts, self.condition_edges = (
+            c.condition_names, c.condition_bucket_counts, c.condition_edges)
         # R2: the reference prefix first, then the speaker row (ggml checkpoint_speaker_modes)
         self.speaker_modes = [mode for mode, on in (("reference", c.speaker_reference_prefix_enabled),
                                                     ("embedding", c.speaker_embedding_dim > 0)) if on]

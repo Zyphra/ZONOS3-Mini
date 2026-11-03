@@ -17,22 +17,25 @@ from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptC
 
 ERRORS = json.loads((Path(__file__).parent / "fixtures" / "request_errors.json").read_text())
 N_CB, CODEBOOK = 10, 4096
-# the Mini release's condition rows (hf_release_zonos3mini_20261020/lm/mect_60k/params.json)
+# the default LM's condition rows (zonos3-rate30-20k-r2grpo params.json): loudness / fmax on 10 buckets, speaking rate
+# on 30 (condition_bucket_counts [10, 10, 30])
 EDGES = {
     "loudness": [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
     "fmax": [7578.125, 8000.0, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
-    "speaking_rate": [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208],
+    "speaking_rate": [6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196,
+                      14.53, 14.887, 15.193, 15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069,
+                      19.818, 20.816, 22.286, 24.722, 29.25],
 }
 
 
 class Context:
-    """A release-like plan context: reference + embedding modes, three 10-bucket condition rows, byte text (no
+    """A release-like plan context: reference + embedding modes, condition rows on 10 / 10 / 30 buckets, byte text (no
     phoneme tokens), no accents, no LACI heads, no steering bundle."""
 
     n_codebooks, codebook_size, hidden_size = N_CB, CODEBOOK, 1024
     audio_pad_id, text_vocab, span_end_id = CODEBOOK + 1, BYTE_TEXT_VOCAB_SIZE, None
     condition_names = ("loudness", "fmax", "speaking_rate")
-    condition_n_buckets = 10
+    condition_bucket_counts = (10, 10, 30)
     condition_edges = EDGES
     speaker_modes = ("reference", "embedding")
     text_tokenizer_spec = None
@@ -74,11 +77,24 @@ def test_every_fixture_refusal(entry):
 def test_flag_rows_take_their_values_or_unknown():
     ctx = Context(flags={"speaking_rate": {"values": [0, 1]}})
     assert plan.resolve_condition_buckets(ctx, {"speaking_rate": 1}, None) == [10, 10, 1]
-    assert plan.resolve_condition_buckets(ctx, {"speaking_rate": 10}, None) == [10, 10, 10]
+    assert plan.resolve_condition_buckets(ctx, {"speaking_rate": 30}, None) == [10, 10, 30]
     assert plan.resolve_condition_buckets(ctx, None, {"speaking_rate": 0.5, "fmax": 8000.0}) == [10, 2, 1]
     assert plan.resolve_condition_buckets(ctx, None, {"speaking_rate": 0.49}) == [10, 10, 0]
-    with pytest.raises(ValueError, match=r"^condition_buckets\[speaking_rate\] is a flag: one of \[0, 1\] or 10"):
+    with pytest.raises(ValueError, match=r"^condition_buckets\[speaking_rate\] is a flag: one of \[0, 1\] or 30"):
         plan.resolve_condition_buckets(ctx, {"speaking_rate": 2}, None)
+
+
+def test_each_condition_row_has_its_own_bucket_count():
+    ctx = Context()
+    assert plan.resolve_condition_buckets(ctx, None, None) == [10, 10, 30]
+    assert plan.resolve_condition_buckets(ctx, {"speaking_rate": 29}, None) == [10, 10, 29]
+    with pytest.raises(ValueError) as exc:
+        plan.resolve_condition_buckets(ctx, {"speaking_rate": 31}, None)
+    assert str(exc.value) == "condition_buckets[speaking_rate] must be in [0, 29] or 30 (= unknown)"
+    with pytest.raises(ValueError, match=r"^condition_buckets\[fmax\] must be in \[0, 9\] or 10 "):
+        plan.resolve_condition_buckets(ctx, {"fmax": 11}, None)
+    assert plan.resolve_condition_buckets(ctx, None, {"speaking_rate": 29.25}) == [10, 10, 29]
+    assert plan.resolve_condition_buckets(ctx, None, {"speaking_rate": 6.0}) == [10, 10, 0]
 
 
 def test_max_tokens_shrinks_to_the_context_left():

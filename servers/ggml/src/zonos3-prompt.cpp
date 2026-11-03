@@ -47,12 +47,13 @@ bool zonos3_build_prompt(const zonos3_model & model, const std::string & text,
             if (!std::isfinite(opt.speaker_embedding[i])) return bad("speaker embedding contains a non-finite value");
     }
     std::vector<int32_t> buckets = opt.condition_buckets;
-    if (buckets.empty()) buckets.assign(hp.n_cond, (int32_t) hp.n_cond_buckets);
+    if (buckets.empty()) buckets.assign(hp.cond_bucket_counts.begin(), hp.cond_bucket_counts.end());
     if (buckets.size() != hp.n_cond) return bad("expected " + std::to_string(hp.n_cond) + " condition buckets");
     for (uint32_t i = 0; i < hp.n_cond; ++i) {
-        if (buckets[i] < 0 || buckets[i] > (int32_t) hp.n_cond_buckets)
+        if (buckets[i] < 0 || buckets[i] > (int32_t) hp.cond_bucket_counts[i])
             return bad("condition bucket " + std::to_string(buckets[i]) + " for " + hp.cond_names[i] + " outside 0.." +
-                       std::to_string(hp.n_cond_buckets - 1) + " (" + std::to_string(hp.n_cond_buckets) + " = unknown)");
+                       std::to_string(hp.cond_bucket_counts[i] - 1) + " (" + std::to_string(hp.cond_bucket_counts[i]) +
+                       " = unknown)");
     }
     const std::string groups = zonos3_check_phoneme_groups(model.tok, text);
     if (!groups.empty()) return bad(groups);
@@ -115,7 +116,7 @@ bool zonos3_build_cfg_twin(const zonos3_model & model, const zonos3_prompt & con
     twin.prefill_frames = cond.prefill_frames;
     twin.cond.speaker_row = -1;
     twin.cond.condition_row = cond.cond.condition_row - cond.speaker_rows;
-    twin.cond.buckets.assign(model.hp.n_cond, (int32_t) model.hp.n_cond_buckets);
+    twin.cond.buckets.assign(model.hp.cond_bucket_counts.begin(), model.hp.cond_bucket_counts.end());
     out = std::move(twin);
     return true;
 }
@@ -172,9 +173,9 @@ bool zonos3_check_conditioning(const zonos3_model & model, const float * ids, in
             return false;
         }
         for (uint32_t i = 0; i < hp.n_cond; ++i) {
-            if (c.buckets[i] < 0 || c.buckets[i] > (int32_t) hp.n_cond_buckets) {
+            if (c.buckets[i] < 0 || c.buckets[i] > (int32_t) hp.cond_bucket_counts[i]) {
                 fprintf(stderr, "zonos3: condition bucket %d for %s outside 0..%u (%u = unknown)\n",
-                        c.buckets[i], hp.cond_names[i].c_str(), hp.n_cond_buckets - 1, hp.n_cond_buckets);
+                        c.buckets[i], hp.cond_names[i].c_str(), hp.cond_bucket_counts[i] - 1, hp.cond_bucket_counts[i]);
                 return false;
             }
             if (!pad_row(c.condition_row + (int) i)) return false;

@@ -93,7 +93,20 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
     u32("zonos3.tokenizer.eos", eos);
     u32("zonos3.speaker.embedding_length", hp.speaker_dim);
     u32("zonos3.condition.count", hp.n_cond);
-    u32("zonos3.condition.bucket_count", hp.n_cond_buckets);
+    if (const int64_t id = gguf_find_key(gf, "zonos3.condition.bucket_counts"); id >= 0) {
+        if (gguf_get_kv_type(gf, id) != GGUF_TYPE_ARRAY || gguf_get_arr_type(gf, id) != GGUF_TYPE_INT32 ||
+            gguf_get_arr_n(gf, id) != hp.n_cond) {
+            fprintf(stderr, "zonos3: invalid array 'zonos3.condition.bucket_counts'\n"); ok = false;
+        } else {
+            const int32_t * c = (const int32_t *) gguf_get_arr_data(gf, id);
+            for (uint32_t i = 0; i < hp.n_cond; ++i) hp.cond_bucket_counts.push_back(c[i] < 0 ? 0 : (uint32_t) c[i]);
+        }
+    } else {
+        // Legacy GGUFs (mect_60k) carry one shared count.
+        uint32_t shared = 0;
+        u32("zonos3.condition.bucket_count", shared);
+        hp.cond_bucket_counts.assign(hp.n_cond, shared);
+    }
     auto arr_of = [&](const char * key, gguf_type type) -> int64_t {
         const int64_t id = gguf_find_key(gf, key);
         if (id < 0 || gguf_get_kv_type(gf, id) != GGUF_TYPE_ARRAY || gguf_get_arr_type(gf, id) != type) {
@@ -111,19 +124,22 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
     if (ok && hp.cond_names != std::vector<std::string>{"loudness", "fmax", "speaking_rate"}) {
         fprintf(stderr, "zonos3: unexpected condition names\n"); ok = false;
     }
-    if (ok && (hp.n_cond != hp.cond_names.size() || hp.cond_units.size() != hp.cond_names.size() ||
-               hp.n_cond_buckets < 2 || hp.n_cond_buckets > 1024 || hp.speaker_dim == 0 || hp.speaker_dim > 65536)) {
+    bool counts_ok = hp.cond_bucket_counts.size() == hp.n_cond;
+    for (uint32_t n : hp.cond_bucket_counts) counts_ok = counts_ok && n >= 2 && n <= 1024;
+    if (ok && (hp.n_cond != hp.cond_names.size() || hp.cond_units.size() != hp.cond_names.size() || !counts_ok ||
+               hp.speaker_dim == 0 || hp.speaker_dim > 65536)) {
         fprintf(stderr, "zonos3: invalid speaker/condition dimensions\n"); ok = false;
     }
     if (ok) {
-        for (const auto & name : hp.cond_names) {
+        for (size_t c = 0; c < hp.cond_names.size(); ++c) {
+            const std::string & name = hp.cond_names[c];
             std::vector<float> edges;
             const int64_t id = arr_of(("zonos3.condition.edges." + name).c_str(), GGUF_TYPE_FLOAT32);
             if (id >= 0) {
                 const float * e = (const float *) gguf_get_arr_data(gf, id);
                 edges.assign(e, e + gguf_get_arr_n(gf, id));
             }
-            bool valid = edges.size() == (size_t) hp.n_cond_buckets - 1;
+            bool valid = edges.size() == (size_t) hp.cond_bucket_counts[c] - 1;
             for (size_t i = 0; valid && i < edges.size(); ++i)
                 valid = std::isfinite(edges[i]) && (i == 0 || edges[i] > edges[i - 1]);
             if (!valid) { fprintf(stderr, "zonos3: invalid condition edges for '%s'\n", name.c_str()); ok = false; }
@@ -297,7 +313,7 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
     m.speaker_proj_b = req("speaker_proj.bias", {D}, true);
     m.cond_embd.resize(hp.n_cond);
     for (uint32_t i = 0; i < hp.n_cond; ++i)
-        m.cond_embd[i] = req("cond_embd." + std::to_string(i) + ".weight", {D, (int64_t) hp.n_cond_buckets + 1}, false, true);
+        m.cond_embd[i] = req("cond_embd." + std::to_string(i) + ".weight", {D, (int64_t) hp.cond_bucket_counts[i] + 1}, false, true);
     m.layers.resize(hp.n_layer);
     for (uint32_t L = 0; L < hp.n_layer; ++L) {
         auto & ly = m.layers[L];

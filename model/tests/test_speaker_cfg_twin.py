@@ -7,7 +7,8 @@ import torch
 
 from zonos3.speaker_cfg import SpeakerCfgTwin, is_reserved_speaker_slot, speaker_cfg_twin, unconditional_prompt
 
-C, PAD, TEXT_VOCAB, UNKNOWN = 10, 4097, 8196, 10
+C, PAD, TEXT_VOCAB = 10, 4097, 8196
+UNKNOWNS = [10, 10, 30]  # per-table unknown ids of the default LM (condition_bucket_counts [10, 10, 30])
 
 
 def frame(text_token):
@@ -39,12 +40,15 @@ def test_reference_twin_drops_the_prefix_and_shifts_the_rows_back():
     m = msg(ids, prefix=7)
     assert torch.equal(unconditional_prompt(m, n_codebooks=C, audio_pad_id=PAD), ids[7:])
     twin = speaker_cfg_twin(m, ids, n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB, speaker_token_position=-1,
-                            condition_values=[3, 5, 7], condition_token_start=7, condition_unknown=UNKNOWN)
+                            condition_values=[3, 5, 7], condition_token_start=7, condition_unknowns=UNKNOWNS)
     assert isinstance(twin, SpeakerCfgTwin) and twin.removed_rows == 7
-    assert torch.equal(twin.input_ids, ids[7:]) and twin.condition_values == [UNKNOWN] * 3 and twin.condition_token_start == 0
+    assert torch.equal(twin.input_ids, ids[7:]) and twin.condition_values == [10, 10, 30] and twin.condition_token_start == 0
+    with pytest.raises(ValueError, match="one unknown id per condition row"):
+        speaker_cfg_twin(m, ids, n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB, speaker_token_position=-1,
+                         condition_values=[3, 5, 7], condition_token_start=7, condition_unknowns=[10])
     # models without condition rows keep None / -1
     twin = speaker_cfg_twin(m, ids, n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB, speaker_token_position=-1,
-                            condition_values=None, condition_token_start=-1, condition_unknown=UNKNOWN)
+                            condition_values=None, condition_token_start=-1, condition_unknowns=UNKNOWNS)
     assert twin.condition_values is None and twin.condition_token_start == -1
 
 
@@ -53,9 +57,9 @@ def test_embedding_twin_drops_the_reserved_speaker_row():
     m = msg(ids, embedding=True, position=0)
     assert is_reserved_speaker_slot(ids[0], n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB)
     twin = speaker_cfg_twin(m, ids, n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB, speaker_token_position=0,
-                            condition_values=[0, 9, 4], condition_token_start=1, condition_unknown=UNKNOWN)
+                            condition_values=[0, 9, 4], condition_token_start=1, condition_unknowns=UNKNOWNS)
     assert twin.removed_rows == 1 and torch.equal(twin.input_ids, ids[1:])
-    assert twin.condition_values == [UNKNOWN] * 3 and twin.condition_token_start == 0
+    assert twin.condition_values == UNKNOWNS and twin.condition_token_start == 0
     # the evaluation generator's twin: condition rows first, then the text, nothing else
     assert torch.equal(twin.input_ids, prompt(speaker=False))
 
@@ -66,7 +70,7 @@ def test_embedding_twin_with_the_scheduler_added_slot_offline_path():
     m = msg(bare, embedding=True, position=-1)
     final = torch.cat((torch.tensor([slot()], dtype=torch.int32), bare))
     twin = speaker_cfg_twin(m, final, n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB, speaker_token_position=0,
-                            condition_values=[UNKNOWN] * 3, condition_token_start=1, condition_unknown=UNKNOWN)
+                            condition_values=list(UNKNOWNS), condition_token_start=1, condition_unknowns=UNKNOWNS)
     assert torch.equal(twin.input_ids, bare) and twin.removed_rows == 1 and twin.condition_token_start == 0
 
 

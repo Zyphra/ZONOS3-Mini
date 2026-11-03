@@ -34,17 +34,18 @@ std::vector<std::string> laci_languages(const ServerState & s) {
 static json condition_tokens(const ServerState & s) {
     const auto & hp = s.model.hp;
     if (hp.n_cond == 0) return nullptr;
-    json edges = json::object(), units = json::object();
+    json edges = json::object(), units = json::object(), counts = json::object();
     std::string layout = "[reference prefix | speaker row]";
     for (size_t i = 0; i < hp.cond_names.size(); ++i) {
         json e = json::array();
         if (i < hp.cond_edges.size()) for (float v : hp.cond_edges[i]) e.push_back(float_decimal(v));
         edges[hp.cond_names[i]] = e;
+        if (i < hp.cond_bucket_counts.size()) counts[hp.cond_names[i]] = (int) hp.cond_bucket_counts[i];
         if (i < hp.cond_units.size()) units[hp.cond_names[i]] = hp.cond_units[i];
         layout += "[" + hp.cond_names[i] + "]";
     }
     return {{"enabled", true}, {"names", hp.cond_names}, {"flags", json::object()}, {"count", (int) hp.n_cond},
-            {"n_buckets", (int) hp.n_cond_buckets}, {"unknown_index", (int) hp.n_cond_buckets}, {"edges", edges},
+            {"bucket_counts", counts}, {"unknown_ids", counts}, {"edges", edges},
             {"units", units}, {"layout", layout + " BOS text EOS"}};
 }
 

@@ -15,7 +15,7 @@ from zonos3.reference.lm import Zonos3LM, Zonos3LMConfig
 CODEC = "tiny_codec"
 
 
-def tiny_params(span_end: bool = False) -> dict:
+def tiny_params(span_end: bool = False, **overrides) -> dict:
     params = {
         "attention_pattern": "gdn3_global1", "residual_type": "full_attnres", "use_xsa": False,
         "speaker_enabled": True, "condition_tokens_enabled": True, "moe_router_type": "linear",
@@ -27,23 +27,23 @@ def tiny_params(span_end: bool = False) -> dict:
         "text_tokenizer_spec": {"kind": "superbpe", "path": "tokenizer.json", "vocab_size": 16,
                                 "offset": 4, "bos": 2, "eos": 3},
         "moe_alpha": 0.25, "moe_n_experts": 4, "multiple_of": 32, "ffn_dim_multiplier": 1.0,
-        "condition_count": 3, "condition_n_buckets": 4,
+        "condition_count": 3, "condition_n_buckets": 4, "condition_bucket_counts": [4, 4, 6],
         "condition_names": ["loudness", "fmax", "speaking_rate"],
         "condition_edges": {"loudness": [-30.0, -20.0, -10.0], "fmax": [4000.0, 8000.0, 12000.0],
-                            "speaking_rate": [10.0, 14.0, 18.0]},
+                            "speaking_rate": [8.0, 10.0, 14.0, 18.0, 22.0]},
         "condition_units": {"loudness": "LUFS", "fmax": "Hz", "speaking_rate": "phonemes/s"},
         "norm_eps": 1e-5, "rope_theta": 10000.0, "max_seqlen": 256, "loss_softcap": 30.0,
         "speaker_embedding_dim": 8, "speaker_reference_max_seconds": 60.0, "audio_codec": CODEC,
     }
     if span_end:
         params["span_end_id"] = 34
-    return params
+    return {**params, **overrides}
 
 
-def make_tiny_lm_dir(path: Path, span_end: bool = False, seed: int = 0) -> tuple[Path, Path]:
+def make_tiny_lm_dir(path: Path, span_end: bool = False, seed: int = 0, **overrides) -> tuple[Path, Path]:
     """A random tiny LM checkpoint directory and its silence-frame JSON."""
     path.mkdir(parents=True, exist_ok=True)
-    params = tiny_params(span_end)
+    params = tiny_params(span_end, **overrides)
     model = Zonos3LM(Zonos3LMConfig.from_params(params))
     generator = torch.Generator().manual_seed(seed)
     state = {}
@@ -100,15 +100,21 @@ def test_lm_round_trip(tmp_path, span_end):
         assert scalar("zonos3.span_end_id") == 34
     text = reader.get_tensor(names.index("text_embd.weight"))
     assert tuple(int(n) for n in text.shape)[::-1] == (20 + 1 + 2, 64)
+    # one bucket count per condition table; the speaking-rate table has 6 buckets + unknown
+    counts = fields["zonos3.condition.bucket_counts"]
+    assert [int(counts.parts[i][0]) for i in counts.data] == [4, 4, 6]
+    assert "zonos3.condition.bucket_count" not in fields
+    rate = reader.get_tensor(names.index("cond_embd.2.weight"))
+    assert tuple(int(n) for n in rate.shape)[::-1] == (7, 64)
 
 
 def release_shapes() -> dict:
-    """The release lm/mect_60k flat state dict (177 tensors)."""
+    """The default LM lm/rate30_20k_r2grpo flat state dict (177 tensors; condition tables of 10, 10, 30 buckets)."""
     shapes = {f"multi_embedder.embedders.{i}.weight": (4098, 1024) for i in range(10)}
     shapes.update({"multi_embedder.embedders.10.weight": (8197, 1024), "multi_output.weight": (40980, 1024),
                    "out_norm.weight": (1024,), "block_attnres_queries": (23, 1024),
                    "speaker_projection.weight": (1024, 192), "speaker_projection.bias": (1024,)})
-    shapes.update({f"condition_embeddings.{i}.weight": (11, 1024) for i in range(3)})
+    shapes.update({f"condition_embeddings.{i}.weight": (n + 1, 1024) for i, n in enumerate((10, 10, 30))})
     for layer in range(11):
         p = f"layers.{layer}."
         shapes[p + "attention_norm.weight"] = shapes[p + "ffn_norm.weight"] = (1024,)
@@ -134,7 +140,8 @@ def test_release_schema_maps_to_the_gguf_tensors():
     params = dict(tiny_params(), n_layers=11, dim=1024, head_dim=32, n_heads=16, n_kv_heads=4, max_seqlen=32768,
                   codebook_size=4096, eoa_id=4096, audio_pad_id=4097, text_vocab=8196, text_extra_tokens=0,
                   speaker_embedding_dim=192, moe_n_experts=64, ffn_dim_multiplier=2.0, multiple_of=64,
-                  moe_ffn_dim_multiplier=1.5, moe_multiple_of=64, condition_n_buckets=10, condition_edges={},
+                  moe_ffn_dim_multiplier=1.5, moe_multiple_of=64, condition_n_buckets=10,
+                  condition_bucket_counts=[10, 10, 30], condition_edges={},
                   text_tokenizer_spec={"kind": "superbpe", "vocab_size": 8192, "offset": 4, "bos": 2, "eos": 3})
     with torch.device("meta"):
         model = Zonos3LM(Zonos3LMConfig.from_params(params))
@@ -164,11 +171,25 @@ def test_lm_tag_cfg_trained(tmp_path, nonverbal):
         assert bool(field.parts[field.data[0]][0])
 
 
-def test_lm_rejects_qat_outtype_without_bake(tmp_path):
-    lm_dir, silence = make_tiny_lm_dir(tmp_path / "lm")
-    with pytest.raises(SystemExit):
-        convert_gguf.main(["lm", str(lm_dir), "--outtype", convert_gguf.QAT_OUTTYPE, "--silence-frame", str(silence),
-                           "-o", str(tmp_path / "x.gguf")])
+def test_lm_mix_outtype_ptq(tmp_path):
+    # moe_alpha 0.5: the routed experts' rows (32) fit the 32-element quant block
+    lm_dir, silence = make_tiny_lm_dir(tmp_path / "lm", moe_alpha=0.5)
+    out = tmp_path / "ptq.gguf"
+    convert_gguf.main(["lm", str(lm_dir), "--outtype", convert_gguf.MIX_OUTTYPE, "--silence-frame", str(silence),
+                       "-o", str(out)])
+    reader = GGUFReader(out)
+    field = reader.fields["general.name"]
+    assert bytes(field.parts[field.data[0]]).decode().endswith("Q4_0-expert/Q8_0-mixer PTQ")
+    experts = ("ffn_gate_exps.weight", "ffn_up_exps.weight", "ffn_down_exps.weight")
+    mixers = ("gdn_in.weight", "attn_q.weight", "attn_k.weight", "attn_v.weight", "attn_output.weight",
+              "attn_gate.weight")
+    types = {t.name: t.tensor_type.name for t in reader.tensors}
+    assert {n for n, q in types.items() if q == "Q4_0"} == {n for n in types if n.endswith(experts)} != set()
+    assert {n for n, q in types.items() if q == "Q8_0"} == {n for n in types if n.endswith(mixers)} != set()
+    for t in reader.tensors:
+        if not t.name.endswith(experts + mixers):
+            matrix = len(t.shape) >= 2 and not t.name.endswith(".gdn_conv.weight")
+            assert t.tensor_type.name == ("F16" if matrix else "F32"), t.name
 
 
 def test_steer(tmp_path):
