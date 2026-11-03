@@ -7,7 +7,7 @@ import { BLOCK_FRAMES, ZacStream } from './zac';
 import { RefEncoder } from './encoder';
 import { parseGguf } from './gguf';
 import { Gpu, initGpu } from './gpu/device';
-import { fetchJson, loadModel } from './gpu/weights';
+import { batchProgress, fetchJson, loadModel, type LoadProgress } from './gpu/weights';
 import { loadReferenceCodes } from './npy';
 import { buildPrompt, modelHp, NCB, W, type ModelHp } from './prompt';
 import { LaciHeads } from './request/laci';
@@ -23,7 +23,7 @@ export type InMsg =
   | { type: 'abort'; id: number };
 
 export type OutMsg =
-  | { type: 'progress'; model: string; loaded: number; total: number }
+  | ({ type: 'progress' } & LoadProgress)
   | { type: 'ready' }
   | { type: 'fatal'; message: string }
   | { type: 'res'; id: number; status: number; headers: Record<string, string> }
@@ -63,7 +63,7 @@ async function loadLaci(base: string): Promise<Map<string, LaciHeads>> {
 async function init(base: string, cache: boolean, voicesPcm: Record<string, Float32Array>): Promise<void> {
   const device = await initGpu(message => post({ type: 'fatal', message }));
   const gpu = new Gpu(device);
-  const progress = (p: { model: string; loaded: number; total: number }) => post({ type: 'progress', ...p });
+  const progress = (p: LoadProgress) => post({ type: 'progress', ...p });
   const voicesBase = new URL('voices/', base).href;
   const voicesRaw = await fetchJson<{ id: string; label: string; file: string; codes: string }[]>(voicesBase + 'voices.json');
   const voices: DefaultVoice[] = await Promise.all(voicesRaw.map(async v => {
@@ -72,8 +72,10 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
     if (!r.ok) throw new Error(`failed to fetch ${url}: ${r.status}`);
     return { id: v.id, label: v.label, file: v.file, pcm: voicesPcm[v.id] ?? null, codes: loadReferenceCodes(await r.arrayBuffer()) };
   }));
-  const bbw = await loadModel(gpu, base, 'backbone', progress, cache);
-  const zacw = await loadModel(gpu, base, 'zac', progress, cache);
+  // backbone + zac as one readout (one bar, one ETA), in the order they load.
+  const boot = await batchProgress(base, ['backbone', 'zac'], progress);
+  const bbw = await loadModel(gpu, base, 'backbone', boot, cache);
+  const zacw = await loadModel(gpu, base, 'zac', boot, cache);
   const hp = modelHp(bbw.meta);
 
   const steerBuf = await companion(base, 'steer.gguf');
@@ -93,11 +95,11 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
     steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci,
     voices, headroomDb: Number(zacw.meta.headroom_db ?? 3),
     async embedSpeaker(pcm) {
-      const enc = await (spk ??= SpeakerEncoder.load(gpu, base, progress, cache).catch((e: unknown) => { spk = null; throw e; }));
+      const enc = await (spk ??= batchProgress(base, ['spk'], progress).then(p => SpeakerEncoder.load(gpu, base, p, cache)).catch((e: unknown) => { spk = null; throw e; }));
       return enc.embed(pcm);
     },
     async encodeReference(pcm) {
-      const enc = await (ref ??= RefEncoder.load(gpu, base, progress, cache).catch((e: unknown) => { ref = null; throw e; }));
+      const enc = await (ref ??= batchProgress(base, ['encoder', 'teacher'], progress).then(p => RefEncoder.load(gpu, base, p, cache)).catch((e: unknown) => { ref = null; throw e; }));
       return enc.encode(pcm);
     },
   };

@@ -12,13 +12,13 @@
         if (JSON.parse(localStorage.getItem('zvs.theme') || '"dark"') === 'light') document.documentElement.dataset.theme = 'light';
       } catch {}
     </script>
-    <script type="module" crossorigin src="/assets/lite-W6qkOq99.js"></script>
+    <script type="module" crossorigin src="/assets/lite-CmD4yQ5-.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/marks-ByjfgAGY.js">
-    <link rel="modulepreload" crossorigin href="/assets/latin-500-CMac3YAQ.js">
+    <link rel="modulepreload" crossorigin href="/assets/latin-500-BwBaozd1.js">
     <link rel="modulepreload" crossorigin href="/assets/chrome-CMTZtdgD.js">
     <link rel="stylesheet" crossorigin href="/assets/marks-xKv10YAh.css">
     <link rel="stylesheet" crossorigin href="/assets/latin-500-DKfSw4PI.css">
-    <link rel="stylesheet" crossorigin href="/assets/lite-COSzv7lk.css">
+    <link rel="stylesheet" crossorigin href="/assets/lite-Be9VkFbt.css">
   </head>
   <body>
     <header class="topbar">
@@ -41,6 +41,13 @@
       </header>
 
       <p id="notice" class="notice" role="status" hidden></p>
+      <div id="download" class="notice download" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden>
+        <div class="dl">
+          <div class="dl-head"><span class="dl-label"></span><span class="dl-pct"></span></div>
+          <div class="dl-track"><div class="dl-fill"></div></div>
+          <span class="dl-detail"></span>
+        </div>
+      </div>
 
       <section class="panel" aria-labelledby="voice-heading">
         <div class="panel-head">

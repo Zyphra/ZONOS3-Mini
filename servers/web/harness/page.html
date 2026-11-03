@@ -12,7 +12,7 @@
     const status = document.getElementById('status');
     window.zfetch = localFetch;
     engine.onFatal(m => { window.zfatal = m; status.textContent = 'fatal: ' + m; });
-    engine.init(p => { status.textContent = `${p.model} ${p.loaded}/${p.total}`; })
+    engine.init(p => { status.textContent = `${p.models.join(' + ')} ${p.loaded}/${p.total}`; })
       .then(() => { window.zready = true; status.textContent = 'ready'; },
             e => { window.zfatal = String(e && e.message || e); status.textContent = 'failed: ' + window.zfatal; });
   </script>

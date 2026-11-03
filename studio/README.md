@@ -77,9 +77,12 @@ in-browser server, `?api=live` the HTTP server, and `auto` (the default) takes t
 server answers `GET /v2/capabilities` and the browser has WebGPU and the site serves the engine (`?engine=URL`,
 default `/web-engine/engine.js`, loaded at run time and never bundled; `?models=URL` is the engine's own). Every
 request, the raw preview and generate ones included, goes through that one transport. While the engine loads its
-models the page shows a progress line (`Loading backbone … 42%`) with the form inert; the top bar's pill then says
-**Live** or **In-browser**;
-the speaker encoder it loads on a clip voice's first use (generate or embedding download) shows on the same line.
+models the page shows a download bar (`components/DownloadBar.tsx` in the studio, the same `.dl` markup in
+`lite.html`; `lib/web-engine.ts` turns the engine's readouts into it): "Downloading backbone + zac" (or "Loading …"
+from this browser's cache), the percent, and `420 MB of 1.9 GB · 18 MB/s · about 1 min 20 s left`. The rate counts
+network bytes only, over the last 8 s, so cached shards don't skew the estimate. The form stays inert meanwhile;
+the top bar's pill then says **Live** or **In-browser**. The encoder models a clip voice's first use downloads
+(generate or embedding download) get the same bar (in the studio, in the corner).
 On load it reads `GET /v2/capabilities` and, when `speaker_modes` lacks `embedding`, says the server cannot clone
 from an embedding and disables the form.
 A voice comes from a default voice of `GET /v2/speakers` (those whose `speaker_modes` include `embedding`), an

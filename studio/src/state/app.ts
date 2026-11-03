@@ -1,13 +1,16 @@
 import { computed, signal } from '@preact/signals';
 import type { Backend, ControlSpec, ControlsSpec } from '../api';
+import type { Download } from '../lib/web-engine';
 import type { History } from './history';
 import { DEFAULT_SETTINGS, type ProjectSettings } from './projectSchema';
 import type { RequestContext } from './requests';
 
 export const backend = signal<Backend | null>(null);
 export const bootError = signal<string | null>(null);
-/** Boot-screen status while a backend loads (the in-browser server's model download). */
-export const bootProgress = signal<string | null>(null);
+/** Boot-screen download while a backend loads (the in-browser server's models). */
+export const bootProgress = signal<Download | null>(null);
+/** The encoder models a clip voice's first use loads on the in-browser server; null once they are in. */
+export const encoderDownload = signal<Download | null>(null);
 
 export const projectSettings = signal<ProjectSettings>(DEFAULT_SETTINGS);
 

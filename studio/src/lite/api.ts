@@ -11,7 +11,7 @@
 import createClient from 'openapi-fetch';
 import type { Readable } from 'openapi-typescript-helpers';
 import type { components, paths } from '../api/schema';
-import { selectWebEngine, startWebEngine, transport, webEngineAvailable } from '../lib/web-engine';
+import { selectWebEngine, startWebEngine, transport, webEngineAvailable, type Download } from '../lib/web-engine';
 
 type Schemas = components['schemas'];
 export type Capabilities = Schemas['Capabilities'];
@@ -104,10 +104,9 @@ export interface Backend {
   caps: Capabilities;
 }
 
-/** The in-browser server: loads its models (`progress` gets a readout line, then null), then serves this tab. */
-async function startWeb(progress: (text: string | null) => void): Promise<Backend> {
-  await startWebEngine(progress);
-  progress(null);
+/** The in-browser server: loads its models (`download` gets the progress as they come), then serves this tab. */
+async function startWeb(download: (d: Download) => void): Promise<Backend> {
+  await startWebEngine(download);
   return { kind: 'web', caps: await capabilities() };
 }
 
@@ -116,13 +115,13 @@ async function startWeb(progress: (text: string | null) => void): Promise<Backen
  * server in `auto` when this browser has WebGPU and the site serves the engine. A 403 is a ZONOS server's access gate,
  * not a missing server: it stays the error.
  */
-export async function connect(progress: (text: string | null) => void): Promise<Backend> {
-  if (mode === 'web') return startWeb(progress);
+export async function connect(download: (d: Download) => void): Promise<Backend> {
+  if (mode === 'web') return startWeb(download);
   try {
     return { kind: 'live', caps: await capabilities() };
   } catch (err) {
     if (mode === 'live' || (err instanceof ApiError && err.status === 403) || !(await webEngineAvailable())) throw err;
-    return startWeb(progress);
+    return startWeb(download);
   }
 }
 

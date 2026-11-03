@@ -3,10 +3,12 @@
 // voices at init, speaker_audio_base64 per request (sent next to the JSON as 44.1 kHz mono PCM).
 import { b64DecodeStrict } from './b64';
 import { REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE } from './generation';
-import { fetchJson, modelsBaseUrl } from './gpu/weights';
+import { fetchJson, modelsBaseUrl, type LoadProgress } from './gpu/weights';
 import type { InMsg, OutMsg } from './worker';
 
-export type Progress = { model: string; loaded: number; total: number };
+/** A model download readout: the models loading together, their bytes in (`loaded` of `total`) and how many of those
+ *  came over the network (`fetched`; the rest from Cache Storage), for a bar and a download-rate ETA. */
+export type Progress = LoadProgress;
 
 interface Pending {
   resolve: (r: Response) => void;
@@ -31,10 +33,12 @@ const send = (m: InMsg, transfer: Transferable[] = []) => worker.postMessage(m, 
 worker.onmessage = (ev: MessageEvent<OutMsg>) => {
   const m = ev.data;
   switch (m.type) {
-    case 'progress':
-      if (!ready) onProgress?.(m);
-      else for (const cb of encoderCbs) cb(m);
+    case 'progress': {
+      const { type: _, ...p } = m;
+      if (!ready) onProgress?.(p);
+      else for (const cb of encoderCbs) cb(p);
       break;
+    }
     case 'ready':
       ready = true;
       initResolve?.();

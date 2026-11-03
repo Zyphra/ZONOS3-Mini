@@ -4,8 +4,9 @@ import { signal } from '@preact/signals';
 import * as api from './api';
 import { startPreview, playSide } from './audio/preview';
 import * as player from './audio/player';
+import { DownloadBar } from './components/DownloadBar';
 import { Icon } from './components/Icon';
-import { act, activeHistory, backend, bootError, bootProgress, modalOpen, primaryAction, screenKeys, toasts, type Act } from './state/app';
+import { act, activeHistory, backend, bootError, bootProgress, encoderDownload, modalOpen, primaryAction, screenKeys, toasts, type Act } from './state/app';
 import { embeddingsSynthetic, loadAllEmbeddings, refreshSpeakers } from './state/library';
 import { openLastProject } from './state/projects';
 import { CastScreen } from './screens/cast/CastScreen';
@@ -254,8 +255,8 @@ export function App() {
           </div>
         ) : !backend.value ? (
           <div class="empty">
-            <div class="loader" />
-            <p>{bootProgress.value ?? 'Opening the studio…'}</p>
+            {bootProgress.value ? <DownloadBar d={bootProgress.value} /> : <div class="loader" />}
+            {!bootProgress.value && <p>Opening the studio…</p>}
           </div>
         ) : act.value === 'cast' ? (
           <CastScreen />
@@ -270,6 +271,11 @@ export function App() {
         )}
       </main>
       <div class="toasts" aria-live="polite">
+        {encoderDownload.value && (
+          <div class="toast toast-dl">
+            <DownloadBar d={encoderDownload.value} />
+          </div>
+        )}
         {toasts.value.map((t) => (
           <div key={t.id} class={`toast toast-${t.kind}`}>
             {t.text}

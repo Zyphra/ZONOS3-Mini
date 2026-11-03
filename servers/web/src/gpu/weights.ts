@@ -35,7 +35,17 @@ export interface Model {
   has(name: string): boolean;
 }
 
-export type Progress = (p: { model: string; loaded: number; total: number }) => void;
+/** One model's progress: tensor bytes in so far (cached or not) of `total`, and how many came over the network. */
+export type Progress = (p: { model: string; loaded: number; total: number; fetched: number }) => void;
+
+/** Models that load together (init: backbone + zac; a clip voice: encoder + teacher), as one readout. */
+export interface LoadProgress {
+  models: string[];
+  loaded: number;
+  total: number;
+  /** Bytes that came over the network (the rest came from Cache Storage): a page's download rate. */
+  fetched: number;
+}
 
 export const CACHE_NAME = 'zonos3-web-models-v2';
 
@@ -53,7 +63,7 @@ export function modelsBaseUrl(): string {
 
 /** `cache: false` reads straight from the network (e.g. weights bundled in a browser extension, where a Cache Storage
  *  copy would only duplicate files already on disk). */
-async function cachedFetch(url: string, onBytes: (n: number) => void, useCache = true): Promise<ArrayBuffer> {
+async function cachedFetch(url: string, onBytes: (n: number, network: boolean) => void, useCache = true): Promise<ArrayBuffer> {
   if (useCache && typeof caches !== 'undefined') {
     await (pruned ??= caches.keys()
       .then(ks => Promise.all(ks.filter(k => (k.startsWith('zonos3-web-models-') || k.startsWith('zonos3-models-')) && k !== CACHE_NAME).map(k => caches.delete(k))))
@@ -63,7 +73,7 @@ async function cachedFetch(url: string, onBytes: (n: number) => void, useCache =
   const hit = cache ? await cache.match(url) : undefined;
   if (hit) {
     const buf = await hit.arrayBuffer();
-    onBytes(buf.byteLength);
+    onBytes(buf.byteLength, false);
     return buf;
   }
   const res = await fetch(url);
@@ -77,7 +87,7 @@ async function cachedFetch(url: string, onBytes: (n: number) => void, useCache =
     if (done) break;
     chunks.push(value);
     got += value.byteLength;
-    onBytes(value.byteLength);
+    onBytes(value.byteLength, true);
   }
   if (len && got !== len) throw new Error(`failed to fetch ${url}: truncated (${got}/${len})`);
   const out = new Uint8Array(got);
@@ -100,18 +110,67 @@ export async function fetchJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Bytes a model's tensors take (its shards hold them plus alignment padding): the unit of every progress readout. */
+function modelBytes(man: Manifest): number {
+  let n = 0;
+  for (const ti of Object.values(man.tensors)) n += ti.nbytes + (ti.scales_nbytes ?? 0);
+  return n;
+}
+
+/** Manifests read once per worker: a readout reads them before its models load, so its total is set from the start. */
+const manifests = new Map<string, Promise<Manifest>>();
+
+function fetchManifest(dir: string, name: string): Promise<Manifest> {
+  let m = manifests.get(dir);
+  if (!m) {
+    m = fetchJson<Manifest>(dir + 'manifest.json').then(man => {
+      if (man.format !== 'zonos3-web-v1') throw new Error(`bad manifest format for ${name}`);
+      return man;
+    });
+    m.catch(() => manifests.delete(dir));   // a failed read is retried by the next load
+    manifests.set(dir, m);
+  }
+  return m;
+}
+
+/**
+ * One readout for models that load together: pass the returned callback to each of their loadModel calls. Their
+ * manifests are read first, so `total` is the whole set's from the first readout; readouts come at most every 100 ms,
+ * plus the last one.
+ */
+export async function batchProgress(baseUrl: string, names: string[], report?: (p: LoadProgress) => void): Promise<Progress | undefined> {
+  if (!report) return undefined;
+  const totals = await Promise.all(names.map(n => fetchManifest(new URL(n + '/', baseUrl).href, n).then(modelBytes)));
+  const total = totals.reduce((a, b) => a + b, 0);
+  const loaded = new Map<string, number>();
+  const fetched = new Map<string, number>();
+  let last = -Infinity;
+  return p => {
+    loaded.set(p.model, p.loaded);
+    fetched.set(p.model, p.fetched);
+    let l = 0;
+    let f = 0;
+    for (const v of loaded.values()) l += v;
+    for (const v of fetched.values()) f += v;
+    const now = performance.now();
+    if (l < total && now - last < 100) return;
+    last = now;
+    report({ models: names, loaded: l, total, fetched: f });
+  };
+}
+
 export async function loadModel(gpu: Gpu, baseUrl: string, name: string, onProgress?: Progress, useCache = true): Promise<Model> {
   const dir = new URL(name + '/', baseUrl).href;
-  const man = await fetchJson<Manifest>(dir + 'manifest.json');
-  if (man.format !== 'zonos3-web-v1') throw new Error(`bad manifest format for ${name}`);
+  const man = await fetchManifest(dir, name);
   const byShard: [string, TensorInfo][][] = man.shards.map(() => []);
-  let total = 0;
-  for (const [tn, ti] of Object.entries(man.tensors)) {
-    byShard[ti.shard].push([tn, ti]);
-    total = Math.max(total, 0) + ti.nbytes + (ti.scales_nbytes ?? 0);
-  }
+  for (const [tn, ti] of Object.entries(man.tensors)) byShard[ti.shard].push([tn, ti]);
+  const total = modelBytes(man);
+  // Done shards plus the bytes of the one in flight (raw shard bytes include padding: capped at its tensor bytes).
   let loaded = 0;
-  const report = () => onProgress?.({ model: name, loaded: Math.min(loaded, total), total });
+  let shardBytes = 0;
+  let shardGot = 0;
+  let fetched = 0;
+  const report = () => onProgress?.({ model: name, loaded: Math.min(loaded + Math.min(shardGot, shardBytes), total), total, fetched });
   report();
   const t = new Map<string, GpuTensor>();
   const host = new Map<string, Float32Array>();
@@ -122,15 +181,15 @@ export async function loadModel(gpu: Gpu, baseUrl: string, name: string, onProgr
     return b;
   };
   for (let s = 0; s < man.shards.length; s++) {
-    const shardBytes = byShard[s].reduce((a, [, ti]) => a + ti.nbytes + (ti.scales_nbytes ?? 0), 0);
-    let shardGot = 0;
-    const data = await cachedFetch(dir + man.shards[s], n => {
-      // scale raw shard bytes (incl. padding) onto tensor bytes
+    shardBytes = byShard[s].reduce((a, [, ti]) => a + ti.nbytes + (ti.scales_nbytes ?? 0), 0);
+    shardGot = 0;
+    const data = await cachedFetch(dir + man.shards[s], (n, network) => {
       shardGot += n;
+      if (network) fetched += n;
       report();
     }, useCache);
     loaded += shardBytes;
-    void shardGot;
+    shardGot = 0;
     for (const [tn, ti] of byShard[s]) {
       if (ti.host) {
         host.set(tn, new Float32Array(data.slice(ti.offset, ti.offset + ti.nbytes)));

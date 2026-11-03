@@ -26,8 +26,8 @@ import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
 import { encodeNpy, encodeWav, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
-import { selectWebEngine, startWebEngine, transport, usingWebEngine, webEngineAvailable } from './lib/web-engine';
-import { bootProgress } from './state/app';
+import { onEncoderProgress, selectWebEngine, startWebEngine, transport, usingWebEngine, webEngineAvailable } from './lib/web-engine';
+import { bootProgress, encoderDownload } from './state/app';
 
 // ── Contract types ────────────────────────────────────────────────────────────────────────────────
 
@@ -450,8 +450,10 @@ function projectCaps(c: Schemas['ProjectsCapability'] | undefined): ProjectCaps 
 
 /** The in-browser server: load the engine and its models (progress on the boot screen), then serve from this tab. */
 async function startWeb(make: (kind: BackendKind, spec: ControlsSpec) => Promise<Backend>): Promise<Backend> {
-  await startWebEngine((text) => (bootProgress.value = text));
+  await startWebEngine((d) => (bootProgress.value = d));
   bootProgress.value = null;
+  // A clip voice's first use downloads the encoders: a bar in the corner until they are in.
+  void onEncoderProgress((d) => (encoderDownload.value = d.fraction >= 1 ? null : d));
   return make('web', await getControls());
 }
 

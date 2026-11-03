@@ -10,7 +10,7 @@ import { mountChrome, setLabel } from '../lib/chrome';
 import { bytesToBase64, download, encodeNpy, encodeWav, slug } from '../lib/files';
 import { langLabel } from '../lib/languages';
 import { drawWave } from '../lib/wave';
-import { onEncoderProgress, usingWebEngine } from '../lib/web-engine';
+import { onEncoderProgress, usingWebEngine, type Download } from '../lib/web-engine';
 import {
   ApiError,
   connect,
@@ -33,6 +33,7 @@ const ui = {
   backend: $<HTMLSpanElement>('backend'),
   studioLink: $<HTMLAnchorElement>('studio-link'),
   notice: $<HTMLParagraphElement>('notice'),
+  download: $<HTMLDivElement>('download'),
   sections: document.querySelectorAll<HTMLElement>('main section'),
   sources: document.querySelectorAll<HTMLInputElement>('input[name="source"]'),
   panels: { default: $('panel-default'), clip: $('panel-clip'), embedding: $('panel-embedding') },
@@ -143,6 +144,19 @@ function show(el: HTMLElement, text: string | null) {
 
 const seconds = (samples: number) => `${(samples / SAMPLE_RATE).toFixed(2)} s`;
 
+/** The in-browser server's model download as a bar (`.dl` in styles/base.css); null hides it. */
+function showDownload(d: Download | null) {
+  ui.download.hidden = !d;
+  if (!d) return;
+  const pct = Math.round(d.fraction * 100);
+  ui.download.setAttribute('aria-valuenow', String(pct));
+  ui.download.setAttribute('aria-label', d.label);
+  ui.download.querySelector('.dl-label')!.textContent = d.label;
+  ui.download.querySelector('.dl-pct')!.textContent = `${pct}%`;
+  ui.download.querySelector<HTMLElement>('.dl-fill')!.style.width = `${d.fraction * 100}%`;
+  ui.download.querySelector('.dl-detail')!.textContent = d.detail;
+}
+
 /** Disables every control: the server cannot clone from an embedding (or did not answer). */
 function disableAll(text: string) {
   show(ui.notice, text);
@@ -220,16 +234,8 @@ async function voiceAction(button: HTMLButtonElement, busy: string, run: () => P
     setLabel(button, idle);
     button.classList.remove('is-busy');
     button.disabled = false;
-    encoderLoaded();
+    showDownload(null);
   }
-}
-
-/**
- * Ends the encoder readout: the in-browser server loads its speaker encoder on a clip voice's first use (generate or
- * embedding download), its progress on the notice line meanwhile.
- */
-function encoderLoaded() {
-  if (!ui.notice.classList.contains('bad')) show(ui.notice, null);
 }
 
 const stem = (name: string) => name.replace(/\.[^.]+$/, '');
@@ -365,7 +371,7 @@ async function generate() {
     ui.wave.classList.remove('is-busy');
     ui.stop.hidden = true;
     updateGenerate();
-    encoderLoaded();
+    showDownload(null);
     animate();
   }
 }
@@ -475,28 +481,32 @@ ui.stop.addEventListener('click', () => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────────────────────────
 
-/** The backend's readout under the header while it boots; the cards stay inert until it answers. */
-function booting(text: string | null) {
-  show(ui.notice, text);
-  for (const section of ui.sections) section.inert = text !== null;
+/** While the backend boots: "Connecting…", then the model download bar; the cards stay inert until it answers. */
+function booting(on: boolean) {
+  show(ui.notice, on ? 'Connecting…' : null);
+  if (!on) showDownload(null);
+  for (const section of ui.sections) section.inert = on;
 }
 
 async function start() {
   if (server) ui.studioLink.search = `?server=${encodeURIComponent(server)}`;
   updateGenerate();
-  booting('Connecting…');
+  booting(true);
   let backend: Backend;
   try {
-    backend = await connect(booting);
+    backend = await connect((d) => {
+      show(ui.notice, null);
+      showDownload(d);
+    });
   } catch (e) {
-    booting(null);
+    booting(false);
     return disableAll(
       usingWebEngine()
         ? `The in-browser server could not start: ${message(e)}`
         : `Cannot reach the server${server ? ` at ${server}` : ''}: ${message(e)}`,
     );
   }
-  booting(null);
+  booting(false);
   const { kind, caps } = backend;
   ui.backend.hidden = false;
   ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In-browser' : 'Live';
@@ -507,7 +517,7 @@ async function start() {
   ui.backend.classList.add(`pill-${kind}`);
   if (kind === 'web') {
     ui.studioLink.search = '?api=web';
-    void onEncoderProgress((text) => show(ui.notice, text));
+    void onEncoderProgress((d) => showDownload(d.fraction >= 1 ? null : d));
   }
   if (!caps.speaker_modes.includes('embedding')) {
     return disableAll(

@@ -36,7 +36,11 @@ pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (o
 ```
 
 The studio's dev and preview servers serve `dist/` at `/web-engine` and `public/models/` at `/models`. The worker
-caches shards in Cache Storage (`zonos3-web-models-v2`); `?models=URL` loads them from elsewhere. Without WebGPU (or
+caches shards in Cache Storage (`zonos3-web-models-v2`); `?models=URL` loads them from elsewhere. Models that load
+together report as one readout (`engine.init(progress)`: backbone + zac; `engine.onEncoderProgress(cb)`: spk, or
+encoder + teacher on a clip voice's first use): `{models, loaded, total, fetched}` in tensor bytes, `total` known from
+the first readout (manifests are read first), at most every 100 ms; `fetched` counts the network bytes so a page can
+tell a download rate from Cache Storage reads. Without WebGPU (or
 with adapter limits too low) `engine.init` rejects and the studio shows the error. The speaker encoder clamps clips to
 what one storage binding of the device holds (60 s on Apple Silicon).
 

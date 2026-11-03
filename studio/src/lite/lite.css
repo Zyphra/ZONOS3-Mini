@@ -191,6 +191,17 @@ a.btn {
   border-color: color-mix(in srgb, var(--bad) 40%, transparent);
   color: var(--bad-text);
 }
+/* Sticky under the top bar: a clip voice's first Generate (at the bottom) downloads the encoders here. */
+.download {
+  position: sticky;
+  top: 66px;
+  z-index: 5;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+.download .dl {
+  width: 100%;
+}
 .error-box {
   overflow-wrap: anywhere;
 }
