@@ -29,6 +29,15 @@ using json = nlohmann::json;
 
 static const char * NO_SESSION = "Cached speaker operations require the X-TTS-Session-ID header.";
 
+// The registry's reference clip limit (seconds of uploaded or default-voice audio).
+static int reference_seconds() { return (int) zonos3_generation().reference_audio_max_seconds; }
+
+// R7: reference codes keep their first reference_max_frames frames (the GGUF servers' reference prefix).
+static void keep_reference_prefix(const ServerState & s, std::vector<int32_t> & codes) {
+    const size_t cap = (size_t) zonos3_generation().reference_max_frames * s.model.hp.n_codebooks;
+    if (codes.size() > cap) codes.resize(cap);
+}
+
 std::vector<std::string> checkpoint_speaker_modes(const ServerState & s) {
     std::vector<std::string> modes = {"reference"};   // the release architecture carries the raw reference prefix
     if (s.model.hp.speaker_dim > 0) modes.push_back("embedding");
@@ -350,7 +359,7 @@ std::vector<float> decode_audio_bytes(const std::vector<uint8_t> & bytes, int ma
     const bool ok = fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
     const bool closed = fclose(f) == 0;
     std::vector<float> pcm;
-    if (ok && closed) pcm = audio_decode_file(tmp.string().c_str(), 44100, max_seconds);
+    if (ok && closed) pcm = audio_decode_file(tmp.string().c_str(), zonos3_generation().sample_rate, max_seconds);
     std::error_code ec;
     fs::remove(tmp, ec);
     if (!ok || !closed) fail(500, "failed to write a temporary audio file");
@@ -370,9 +379,12 @@ std::vector<uint8_t> decode_b64_field(const json & req, const char * field) {
     return out;
 }
 
-// Under reference_compute_mtx: both native allocators are non-reentrant.
+// Under reference_compute_mtx: both native allocators are non-reentrant. At most max_seconds of audio, so at most
+// ceil(max_seconds * frame rate) + 1 frames of codes.
 static void encode_reference_locked(ServerState & s, const std::vector<float> & pcm, std::vector<int32_t> & codes,
-                                    int max_seconds = 60, int max_frames = ZONOS3_MAX_REFERENCE_FRAMES) {
+                                    int max_seconds) {
+    const int sample_rate = zonos3_generation().sample_rate;
+    const size_t max_frames = (size_t) std::ceil(max_seconds * ZONOS3_FRAME_RATE) + 1;
     if (!reference_audio_available(s))
         fail(400, "reference-mode cloning of audio requires dac-encoder.gguf and ssl-teacher.gguf; supply --dac-encoder and --ssl-teacher");
     if (!s.reference_models_loaded) {
@@ -385,23 +397,24 @@ static void encode_reference_locked(ServerState & s, const std::vector<float> & 
         s.reference_models_loaded = true;
     }
     s.reference_last_use = std::chrono::steady_clock::now();
-    if (pcm.empty() || pcm.size() > (size_t) max_seconds * 44100 || !dac_encode(s.encoder, s.teacher, pcm.data(), (int) pcm.size(), codes) ||
-        codes.empty() || codes.size() % 10 || codes.size() > (size_t) max_frames * 10) {
+    if (pcm.empty() || pcm.size() > (size_t) max_seconds * sample_rate || !dac_encode(s.encoder, s.teacher, pcm.data(), (int) pcm.size(), codes) ||
+        codes.empty() || codes.size() % 10 || codes.size() > max_frames * 10) {
         codes.clear();
         fail(400, "reference audio encoding failed (maximum " + std::to_string(max_seconds) + " seconds)");
     }
 }
 
 static void embed_speaker_locked(ServerState & s, const std::vector<float> & pcm, std::vector<float> & embedding,
-                                 int max_seconds = 60) {
+                                 int max_seconds = reference_seconds()) {
+    const int sample_rate = zonos3_generation().sample_rate;
     if (!speaker_encoder_available(s))
         fail(400, "speaker-embedding cloning of audio requires spk-encoder.gguf; supply --spk-encoder");
     if (!s.spk_loaded) {
         if (!spk_load(s.spk, s.spk_path.c_str(), s.use_gpu)) { spk_free(s.spk); fail(500, "failed to load the speaker encoder companion"); }
         s.spk_loaded = true;
     }
-    if (pcm.empty() || pcm.size() > (size_t) max_seconds * 44100 ||
-        !spk_embed(s.spk, pcm.data(), (int64_t) pcm.size(), 44100, embedding) ||
+    if (pcm.empty() || pcm.size() > (size_t) max_seconds * sample_rate ||
+        !spk_embed(s.spk, pcm.data(), (int64_t) pcm.size(), sample_rate, embedding) ||
         embedding.size() != (size_t) s.model.hp.speaker_dim) {
         embedding.clear();
         fail(400, "speaker embedding computation failed (maximum " + std::to_string(max_seconds) + " seconds)");
@@ -412,7 +425,7 @@ static void embed_speaker_locked(ServerState & s, const std::vector<float> & pcm
 std::vector<int32_t> encode_audio_codes(ServerState & s, const std::vector<float> & pcm, int max_seconds) {
     std::vector<int32_t> codes;
     std::lock_guard<std::mutex> compute(s.reference_compute_mtx);
-    encode_reference_locked(s, pcm, codes, max_seconds, (int) std::ceil(max_seconds * ZONOS3_FRAME_RATE) + 1);
+    encode_reference_locked(s, pcm, codes, max_seconds);
     return codes;
 }
 
@@ -492,7 +505,7 @@ static void remember(ServerState & s, const std::optional<std::string> & session
 
 static void ensure_pcm(Speaker & v) {
     if (!v.pcm.empty() || !v.is_default) return;
-    v.pcm = audio_decode_file(v.path.c_str(), 44100, 60);
+    v.pcm = audio_decode_file(v.path.c_str(), zonos3_generation().sample_rate, reference_seconds());
     if (v.pcm.empty()) fail(400, "Failed to read default voice '" + v.label + "'.");
 }
 
@@ -520,7 +533,7 @@ static std::vector<float> voice_embedding(ServerState & s, const std::optional<s
 }
 
 // The voice's reference codes (sgl _resolve_speaker_reference_audio + the tokenizer's codec encode): shipped
-// <stem>.codes.npy, else the codec encoder's codes of the clip, computed once.
+// <stem>.codes.npy, else the codec encoder's codes of the clip, computed once; the first reference_max_frames frames.
 static std::vector<int32_t> voice_codes(ServerState & s, const std::optional<std::string> & session, const std::string & id) {
     Speaker v = lookup_voice(s, session, id);
     if (v.source_type != "audio") {
@@ -529,7 +542,8 @@ static std::vector<int32_t> voice_codes(ServerState & s, const std::optional<std
     }
     if (v.codes.empty()) {
         std::string err;
-        if (!v.codes_path.empty() && !mp_load_reference_codes(v.codes_path, v.codes, err)) {
+        if (!v.codes_path.empty() &&
+            !mp_load_reference_codes(v.codes_path, v.codes, err, zonos3_generation().reference_max_frames)) {
             fprintf(stderr, "zonos3-server: cannot load shipped codes %s (%s); encoding %s\n",
                     v.codes_path.c_str(), err.c_str(), v.path.c_str());
             v.codes.clear();
@@ -537,7 +551,8 @@ static std::vector<int32_t> voice_codes(ServerState & s, const std::optional<std
         if (v.codes.empty()) {
             std::lock_guard<std::mutex> compute(s.reference_compute_mtx);
             ensure_pcm(v);
-            encode_reference_locked(s, v.pcm, v.codes);
+            encode_reference_locked(s, v.pcm, v.codes, reference_seconds());
+            keep_reference_prefix(s, v.codes);
         }
         remember(s, session, v);
     }
@@ -591,20 +606,27 @@ ResolvedSpeaker resolve_request_speaker(ServerState & s, const json & req, const
             fail(400, "This checkpoint conditions on raw reference audio and does not accept speaker embedding files or embedding blends.");
         if (codes) {
             if (audio || id) fail(400, "Provide either speaker_reference_codes or a reference clip (audio or a speaker id), not both.");
+            // R7 (zonos3.tts.plan.reference_codes): the shape, then non-negative ids, then codec ids, over every frame;
+            // a reference longer than the prefix keeps its first frames.
             const json & rows = req["speaker_reference_codes"];
             const size_t ncb = s.model.hp.n_codebooks;
-            if (rows.size() > (size_t) ZONOS3_MAX_REFERENCE_FRAMES)
-                fail(400, "speaker_reference_codes must be a non-empty [frames, codebooks] list of at most " +
-                          std::to_string(ZONOS3_MAX_REFERENCE_FRAMES) + " frames");
-            for (const json & row : rows) {
-                if (row.size() != ncb) fail(400, "speaker_reference_codes must be a non-empty [frames, codebooks] list");
+            const int64_t codebook_size = s.model.hp.codebook_size;
+            if (rows.empty()) fail(400, "speaker_reference_codes must be a non-empty [frames, codebooks] list");
+            for (const json & row : rows)
+                if (!row.is_array() || row.size() != ncb)
+                    fail(400, "speaker_reference_codes must be a non-empty [frames, codebooks] list");
+            for (const json & row : rows)
+                for (const json & c : row)
+                    if (c.get<int64_t>() < 0) fail(400, "speaker_reference_codes must be non-negative");
+            out.codes.reserve(rows.size() * ncb);
+            for (const json & row : rows)
                 for (const json & c : row) {
                     const int64_t v = c.get<int64_t>();
-                    if (v >= (int64_t) s.model.hp.codebook_size)
-                        fail(400, "speaker_reference_codes must be ordinary codec ids 0.." + std::to_string(s.model.hp.codebook_size - 1));
+                    if (v >= codebook_size)
+                        fail(400, "speaker_reference_codes must be codec ids in [0, " + std::to_string(codebook_size - 1) + "]");
                     out.codes.push_back((int32_t) v);
                 }
-            }
+            keep_reference_prefix(s, out.codes);
             out.mode = mode;
             return out;
         }
@@ -614,7 +636,8 @@ ResolvedSpeaker resolve_request_speaker(ServerState & s, const json & req, const
         } else if (audio) {
             const std::vector<float> pcm = decode_audio_bytes(decode_b64_field(req, "speaker_audio_base64"));
             std::lock_guard<std::mutex> compute(s.reference_compute_mtx);
-            encode_reference_locked(s, pcm, out.codes);
+            encode_reference_locked(s, pcm, out.codes, reference_seconds());
+            keep_reference_prefix(s, out.codes);
         } else {
             return out;
         }
@@ -725,7 +748,7 @@ static void handle_preview(ServerState & s, const httplib::Request & req, httpli
         remember(s, session, v);
     }
     if (v.pcm.empty()) fail(404, "Cached speaker preview audio is not available.");
-    const std::vector<uint8_t> wav = dac_wav_bytes(v.pcm, 44100);
+    const std::vector<uint8_t> wav = dac_wav_bytes(v.pcm, zonos3_generation().sample_rate);
     res.set_content((const char *) wav.data(), wav.size(), "audio/wav");
 }
 

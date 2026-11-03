@@ -9,6 +9,7 @@
 // (ffn1 also after GELU), q/k round after RoPE, while attention, LayerNorm, layer scales and the MOSS residual stream
 // stay f32. ConvNeXt blocks round the depthwise input, its tap sum and its biased output, pw1/pw2 after bias (pw1 also
 // after GELU), and the semantic encoder's residual output. Snake and the RVQ are f32.
+import { REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE } from './generation';
 import type { Gpu } from './gpu/device';
 import { ACT, attentionWin, dwconv, gemm, layernorm, patchDown, RND, ropeKv, snake, type Weight } from './gpu/ops';
 import { Builder, type Program } from './gpu/program';
@@ -18,8 +19,6 @@ import { Resampler } from './resample';
 import { LANE, poolSsl, Rvq } from './rvq';
 import { LANE_SAMPLES, SSL_FRAMES, SslTeacher } from './ssl';
 
-export const SAMPLE_RATE = 44100;
-export const MAX_SECONDS = 60;
 const HOP = 2940;
 const INTERNAL_HOP = 2944;
 const CONTEXT = 150;
@@ -47,7 +46,7 @@ const STAGES: Stage[] = [
 ];
 const STAGE_T = [4800, 2400, 1200, 600, 300];
 
-export const ENCODE_ERROR = 'reference audio encoding failed (maximum 60 seconds)';
+const ENCODE_ERROR = `reference audio encoding failed (maximum ${REFERENCE_AUDIO_MAX_SECONDS} seconds)`;
 
 function checkMeta(meta: Record<string, unknown>): void {
   const want: Record<string, unknown> = {
@@ -274,10 +273,11 @@ export class RefEncoder {
     return this.rvq[c].quantize(input, LANE);
   }
 
-  /** Ordinary reference codes [frames][10] for mono 44.1 kHz audio (at most 60 seconds). */
+  /** Ordinary reference codes [frames][10] for mono 44.1 kHz audio (at most REFERENCE_AUDIO_MAX_SECONDS). */
   async encode(pcm44k: Float32Array): Promise<Int32Array> {
     const n = pcm44k.length;
-    if (n < 1 || n > MAX_SECONDS * SAMPLE_RATE || !pcm44k.every(Number.isFinite)) throw new Error(ENCODE_ERROR);
+    if (n < 1 || n > REFERENCE_AUDIO_MAX_SECONDS * SAMPLE_RATE || !pcm44k.every(Number.isFinite))
+      throw new Error(ENCODE_ERROR);
     const frames = Math.ceil(n / HOP);
     const rs = new Resampler(this.internalKernel, 735, 736, 17);
     const a = rs.push(pcm44k), z = rs.flush();

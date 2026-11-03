@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple
 import torch
 from zonos3_sgl.distributed import DistributedInfo
 from zonos3_sgl.scheduler import SchedulerConfig
+from zonos3.generation import SAMPLE_RATE
 from zonos3.utils.hf import cached_load_checkpoint_config
 from zonos3_sgl.utils.logger import init_logger
 
@@ -24,7 +25,7 @@ class ServerArgs(SchedulerConfig):
     tts_n_codebooks: int = 9
     tts_audio_pad_id: int = 1025
     tts_text_vocab: int | None = None
-    tts_sample_rate: int = 44100
+    tts_sample_rate: int = SAMPLE_RATE
     tts_audio_codec: str = "opus_dual_3n_600k_sched600k_r4096_step600000"
     tts_speaker_reference_max_seconds: float = 30.0
     tts_speaker_background_token_enabled: bool = False
@@ -298,7 +299,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--tts-sample-rate",
         type=int,
         default=ServerArgs.tts_sample_rate,
-        help="Audio sample rate for TTS output (default: 44100 for DAC).",
+        help=f"Audio sample rate for TTS output (default: {SAMPLE_RATE}, the API rate).",
     )
 
     parser.add_argument(

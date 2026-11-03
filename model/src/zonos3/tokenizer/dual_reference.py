@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
+from zonos3.generation import UPLOAD_MAX_SECONDS
 from zonos3.tokenizer import matched_codec
 from zonos3.utils import release
 
@@ -77,8 +78,8 @@ def get_encoder(device: str | None = None):
 
 
 def prepare_reference(waveform: torch.Tensor, sample_rate: int, max_seconds: float) -> torch.Tensor:
-    if not 0 < max_seconds <= 600:
-        raise ValueError("Codec input limit must be in (0, 600] seconds")
+    if not 0 < max_seconds <= UPLOAD_MAX_SECONDS:
+        raise ValueError(f"Codec input limit must be in (0, {UPLOAD_MAX_SECONDS:g}] seconds")
     if waveform.ndim == 1:
         waveform = waveform[None]
     if waveform.ndim != 2 or not waveform.shape[-1] or not torch.isfinite(waveform).all():

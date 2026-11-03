@@ -1,4 +1,5 @@
 // Port of zonos3-sampler.cpp: repetition penalty, temperature, top-k, top-p, min-p, multinomial.
+import { SAMPLING } from './generation';
 import { MT19937, uniform } from './mt19937';
 
 export interface Sampling {
@@ -13,10 +14,12 @@ export interface Sampling {
   greedy: boolean;
 }
 
+/** The registry's sampling defaults (seed 0, sampled). */
 export function defaultSampling(): Sampling {
   return {
-    temperature: 0.75, top_k: 80, top_p: 0.69, min_p: 0, rep_penalty: 2.4, rep_window: 96,
-    rep_codebooks: 6, seed: 0, greedy: false,
+    temperature: SAMPLING.temperature, top_k: SAMPLING.topk, top_p: SAMPLING.top_p, min_p: SAMPLING.min_p,
+    rep_penalty: SAMPLING.repetition_penalty, rep_window: SAMPLING.repetition_window,
+    rep_codebooks: SAMPLING.repetition_codebooks, seed: 0, greedy: false,
   };
 }
 

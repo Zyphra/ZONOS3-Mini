@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 import numpy as np
+from zonos3.generation import SAMPLE_RATE
 
 _ERROR = "Reference file must contain an audio stream supported by ffmpeg."
 
@@ -19,7 +20,7 @@ def ffmpeg_binary() -> str:
     return path
 
 
-def decode_pcm(audio_bytes: bytes, sample_rate: int = 44100, max_seconds: float | None = None) -> np.ndarray:
+def decode_pcm(audio_bytes: bytes, sample_rate: int = SAMPLE_RATE, max_seconds: float | None = None) -> np.ndarray:
     """Mono float32 PCM at ``sample_rate`` (ggml audio-decode.cpp's ffmpeg command). The bytes go through a temporary
     file, not a pipe: ffmpeg applies an MP3's gapless trim (encoder delay / padding) only to a seekable input."""
     with tempfile.NamedTemporaryFile(prefix="zonos3-audio-", suffix=".bin") as tmp:

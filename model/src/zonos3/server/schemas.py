@@ -8,6 +8,8 @@ from typing import Annotated, Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
+from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLING, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -33,20 +35,22 @@ class GenerationOptions(_Strict):
 
     language: str = "en_us"
     text_normalization: bool = True
-    # Codec-matched silence frames prefilled into the audio stream (None = the server default; 0 = off).
+    # Codec-matched silence frames prefilled into the audio stream (None = the server default; 0 = off; at most the
+    # registry's maximum, checked by the request rules: 400).
     silence_prefill_frames: int | None = None
     # Decode the generated frames behind the last decode_context_frames of the reference prompt.
     decode_context: bool = False
-    decode_context_frames: int = 30
-    temperature: float = 0.75
-    topk: int = 80
-    top_p: float = 0.69
-    min_p: float = 0.0
-    max_tokens: int | None = None            # None = the checkpoint's limit
+    decode_context_frames: int = DECODE_CONTEXT_FRAMES     # 0 = the registry's
+    # Sampling: the generation registry's defaults (zonos3.generation.SAMPLING).
+    temperature: float = SAMPLING["temperature"]
+    topk: int = SAMPLING["topk"]
+    top_p: float = SAMPLING["top_p"]
+    min_p: float = SAMPLING["min_p"]
+    max_tokens: int | None = None            # None = the server's frame budget
     fade_out_ms: float = 0.0
-    repetition_window: int = 96
-    repetition_penalty: float = 2.4
-    repetition_codebooks: int = 6
+    repetition_window: int = SAMPLING["repetition_window"]
+    repetition_penalty: float = SAMPLING["repetition_penalty"]
+    repetition_codebooks: int = SAMPLING["repetition_codebooks"]
     seed: Seed | None = None                 # None = drawn by the server (echoed in X-Seed)
     # "prefix" streams prefix re-decodes (matched long-context codecs), "whole" one exact chunk at EOS.
     stream_decode: Literal["prefix", "whole"] | None = None
@@ -71,7 +75,7 @@ class GenerationOptions(_Strict):
     # Reference CFG: uncond + scale * (cond - uncond) (1 = off).
     speaker_cfg_scale: float = Field(default=1.0, ge=0.0, allow_inf_nan=False)
     # Tagged-vs-plain guidance on nonverbal markup (1 = off; above 1 needs markup and speaker / controls CFG at 1).
-    tag_cfg_scale: float = Field(default=1.0, ge=1.0, le=4.0)
+    tag_cfg_scale: float = Field(default=1.0, ge=TAG_CFG_MIN_SCALE, le=TAG_CFG_MAX_SCALE)
     # An accent adapter of GET /v2/capabilities "accents" (None = the base model).
     accent: str | None = None
     accent_strength: float = 1.0
@@ -161,13 +165,13 @@ class EditRequest(_Strict):
     max_span_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
     language: str = "en_us"
     text_normalization: bool = True
-    temperature: float = 0.75
-    topk: int = 80
-    top_p: float = 0.69
-    min_p: float = 0.0
-    repetition_window: int = 96
-    repetition_penalty: float = 2.4
-    repetition_codebooks: int = 6
+    temperature: float = SAMPLING["temperature"]
+    topk: int = SAMPLING["topk"]
+    top_p: float = SAMPLING["top_p"]
+    min_p: float = SAMPLING["min_p"]
+    repetition_window: int = SAMPLING["repetition_window"]
+    repetition_penalty: float = SAMPLING["repetition_penalty"]
+    repetition_codebooks: int = SAMPLING["repetition_codebooks"]
     seed: Seed | None = None
     num_takes: int = Field(default=1, ge=1, le=4)
     # Speaker-embedding checkpoints: embed the original clip into the speaker row in front of the text (False leaves

@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from zonos3.generation import SAMPLE_RATE
+
 
 def _cond_path(ids_path: Path) -> Path:
     return ids_path.with_suffix(".cond.json") if ids_path.suffix == ".npy" else Path(str(ids_path) + ".cond.json")
@@ -27,7 +29,7 @@ def _dump(path: Path, rows: torch.Tensor, cond: dict) -> None:
     _cond_path(path).write_text(json.dumps(cond) + "\n")
 
 
-def write_wav(path: str | Path, pcm: np.ndarray, sample_rate: int = 44100) -> None:
+def write_wav(path: str | Path, pcm: np.ndarray, sample_rate: int = SAMPLE_RATE) -> None:
     samples = (np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2")
     with wave.open(str(path), "wb") as f:
         f.setnchannels(1)
@@ -80,7 +82,7 @@ def main(argv=None) -> int:
     if args.out:
         result = synthesize(lm, request, assets=assets, device=device, dtype=dtype)
         write_wav(args.out, result.pcm)
-        seconds = len(result.pcm) / 44100.0
+        seconds = len(result.pcm) / SAMPLE_RATE
         print(f"{seconds:.2f} s, seed {result.seed}, {len(result.rows)} rows, eos frame {result.eos_frame} -> {args.out}")
         if result.laci is not None:
             print(json.dumps(result.laci))

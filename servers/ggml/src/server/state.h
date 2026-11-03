@@ -63,15 +63,16 @@ struct ServerState {
     std::string steer_path;
     bool steer_loaded = false;
     zonos3_steer_bundle steer;              // its hidden sources (steer.sources) are the batch's steered bank sources
-    // Silence prefill (sgl _silence_prefill_spec): ZONOS3_SILENCE_PREFILL_FRAMES (default 3) frames for a request
-    // without silence_prefill_frames, unless ZONOS3_SILENCE_PREFILL_DEFAULT is 0/false/no/off.
-    int silence_prefill_frames = ZONOS3_DEFAULT_SILENCE_PREFILL;
+    // Silence prefill (sgl _silence_prefill_spec): ZONOS3_SILENCE_PREFILL_FRAMES (default: the registry's
+    // silence_prefill_frames.default) frames for a request without silence_prefill_frames, unless
+    // ZONOS3_SILENCE_PREFILL_DEFAULT is 0/false/no/off (configure_silence_prefill).
+    int silence_prefill_frames = zonos3_generation().silence_prefill_default_frames;
     bool silence_prefill_on = true;
     std::string controls_doc;               // GET /v2/controls
 
     // ---- settings
-    int max_frames = 2000;
-    int context_capacity = 0;
+    int max_frames = zonos3_generation().max_frames;   // --max: the frame budget of a request (R5's server_max)
+    int context_capacity = 0;                          // rows of a slot (configure_frame_budget)
     int batch_slots = 8;
     int dac_threads = 4;
     bool use_gpu = false;

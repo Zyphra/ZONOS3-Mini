@@ -20,6 +20,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 | `src/worker.ts` | The worker: loads models and companions, warms up, serves requests one at a time |
 | `src/api/` | The routes (port of `servers/ggml/src/server/`): `router`, `generate` (resolve + one-request scheduler), `speakers`, `capabilities`, `validate` (spec validation, FastAPI 422 shape) |
 | `src/request/` | Pure ports of the ggml request logic: steering bundle, markup, LACI, span follow |
+| `src/generation.ts` | The generation registry ([`model/src/zonos3/registries/generation.json`](../../model/src/zonos3/registries/generation.json)): sampling defaults, the API rate, tag-CFG range, silence prefill (default 3, at most 30 frames), decode context (30), the 900-frame reference prefix (longer reference codes keep their first 900 frames), the 2000-frame budget (shrunk to the slot rows the prompt leaves), 60 s reference clips |
 | `src/backbone.ts`, `dac.ts`, `istft.ts`, `speaker.ts`, `encoder.ts`, `ssl.ts`, `rvq.ts` | The networks on WebGPU (`src/gpu/kernels/*.wgsl`) and their host parts |
 | `scripts/export_web_models.py` | GGUF → sharded web format (`zonos3-web-v1`), voices, companions, LACI heads |
 | `harness/` | Headless-Chrome harness: `server.mjs` (HTTP front for conformance), `parity.mjs` (WebGPU parity checks) |
@@ -42,7 +43,7 @@ what one storage binding of the device holds (60 s on Apple Silicon).
 ## Tests
 
 ```bash
-pnpm --dir servers/web test            # unit tests (Node): tokenizer, sampler, prompt, iSTFT, companions, LACI, API router
+pnpm --dir servers/web test            # unit tests (Node): tokenizer, sampler, prompt, iSTFT, companions, LACI, API router, request rules (model/tests/fixtures/request_errors.json)
 pnpm --dir servers/web goldens         # CPU ggml goldens (needs a CPU ggml build at $GGML_BUILD, default /tmp/ggml-build)
 pnpm --dir servers/web parity          # WebGPU parity vs the goldens in headless Chrome
 pnpm --dir servers/web harness         # HTTP front on :1920, then:

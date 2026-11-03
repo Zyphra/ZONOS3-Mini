@@ -23,9 +23,10 @@ from typing import Callable
 
 import numpy as np
 import torch
-from zonos3.reference.synth import Branch, ProbeState, Sampling, fade_out, sample_row, steer_fn
+from zonos3.reference.synth import ProbeState, Sampling, fade_out, sample_row, steer_fn
 from zonos3.speaker_cfg import guided_logits
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciSession, RateBuckets
+from zonos3.tts.plan import Branch
 from zonos3.tts.probe import locate_text_span
 from zonos3.tts.span_follow import FollowConfig, SpanFollower
 

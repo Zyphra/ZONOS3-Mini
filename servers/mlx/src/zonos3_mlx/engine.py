@@ -1,50 +1,35 @@
 """The MLX server's models, companions and request planning.
 
 ``Engine`` owns the loaded networks (LM, codec decoder, speaker encoder, the lazily loaded reference encoder) and the
-companion request logic (steering bundle, accent adapters, LACI heads, the text normalizer). ``plan_request`` turns a
-v2 GenerateRequest plus its pre-resolved speaker inputs into the ``zonos3.reference.synth.PromptPlan`` the scheduler
-runs: a port of ``zonos3.reference.synth.plan_prompt`` with the sgl server's request rules (api_server
-``_tts_generate_msg``, ``_apply_request_controls``, ``_span_follow``) and the tokenizer worker's prompt layout.
+companion request logic (steering bundle, accent adapters, LACI heads, the text normalizer), and is the
+``zonos3.tts.plan.PromptContext`` of the shared request rules. ``plan_request`` turns a v2 GenerateRequest plus its
+pre-resolved speaker inputs into the ``Plan`` the scheduler runs: ``zonos3.tts.plan.plan_prompt`` plus the server-side
+fields (a dub take's LACI target, a speech-edit layout).
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
-import secrets
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import torch
-from zonos3 import languages
-from zonos3.reference.synth import (
-    Branch,
-    PromptPlan,
-    TwinMsg,
-    parse_request,
-    resolve_condition_buckets,
-    silence_frames,
-    validate_phoneme_groups,
-    validate_tag_cfg,
-)
-from zonos3.speaker_cfg import speaker_cfg_twin
+from zonos3.generation import MAX_FRAMES, REFERENCE_MAX_FRAMES
 from zonos3.tts.laci import LaciHeads
-from zonos3.tts.markup import strip_nonverbal_markup
-from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig, silence_rows_from_codes
-from zonos3.tts.span_follow import FollowConfig
-from zonos3.tts.steering import SteeringBundle, resolve_controls
+from zonos3.tts.plan import PromptPlan, Speaker, plan_prompt
+from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
+from zonos3.tts.steering import SteeringBundle
 
 from zonos3_mlx import companions
 from zonos3_mlx.models.codec_decoder import CodecDecoder
 from zonos3_mlx.models.lm import LMConfig, Zonos3MLX
 
-SAMPLE_RATE = 44100
-MAX_SILENCE_PREFILL_FRAMES = 30
-MAX_REFERENCE_FRAMES = int(os.environ.get("ZONOS3_MAX_REFERENCE_FRAMES", "900"))
 COMPANIONS = {
     "dac": "dac.gguf", "spk_encoder": "spk-encoder.gguf", "dac_encoder": "dac-encoder.gguf",
     "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "accent_adapters": "accents.gguf",
@@ -127,35 +112,36 @@ def find_companions(model_path: str | Path, given: dict[str, str | None]) -> dic
     return out
 
 
-@dataclass
-class ResolvedSpeaker:
-    """A request's speaker inputs resolved by the HTTP layer: the mode, the speaker embedding (embedding mode) and the
-    reference prefix codes (reference mode)."""
-
-    mode: str
-    embedding: torch.Tensor | None = None
-    reference_codes: torch.Tensor | None = None
-
-
 class Engine:
+    """The loaded networks and companions, and the ``zonos3.tts.plan.PromptContext`` of the request rules: the
+    checkpoint's rows from the backbone GGUF, the loaded companions and the server limits."""
+
+    steer_hint = "place steer.gguf next to the backbone or pass --steer"
+    reference_max_frames = REFERENCE_MAX_FRAMES  # R7: the GGUF servers' reference prefix limit
+    silence_available = True  # every backbone GGUF carries its codec's silence frame
+    condition_flags: Mapping = MappingProxyType({})  # the GGUF converter refuses checkpoints with flag rows
+
     def __init__(self, lm: Zonos3MLX, decoder: CodecDecoder, *, paths: dict[str, str | None],
-                 laci_heads: dict[str, str] | None = None, max_frames: int = 2000, normalizer=None,
+                 laci_heads: dict[str, str] | None = None, max_frames: int = MAX_FRAMES, normalizer=None,
                  reference_idle_unload: float = 60.0):
         self.lm = lm
         self.config: LMConfig = lm.config
         self.decoder = decoder
         self.paths = paths
-        self.max_frames = int(max_frames)
+        self.max_frames = int(max_frames)  # --max: the frame budget of a request (R5)
         self.normalizer: TextNormalizer | None = normalizer
         self.speaker_encoder = None
         if paths.get("spk_encoder"):
             from zonos3_mlx.models.speaker_encoder import SpeakerEncoder
 
             self.speaker_encoder = SpeakerEncoder.load(paths["spk_encoder"])
-        self.bundle: SteeringBundle | None = companions.load_steer(paths["steer"]) if paths.get("steer") else None
+        self.steer_bundle: SteeringBundle | None = companions.load_steer(paths["steer"]) if paths.get("steer") else None
+        self.steering_sources = () if self.steer_bundle is None else tuple(self.steer_bundle.hidden_sources)
         self.accents = companions.AccentBank.load(paths["accent_adapters"]) if paths.get("accent_adapters") else None
+        self.accent_names = [] if self.accents is None else list(self.accents.names)
         self.laci_heads = {lang: LaciHeads.load(path) for lang, path in (laci_heads or {}).items()}
         self.laci_paths = dict(laci_heads or {})
+        self.laci_languages = frozenset(self.laci_heads)
         for lang, heads in self.laci_heads.items():
             for layer, head in heads.heads:
                 if not (0 <= layer < self.config.n_layers) or self.config.uses_gdn(layer) or not (
@@ -166,10 +152,19 @@ class Engine:
         self._reference_encoder = None
         self._reference_last_use = 0.0
         self.reference_idle_unload = float(reference_idle_unload)
-        spec = self.config.text_tokenizer_spec
+        c = self.config
+        self.n_codebooks, self.codebook_size, self.hidden_size = c.n_codebooks, c.codebook_size, c.dim
+        self.condition_names, self.condition_n_buckets, self.condition_edges = (
+            c.condition_names, c.condition_n_buckets, c.condition_edges)
+        # R2: the reference prefix first, then the speaker row (ggml checkpoint_speaker_modes)
+        self.speaker_modes = [mode for mode, on in (("reference", c.speaker_reference_prefix_enabled),
+                                                    ("embedding", c.speaker_embedding_dim > 0)) if on]
+        self.text_tokenizer_spec = c.text_tokenizer_spec or None
+        self.audio_pad_id, self.text_vocab, self.span_end_id, self.max_seqlen = (
+            c.audio_pad_id, c.text_vocab, c.span_end_id, c.max_seqlen)
         self._builder = TTSPromptBuilder(TTSPromptConfig(
-            n_codebooks=self.config.n_codebooks, codebook_sizes=self.config.codebook_sizes,
-            audio_pad_id=self.config.audio_pad_id, text_vocab=self.config.text_vocab, text_tokenizer_spec=spec))
+            n_codebooks=c.n_codebooks, codebook_sizes=c.codebook_sizes, audio_pad_id=c.audio_pad_id,
+            text_vocab=c.text_vocab, text_tokenizer_spec=c.text_tokenizer_spec))
 
     @classmethod
     def load(cls, model: str | Path, *, dac: str | None = None, **kwargs) -> "Engine":
@@ -185,11 +180,9 @@ class Engine:
     def prompt_builder(self) -> TTSPromptBuilder:
         return self._builder
 
-    def accent_names(self) -> list[str]:
-        return [] if self.accents is None else list(self.accents.names)
-
-    def steering_sources(self) -> tuple[int, ...]:
-        return () if self.bundle is None else tuple(self.bundle.hidden_sources)
+    def silence_frame(self) -> torch.Tensor:
+        """The codec's silence frame [n_codebooks] (the backbone GGUF's ``silence_frame``)."""
+        return torch.tensor(self.config.silence_frame, dtype=torch.int32)
 
     @property
     def has_reference_encoder(self) -> bool:
@@ -236,19 +229,6 @@ class Engine:
 # ----------------------------------------------------------------------------------------------------- planning
 
 
-def resolve_accent(engine: Engine, accent, strength):
-    """(accent adapter or None, strength) of a request (sgl ``_resolve_tts_request_accent``)."""
-    if accent is None or accent == "" or accent == "none":
-        return None, 1.0
-    names = engine.accent_names()
-    if accent not in names:
-        loaded = ", ".join(names) or "none (load accent adapters)"
-        raise ValueError(f"Unknown accent {accent!r}; loaded accents: {loaded}.")
-    if not math.isfinite(float(strength)):
-        raise ValueError(f"accent_strength must be finite, got {strength!r}.")
-    return accent, float(strength)
-
-
 @dataclass
 class LaciTake:
     """A dub take's LACI duration target and its speaking-rate scale (sgl _dub_take_rate_steering)."""
@@ -273,165 +253,21 @@ class EditLayout:
 
 @dataclass
 class Plan(PromptPlan):
-    """The reference PromptPlan plus the server-side fields: its LACI take (dub) and its edit layout (speech editing,
-    codes-only)."""
+    """The shared PromptPlan plus the server-side fields: its LACI take (dub), its edit layout (speech editing,
+    codes-only) and the language whose LACI heads drive the span follower."""
 
     laci_take: LaciTake | None = None
     edit: EditLayout | None = None
     follow_language: str | None = None
 
 
-def plan_request(engine: Engine, request: dict, speaker: ResolvedSpeaker | None, *, laci_take: LaciTake | None = None,
+def plan_request(engine: Engine, request: Mapping, speaker: Speaker | None, *, laci_take: LaciTake | None = None,
                  edit: EditLayout | None = None, hidden_delta=None) -> Plan:
-    """The prompt rows, conditioning and CFG twin of ``request`` (zonos3.reference.synth.plan_prompt with the sgl
-    server's request rules). ``edit``: a speech-edit region (the edit layout, no silence prefill, stop on span-end;
-    ``hidden_delta`` its steering delta). Raises ValueError for a request the server refuses (HTTP 400)."""
-    c = engine.config
-    req = parse_request(request)
-    validate_tag_cfg(req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale,
-                     controls_cfg_scale=req.controls_cfg_scale)
-    condition_values = resolve_condition_buckets(c, req.condition_buckets, req.condition_values)
-    mode = speaker.mode if speaker is not None else "reference"
-    embedding = None if speaker is None else speaker.embedding
-    reference_codes = None if speaker is None else speaker.reference_codes
-    language = languages.normalize(req.language)
-    if req.max_tokens is not None and int(req.max_tokens) <= 0:
-        raise ValueError("max_tokens must be positive.")
-    max_tokens = engine.max_frames if req.max_tokens is None else min(int(req.max_tokens), engine.max_frames)
-    accent, accent_strength = resolve_accent(engine, req.accent, req.accent_strength)
-    sources = engine.steering_sources()
-    delta = schedule = span_chars = None
-    if req.controls or req.control_spans:
-        bundle = engine.bundle
-        if bundle is None:
-            raise ValueError("This server has no steering bundle (place steer.gguf next to the backbone or pass "
-                             "--steer); `controls` are unavailable.")
-        resolved = resolve_controls(bundle, req.controls, list(req.control_spans or []), text=req.text,
-                                    speaker_embedding=embedding, sources=sources, hidden_size=c.dim,
-                                    frames_per_char=req.control_span_rate)
-        embedding, schedule, span_chars = resolved.speaker_embedding, resolved.schedule, resolved.span_chars
-        delta = resolved.hidden_delta
-    if hidden_delta is not None:
-        delta = hidden_delta if delta is None else delta + hidden_delta
-    follow_chars = follow_gate = None
-    if req.control_span_follow == "reading" and span_chars and language in engine.laci_heads and edit is None:
-        default = FollowConfig()
-        follow_gate = [default.lead if req.control_span_lead is None else float(req.control_span_lead),
-                       default.lag if req.control_span_lag is None else float(req.control_span_lag)]
-        follow_chars = [[int(a), int(b)] for a, b in span_chars]
-    if req.speaker_cfg_scale != 1.0:
-        has_reference = mode == "reference" and reference_codes is not None
-        has_embedding = mode == "embedding" and embedding is not None
-        if not (has_reference or has_embedding):
-            raise ValueError("Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, "
-                             "or speaker_mode=embedding with a clip or an embedding")
-        if req.controls_cfg_scale != 1.0:
-            raise ValueError("Speaker and controls CFG cannot be combined")
-    builder = engine.prompt_builder()
-    validate_phoneme_groups(builder.config.text_tokenizer_spec, req.text)
-    if req.laci:
-        if not engine.laci_heads:
-            raise ValueError("LACI is not enabled on this server (start it with --laci-heads LANG=PATH)")
-        if language not in engine.laci_heads:
-            raise ValueError(f"No LACI alignment heads for language {language!r} (configured: "
-                             f"{', '.join(sorted(engine.laci_heads))})")
-        if float(req.speaker_cfg_scale) != 1.0 or float(req.controls_cfg_scale) != 1.0:
-            raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = 1")
-        if float(req.tag_cfg_scale) != 1.0:
-            raise ValueError("LACI needs tag_cfg_scale = 1")
-    elif laci_take is not None:
-        raise ValueError("A LACI duration target needs laci=true")
-
-    # ---- prompt rows (the tokenizer worker)
-    text = engine.normalize_text(req.text, language, bool(req.text_normalization))
-    silence = None
-    if edit is None:
-        requested = req.silence_prefill_frames
-        if requested is not None:
-            requested = max(0, min(int(requested), MAX_SILENCE_PREFILL_FRAMES))
-        frames = silence_frames(requested)
-        if frames > 0:
-            silence = silence_rows_from_codes(torch.tensor(c.silence_frame, dtype=torch.int32), frames, builder.config)
-
-    def text_prompt_rows(t: str) -> torch.Tensor:
-        prompt = builder.build(t)
-        if edit is not None:
-            from zonos3.tts.edit import edit_prompt_tokens
-
-            if c.span_end_id is None:
-                raise ValueError("Speech editing needs a checkpoint with a span-end audio token")
-            return edit_prompt_tokens(prompt, edit.codes, edit.spans, edit.fills, builder.config,
-                                      span_end_id=c.span_end_id)
-        return prompt if silence is None else torch.cat((prompt, silence.to(prompt.dtype)), dim=0)
-
-    text_rows = text_prompt_rows(text)
-    plain_rows = text_prompt_rows(strip_nonverbal_markup(text)) if float(req.tag_cfg_scale) > 1.0 else None
-    follow_tokens = None
-    if follow_chars is not None:
-        from zonos3.tts.span_follow import span_token_ranges
-
-        follow_tokens = [list(r) for r in span_token_ranges(req.text, text, [tuple(x) for x in follow_chars],
-                                                            builder.config.text_tokenizer_spec)]
-    t = torch.cat((builder.condition_rows(c.condition_count, dtype=text_rows.dtype), text_rows), dim=0)
-    reference_prefix_length = 0
-    if reference_codes is not None:
-        max_ref = int(c.speaker_reference_max_seconds * SAMPLE_RATE // engine.decoder.hop)
-        reference_codes = reference_codes[:max_ref]
-        prefix = builder.speaker_reference_prefix(reference_codes)
-        reference_prefix_length = len(prefix)
-        t = torch.cat((prefix.to(t.dtype), t), dim=0)
-    context_codes = None
-    if req.decode_context and reference_codes is not None:
-        k = max(0, min(int(req.decode_context_frames or 0), int(reference_codes.shape[0])))
-        context_codes = reference_codes[int(reference_codes.shape[0]) - k:] if k > 0 else None
-    speaker_row = -1
-    if embedding is not None:
-        t = torch.cat((builder.speaker_slot(dtype=t.dtype), t), dim=0)
-        speaker_row = 0
-    condition_token_start = reference_prefix_length + (1 if embedding is not None else 0)
-    plain_ids = None
-    if plain_rows is not None:
-        lead = len(t) - len(text_rows)
-        plain_ids = torch.cat((t[:lead], plain_rows.to(t.dtype)), dim=0)
-
-    # ---- CFG twin (the scheduler's _schedule_prefill)
-    tag_cfg = float(req.tag_cfg_scale) > 1.0
-    controls_cfg = delta is not None and embedding is not None and float(req.controls_cfg_scale) != 1.0
-    speaker_cfg = float(req.speaker_cfg_scale) != 1.0
-    if speaker_cfg and controls_cfg:
-        raise ValueError("Speaker and controls CFG cannot be combined")
-    if tag_cfg and (speaker_cfg or float(req.controls_cfg_scale) != 1.0):
-        raise ValueError("Tag CFG cannot be combined with speaker or controls CFG")
-    cond = Branch(t.to(torch.int32), embedding, speaker_row if embedding is not None else -1,
-                  condition_values=condition_values, condition_token_start=condition_token_start)
-    twin = None
-    cfg_kind, cfg_scale = None, 1.0
-    if speaker_cfg:
-        msg = TwinMsg(t, reference_prefix_length, embedding, max(speaker_row, 0))
-        spec = speaker_cfg_twin(msg, t, n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id, text_vocab=c.text_vocab,
-                                speaker_token_position=max(speaker_row, 0), condition_values=condition_values,
-                                condition_token_start=condition_token_start, condition_unknown=c.condition_n_buckets)
-        twin = Branch(spec.input_ids.to(torch.int32), condition_values=spec.condition_values,
-                      condition_token_start=spec.condition_token_start)
-        cfg_kind, cfg_scale = "speaker", float(req.speaker_cfg_scale)
-    elif tag_cfg:
-        twin = replace(cond, input_ids=plain_ids.to(torch.int32))
-        cfg_kind, cfg_scale = "tag", float(req.tag_cfg_scale)
-    elif controls_cfg:
-        twin = replace(cond, steered=False)
-        cfg_kind, cfg_scale = "controls", float(req.controls_cfg_scale)
-    prompt_len = max(len(cond.input_ids), len(twin.input_ids)) if twin is not None else len(cond.input_ids)
-    if prompt_len >= c.max_seqlen:
-        raise ValueError(f"TTS input len {prompt_len} exceeds {c.max_seqlen}")
-    max_tokens = min(max_tokens, c.max_seqlen - prompt_len)
-    seed = int(req.seed) if req.seed is not None else secrets.randbelow(2**31)
-    return Plan(
-        request=req, text=text, language=language, cond=cond, twin=twin, cfg_kind=cfg_kind, cfg_scale=cfg_scale,
-        reference_prefix_length=reference_prefix_length,
-        prefill_rows=None if silence is None else silence.to(torch.int32),
-        context_codes=context_codes, sources=sources, hidden_delta=delta, schedule=schedule,
-        follow_tokens=follow_tokens, follow_gate=follow_gate,
-        accent=None if accent is None else (accent, accent_strength), max_tokens=max_tokens, seed=seed,
-        laci=language if req.laci else None, laci_take=laci_take, edit=edit,
-        follow_language=language if follow_tokens is not None else None,
-    )
+    """The scheduler plan of ``request``: ``zonos3.tts.plan.plan_prompt`` over the engine with the speaker inputs the
+    HTTP layer resolved (None: none, in the request's speaker mode). ``laci_take``: a dub take's LACI duration target;
+    ``edit``: a speech-edit region (the edit layout, no silence prefill, stop on span-end; ``hidden_delta`` its
+    steering delta). Raises ValueError for a request the server refuses (HTTP 400)."""
+    plan = plan_prompt(engine, request, lambda req, mode: Speaker(mode) if speaker is None else speaker,
+                       hidden_delta=hidden_delta, edit=edit, duration_target=laci_take is not None)
+    return Plan(**vars(plan), laci_take=laci_take, edit=edit,
+                follow_language=plan.language if plan.follow_tokens is not None else None)

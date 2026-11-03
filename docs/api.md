@@ -68,14 +68,14 @@ CORS allows every origin and exposes the response headers above.
 | `stream` | `true` | Chunked PCM; `stream_decode` (`prefix` / `whole`, null = server default) picks the decode |
 | `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV, needs `stream: false` |
 | `seed` | `null` | 0..4294967295; echoed in `X-Seed` |
-| `temperature`, `topk`, `top_p`, `min_p` | `0.75`, `80`, `0.69`, `0` | Sampling |
+| `temperature`, `topk`, `top_p`, `min_p` | `0.75`, `80`, `0.69`, `0` | Sampling (the defaults of `model/src/zonos3/registries/generation.json`) |
 | `repetition_window`, `repetition_penalty`, `repetition_codebooks` | `96`, `2.4`, `6` | Per-codebook repetition penalty |
-| `max_tokens` | `null` | Frame budget (null = the checkpoint's limit) |
+| `max_tokens` | `null` | Frame budget (null = the server's: the checkpoint's context on sgl, `--max` on the GGUF servers); shrunk to the context the prompt leaves |
 | `speaker_audio_base64` / `speaker_embedding_base64` / `speaker_embedding_id` / `speaker_reference_codes` | `null` | The voice: a clip, a `.npy`/`.npz` embedding, a speaker id, or pre-encoded reference codes; `speaker_mode` picks embedding or raw-reference cloning on checkpoints with both |
 | `speaker_blend_embedding_id_a`, `_b`, `speaker_blend_t` | `null` | Slerp between two voices |
 | `speaker_cfg_scale` | `1.0` | Reference CFG (1 = off) |
 | `condition_buckets` / `condition_values` | `null` | Condition rows (`loudness`, `fmax`, `speaking_rate`) by bucket or raw value |
-| `silence_prefill_frames` | `null` | Codec-matched silence frames prefilled before the audio (0 = off) |
+| `silence_prefill_frames` | `null` | Codec-matched silence frames prefilled before the audio: null = the server default (3), 0 = off, at most 30 (more is a 400) |
 | `accent`, `accent_strength` | `null`, `1.0` | Accent adapter from `/v2/capabilities` `accents` |
 | `controls`, `control_spans`, `control_span_*` | `null` | Steering-bundle controls, whole-utterance or over character spans ([guide](guide.md#steering-controls)) |
 | `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |

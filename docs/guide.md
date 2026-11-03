@@ -22,8 +22,13 @@ Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plai
 ## Raw-audio voice cloning
 
 Either upload reference audio (`speaker_audio_base64` / the studio) or pass
-already-encoded codes with `speaker_reference_codes` (`[frames, 10]` ints, the
-same codes the training loader sees). The prefix is built exactly like
+already-encoded codes with `speaker_reference_codes` (`[frames, 10]` codec ids, the
+same codes the training loader sees). Longer codes keep their first frames: the
+checkpoint's `speaker_reference_max_seconds` on the sgl server (60 s = 900 frames on
+the release), the registry's `reference_max_frames` (900) on the GGUF servers; a
+default voice's `<stem>.codes.npy` is cut the same way. With `decode_context`, the
+last `decode_context_frames` (null or 0 = 30) of them are decoded as left context.
+The prefix is built exactly like
 `apps.zonos.reference_packing.encode_reference`: each codebook delayed by its
 index, tail flushed with audio padding, text column padded, no separator token.
 `speaker_cfg_scale` > 1 runs the prompt without the prefix as the unconditional

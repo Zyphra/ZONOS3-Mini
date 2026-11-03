@@ -32,8 +32,10 @@ bool speaker_known(ServerState & s, const std::optional<std::string> & session, 
 
 // A base64 request field (sgl _decode_base64_blob, "data:" URLs allowed); HttpError 400 on an invalid payload.
 std::vector<uint8_t> decode_b64_field(const nlohmann::json & req, const char * field);
-// Uploaded audio (any container ffmpeg reads) -> 44.1 kHz mono PCM, cut at max_seconds; HttpError 400 when undecodable.
-std::vector<float> decode_audio_bytes(const std::vector<uint8_t> & bytes, int max_seconds = 60);
+// Uploaded audio (any container ffmpeg reads) -> mono PCM at the API rate, cut at max_seconds (default: the registry's
+// reference clip limit); HttpError 400 when undecodable.
+std::vector<float> decode_audio_bytes(const std::vector<uint8_t> & bytes,
+                                      int max_seconds = (int) zonos3_generation().reference_audio_max_seconds);
 // The codec encoder's ordinary codes [frames, 10] / the speaker encoder's embedding of 44.1 kHz PCM of at most
 // max_seconds (HttpError 400 / 500 like the speaker paths).
 std::vector<int32_t> encode_audio_codes(ServerState & s, const std::vector<float> & pcm, int max_seconds);

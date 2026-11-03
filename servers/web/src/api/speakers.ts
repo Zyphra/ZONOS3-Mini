@@ -1,14 +1,14 @@
 // Voices of the engine API: default voices, session uploads, embedding files, slerp blends and the /v2/speakers routes
 // (port of servers/ggml/src/server/speakers.cpp; same 400 details).
 import { b64DecodeStrict } from '../b64';
-import { MAX_REFERENCE_FRAMES } from '../prompt';
+import { REFERENCE_AUDIO_MAX_SECONDS, REFERENCE_MAX_FRAMES, SAMPLE_RATE } from '../generation';
+import { CODEBOOK_SIZE } from '../prompt';
 import { disabledControls } from '../request/steer';
 import { wavBytes } from '../wav';
 import type { Engine } from './engine';
 import { fail, isSet, parseBody, pyRepr, sendBytes, sendJson, sessionId, str, type EngineRequest, type Sink } from './http';
 
 const NO_SESSION = 'Cached speaker operations require the X-TTS-Session-ID header.';
-const MAX_SECONDS = 60;
 
 export interface Voice {
   id: string;
@@ -114,11 +114,11 @@ export class Speakers {
     return v.codes;
   }
 
-  /** embed_speaker_locked: the speaker encoder's embedding (400 past 60 s, or with the encoder's own message when the
-   *  device clamps clips shorter or the computation fails). */
+  /** embed_speaker_locked: the speaker encoder's embedding (400 past REFERENCE_AUDIO_MAX_SECONDS, or with the encoder's
+   *  own message when the device clamps clips shorter or the computation fails). */
   async embed(pcm: Float32Array): Promise<Float32Array> {
-    const limitMsg = `speaker embedding computation failed (maximum ${MAX_SECONDS} seconds)`;
-    if (!pcm.length || pcm.length > MAX_SECONDS * 44100) fail(400, limitMsg);
+    const limitMsg = `speaker embedding computation failed (maximum ${REFERENCE_AUDIO_MAX_SECONDS} seconds)`;
+    if (!pcm.length || pcm.length > REFERENCE_AUDIO_MAX_SECONDS * SAMPLE_RATE) fail(400, limitMsg);
     let emb: Float32Array;
     try {
       emb = await this.e.embedSpeaker(pcm);
@@ -132,16 +132,16 @@ export class Speakers {
   }
 
   /** encode_reference_locked: ordinary reference codes of the clip (400 on failure). */
-  async encode(pcm: Float32Array, maxSeconds = MAX_SECONDS, maxFrames = MAX_REFERENCE_FRAMES): Promise<Int32Array> {
-    const msg = `reference audio encoding failed (maximum ${maxSeconds} seconds)`;
-    if (!pcm.length || pcm.length > maxSeconds * 44100) fail(400, msg);
+  async encode(pcm: Float32Array): Promise<Int32Array> {
+    const msg = `reference audio encoding failed (maximum ${REFERENCE_AUDIO_MAX_SECONDS} seconds)`;
+    if (!pcm.length || pcm.length > REFERENCE_AUDIO_MAX_SECONDS * SAMPLE_RATE) fail(400, msg);
     let codes: Int32Array;
     try {
       codes = await this.e.encodeReference(pcm);
     } catch {
       fail(400, msg);
     }
-    if (!codes.length || codes.length % 10 || codes.length > maxFrames * 10)
+    if (!codes.length || codes.length % 10 || codes.length > REFERENCE_MAX_FRAMES * 10)
       fail(400, msg);
     return codes;
   }
@@ -161,19 +161,17 @@ export class Speakers {
         fail(400, 'This checkpoint conditions on raw reference audio and does not accept speaker embedding files or embedding blends.');
       if (hasCodes) {
         if (audio || id) fail(400, 'Provide either speaker_reference_codes or a reference clip (audio or a speaker id), not both.');
+        // zonos3.tts.plan reference_codes: shape, then sign, then range over every row; the first
+        // REFERENCE_MAX_FRAMES frames are kept.
         const rows = body.speaker_reference_codes as unknown[][];
         const ncb = this.e.hp.nCodebooks;
-        if (rows.length > MAX_REFERENCE_FRAMES)
-          fail(400, `speaker_reference_codes must be a non-empty [frames, codebooks] list of at most ${MAX_REFERENCE_FRAMES} frames`);
-        const codes: number[] = [];
-        for (const row of rows) {
-          if (row.length !== ncb) fail(400, 'speaker_reference_codes must be a non-empty [frames, codebooks] list');
-          for (const c of row) {
-            if (Number(c) >= 4096) fail(400, 'speaker_reference_codes must be ordinary codec ids 0..4095');
-            codes.push(Number(c));
-          }
-        }
-        out.codes = Int32Array.from(codes);
+        if (!rows.length || rows.some(row => row.length !== ncb))
+          fail(400, 'speaker_reference_codes must be a non-empty [frames, codebooks] list');
+        const values = rows.flat().map(Number);
+        if (values.some(v => v < 0)) fail(400, 'speaker_reference_codes must be non-negative');
+        if (values.some(v => v >= CODEBOOK_SIZE))
+          fail(400, `speaker_reference_codes must be codec ids in [0, ${CODEBOOK_SIZE - 1}]`);
+        out.codes = Int32Array.from(values.slice(0, REFERENCE_MAX_FRAMES * ncb));
         out.mode = mode;
         return out;
       }
@@ -255,7 +253,7 @@ export class Speakers {
     if (v.isDefault && v.sourceType !== 'audio') fail(400, 'Default embedding speakers do not include preview audio.');
     if (v.isDefault && !v.pcm) fail(400, `Failed to read default voice '${v.label}'.`);
     if (!v.pcm) fail(404, 'Cached speaker preview audio is not available.');
-    sendBytes(sink, wavBytes(v.pcm, 44100, 'rint'), 'audio/wav');
+    sendBytes(sink, wavBytes(v.pcm, SAMPLE_RATE, 'rint'), 'audio/wav');
   }
 
   async embedding(req: EngineRequest, sink: Sink, id: string): Promise<void> {
@@ -302,7 +300,7 @@ function decodeB64Field(body: Record<string, unknown>, field: string): Uint8Arra
 function decodedAudio(body: Record<string, unknown>, pcm: Float32Array | undefined): Float32Array {
   decodeB64Field(body, 'speaker_audio_base64');
   if (!pcm || !pcm.length)
-    fail(400, `could not decode the reference audio (any container ffmpeg reads, at most ${MAX_SECONDS} seconds)`);
+    fail(400, `could not decode the reference audio (any container ffmpeg reads, at most ${REFERENCE_AUDIO_MAX_SECONDS} seconds)`);
   return pcm;
 }
 

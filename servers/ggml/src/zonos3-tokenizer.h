@@ -44,6 +44,6 @@ bool zonos3_payload_ids(const zonos3_tokenizer & tok, const std::string & utf8, 
 // superbpe.text_ids: [BOS] payload_ids [EOS].
 bool zonos3_text_ids(const zonos3_tokenizer & tok, const std::string & utf8, std::vector<int32_t> & out,
                      std::string & err);
-// The server's _validate_phoneme_groups: "" when `utf8` has no group markers or valid groups, else the 400 message
-// ("This checkpoint has no phoneme tokens: ..." / "Pronunciation groups: <payload_ids error>").
+// R13 (zonos3.tts.plan.validate_phoneme_groups): "" when `utf8` has no group markers or valid groups, else the 400
+// message ("This checkpoint has no phoneme tokens: ..." / "Pronunciation groups: <payload_ids error>").
 std::string zonos3_check_phoneme_groups(const zonos3_tokenizer & tok, const std::string & utf8);

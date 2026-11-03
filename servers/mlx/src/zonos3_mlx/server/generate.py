@@ -16,8 +16,10 @@ import wave
 import numpy as np
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from zonos3.generation import SAMPLE_RATE
 from zonos3.reference.synth import Sampling, fade_out
 from zonos3.server.schemas import GenerateRequest, SpeechRequest
+from zonos3.tts.plan import parse_request, request_head
 
 from zonos3_mlx.engine import Plan, plan_request
 from zonos3_mlx.scheduler import Job
@@ -26,7 +28,6 @@ from zonos3_mlx.server.state import ServerState
 from zonos3_mlx.vocoder import StreamDecoder
 
 logger = logging.getLogger("zonos3_mlx.server")
-SAMPLE_RATE = 44100
 
 # The speaker input fields a SpeechRequest `voice` cannot be combined with.
 SPEAKER_INPUT_FIELDS = (
@@ -141,10 +142,13 @@ def stream_decode_mode(state: ServerState, req: GenerateRequest) -> str:
 
 
 async def plan_generate(state: ServerState, req: GenerateRequest, session_id: str | None, **plan_kwargs) -> Plan:
-    """The scheduler plan of a GenerateRequest (HTTP 400 for a refused request, 500 for an encoder failure)."""
+    """The scheduler plan of a GenerateRequest (HTTP 400 for a refused request, 500 for an encoder failure). The
+    request head (tag CFG, speaker mode, condition rows) is checked before the speaker inputs are resolved, in the sgl
+    server's order."""
     try:
-        speaker = await speakers.resolve_speaker(state, session_id, req)
-        return await asyncio.to_thread(plan_request, state.engine, req.model_dump(), speaker, **plan_kwargs)
+        request = parse_request(req.model_dump())
+        speaker = await speakers.resolve_speaker(state, session_id, req, request_head(state.engine, request).mode)
+        return await asyncio.to_thread(plan_request, state.engine, request, speaker, **plan_kwargs)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

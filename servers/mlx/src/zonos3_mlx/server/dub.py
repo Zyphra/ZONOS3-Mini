@@ -34,15 +34,15 @@ def runtime(state: ServerState):
     if state.dub_runtime is None:
         from zonos3.dub.runtime import DubModel, DubRuntime, WorkerSettings, rate_scales
 
-        modes = speakers.checkpoint_modes(state)
-        bundle = state.engine.bundle
+        modes = state.engine.speaker_modes
+        bundle = state.engine.steer_bundle
         settings = WorkerSettings.from_env()
         if asr_device() is not None:
             settings = WorkerSettings(python=settings.python, avsync_home=settings.avsync_home, device=asr_device())
         model = DubModel(
             name=Path(state.options.model_path).name, rate_edges=tuple(caps.dub_rate_edges(state)),
             n_buckets=state.config.condition_n_buckets if state.config.condition_count else 0,
-            laci_languages=frozenset(state.engine.laci_heads), studio_voices="embedding" in modes,
+            laci_languages=state.engine.laci_languages, studio_voices="embedding" in modes,
             source_voice="reference" in modes,
             raw_controls=frozenset(did for did, d in (bundle.directions.items() if bundle is not None else ())
                                    if d.space == RAW_SPACE),
@@ -82,14 +82,14 @@ def take_rate_steering(state: ServerState, job: dict, text: str, base_delta) -> 
     scale = job.get("rate_scale")
     if scale is None:
         return None
-    bundle, engine = state.engine.bundle, state.engine
+    bundle, engine = state.engine.steer_bundle, state.engine
 
     def delta(b: int):
         if b not in scale.doses:
             return base_delta
         tempo = resolve_controls(bundle, {bundle.rate_extension.direction: scale.doses[b]}, None, text=text,
-                                 speaker_embedding=None, sources=engine.steering_sources(),
-                                 hidden_size=state.config.dim).hidden_delta
+                                 speaker_embedding=None, sources=engine.steering_sources,
+                                 hidden_size=engine.hidden_size).hidden_delta
         return tempo if base_delta is None else base_delta + tempo
 
     return LaciTake(float(job["target_frames"]), bool(job["adjust_rate"]), tuple(float(e) for e in scale.edges),

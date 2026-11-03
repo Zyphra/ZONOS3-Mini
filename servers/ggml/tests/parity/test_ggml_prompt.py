@@ -5,6 +5,11 @@ bundle ``steering/studio_bundle_mect60k.json`` (ggml: its ``convert_gguf.py stee
 
 Rows (and a CFG twin's rows) must be identical; the ``.cond.json`` sidecars equal, speaker embeddings within 1e-6.
 
+Refusals: the CLI refuses every request of model/tests/fixtures/request_errors.json whose ``requires`` the backbone GGUF
+meets (``conditions``: it has condition rows; ``no_phoneme_tokens``: its text tokenizer spec has no phonemes) with the
+server's 400 and a detail containing the fixture's ``error`` (no accent adapters, no LACI heads; the GGUF alone, no
+reference checkpoint needed).
+
 Backbones (each skipped when its GGUF or checkpoint is absent):
 - ``release``: the GGUF ``ZONOS3_GGUF`` (default servers/ggml/models/zonos3-f16.gguf) and the checkpoint it was
   converted from, ``ZONOS3_TEST_MODEL`` (default the Mini release's lm/mect_60k);
@@ -29,6 +34,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[4]
 FIXTURES = REPO / "model" / "tests" / "fixtures" / "prompt_requests.json"
+ERROR_FIXTURES = REPO / "model" / "tests" / "fixtures" / "request_errors.json"
 MODELS = REPO / "servers" / "ggml" / "models"
 BACKBONES = {
     "release": (Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
@@ -40,6 +46,7 @@ BACKBONES = {
 }
 BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
+ERRORS = json.loads(ERROR_FIXTURES.read_text())
 
 
 @pytest.fixture(scope="module", params=list(BACKBONES))
@@ -130,3 +137,46 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
         ref_twin = tmp_path / "ref.twin.npy"
         _dump(ref_twin, plan.twin.input_ids, plan.cond_json(plan.twin))
         _assert_same(ggml_twin, ref_twin, f"{entry['name']} ({plan.cfg_kind} twin)")
+
+
+@pytest.fixture(scope="module", params=list(BACKBONES))
+def backbone_caps(request):
+    """``(gguf, caps)``: a backbone GGUF and the ``requires`` tags of request_errors.json it meets."""
+    gguf = BACKBONES[request.param][0]
+    if not gguf.is_file():
+        pytest.skip(f"{request.param}: no backbone GGUF at {gguf}")
+    from gguf import GGUFReader
+
+    fields = GGUFReader(gguf).fields
+
+    def value(key: str):
+        field = fields.get(key)
+        return None if field is None else field.parts[field.data[0]]
+
+    caps = set()
+    count = value("zonos3.condition.count")
+    if count is not None and int(count[0]) > 0:
+        caps.add("conditions")
+    if json.loads(bytes(value("zonos3.text_tokenizer_spec")).decode()).get("phonemes") is None:
+        caps.add("no_phoneme_tokens")
+    return gguf, caps
+
+
+@pytest.mark.parametrize("entry", ERRORS, ids=[e["name"] for e in ERRORS])
+def test_request_refused(entry, backbone_caps, ggml_build, tmp_path):
+    gguf, caps = backbone_caps
+    missing = set(entry["requires"]) - caps
+    if missing:
+        pytest.skip(f"the backbone lacks {sorted(missing)}")
+    request = tmp_path / "req.json"
+    request.write_text(json.dumps(entry["request"]))
+    exe = ggml_build / "zonos3-cli"
+    if not exe.exists():
+        pytest.fail(f"{exe} is not built")
+    run = subprocess.run([str(exe), str(gguf), "--request", str(request), "--build-prompt", str(tmp_path / "ids.npy")],
+                         capture_output=True, text=True)
+    assert run.returncode != 0, f"{entry['name']}: accepted"
+    # The refusal is the last stderr line: "<status> {"detail": ...}".
+    status, _, body = run.stderr.strip().splitlines()[-1].partition(" ")
+    assert status == "400", run.stderr
+    assert entry["error"] in json.loads(body)["detail"], run.stderr

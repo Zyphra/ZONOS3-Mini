@@ -23,8 +23,6 @@ using json = nlohmann::json;
 
 namespace {
 
-constexpr double TAG_CFG_MIN_SCALE = 1.0, TAG_CFG_MAX_SCALE = 4.0;
-
 std::string py_list(const std::vector<std::string> & items) {
     std::string out = "[";
     for (size_t i = 0; i < items.size(); ++i) out += (i ? ", " : "") + py_repr(items[i]);
@@ -36,10 +34,12 @@ double num(const json & j, const char * key, double d) { return set(j, key) ? j[
 // Python truthiness of an optional container (None, {} and [] are false).
 bool truthy(const json & j, const char * key) { return set(j, key) && !j[key].empty(); }
 
-// sgl _validate_tag_cfg: tagged-vs-plain guidance needs recognized markup and no other CFG.
+// R1 (zonos3.tts.plan.validate_tag_cfg): tagged-vs-plain guidance needs recognized markup and no other CFG.
 void validate_tag_cfg(const std::string & text, double scale, double speaker_cfg, double controls_cfg) {
-    if (!std::isfinite(scale) || scale < TAG_CFG_MIN_SCALE || scale > TAG_CFG_MAX_SCALE)
-        fail(400, "tag_cfg_scale must be finite and between 1.0 and 4.0.");
+    const zonos3_generation_registry & limits = zonos3_generation();
+    if (!std::isfinite(scale) || scale < limits.tag_cfg_min_scale || scale > limits.tag_cfg_max_scale)
+        fail(400, "tag_cfg_scale must be finite and between " + json(limits.tag_cfg_min_scale).dump() + " and " +
+                  json(limits.tag_cfg_max_scale).dump() + ".");
     if (scale == 1.0) return;
     if (!zonos3_has_nonverbal_markup(text) || zonos3_strip_nonverbal_markup(text) == text) {
         std::string tags;
@@ -51,7 +51,7 @@ void validate_tag_cfg(const std::string & text, double scale, double speaker_cfg
     if (controls_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.");
 }
 
-// sgl _resolve_speaker_mode.
+// R2 (zonos3.tts.plan.resolve_speaker_mode).
 std::string resolve_speaker_mode(const ServerState & s, const json & body) {
     const auto modes = checkpoint_speaker_modes(s);
     if (!set(body, "speaker_mode")) return modes.empty() ? "" : modes[0];
@@ -63,7 +63,8 @@ std::string resolve_speaker_mode(const ServerState & s, const json & body) {
 
 }  // namespace
 
-// sgl _resolve_condition_buckets: explicit ids win, raw values map through the edges, anything else is unknown.
+// R3 (zonos3.tts.plan.resolve_condition_buckets): explicit ids win, raw values map through the edges, anything else is
+// unknown.
 std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json & body) {
     const auto & hp = s.model.hp;
     const json buckets = set(body, "condition_buckets") ? body["condition_buckets"] : json();
@@ -120,7 +121,7 @@ std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json
     return out;
 }
 
-// sgl _normalize_tts_request_language.
+// R4 (zonos3.languages.normalize).
 std::string resolve_language(const json & body) {
     const std::string given = set(body, "language") ? body["language"].get<std::string>() : "en_us";
     std::string lang = lower_ascii(strip(given));
@@ -150,7 +151,7 @@ std::vector<float> * request_embedding(GenReq & gr) {
     return gr.speaker_mode == "embedding" && !gr.speaker_embedding.empty() ? &gr.speaker_embedding : nullptr;
 }
 
-// sgl _resolve_tts_request_accent: an accent selects its adapter for the scheduler (gr.accent).
+// R9 (zonos3.tts.plan.resolve_accent): an accent selects its adapter for the scheduler (gr.accent).
 void apply_accent(const ServerState & s, const json & body, GenReq & gr) {
     if (!set(body, "accent")) return;
     const std::string accent = body["accent"].get<std::string>();
@@ -166,8 +167,8 @@ void apply_accent(const ServerState & s, const json & body, GenReq & gr) {
     gr.accent_strength = (float) num(body, "accent_strength", 1.0);
 }
 
-// sgl _apply_request_controls: steering-bundle controls and spans -> resolved steering (raw controls move the
-// embedding in place).
+// R10 (zonos3.tts.plan.request_rules' controls): steering-bundle controls and spans -> resolved steering (raw controls
+// move the embedding in place).
 void apply_controls(ServerState & s, const json & body, GenReq & gr) {
     if (!truthy(body, "controls") && !truthy(body, "control_spans")) return;
     if (!s.steer_loaded)
@@ -192,7 +193,8 @@ void apply_controls(ServerState & s, const json & body, GenReq & gr) {
         fail(400, err);
 }
 
-// sgl _validate_phoneme_groups: pronunciation groups need a phoneme-token checkpoint and must be well formed.
+// R13 (zonos3.tts.plan.validate_phoneme_groups): pronunciation groups need a phoneme-token checkpoint and must be well
+// formed.
 void check_phoneme_groups(const ServerState & s, const std::string & text) {
     const std::string err = zonos3_check_phoneme_groups(s.model.tok, text);
     if (!err.empty()) fail(400, err);
@@ -243,7 +245,7 @@ int token_bytes(const zonos3_tokenizer & tok, int32_t id) {
     return it == table.end() ? 0 : it->second;
 }
 
-// sgl _check_laci_request (minus its naive-cache clause: every rollback here re-prefills the slot): heads for the
+// R14 (zonos3.tts.plan.check_laci; every rollback here re-prefills the slot, so no cache-type clause): heads for the
 // request's language and no CFG twin (the probe reads and masks the conditional request alone).
 void check_laci(const ServerState & s, const json & body, const std::string & language) {
     if (!(set(body, "laci") && body["laci"].get<bool>())) return;
@@ -258,8 +260,8 @@ void check_laci(const ServerState & s, const json & body, const std::string & la
     if (num(body, "tag_cfg_scale", 1.0) != 1.0) fail(400, "LACI needs tag_cfg_scale = 1");
 }
 
-// sgl _span_follow: the request's spans follow the reading position when it asks for it, has span-schedule rows and its
-// language has alignment heads; otherwise the character-rate schedule places them.
+// R11 (zonos3.tts.plan.request_rules' span follow): the request's spans follow the reading position when it asks for
+// it, has span-schedule rows and its language has alignment heads; otherwise the character-rate schedule places them.
 void resolve_span_follow(const ServerState & s, const json & body, GenReq & gr) {
     if (!(set(body, "control_span_follow") && body["control_span_follow"].get<std::string>() == "reading")) return;
     if (gr.steering.spans.empty()) return;
@@ -318,9 +320,9 @@ bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
     return body["stream_decode"].get<std::string>() == "prefix";
 }
 
-// GenerateRequest -> GenReq (sgl _tts_generate_msg order: tag CFG, speaker mode, condition rows, speaker, language,
-// max_tokens, accent, controls, stream decode, speaker CFG, pronunciation groups, LACI; then the scheduler's CFG twin
-// choice).
+// GenerateRequest -> GenReq in the rules' order (zonos3.tts.plan.request_head + request_rules, which sgl
+// _tts_generate_msg runs): tag CFG, speaker mode, condition rows, speaker, language, max_tokens, silence prefill,
+// accent, controls, stream decode, speaker CFG, pronunciation groups, LACI; then the scheduler's CFG twin choice.
 GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session) {
     GeneratePlan out;
     GenReq & gr = out.gr;
@@ -335,12 +337,21 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     gr.reference_codes = std::move(spk.codes);
     gr.speaker_embedding = std::move(spk.embedding);
     gr.language = resolve_language(body);
-    // sgl _resolve_tts_max_tokens: the server's frame limit, or the request's (positive) budget below it.
+    // R5 (zonos3.tts.plan.max_tokens_budget): the server's frame limit, or the request's (positive) budget below it.
     gr.max_frames = s.max_frames;
     if (set(body, "max_tokens")) {
         const int64_t requested = body["max_tokens"].get<int64_t>();
         if (requested <= 0) fail(400, "max_tokens must be positive.");
         gr.max_frames = (int) std::min<int64_t>(requested, s.max_frames);
+    }
+    // silence_prefill_frames: unset = the server default, else 0..the registry maximum (never clamped).
+    gr.silence_prefill = s.silence_prefill_on ? s.silence_prefill_frames : 0;
+    if (set(body, "silence_prefill_frames")) {
+        const int max_prefill = zonos3_generation().silence_prefill_max_frames;
+        const int64_t frames = body["silence_prefill_frames"].get<int64_t>();
+        if (frames < 0 || frames > max_prefill)
+            fail(400, "silence_prefill_frames must be 0.." + std::to_string(max_prefill));
+        gr.silence_prefill = (int) frames;
     }
     apply_accent(s, body, gr);
     apply_controls(s, body, gr);
@@ -380,14 +391,14 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     check_laci(s, body, gr.language);
     if (set(body, "laci") && body["laci"].get<bool>()) gr.laci = &s.laci.at(gr.language);
 
-    // sampling (TTSSamplingParams)
-    gr.sp.temperature = (float) num(body, "temperature", 0.75);
-    gr.sp.top_k = set(body, "topk") ? body["topk"].get<int>() : 80;
-    gr.sp.top_p = (float) num(body, "top_p", 0.69);
-    gr.sp.min_p = (float) num(body, "min_p", 0.0);
-    gr.sp.rep_penalty = (float) num(body, "repetition_penalty", 2.4);
-    gr.sp.rep_window = set(body, "repetition_window") ? body["repetition_window"].get<int>() : 96;
-    gr.sp.rep_codebooks = set(body, "repetition_codebooks") ? body["repetition_codebooks"].get<int>() : 6;
+    // sampling (TTSSamplingParams): gr.sp starts at the registry's defaults; the request overrides what it sets.
+    if (set(body, "temperature")) gr.sp.temperature = (float) body["temperature"].get<double>();
+    if (set(body, "topk")) gr.sp.top_k = body["topk"].get<int>();
+    if (set(body, "top_p")) gr.sp.top_p = (float) body["top_p"].get<double>();
+    if (set(body, "min_p")) gr.sp.min_p = (float) body["min_p"].get<double>();
+    if (set(body, "repetition_penalty")) gr.sp.rep_penalty = (float) body["repetition_penalty"].get<double>();
+    if (set(body, "repetition_window")) gr.sp.rep_window = body["repetition_window"].get<int>();
+    if (set(body, "repetition_codebooks")) gr.sp.rep_codebooks = body["repetition_codebooks"].get<int>();
     if (gr.sp.rep_codebooks < 0) gr.sp.rep_codebooks = (int) s.model.hp.n_codebooks;
     if (set(body, "seed")) gr.sp.seed = (uint32_t) body["seed"].get<uint64_t>();
     else {   // secrets.randbelow(2**31)
@@ -397,17 +408,11 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     gr.sp.greedy = gr.sp.temperature <= 0.0f;
     gr.fade_out_ms = num(body, "fade_out_ms", 0.0);
     gr.headroom_db = set(body, "headroom_db") ? body["headroom_db"].get<double>() : -1.0;
-    gr.silence_prefill = s.silence_prefill_on ? s.silence_prefill_frames : 0;   // silence_prefill_frames_for(None)
-    if (set(body, "silence_prefill_frames")) {
-        const int64_t frames = body["silence_prefill_frames"].get<int64_t>();
-        if (frames < 0 || frames > ZONOS3_MAX_SILENCE_PREFILL)
-            fail(400, "silence_prefill_frames must be 0.." + std::to_string(ZONOS3_MAX_SILENCE_PREFILL));
-        gr.silence_prefill = (int) frames;
-    }
-    // decode_context: the last decode_context_frames (`or 30`) of the reference prompt, decoded ahead of the stream.
+    // decode_context: the last decode_context_frames (unset or 0: the registry's decode_context_frames) of the
+    // reference prompt, decoded ahead of the stream.
     if (set(body, "decode_context") && body["decode_context"].get<bool>() && !gr.reference_codes.empty()) {
-        const int64_t asked = set(body, "decode_context_frames") ? body["decode_context_frames"].get<int64_t>() : 30;
-        const int64_t frames = asked ? asked : 30;
+        const int64_t asked = set(body, "decode_context_frames") ? body["decode_context_frames"].get<int64_t>() : 0;
+        const int64_t frames = asked ? asked : zonos3_generation().decode_context_frames;
         const int64_t ref_frames = (int64_t) gr.reference_codes.size() / s.model.hp.n_codebooks;
         const int64_t k = std::max<int64_t>(0, std::min(frames, ref_frames));
         gr.decode_context.assign(gr.reference_codes.end() - (size_t) k * s.model.hp.n_codebooks, gr.reference_codes.end());
@@ -502,20 +507,36 @@ const char * SPEAKER_INPUT_FIELDS[] = {
 }  // namespace
 
 bool configure_silence_prefill(ServerState & s, std::string & err) {
-    s.silence_prefill_frames = ZONOS3_DEFAULT_SILENCE_PREFILL;
+    const zonos3_generation_registry & limits = zonos3_generation();
+    s.silence_prefill_frames = limits.silence_prefill_default_frames;
     if (const char * v = getenv("ZONOS3_SILENCE_PREFILL_FRAMES"); v && *v) {
         char * end = nullptr;
         const long x = strtol(v, &end, 10);
         if (end && !*end) s.silence_prefill_frames = (int) std::max(0L, x);
     }
-    if (s.silence_prefill_frames > ZONOS3_MAX_SILENCE_PREFILL) {
-        err = "ZONOS3_SILENCE_PREFILL_FRAMES must be 0.." + std::to_string(ZONOS3_MAX_SILENCE_PREFILL);
+    if (s.silence_prefill_frames > limits.silence_prefill_max_frames) {
+        err = "ZONOS3_SILENCE_PREFILL_FRAMES must be 0.." + std::to_string(limits.silence_prefill_max_frames);
         return false;
     }
     const char * on = getenv("ZONOS3_SILENCE_PREFILL_DEFAULT");
     const std::string v = lower_ascii(strip(on ? on : "1"));
     s.silence_prefill_on = !(v == "0" || v == "false" || v == "no" || v == "off") && s.silence_prefill_frames > 0;
     return true;
+}
+
+bool configure_frame_budget(ServerState & s, std::string & err) {
+    if (s.max_frames < 1 || s.max_frames + 16 >= (int) s.model.hp.n_ctx_train) {
+        err = "--max must be positive and leave prompt headroom in model context";
+        return false;
+    }
+    s.context_capacity = std::min((int) s.model.hp.n_ctx_train, s.max_frames + 4096);
+    return true;
+}
+
+int fit_frame_budget(const ServerState & s, int64_t prompt_rows, int budget) {
+    if (prompt_rows >= s.context_capacity)
+        fail(400, "TTS input len " + std::to_string(prompt_rows) + " exceeds " + std::to_string(s.context_capacity));
+    return (int) std::min<int64_t>(budget, s.context_capacity - prompt_rows);
 }
 
 std::vector<std::string> server_accents(const ServerState & s) {
@@ -569,6 +590,8 @@ GeneratePlan plan_generate(ServerState & s, const json & body, const std::option
     // The accent adapter applies to both branches.
     plan.twin.cond.accent = gr.accent;
     plan.twin.cond.accent_strength = gr.accent_strength;
+    // R5: the frame budget shrinks to the slot rows the longer of the two prompts leaves.
+    plan.gr.max_frames = fit_frame_budget(s, std::max(plan.prompt.n_rows, plan.twin.n_rows), plan.gr.max_frames);
     return plan;
 }
 
@@ -577,9 +600,6 @@ std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan) {
     job->prompt = std::move(plan.prompt);
     job->twin = std::move(plan.twin);
     const GenReq & gr = plan.gr;
-    const int64_t rows = std::max(job->prompt.n_rows, job->twin.n_rows);
-    if (rows + gr.max_frames > s.context_capacity)
-        fail(400, "reference, text and max_tokens exceed the slot context capacity (" + std::to_string(s.context_capacity) + " rows)");
     job->idf.assign(job->prompt.ids.begin(), job->prompt.ids.end());
     job->idf_twin.assign(job->twin.ids.begin(), job->twin.ids.end());
     job->n0 = job->prompt.n_rows;

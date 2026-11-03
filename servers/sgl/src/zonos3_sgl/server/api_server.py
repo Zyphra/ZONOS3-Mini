@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import bisect
 import functools
-import math
 import hashlib
 import io
 import os
@@ -13,7 +11,6 @@ import subprocess
 import time
 import uuid
 import wave
-from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,12 +36,13 @@ from zonos3_sgl.message import (
     TTSTokenizeMsg,
 )
 from zonos3 import languages
+from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE
+from zonos3.tts import plan
 from zonos3.tts.audio import (
     _decode_audio_bytes,
     _decode_wav_bytes,
     _transcode_audio_bytes_to_wav,
 )
-from zonos3.tts.conditioning import _model_tts_max_tokens, _resolve_tts_max_tokens
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
@@ -57,7 +55,7 @@ from zonos3.tts.steering import (
     load_bundle,
     resolve_controls,
 )
-from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip_nonverbal_markup, trained_on_tags
+from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
 from zonos3.server.dub import make_router as _dub_router
 from zonos3.server.edit import make_router as _edit_router
 from zonos3.server.keepalive import KeepaliveMiddleware
@@ -183,17 +181,6 @@ def _speaker_modes(config: ServerArgs) -> list[str]:
     return modes
 
 
-def _resolve_speaker_mode(config: ServerArgs, value: str | None) -> str | None:
-    """Which conditioning path a request uses: raw reference prefix (default when the model has it) or the reserved
-    speaker-embedding row; explicit requests (the schema's enum) must name a path the checkpoint supports."""
-    modes = _speaker_modes(config)
-    if value is None:
-        return modes[0] if modes else None
-    if value not in modes:
-        raise HTTPException(status_code=400, detail=f"speaker_mode={value!r} is not available for this checkpoint (supported: {modes})")
-    return value
-
-
 # ----------------------------------------------------------------------------- condition rows (cond3 finetunes)
 _CONDITION_LAYOUT = "[reference prefix | speaker row][loudness][fmax][speaking_rate] BOS text EOS"
 
@@ -226,88 +213,28 @@ def _condition_spec(config: ServerArgs) -> dict | None:
     )
 
 
-def _silence_prefill_spec(config: ServerArgs) -> dict:
-    """Whether codec-matched silence frames can be prefilled into the audio stream (2026-10-17)."""
+def _dual_codec(config: ServerArgs) -> dict | None:
+    """The codec registry entry of the checkpoint's codec when it is a matched dual codec (the codecs with
+    codec-matched silence frames), else None."""
+    from zonos3.tokenizer.matched_codec import codec_names, entry
+
     codec = str(getattr(config.model_config, "audio_codec", "") or "")
-    try:
-        from zonos3.tokenizer.matched_codec import codec_names, entry
-        if codec in codec_names() and entry(codec).get("family") == "dual":
-            hop = int(entry(codec)["hop"])
-            try:
-                default_frames = max(0, int(os.environ.get("ZONOS3_SILENCE_PREFILL_FRAMES", "3")))
-            except ValueError:
-                default_frames = 3
-            default_on = os.environ.get("ZONOS3_SILENCE_PREFILL_DEFAULT", "1").strip().lower() not in ("0", "false", "no", "off") and default_frames > 0
-            return dict(available=True, default_frames=default_frames, default_on=default_on, default_seconds=round(default_frames * hop / 44100.0, 3),
-                        frame_seconds=hop / 44100.0, codec=codec,
-                        note="codec-matched silence frames open the audio stream before the model starts (their audio is not emitted); "
-                             "a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 "
-                             "turns it off and silence_prefill_frames=N sets the length")
-    except Exception:  # noqa: BLE001
-        pass
-    return dict(available=False, default_frames=None, codec=codec)
+    return entry(codec) if codec in codec_names() and entry(codec).get("family") == "dual" else None
 
 
-def _condition_bucket_of(edges: list[float], value: float) -> int:
-    # bucket i = [edge_{i-1}, edge_i), exactly the training loader's bisect_right over the edges
-    return int(bisect.bisect_right(edges, float(value)))
-
-
-def _resolve_condition_buckets(config: ServerArgs, buckets, values) -> list[int] | None:
-    """Per-request bucket ids for the condition rows: explicit ids win, raw values map through the edges, anything
-    else is unknown. None for checkpoints without condition rows (a request that names them is refused)."""
-    spec = _condition_spec(config)
+def _silence_prefill_spec(config: ServerArgs) -> dict:
+    """Whether codec-matched silence frames can be prefilled into the audio stream (2026-10-17), and the server
+    default (zonos3.tts.plan.silence_prefill_default)."""
+    codec = str(getattr(config.model_config, "audio_codec", "") or "")
+    spec = _dual_codec(config)
     if spec is None:
-        if buckets not in (None, {}, []) or values not in (None, {}, []):
-            raise HTTPException(status_code=400, detail="This checkpoint has no condition rows (loudness / fmax / speaking rate)")
-        return None
-    names, n_buckets = spec["names"], spec["n_buckets"]
-
-    def as_map(raw, what):
-        if raw is None:
-            return {}
-        if isinstance(raw, Mapping):
-            unknown = [str(k) for k in raw if str(k) not in names]
-            if unknown:
-                raise HTTPException(status_code=400, detail=f"{what}: unknown condition name(s) {unknown}; expected {names}")
-            return {str(k): v for k, v in raw.items()}
-        raw = list(raw)
-        if len(raw) != len(names):
-            raise HTTPException(status_code=400, detail=f"{what}: expected {len(names)} entries in the order {names}")
-        return dict(zip(names, raw))
-
-    ids_by_name = as_map(buckets, "condition_buckets")
-    values_by_name = as_map(values, "condition_values")
-    out = []
-    for name in names:
-        if ids_by_name.get(name) is not None:
-            try:
-                bucket = int(ids_by_name[name])
-            except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail=f"condition_buckets[{name}] must be an integer") from None
-            flag = spec["flags"].get(name)
-            if flag is not None and bucket != n_buckets and bucket not in [int(v) for v in (flag.get("values") or (0, 1))]:
-                raise HTTPException(status_code=400, detail=f"condition_buckets[{name}] is a flag: one of {flag.get('values') or [0, 1]} or {n_buckets} (= unknown)")
-            if not 0 <= bucket <= n_buckets:
-                raise HTTPException(status_code=400, detail=f"condition_buckets[{name}] must be in [0, {n_buckets - 1}] or {n_buckets} (= unknown)")
-        elif values_by_name.get(name) is not None:
-            try:
-                value = float(values_by_name[name])
-            except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail=f"condition_values[{name}] must be a number") from None
-            if not math.isfinite(value):
-                raise HTTPException(status_code=400, detail=f"condition_values[{name}] must be finite")
-            if name in spec["flags"]:
-                bucket = 1 if value >= 0.5 else 0          # a flag row: any truthy value means "yes"
-            else:
-                edges = spec["edges"].get(name)
-                if not edges:
-                    raise HTTPException(status_code=400, detail=f"the checkpoint carries no edges for {name}; send condition_buckets[{name}] instead")
-                bucket = _condition_bucket_of(edges, value)
-        else:
-            bucket = n_buckets
-        out.append(bucket)
-    return out
+        return dict(available=False, default_frames=None, codec=codec)
+    hop, default = int(spec["hop"]), plan.silence_prefill_default()
+    return dict(available=True, default_frames=default.frames, default_on=default.on,
+                default_seconds=round(default.frames * hop / SAMPLE_RATE, 3), frame_seconds=hop / SAMPLE_RATE, codec=codec,
+                note="codec-matched silence frames open the audio stream before the model starts (their audio is not emitted); "
+                     "a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 "
+                     "turns it off and silence_prefill_frames=N sets the length")
 
 
 def _model_supports_speaker(config: ServerArgs) -> bool:
@@ -364,21 +291,6 @@ def _adapter_accents(config: ServerArgs) -> list[str]:
     return list_accent_adapters(config.accent_adapters)
 
 
-def _resolve_tts_request_accent(
-    config: ServerArgs, accent: str | None, strength: float
-) -> tuple[str | None, float]:
-    """A request's accent adapter (None = base model) and its strength."""
-    if accent is None or accent == "" or accent == "none":
-        return None, 1.0
-    accents = _adapter_accents(config)
-    if accent not in accents:
-        loaded = ", ".join(accents) or "none (load accent adapters)"
-        raise ValueError(f"Unknown accent {accent!r}; loaded accents: {loaded}.")
-    if not math.isfinite(strength):
-        raise ValueError(f"accent_strength must be finite, got {strength!r}.")
-    return accent, float(strength)
-
-
 def _steering_sources(config: ServerArgs) -> tuple[int, ...]:
     """The Full AttnRes bank sources the engine steers, ascending (as Engine._init_steering): the steering bundle's
     hidden-space sources."""
@@ -402,42 +314,88 @@ def _steer_bundle(config: ServerArgs) -> SteeringBundle | None:
     return _STEER_BUNDLE_CACHE[path]
 
 
-def _apply_request_controls(
-    config: ServerArgs,
-    req: GenerateRequest,
-    speaker_embedding: torch.Tensor | None,
-) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, list[tuple[int, int]] | None]:
-    """Fold a request's steering-bundle controls in: (speaker embedding, hidden delta, span schedule, each schedule
-    row's character range). The hidden delta has one hidden-size slot per steered source (``_steering_sources``)."""
-    if not req.controls and not req.control_spans:
-        return speaker_embedding, None, None, None
-    bundle = _steer_bundle(config)
-    if bundle is None:
-        raise ValueError("This server has no steering bundle (start it with --steer-bundle); `controls` are unavailable.")
-    resolved = resolve_controls(
-        bundle, req.controls, [s.model_dump() for s in req.control_spans or []], text=req.text,
-        speaker_embedding=speaker_embedding, sources=_steering_sources(config),
-        hidden_size=int(config.model_config.hidden_size), frames_per_char=req.control_span_rate,
-    )
-    return resolved.speaker_embedding, resolved.hidden_delta, resolved.schedule, resolved.span_chars
+class _RulesContext:
+    """zonos3.tts.plan.RulesContext over the server's arguments: the checkpoint's condition rows (``_condition_spec``)
+    and speaker modes, its text tokenizer, the loaded accent adapters, steering bundle and LACI heads, the frame
+    budget (``max_seq_len``), the reference prefix limit (the checkpoint's speaker_reference_max_seconds at its codec
+    hop, the limit the tokenizer worker cuts inline reference codes to) and whether its codec has codec-matched
+    silence frames."""
 
+    steer_hint = "start it with --steer-bundle"
 
-def _span_follow(
-    config: ServerArgs, req: GenerateRequest, language: str, span_chars: list[tuple[int, int]] | None
-) -> tuple[list[list[int]] | None, list[float] | None]:
-    """(character range of every span-schedule row, gate [lead, lag]) when the request's spans follow the reading
-    position (control_span_follow "reading" and LACI heads for its language; zonos3.tts.span_follow), else (None,
-    None): the character-rate schedule."""
-    from zonos3.tts.span_follow import FollowConfig
+    def __init__(self, config: ServerArgs):
+        self.config = config
 
-    if req.control_span_follow != "reading" or not span_chars:
-        return None, None
-    if language not in (getattr(config, "laci_heads", None) or {}):
-        return None, None
-    default = FollowConfig()
-    gate = [default.lead if req.control_span_lead is None else float(req.control_span_lead),
-            default.lag if req.control_span_lag is None else float(req.control_span_lag)]
-    return [[int(a), int(b)] for a, b in span_chars], gate
+    @functools.cached_property
+    def _conditions(self) -> dict:
+        return _condition_spec(self.config) or dict(names=[], n_buckets=0, edges={}, flags={})
+
+    @property
+    def n_codebooks(self) -> int:
+        return int(self.config.model_config.n_codebooks)
+
+    @property
+    def codebook_size(self) -> int:
+        return int(self.config.model_config.codebook_size)
+
+    @property
+    def hidden_size(self) -> int:
+        return int(self.config.model_config.hidden_size)
+
+    @property
+    def condition_names(self) -> list[str]:
+        return self._conditions["names"]
+
+    @property
+    def condition_n_buckets(self) -> int:
+        return self._conditions["n_buckets"]
+
+    @property
+    def condition_edges(self) -> dict:
+        return self._conditions["edges"]
+
+    @property
+    def condition_flags(self) -> dict:
+        return self._conditions["flags"]
+
+    @property
+    def speaker_modes(self) -> list[str]:
+        return _speaker_modes(self.config)
+
+    @property
+    def text_tokenizer_spec(self) -> dict | None:
+        return _text_tokenizer_spec(str(self.config.model_path))
+
+    @property
+    def accent_names(self) -> list[str]:
+        return _adapter_accents(self.config)
+
+    @property
+    def steer_bundle(self) -> SteeringBundle | None:
+        return _steer_bundle(self.config)
+
+    @property
+    def steering_sources(self) -> tuple[int, ...]:
+        return _steering_sources(self.config)
+
+    @property
+    def laci_languages(self) -> dict:
+        return getattr(self.config, "laci_heads", None) or {}
+
+    @property
+    def max_frames(self) -> int:
+        return int(self.config.max_seq_len)
+
+    @property
+    def reference_max_frames(self) -> int:
+        from zonos3.tokenizer.matched_codec import entry
+
+        hop = int(entry(str(self.config.tts_audio_codec))["hop"])
+        return plan.reference_frame_limit(self.config.tts_speaker_reference_max_seconds, hop, SAMPLE_RATE)
+
+    @property
+    def silence_available(self) -> bool:
+        return _dual_codec(self.config) is not None
 
 
 def _apply_gain_pcm(audio_bytes: bytes, gain: float) -> bytes:
@@ -458,7 +416,7 @@ def _output_gain(config: ServerArgs, headroom_db: float | None) -> float:
 
 
 def _apply_fade_out_pcm(
-    audio_bytes: bytes, fade_out_ms: float, sample_rate: int = 44100
+    audio_bytes: bytes, fade_out_ms: float, sample_rate: int = SAMPLE_RATE
 ) -> bytes:
     """Apply a cosine fade-out to the tail of float32 PCM bytes."""
     if fade_out_ms <= 0 or not audio_bytes:
@@ -549,26 +507,6 @@ def _text_tokenizer_spec(model_path: str) -> dict | None:
     return load_spec(model_path)
 
 
-def _validate_phoneme_groups(config: ServerArgs, text: str) -> None:
-    """Reject malformed pronunciation groups here, before the tokenizer worker sees them."""
-    from zonos3.tts.superbpe import PHONEME_CLOSE, PHONEME_OPEN, payload_ids
-
-    spec = _text_tokenizer_spec(str(config.model_path))
-    phonemes = None if spec is None else spec.get("phonemes")
-    open_, close = (PHONEME_OPEN, PHONEME_CLOSE) if phonemes is None else (phonemes["open_marker"], phonemes["close_marker"])
-    if open_ not in text and close not in text:
-        return
-    if phonemes is None:
-        raise HTTPException(status_code=400, detail="This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups")
-    try:
-        payload_ids(text, spec)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Pronunciation groups: {exc}") from exc
-
-
-_TAG_CFG_MIN_SCALE, _TAG_CFG_MAX_SCALE = 1.0, 4.0
-
-
 @functools.lru_cache(maxsize=4)
 def _model_trained_on_tags(model_path: str) -> bool:
     """zonos3.tts.markup.trained_on_tags, memoized per checkpoint path."""
@@ -577,32 +515,8 @@ def _model_trained_on_tags(model_path: str) -> bool:
 
 def _tag_cfg_capabilities(config: ServerArgs) -> dict:
     return {"available": True, "trained": _model_trained_on_tags(str(config.model_path)),
-            "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": _TAG_CFG_MIN_SCALE, "max_scale": _TAG_CFG_MAX_SCALE,
+            "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": TAG_CFG_MIN_SCALE, "max_scale": TAG_CFG_MAX_SCALE,
             "default_scale": 1.0}
-
-
-def _validate_tag_cfg(
-    config: ServerArgs, text: str, tag_cfg_scale: float, *, speaker_cfg_scale: float, controls_cfg_scale: float
-) -> None:
-    """Tag CFG (tagged-vs-plain guidance on nonverbal markup) request rules; raises HTTP 400 when broken.
-
-    1.0 is the unguided path (the schema bounds the scale to [1, 4]). Above it the text must carry recognized markup
-    whose removal changes it, and the guidance cannot be stacked with speaker or controls CFG (one twin per request)."""
-    def reject(detail: str) -> None:
-        raise HTTPException(status_code=400, detail=detail)
-
-    if float(tag_cfg_scale) == 1.0:
-        return
-    if not has_nonverbal_markup(text) or strip_nonverbal_markup(text) == text:
-        reject(
-            "tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags "
-            + ", ".join(f"<{tag}/>" for tag in NONVERBAL_MARKUP_TAGS)
-            + " or the same names as span tags (<shouting>...</shouting>)."
-        )
-    if float(speaker_cfg_scale) != 1.0:
-        reject("tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.")
-    if float(controls_cfg_scale) != 1.0:
-        reject("tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.")
 
 
 def _voice_speaker_modes(config: ServerArgs, source_type: str, has_embedding: bool = True) -> list[str]:
@@ -1112,20 +1026,6 @@ async def _resolve_speaker_embedding(
     )
 
 
-def _reference_codes_tensor(codes) -> "torch.Tensor | None":
-    """Validate caller-supplied reference prefix codes ([frames, n_codebooks] ints)."""
-    if codes is None:
-        return None
-    import torch
-
-    tensor = torch.as_tensor(codes, dtype=torch.int32)
-    if tensor.ndim != 2 or tensor.shape[0] == 0 or tensor.shape[0] > 16384:
-        raise ValueError("speaker_reference_codes must be a non-empty [frames, codebooks] list")
-    if bool((tensor < 0).any()):
-        raise ValueError("speaker_reference_codes must be non-negative")
-    return tensor.contiguous()
-
-
 async def _resolve_speaker_reference_audio(
     *,
     config: ServerArgs,
@@ -1161,27 +1061,6 @@ async def _resolve_speaker_reference_audio(
     if speaker_audio_base64 is None:
         return None
     return _decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
-
-
-def _check_laci_request(config, laci: bool, language: str, speaker_cfg_scale: float, controls_cfg_scale: float,
-                        duration_target: bool = False, adjust_rate: bool = True, tag_cfg_scale: float = 1.0) -> None:
-    """HTTP 400 unless a laci=true request meets LACI's constraints (zonos3.tts.laci): heads for its language, no CFG,
-    and for a duration target that moves the speaking-rate bucket the naive cache (the scheduler refuses the rest)."""
-    if not laci:
-        if duration_target:
-            raise HTTPException(status_code=400, detail="A LACI duration target needs laci=true")
-        return
-    heads = getattr(config, "laci_heads", None) or {}
-    if not heads:
-        raise HTTPException(status_code=400, detail="LACI is not enabled on this server (start it with --laci-heads LANG=PATH)")
-    if language not in heads:
-        raise HTTPException(status_code=400, detail=f"No LACI alignment heads for language {language!r} (configured: {', '.join(sorted(heads))})")
-    if float(speaker_cfg_scale) != 1.0 or float(controls_cfg_scale) != 1.0:
-        raise HTTPException(status_code=400, detail="LACI needs speaker_cfg_scale = controls_cfg_scale = 1")
-    if float(tag_cfg_scale) != 1.0:
-        raise HTTPException(status_code=400, detail="LACI needs tag_cfg_scale = 1")
-    if duration_target and adjust_rate and getattr(config, "cache_type", "naive") != "naive":
-        raise HTTPException(status_code=400, detail="A LACI duration target that adjusts the speaking rate needs --cache-type naive")
 
 
 @dataclass
@@ -1262,7 +1141,7 @@ class FrontendManager:
         first_byte = True
         total_audio_bytes = 0
         chunk_count = 0
-        fade_bytes = int(44100 * max(0.0, fade_out_ms) / 1000.0) * 4
+        fade_bytes = int(SAMPLE_RATE * max(0.0, fade_out_ms) / 1000.0) * 4
         held = b""
         async for ack in self.wait_for_ack(uid):
             if isinstance(ack, TTSAudioReply):
@@ -1289,7 +1168,7 @@ class FrontendManager:
             yield _apply_fade_out_pcm(held, fade_out_ms)
         if t_start is not None:
             e2e_s = time.perf_counter() - t_start
-            audio_s = total_audio_bytes / (44100 * 4)  # float32 @ 44.1kHz
+            audio_s = total_audio_bytes / (SAMPLE_RATE * 4)  # float32 PCM
             logger.info(
                 "uid=%d TTS completed: E2E=%.3fms, audio=%.2fs, chunks=%d, RTF=%.2fx",
                 uid, e2e_s * 1000, audio_s, chunk_count,
@@ -1318,7 +1197,7 @@ class FrontendManager:
         audio_data = _apply_fade_out_pcm(_apply_gain_pcm(audio_data, gain), fade_out_ms)
         if t_start is not None:
             e2e_s = time.perf_counter() - t_start
-            audio_s = len(audio_data) / (44100 * 4)
+            audio_s = len(audio_data) / (SAMPLE_RATE * 4)
             logger.info(
                 "uid=%d TTS completed (non-stream): E2E=%.3fms, audio=%.2fs, RTF=%.2fx",
                 uid, e2e_s * 1000, audio_s,
@@ -1444,7 +1323,7 @@ async def _resolve_request_speaker_conditioning(
 ) -> tuple[bytes | None, torch.Tensor | None]:
     """(reference audio, speaker embedding) for a request.
 
-    ``speaker_mode`` (from ``_resolve_speaker_mode``) picks the conditioning
+    ``speaker_mode`` (zonos3.tts.plan.request_head) picks the conditioning
     path: "reference" takes a waveform (upload, default voice or session clip)
     and no embedding, "embedding" the reverse.
     """
@@ -1518,87 +1397,75 @@ async def _tts_generate_msg(
     laci_adjust_rate: bool = True,
 ) -> TTSTokenizeMsg:
     """The tokenizer message of a /v2/generate request (HTTP 400/500 on an invalid one), with a new uid and the seed
-    it samples with (the request's, else drawn uniformly in 0..2^31-1).
+    it samples with: the request rules of zonos3.tts.plan (``request_head``, the request's speaker inputs resolved
+    for its speaker mode, ``request_rules``); the tokenizer worker builds the prompt rows.
     ``laci_target_frames`` / ``laci_adjust_rate``: the LACI duration target of a dub take (needs req.laci)."""
-    _validate_tag_cfg(
-        state.config, req.text, req.tag_cfg_scale,
-        speaker_cfg_scale=req.speaker_cfg_scale, controls_cfg_scale=req.controls_cfg_scale,
-    )
-    speaker_mode = _resolve_speaker_mode(state.config, req.speaker_mode)
-    condition_ids = _resolve_condition_buckets(state.config, req.condition_buckets, req.condition_values)
+    ctx = _RulesContext(state.config)
+    try:
+        request = plan.parse_request(req.model_dump())
+        head = plan.request_head(ctx, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         speaker_reference_audio, speaker_embedding = (
-            await _resolve_request_speaker_conditioning(state.config, req, session_id, speaker_mode)
+            await _resolve_request_speaker_conditioning(state.config, req, session_id, head.mode)
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        language = languages.normalize(req.language)
-        reference_codes = _reference_codes_tensor(req.speaker_reference_codes)
-        max_tokens = _resolve_tts_max_tokens(state.config, req.max_tokens)
-        accent, accent_strength = _resolve_tts_request_accent(
-            state.config, req.accent, req.accent_strength
-        )
-        speaker_embedding, steering_delta, steer_schedule, span_chars = _apply_request_controls(
-            state.config, req, speaker_embedding
-        )
-        follow_chars, follow_gate = _span_follow(state.config, req, language, span_chars)
+        reference_codes = plan.reference_codes(ctx, request.speaker_reference_codes)
+        speaker = plan.Speaker(head.mode, speaker_embedding, reference_codes, speaker_reference_audio)
+        rules = plan.request_rules(ctx, request, head, speaker, duration_target=laci_target_frames is not None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     stream_decode = _resolve_stream_decode(state.config, req.stream_decode, streaming=bool(req.stream))
-    if req.speaker_cfg_scale != 1.0:
-        has_reference = speaker_mode == "reference" and (speaker_reference_audio is not None or reference_codes is not None)
-        has_embedding = speaker_mode == "embedding" and speaker_embedding is not None
-        if not (has_reference or has_embedding):
-            raise HTTPException(status_code=400, detail="Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or speaker_mode=embedding with a clip or an embedding")
-        if req.controls_cfg_scale != 1.0:
-            raise HTTPException(status_code=400, detail="Speaker and controls CFG cannot be combined")
-    _validate_phoneme_groups(state.config, req.text)
-    _check_laci_request(state.config, req.laci, language, req.speaker_cfg_scale, req.controls_cfg_scale,
-                        duration_target=laci_target_frames is not None, adjust_rate=laci_adjust_rate,
-                        tag_cfg_scale=req.tag_cfg_scale)
+    # sgl's own LACI rule: a retake in another speaking-rate bucket changes the condition rows, which only the naive
+    # cache never serves stale from a cached prompt prefix
+    if laci_target_frames is not None and laci_adjust_rate and getattr(state.config, "cache_type", "naive") != "naive":
+        raise HTTPException(status_code=400, detail="A LACI duration target that adjusts the speaking rate needs --cache-type naive")
+    accent, accent_strength = rules.accent or (None, 1.0)
     return TTSTokenizeMsg(
         uid=state.new_user(),
         text=req.text,
-        language=language,
+        language=rules.language,
         text_normalization=req.text_normalization,
         silence_prefill_frames=req.silence_prefill_frames,
         decode_context=req.decode_context,
-        decode_context_frames=int(req.decode_context_frames or 30),
+        decode_context_frames=int(req.decode_context_frames or DECODE_CONTEXT_FRAMES),
         sampling_params=TTSSamplingParams(
             temperature=req.temperature,
             topk=req.topk,
             top_p=req.top_p,
             min_p=req.min_p,
-            max_tokens=max_tokens,
+            max_tokens=rules.max_tokens,
             repetition_window=req.repetition_window,
             repetition_penalty=req.repetition_penalty,
             repetition_codebooks=req.repetition_codebooks,
-            seed=req.seed if req.seed is not None else secrets.randbelow(2**31),
+            seed=rules.seed,
             controls_cfg_scale=req.controls_cfg_scale,
             speaker_cfg_scale=req.speaker_cfg_scale,
             tag_cfg_scale=req.tag_cfg_scale,
             stream_decode=stream_decode,
         ),
-        speaker_embedding=speaker_embedding,
+        speaker_embedding=rules.embedding,
         speaker_reference_audio=speaker_reference_audio,
         speaker_reference_codes=reference_codes,
-        steering_delta=steering_delta,
-        condition_buckets=condition_ids,
+        steering_delta=rules.hidden_delta,
+        condition_buckets=rules.condition_ids,
         accent=accent,
         accent_strength=accent_strength,
-        steer_schedule=steer_schedule,
-        steer_follow_chars=follow_chars,
-        steer_follow_gate=follow_gate,
+        steer_schedule=rules.schedule,
+        steer_follow_chars=rules.follow_chars,
+        steer_follow_gate=rules.follow_gate,
         laci=req.laci,
         laci_target_frames=laci_target_frames,
         laci_adjust_rate=laci_adjust_rate,
     )
 
 
-def _pcm16_wav(audio_bytes: bytes, sample_rate: int = 44100) -> bytes:
+def _pcm16_wav(audio_bytes: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
     """float32 PCM bytes as a 16-bit mono WAV file, samples clipped to [-1, 1]."""
     samples = np.clip(np.frombuffer(audio_bytes, dtype=np.float32), -1.0, 1.0)
     buf = io.BytesIO()
@@ -1621,7 +1488,7 @@ async def _generate_response(state: FrontendManager, req: GenerateRequest, sessi
     async def _abort():
         await state.abort_user(uid)
 
-    headers = {"X-Audio-Sample-Rate": "44100", "X-Audio-Channels": "1",
+    headers = {"X-Audio-Sample-Rate": str(SAMPLE_RATE), "X-Audio-Channels": "1",
                "X-Audio-Format": "pcm16" if req.format == "wav" else "float32",
                "X-Seed": str(msg.sampling_params.seed)}
     if req.control_spans:
@@ -1872,12 +1739,12 @@ async def tts_capabilities():
         "audio_codec": str(
             getattr(state.config.model_config, "audio_codec", "")
         ),
-        "max_tokens": _model_tts_max_tokens(state.config),
+        "max_tokens": int(state.config.max_seq_len),
         "stream_decode_modes": list(_STREAM_DECODE_MODES) if _model_prefix_stream_supported(state.config) else ["whole"],
         "stream_decode_default": _default_stream_decode(state.config),
         "silence_prefill": _silence_prefill_spec(state.config),
         "tag_cfg": _tag_cfg_capabilities(state.config),
-        "decode_context": {"available": True, "default_frames": 30, "max_frames": 450,
+        "decode_context": {"available": True, "default_frames": DECODE_CONTEXT_FRAMES, "max_frames": 450,
                            "note": "decode the generated frames behind the last decode_context_frames of the raw-reference prompt "
                                    "(their audio dropped), so the first generated frame is not the decoder's position 0; "
                                    "no-op without a reference prompt"},
@@ -2044,37 +1911,34 @@ class _SglEditEngine:
 
     async def check(self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets,
                     condition_values) -> set[str]:
-        config = get_global_state().config
-        _validate_phoneme_groups(config, target_text)
+        ctx = _RulesContext(get_global_state().config)
+        plan.validate_phoneme_groups(ctx.text_tokenizer_spec, target_text)
         raw: set[str] = set()
         if doses is not None:
-            bundle = _steer_bundle(config)
+            bundle = ctx.steer_bundle
             if bundle is None:
-                raise ValueError(
-                    "This server has no steering bundle (start it with --steer-bundle); `controls` are unavailable."
-                )
+                raise ValueError(f"This server has no steering bundle ({ctx.steer_hint}); `controls` are unavailable.")
             for region in doses:
                 check_controls(bundle, region)
             raw = {did for region in doses for did in region if bundle.directions[did].space == RAW_SPACE}
-        _resolve_condition_buckets(config, condition_buckets, condition_values)
+        plan.resolve_condition_buckets(ctx, condition_buckets, condition_values)
         return raw
 
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
         state = get_global_state()
-        config = state.config
+        ctx = _RulesContext(state.config)
         speaker_embedding, delta = job.speaker_embedding, None
         if job.controls:
             resolved = resolve_controls(
-                _steer_bundle(config), job.controls, None, text=job.controls_text,
-                speaker_embedding=job.speaker_embedding, sources=_steering_sources(config),
-                hidden_size=int(config.model_config.hidden_size),
+                ctx.steer_bundle, job.controls, None, text=job.controls_text,
+                speaker_embedding=job.speaker_embedding, sources=ctx.steering_sources, hidden_size=ctx.hidden_size,
             )
             speaker_embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
         sampling = TTSSamplingParams(
-            **job.sampling, max_tokens=_resolve_tts_max_tokens(config, job.max_tokens), seed=job.seed,
+            **job.sampling, max_tokens=plan.max_tokens_budget(job.max_tokens, ctx.max_frames), seed=job.seed,
             end_token="span", min_frames=job.min_frames,
         )
-        condition_ids = _resolve_condition_buckets(config, job.condition_buckets, job.condition_values)
+        condition_ids = plan.resolve_condition_buckets(ctx, job.condition_buckets, job.condition_values)
         reply = await _backend_reply(
             state,
             lambda uid: TTSTokenizeMsg(
@@ -2304,12 +2168,12 @@ async def tts_shell():
     completer = WordCompleter(commands)
     session = PromptSession("TTS> ", completer=completer)
 
-    # TTS settings
-    temperature = 0.75
-    topk = 80
-    repetition_window = 96
-    repetition_penalty = 2.4
-    repetition_codebooks = 6
+    # TTS settings (the generation registry's sampling defaults)
+    temperature = SAMPLING["temperature"]
+    topk = SAMPLING["topk"]
+    repetition_window = SAMPLING["repetition_window"]
+    repetition_penalty = SAMPLING["repetition_penalty"]
+    repetition_codebooks = SAMPLING["repetition_codebooks"]
     last_audio: bytes | None = None
 
     # Try to import sounddevice for audio playback
@@ -2359,7 +2223,7 @@ async def tts_shell():
                         print("No audio to play. Generate some speech first.")
                         continue
                     audio = np.frombuffer(last_audio, dtype=np.float32)
-                    sd.play(audio, samplerate=44100)
+                    sd.play(audio, samplerate=SAMPLE_RATE)
                     sd.wait()
                     continue
                 elif cmd.startswith("/temperature"):
@@ -2437,13 +2301,13 @@ async def tts_shell():
 
             if audio_chunks:
                 last_audio = b"".join(audio_chunks)
-                duration = len(last_audio) / (44100 * 4)  # float32 = 4 bytes
+                duration = len(last_audio) / (SAMPLE_RATE * 4)  # float32 = 4 bytes
                 print(f" Done! ({duration:.2f}s)")
 
                 # Auto-play if sounddevice is available
                 if can_play_audio:
                     audio = np.frombuffer(last_audio, dtype=np.float32)
-                    sd.play(audio, samplerate=44100)
+                    sd.play(audio, samplerate=SAMPLE_RATE)
                     sd.wait()
             else:
                 print(" No audio generated")
@@ -2463,7 +2327,7 @@ async def tts_shell():
             child.kill()
 
 
-def _save_wav(audio_bytes: bytes, path: str, sample_rate: int = 44100) -> None:
+def _save_wav(audio_bytes: bytes, path: str, sample_rate: int = SAMPLE_RATE) -> None:
     """Save float32 PCM bytes as a 16-bit WAV file."""
     Path(path).write_bytes(_pcm16_wav(audio_bytes, sample_rate))
 

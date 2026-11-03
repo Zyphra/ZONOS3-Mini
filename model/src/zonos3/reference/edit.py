@@ -12,8 +12,9 @@ from dataclasses import replace
 import torch
 
 from zonos3.reference.lm import Zonos3LM
-from zonos3.reference.synth import Branch, Sampling, generate_rows, prompt_builder
+from zonos3.reference.synth import Sampling, generate_rows, prompt_builder
 from zonos3.tts.edit import edit_marker_rows, edit_prompt_tokens, extract_fill, validate_edit_spans
+from zonos3.tts.plan import Branch
 
 
 @torch.inference_mode()

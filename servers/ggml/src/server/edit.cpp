@@ -13,10 +13,6 @@ using json = nlohmann::json;
 
 namespace {
 
-// zonos3.tts.edit_runtime EDIT_ALIGN_MAX_SECONDS / EDIT_MAX_SECONDS: the transcribe / align limit bounds every edit.
-constexpr double EDIT_ALIGN_MAX_SECONDS = 150.0;
-constexpr double EDIT_MAX_SECONDS = EDIT_ALIGN_MAX_SECONDS;
-
 // The request (schema-checked) through the edit/dub worker.
 json forward(ServerState & s, const char * op, const httplib::Request & req, const char * schema_name) {
     const json body = schema::parse_body(req, schema_name);
@@ -36,9 +32,11 @@ json edit_capabilities(const ServerState & s) {
     const json m = edit_model(s);
     const bool editing = m["max_spans"].get<int>() > 0;
     const bool available = s.edit_dub && s.fusealign_installed && asr_installed(s) && reference_audio_available(s);
+    // The registry's speech-edit clip limit bounds transcribe / align and every edit (zonos3.tts.edit_runtime).
+    const double max_seconds = zonos3_generation().edit_max_seconds;
     return {{"speech_editing", editing && available}, {"edit_max_spans", m["max_spans"]},
-            {"edit_frame_rate", editing ? m["frame_rate"] : json()}, {"edit_max_seconds", EDIT_MAX_SECONDS},
-            {"edit_align_max_seconds", EDIT_ALIGN_MAX_SECONDS}};
+            {"edit_frame_rate", editing ? m["frame_rate"] : json()}, {"edit_max_seconds", max_seconds},
+            {"edit_align_max_seconds", max_seconds}};
 }
 
 void register_edit_routes(httplib::Server & svr, ServerState & s) {

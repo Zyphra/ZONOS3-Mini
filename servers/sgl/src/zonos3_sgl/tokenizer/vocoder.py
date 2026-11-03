@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from zonos3_sgl.message import TTSDetokenizeMsg
 
+from zonos3.generation import SAMPLE_RATE
+from zonos3.tts import plan
 from zonos3.tts.delay import shear_up
 
 
@@ -33,7 +35,7 @@ class TTSVocoderManager:
         n_codebooks: int,
         audio_pad_id: int,
         audio_codec: str,
-        sample_rate: int = 44100,
+        sample_rate: int = SAMPLE_RATE,
         overlap_frames: int = 4,
         prefix_chunk_frames: int | None = None,
         prefix_hold_back_frames: int | None = None,
@@ -93,29 +95,10 @@ class TTSVocoderManager:
         self._silence_frame: torch.Tensor | None = None
 
     # ------------------------------------------------------------------ decode context / silence prefill (2026-10-17)
-    @property
-    def silence_prefill_default_frames(self) -> int:
-        """ZONOS3_SILENCE_PREFILL_FRAMES (default 3 = 0.2 s at 15 fps): the prefill length a request gets when it does not
-        name one."""
-        try:
-            return max(0, int(os.environ.get("ZONOS3_SILENCE_PREFILL_FRAMES", "3")))
-        except ValueError:
-            return 3
-
-    @property
-    def silence_prefill_default_on(self) -> bool:
-        """ZONOS3_SILENCE_PREFILL_DEFAULT (default 1): prefill when a request leaves silence_prefill_frames unset."""
-        return os.environ.get("ZONOS3_SILENCE_PREFILL_DEFAULT", "1").strip().lower() not in ("0", "false", "no", "off") \
-            and self.silence_prefill_default_frames > 0
-
     def silence_prefill_frames_for(self, requested_frames: int | None) -> int:
-        """How many silence frames a request gets: 0 = none. None = the server default; requested_frames
-        (silence_prefill_frames) sets the length, 0 switches it off."""
-        if not self.silence_prefill_supported:
-            return 0
-        if requested_frames is None:
-            return self.silence_prefill_default_frames if self.silence_prefill_default_on else 0
-        return max(0, int(requested_frames))
+        """How many silence frames a request gets (zonos3.tts.plan.silence_prefill_frames on this codec): 0 = none,
+        None = the server default; an explicit silence_prefill_frames outside 0..registry max is a ValueError."""
+        return plan.silence_prefill_frames(requested_frames, available=self.silence_prefill_supported)
 
     @property
     def silence_prefill_supported(self) -> bool:

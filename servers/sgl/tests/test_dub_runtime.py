@@ -11,6 +11,7 @@ import pytest
 
 from zonos3.dub import plan as P
 from zonos3.dub import runtime as R
+from zonos3.generation import SAMPLE_RATE
 
 EDGES = (10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208)
 
@@ -65,14 +66,14 @@ class Fake:
             raise AssertionError(f"unexpected alignment-worker call {op}")
 
         self.rt._call = call
-        sr = P.SAMPLE_RATE
+        sr = SAMPLE_RATE
         audio = (0.1 * np.sin(np.arange(4 * sr) / sr * 2 * math.pi * 220)).astype(np.float32)
         self.ref_id = self.rt.refs.put({"audio": audio, "sr": sr, "duration": 4.0})
 
     async def synthesize(self, jobs, session_id):
         self.requests.append(jobs)
         self.sessions.append(session_id)
-        take = np.full(P.SAMPLE_RATE, 0.05, dtype=np.float32)
+        take = np.full(SAMPLE_RATE, 0.05, dtype=np.float32)
         record = {"attempts": 1, "failures": [], "capped": False, "end": "eos", "rate_bucket": 3}
         return [(take, {**record, "rate_bucket": j["bucket"]}) for j in jobs]
 

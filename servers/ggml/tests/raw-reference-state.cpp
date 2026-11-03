@@ -244,8 +244,10 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     o.silence_prefill_frames = 0;
     REQUIRE(zonos3_build_prompt(model, text, o, plain0), "plain build without silence");
     const int text_rows = (int) tokens.size();
-    REQUIRE(plain0.n_rows == ncond + text_rows && plain.n_rows == plain0.n_rows + ZONOS3_DEFAULT_SILENCE_PREFILL, "plain row counts");
-    REQUIRE(plain.ids.size() == (size_t) plain.n_rows * W && plain.speaker_rows == 0 && plain.prefill_frames == 3, "plain metadata");
+    const zonos3_generation_registry & limits = zonos3_generation();
+    REQUIRE(plain0.n_rows == ncond + text_rows && plain.n_rows == plain0.n_rows + limits.silence_prefill_default_frames, "plain row counts");
+    REQUIRE(plain.ids.size() == (size_t) plain.n_rows * W && plain.speaker_rows == 0 &&
+            plain.prefill_frames == limits.silence_prefill_default_frames, "plain metadata");
     REQUIRE(plain0.prefill_frames == 0, "silence 0 disables prefill");
     REQUIRE(plain.cond.speaker_row == -1 && plain.cond.condition_row == 0 && plain.cond.buckets.size() == 3, "plain cond");
     for (int b : plain.cond.buckets) REQUIRE(b == unknown, "plain buckets are unknown");
@@ -326,18 +328,19 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "bucket range");
     o.condition_buckets = {1, -1, 2};
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "negative bucket");
-    o = zonos3_prompt_options(); o.silence_prefill_frames = ZONOS3_MAX_SILENCE_PREFILL + 1;
+    o = zonos3_prompt_options(); o.silence_prefill_frames = limits.silence_prefill_max_frames + 1;
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "silence prefill upper bound");
     o.silence_prefill_frames = -1;
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "silence prefill lower bound");
-    o.silence_prefill_frames = ZONOS3_MAX_SILENCE_PREFILL;
-    REQUIRE(zonos3_build_prompt(model, text, o, bad), "silence prefill 30 accepted");
+    o.silence_prefill_frames = limits.silence_prefill_max_frames;
+    REQUIRE(zonos3_build_prompt(model, text, o, bad), "silence prefill max accepted");
     std::vector<float> nonfinite = speaker;
     nonfinite[7] = INFINITY;
     o = zonos3_prompt_options(); o.speaker_embedding = nonfinite.data();
     REQUIRE(!zonos3_build_prompt(model, text, o, bad), "non-finite embedding");
 
-    // reference-code validation (non-ordinary codes, inconsistent pointer/length, 900-frame cap)
+    // reference-code validation (non-ordinary codes, inconsistent pointer/length, the builder's reference_max_frames
+    // bound: request resolvers truncate before it)
     o = zonos3_prompt_options();
     o.reference_codes = codes.data(); o.reference_frames = frames;
     codes[0] = (int32_t) hp.codebook_size;
@@ -347,15 +350,16 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     REQUIRE(!zonos3_build_prompt(model, "test", o, bad), "null reference with frames");
     o.reference_codes = codes.data(); o.reference_frames = -1;
     REQUIRE(!zonos3_build_prompt(model, "test", o, bad), "negative frames");
-    std::vector<int32_t> boundary((size_t) 901 * ncb, 0);
-    o.reference_codes = boundary.data(); o.reference_frames = 900;
+    const int max_ref = limits.reference_max_frames;
+    std::vector<int32_t> boundary((size_t) (max_ref + 1) * ncb, 0);
+    o.reference_codes = boundary.data(); o.reference_frames = max_ref;
     const auto saved_context = model.hp.n_ctx_train;
     model.hp.n_ctx_train = std::max(saved_context, (uint32_t) 4096);
-    const bool accepts_900 = zonos3_build_prompt(model, "boundary", o, bad);
-    o.reference_frames = 901;
-    const bool rejects_901 = !zonos3_build_prompt(model, "boundary", o, bad) && bad.n_rows == 0;
+    const bool accepts_max = zonos3_build_prompt(model, "boundary", o, bad);
+    o.reference_frames = max_ref + 1;
+    const bool rejects_above = !zonos3_build_prompt(model, "boundary", o, bad) && bad.n_rows == 0;
     model.hp.n_ctx_train = saved_context;
-    REQUIRE(accepts_900 && rejects_901, "900-frame reference cap");
+    REQUIRE(accepts_max && rejects_above, "reference_max_frames prefix bound");
 
     // (4) coverage contract
     std::vector<float> ids(emb.ids.begin(), emb.ids.end());

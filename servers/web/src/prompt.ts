@@ -1,4 +1,5 @@
 // Port of zonos3-prompt.cpp: [speaker row | delayed reference prefix] [condition rows] BOS text EOS [silence rows].
+import { REFERENCE_MAX_FRAMES, SILENCE_PREFILL_MAX_FRAMES } from './generation';
 import type { Tokenizer } from './tokenizer';
 
 export const NCB = 10;
@@ -7,8 +8,6 @@ export const AUDIO_PAD = 4097;
 export const TEXT_PAD = 8196;
 export const EOA = 4096;
 export const CODEBOOK_SIZE = 4096;
-export const MAX_REFERENCE_FRAMES = 900;
-export const MAX_SILENCE_PREFILL = 30;
 
 export interface ModelHp {
   nCodebooks: number; audioPad: number; textVocab: number; nCond: number; nCondBuckets: number;
@@ -72,10 +71,10 @@ export function buildPrompt(
   const refFrames = ref ? Math.floor(ref.length / ncb) : 0;
   const spk = opt.speakerEmbedding;
   if (spk && ref) throw new Error('a speaker embedding and a reference prefix are mutually exclusive');
-  if (refFrames > MAX_REFERENCE_FRAMES || (ref !== undefined && refFrames === 0)) throw new Error('invalid reference-code prefix');
+  if (refFrames > REFERENCE_MAX_FRAMES || (ref !== undefined && refFrames === 0)) throw new Error('invalid reference-code prefix');
   const prefill = opt.silencePrefill;
-  if (!Number.isInteger(prefill) || prefill < 0 || prefill > MAX_SILENCE_PREFILL)
-    throw new Error(`silence prefill must be 0..${MAX_SILENCE_PREFILL} frames`);
+  if (!Number.isInteger(prefill) || prefill < 0 || prefill > SILENCE_PREFILL_MAX_FRAMES)
+    throw new Error(`silence prefill must be 0..${SILENCE_PREFILL_MAX_FRAMES} frames`);
   if (spk) {
     for (let i = 0; i < model.speakerDim; i++)
       if (!Number.isFinite(spk[i])) throw new Error('speaker embedding contains a non-finite value');

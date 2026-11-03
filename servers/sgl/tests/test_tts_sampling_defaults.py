@@ -1,16 +1,10 @@
 from zonos3_sgl.core import TTSSamplingParams as CoreTTSSamplingParams
 from zonos3_sgl.message.tts import TTSSamplingParams as MessageTTSSamplingParams
+from zonos3.generation import SAMPLING
 from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest
 
-EXPECTED_DEFAULTS = {
-    "temperature": 0.75,
-    "topk": 80,
-    "top_p": 0.69,
-    "min_p": 0.0,
-    "repetition_window": 96,
-    "repetition_penalty": 2.4,
-    "repetition_codebooks": 6,
-}
+# the generation registry's sampling defaults (model/tests/test_generation.py pins them to api/openapi.json)
+EXPECTED_DEFAULTS = dict(SAMPLING)
 
 
 def _sampling_values(params):

@@ -3,6 +3,7 @@
 // when the flags are omitted we look there before giving up.
 #pragma once
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <cmath>
@@ -41,9 +42,10 @@ static inline void mp_print_missing_hint(const char * name, const std::string & 
             name, tried.c_str(), script);
 }
 
-// Ordinary C-order codec references, not delayed backbone token grids.
-static inline bool mp_load_reference_codes(const std::string & path,
-                                          std::vector<int32_t> & codes, std::string & err) {
+// Ordinary C-order codec references, not delayed backbone token grids. Every frame of the file is validated; codes
+// keeps the first max_frames (the registry's reference_max_frames for a reference prefix).
+static inline bool mp_load_reference_codes(const std::string & path, std::vector<int32_t> & codes,
+                                          std::string & err, int max_frames) {
     codes.clear();
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) { err = "cannot open reference codes: " + path; return false; }
@@ -84,14 +86,14 @@ static inline bool mp_load_reference_codes(const std::string & path,
     int consumed = 0;
     if (p == std::string::npos ||
         sscanf(header.c_str() + p, "( %lld , %lld %n", &frames, &width, &consumed) != 2 ||
-        frames < 1 || frames > 900 || width != 10)
-        return fail("reference codes must have shape [T,10], 1 <= T <= 900 (60 seconds)");
+        frames < 1 || frames > std::numeric_limits<long long>::max() / 10 || width != 10)
+        return fail("reference codes must have shape [T,10], T >= 1");
     p += consumed;
     while (p < header.size() && (header[p] == ' ' || header[p] == ',')) ++p;
     if (p == header.size() || header[p] != ')') return fail("reference codes must be two-dimensional");
     const int bytes = dtype[2] - '0';
-    codes.resize((size_t) frames * 10);
-    for (int32_t & code : codes) {
+    codes.resize((size_t) std::min<long long>(frames, max_frames) * 10);
+    for (long long i = 0; i < frames * 10; ++i) {
         unsigned char raw[8] = {};
         if (fread(raw, 1, bytes, f) != (size_t) bytes) return fail("truncated reference codes");
         uint64_t bits = 0;
@@ -105,7 +107,7 @@ static inline bool mp_load_reference_codes(const std::string & path,
         } else value = (double) bits;
         if (!std::isfinite(value) || value < 0 || value > 4095 || value != std::floor(value))
             return fail("reference codes must be ordinary integer codec IDs 0..4095");
-        code = (int32_t) value;
+        if (i < (long long) codes.size()) codes[(size_t) i] = (int32_t) value;
     }
     if (fgetc(f) != EOF) return fail("unexpected trailing data in reference NPY");
     fclose(f);

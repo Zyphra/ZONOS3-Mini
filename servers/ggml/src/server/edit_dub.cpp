@@ -29,11 +29,7 @@ namespace E = zonos3_edit;
 
 namespace {
 
-constexpr int SAMPLE_RATE = 44100;
-constexpr int UPLOAD_MAX_SECONDS = 600;   // uploads are decoded this far, so the runtime's length checks see them
-
 bool set(const json & j, const char * key) { return j.is_object() && j.contains(key) && !j[key].is_null(); }
-double num(const json & j, const char * key, double d) { return set(j, key) ? j[key].get<double>() : d; }
 
 // soundfile.write(path, audio, sr, subtype="FLOAT"): a mono IEEE-float WAV.
 void write_float_wav(const std::string & path, const std::vector<float> & audio, int sr) {
@@ -53,12 +49,14 @@ void write_float_wav(const std::string & path, const std::vector<float> & audio,
     if (fclose(f) != 0 || !ok) throw std::runtime_error("cannot write " + path);
 }
 
-// A sound file (any container ffmpeg reads) as 44.1 kHz mono PCM (decode_audio_bytes of an upload).
+// A sound file (any container ffmpeg reads) as mono PCM at the API rate (decode_audio_bytes of an upload), decoded up
+// to the registry's upload limit so the runtime's own length checks see it.
 std::vector<float> decode_file(const std::string & path) {
-    std::vector<float> pcm = audio_decode_file(path.c_str(), SAMPLE_RATE, UPLOAD_MAX_SECONDS);
+    const int max_seconds = (int) zonos3_generation().upload_max_seconds;
+    std::vector<float> pcm = audio_decode_file(path.c_str(), zonos3_generation().sample_rate, max_seconds);
     if (pcm.empty())
         fail(400, "could not decode the reference audio (any container ffmpeg reads, at most " +
-                  std::to_string(UPLOAD_MAX_SECONDS) + " seconds)");
+                  std::to_string(max_seconds) + " seconds)");
     return pcm;
 }
 
@@ -136,14 +134,12 @@ Generated generate_fill(ServerState & s, const std::string & text, const std::ve
     layout.span_end_id = hp.span_end_id;
     job->prompt.ids = E::edit_prompt_tokens(job->prompt.ids, window_codes, window_spans, window_fills, layout);
     job->prompt.n_rows = (int) (job->prompt.ids.size() / W);
-    if (job->prompt.n_rows + max_frames > s.context_capacity)
-        fail(400, "the edit prompt and max_span_seconds exceed the slot context capacity (" +
-                  std::to_string(s.context_capacity) + " rows)");
+    const int budget = fit_frame_budget(s, job->prompt.n_rows, max_frames);
     job->idf.assign(job->prompt.ids.begin(), job->prompt.ids.end());
     job->n0 = job->prompt.n_rows;
     GenReq & gr = job->gr;
     gr.sp = sp;
-    gr.max_frames = max_frames;
+    gr.max_frames = budget;
     gr.stream = false;
     gr.steering = steering;
     gr.stop_id = hp.span_end_id;
@@ -181,10 +177,11 @@ std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & fr
     return audio;
 }
 
-// EditEngine.decode_audio: the upload as 44.1 kHz mono float WAV at `out`.
+// EditEngine.decode_audio: the upload as mono float WAV at the API rate at `out`.
 json call_decode_audio(const json & c) {
-    write_float_wav(c.at("out").get<std::string>(), decode_file(c.at("audio").get<std::string>()), SAMPLE_RATE);
-    return {{"sample_rate", SAMPLE_RATE}};
+    const int sample_rate = zonos3_generation().sample_rate;
+    write_float_wav(c.at("out").get<std::string>(), decode_file(c.at("audio").get<std::string>()), sample_rate);
+    return {{"sample_rate", sample_rate}};
 }
 
 // EditEngine.embed: the speaker encoder's embedding of the upload.
@@ -197,7 +194,7 @@ json call_embed(ServerState & s, const json & c) {
 json call_encode(ServerState & s, const json & c) {
     const double max_seconds = c.at("max_seconds").get<double>();
     std::vector<float> pcm = decode_file(c.at("audio").get<std::string>());
-    const size_t cap = (size_t) (max_seconds * SAMPLE_RATE);
+    const size_t cap = (size_t) (max_seconds * zonos3_generation().sample_rate);
     if (pcm.size() > cap) pcm.resize(cap);
     return {{"codes", rows_json(encode_audio_codes(s, pcm, (int) std::ceil(max_seconds)), (int) s.model.hp.n_codebooks)}};
 }
@@ -252,14 +249,14 @@ json call_fill(ServerState & s, const json & c) {
             fail(400, err);
     }
     const json & sampling = c.at("sampling");
-    zonos3_sampling sp;
-    sp.temperature = (float) num(sampling, "temperature", 0.75);
-    sp.top_k = set(sampling, "topk") ? sampling["topk"].get<int>() : 80;
-    sp.top_p = (float) num(sampling, "top_p", 0.69);
-    sp.min_p = (float) num(sampling, "min_p", 0.0);
-    sp.rep_penalty = (float) num(sampling, "repetition_penalty", 2.4);
-    sp.rep_window = set(sampling, "repetition_window") ? sampling["repetition_window"].get<int>() : 96;
-    sp.rep_codebooks = set(sampling, "repetition_codebooks") ? sampling["repetition_codebooks"].get<int>() : 6;
+    zonos3_sampling sp;   // the registry's sampling defaults; the call's sampling overrides what it sets
+    if (set(sampling, "temperature")) sp.temperature = (float) sampling["temperature"].get<double>();
+    if (set(sampling, "topk")) sp.top_k = sampling["topk"].get<int>();
+    if (set(sampling, "top_p")) sp.top_p = (float) sampling["top_p"].get<double>();
+    if (set(sampling, "min_p")) sp.min_p = (float) sampling["min_p"].get<double>();
+    if (set(sampling, "repetition_penalty")) sp.rep_penalty = (float) sampling["repetition_penalty"].get<double>();
+    if (set(sampling, "repetition_window")) sp.rep_window = sampling["repetition_window"].get<int>();
+    if (set(sampling, "repetition_codebooks")) sp.rep_codebooks = sampling["repetition_codebooks"].get<int>();
     if (sp.rep_codebooks < 0) sp.rep_codebooks = K;
     sp.greedy = sp.temperature <= 0.0f;
     sp.seed = (uint32_t) c.at("seed").get<int64_t>();
@@ -349,7 +346,7 @@ json call_synthesize(ServerState & s, EditDubWorker & worker, const json & c) {
     json takes = json::array();
     for (size_t i = 0; i < results.size(); ++i) {
         const bool audio = !results[i].pcm.empty();
-        if (audio) write_float_wav(jobs[i].at("out").get<std::string>(), results[i].pcm, SAMPLE_RATE);
+        if (audio) write_float_wav(jobs[i].at("out").get<std::string>(), results[i].pcm, zonos3_generation().sample_rate);
         takes.push_back({{"audio", audio}, {"record", results[i].laci}});
     }
     return {{"takes", takes}};

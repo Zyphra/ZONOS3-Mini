@@ -51,9 +51,10 @@ static json condition_tokens(const ServerState & s) {
 // sgl _silence_prefill_spec (the matched dual codec has codec-matched silence frames).
 static json silence_prefill(const ServerState & s) {
     const int hop = dac_samples_per_frame(s.dac);
+    const double rate = zonos3_generation().sample_rate;
     const int frames = s.silence_prefill_frames;
     return {{"available", true}, {"default_frames", frames}, {"default_on", s.silence_prefill_on},
-            {"default_seconds", std::round(frames * hop / 44100.0 * 1000.0) / 1000.0}, {"frame_seconds", hop / 44100.0},
+            {"default_seconds", std::round(frames * hop / rate * 1000.0) / 1000.0}, {"frame_seconds", hop / rate},
             {"codec", AUDIO_CODEC},
             {"note", "codec-matched silence frames open the audio stream before the model starts (their audio is not "
                      "emitted); a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 "
@@ -72,6 +73,7 @@ json capabilities(const ServerState & s) {
     const auto modes = checkpoint_speaker_modes(s);
     const bool embedding = hp.speaker_dim > 0;
     const bool cfg = !modes.empty() && s.batch_slots >= 2;
+    const zonos3_generation_registry & limits = zonos3_generation();
     json caps = {
         {"text_tokenizer_spec", json::parse(s.model.tok.spec_json)},
         {"text_normalization_enabled", s.text_normalizer != nullptr},
@@ -91,8 +93,8 @@ json capabilities(const ServerState & s) {
         // `trained`: the checkpoint was fine-tuned on nonverbal markup (GGUF zonos3.tag_cfg_trained; sgl reads config.yaml).
         {"tag_cfg", {{"available", s.batch_slots >= 2}, {"trained", s.model.hp.tag_cfg_trained},
                      {"tags", zonos3_nonverbal_markup_tags()},
-                     {"min_scale", 1.0}, {"max_scale", 4.0}, {"default_scale", 1.0}}},
-        {"decode_context", {{"available", true}, {"default_frames", 30}, {"max_frames", 450},
+                     {"min_scale", limits.tag_cfg_min_scale}, {"max_scale", limits.tag_cfg_max_scale}, {"default_scale", 1.0}}},
+        {"decode_context", {{"available", true}, {"default_frames", limits.decode_context_frames}, {"max_frames", 450},
                             {"note", "decode the generated frames behind the last decode_context_frames of the raw-reference prompt "
                                      "(their audio dropped), so the first generated frame is not the decoder's position 0; "
                                      "no-op without a reference prompt"}}},

@@ -2,6 +2,10 @@
 // edit.cpp edit_capabilities, phonemize.cpp phoneme_capabilities, dub.cpp DubRuntime::capabilities) with this server's
 // feature set: no text normalization, speech editing, dubbing, phonemizer or server projects.
 import languages from '../../../../model/src/zonos3/registries/languages.json';
+import {
+  DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES, TAG_CFG_MAX_SCALE,
+  TAG_CFG_MIN_SCALE,
+} from '../generation';
 import { NONVERBAL_MARKUP_TAGS } from '../request/markup';
 import type { Engine } from './engine';
 
@@ -10,8 +14,6 @@ const SPEAKER_EMBEDDING_CODEC = 'ownmect_s2';
 const HOP = 2940;
 /** The server language codes (zonos3.languages SERVER), in order. */
 export const TEXT_NORM_LANGUAGES = languages.server.map((l) => l.code);
-export const MAX_FRAMES = 2000;
-export const EDIT_ALIGN_MAX_SECONDS = 150;
 const DECODER_CHECKPOINT = 'dac.gguf';
 
 /** float_decimal: a float32 metadata value as the shortest decimal that round-trips it. */
@@ -24,8 +26,8 @@ export function floatDecimal(v: number): number {
   return f;
 }
 
-/** The silence-prefill default (configure_silence_prefill with the defaults: 3 frames, on). */
-export const SILENCE_PREFILL = { frames: 3, on: true };
+/** The silence-prefill default (configure_silence_prefill with the registry default, on). */
+export const SILENCE_PREFILL = { frames: SILENCE_PREFILL_DEFAULT_FRAMES, on: true };
 
 export function laciLanguages(e: Engine): string[] {
   return [...e.laci.keys()].sort();
@@ -72,17 +74,18 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     stream_decode_default: 'prefix',
     silence_prefill: {
       available: true, default_frames: frames, default_on: SILENCE_PREFILL.on,
-      default_seconds: Math.round(frames * HOP / 44100 * 1000) / 1000, frame_seconds: HOP / 44100, codec: AUDIO_CODEC,
+      default_seconds: Math.round(frames * HOP / SAMPLE_RATE * 1000) / 1000, frame_seconds: HOP / SAMPLE_RATE,
+      codec: AUDIO_CODEC,
       note: 'codec-matched silence frames open the audio stream before the model starts (their audio is not ' +
         'emitted); a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 ' +
         'turns it off and silence_prefill_frames=N sets the length',
     },
     tag_cfg: {
       available: true, trained: hp.tagCfgTrained, tags: NONVERBAL_MARKUP_TAGS,
-      min_scale: 1.0, max_scale: 4.0, default_scale: 1.0,
+      min_scale: TAG_CFG_MIN_SCALE, max_scale: TAG_CFG_MAX_SCALE, default_scale: 1.0,
     },
     decode_context: {
-      available: true, default_frames: 30, max_frames: 450,
+      available: true, default_frames: DECODE_CONTEXT_FRAMES, max_frames: 450,
       note: 'decode the generated frames behind the last decode_context_frames of the raw-reference prompt ' +
         "(their audio dropped), so the first generated frame is not the decoder's position 0; " +
         'no-op without a reference prompt',
@@ -109,8 +112,8 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     speech_editing: false,
     edit_max_spans: 0,
     edit_frame_rate: null,
-    edit_max_seconds: EDIT_ALIGN_MAX_SECONDS,
-    edit_align_max_seconds: EDIT_ALIGN_MAX_SECONDS,
+    edit_max_seconds: EDIT_MAX_SECONDS,
+    edit_align_max_seconds: EDIT_MAX_SECONDS,
     phoneme_tokens: null,
     phonemize_enabled: false,
     phonemize_languages: [],
@@ -134,7 +137,7 @@ export function dubCapabilities(e: Engine): Record<string, unknown> {
     max_segments: 120,
     default_min_pause_s: 0.30,
     min_pause_range: [0.10, 2.00],
-    sample_rate: 44100,
+    sample_rate: SAMPLE_RATE,
     frame_rate: 15.0,
     rate_edges: rate >= 0 ? (hp.condEdges[rate] ?? []).map(floatDecimal) : [],
     n_buckets: hp.nCondBuckets,

@@ -14,20 +14,19 @@ from dataclasses import replace
 
 import numpy as np
 import torch
-from zonos3.reference.synth import Sampling, resolve_condition_buckets, validate_phoneme_groups
+from zonos3.generation import SAMPLE_RATE, UPLOAD_MAX_SECONDS
+from zonos3.reference.synth import Sampling
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_runtime import EditRuntime, FillJob
+from zonos3.tts.plan import Speaker, resolve_condition_buckets, validate_phoneme_groups
 from zonos3.tts.steering import check_controls, resolve_controls
 
 from zonos3_mlx.audio_io import decode_pcm
-from zonos3_mlx.engine import EditLayout, ResolvedSpeaker, plan_request
+from zonos3_mlx.engine import EditLayout, plan_request
 from zonos3_mlx.server import capabilities as caps
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.generate import JobRun
 from zonos3_mlx.server.state import ServerState
-
-EDIT_DECODE_MAX_SECONDS = 600  # uploads are decoded this far, so the length check sees them
-SAMPLE_RATE = 44100
 
 
 class MlxEditEngine:
@@ -38,7 +37,8 @@ class MlxEditEngine:
         self.model = caps.edit_model(state)
 
     async def decode_audio(self, audio: bytes) -> tuple[np.ndarray, int]:
-        return await asyncio.to_thread(decode_pcm, audio, max_seconds=EDIT_DECODE_MAX_SECONDS), SAMPLE_RATE
+        # uploads are decoded up to the upload limit, so the runtime's length check sees them
+        return await asyncio.to_thread(decode_pcm, audio, max_seconds=UPLOAD_MAX_SECONDS), SAMPLE_RATE
 
     async def embed(self, audio: bytes) -> torch.Tensor:
         return await speakers.embed_audio(self.state, audio)
@@ -49,17 +49,18 @@ class MlxEditEngine:
 
     async def check(self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets,
                     condition_values) -> set[str]:
-        c, bundle = self.state.config, self.state.engine.bundle
-        validate_phoneme_groups(c.text_tokenizer_spec or None, target_text)
+        engine = self.state.engine
+        bundle = engine.steer_bundle
+        validate_phoneme_groups(engine.text_tokenizer_spec, target_text)
         raw = set()
         if doses is not None:
             if bundle is None:
-                raise ValueError("This server has no steering bundle (place steer.gguf next to the backbone or pass "
-                                 "--steer); `controls` are unavailable.")
+                raise ValueError(f"This server has no steering bundle ({engine.steer_hint}); `controls` are "
+                                 "unavailable.")
             for region in doses:
                 check_controls(bundle, region)
             raw = {did for region in doses for did in region if bundle.directions[did].space == RAW_SPACE}
-        resolve_condition_buckets(c, condition_buckets, condition_values)  # as plan_request reads them
+        resolve_condition_buckets(engine, condition_buckets, condition_values)  # as plan_request reads them
         return raw
 
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
@@ -67,9 +68,9 @@ class MlxEditEngine:
         c = state.config
         embedding, delta = job.speaker_embedding, None
         if job.controls:
-            resolved = resolve_controls(engine.bundle, job.controls, None, text=job.controls_text,
-                                        speaker_embedding=embedding, sources=engine.steering_sources(),
-                                        hidden_size=c.dim)
+            resolved = resolve_controls(engine.steer_bundle, job.controls, None, text=job.controls_text,
+                                        speaker_embedding=embedding, sources=engine.steering_sources,
+                                        hidden_size=engine.hidden_size)
             embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
         request = {"text": job.text, "language": job.language, "text_normalization": job.text_normalization,
                    **job.sampling, "seed": job.seed, "max_tokens": job.max_tokens,
@@ -77,7 +78,7 @@ class MlxEditEngine:
                    "stream": False}
         layout = EditLayout(torch.as_tensor(job.window_codes, dtype=torch.int64), job.spans,
                             [torch.as_tensor(f, dtype=torch.int32) for f in job.fills], job.min_frames)
-        speaker = ResolvedSpeaker("embedding", embedding, None)
+        speaker = Speaker("embedding", embedding=embedding)
         plan = await asyncio.to_thread(plan_request, engine, request, speaker, edit=layout, hidden_delta=delta)
         sampling = replace(Sampling.from_request(plan.request), min_frames=int(job.min_frames))
         run = JobRun(state, plan, None, sampling, stop_id=c.span_end_id).start()

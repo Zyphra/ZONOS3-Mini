@@ -38,8 +38,16 @@ import soundfile as sf
 import zonos3
 import zonos3.workers
 from zonos3.dub import plan as P
+from zonos3.generation import SAMPLE_RATE
 from zonos3.tts.align_text import align_tokens
-from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, WorkerError, align_words, asr_python, transcribe_audio
+from zonos3.tts.edit_align import (
+    AsrWorker,
+    FuseAlignWorker,
+    WorkerError,
+    align_words,
+    asr_python,
+    transcribe_audio,
+)
 
 logger = logging.getLogger("zonos3.dub")
 DUB_ROOT = Path(__file__).resolve().parents[4]  # the repo root
@@ -180,7 +188,7 @@ def rate_scales(extension, row_edges) -> dict[str, dict[str, P.RateScale]]:
             for mode, by_lang in (("studio", extension.doses), ("source", source))}
 
 
-# Take synthesis (the server's): jobs -> per job (float32 audio at P.SAMPLE_RATE, or None for no audio; LACI record).
+# Take synthesis (the server's): jobs -> per job (float32 audio at SAMPLE_RATE, or None for no audio; LACI record).
 Synthesize = Callable[[list[dict], "str | None"], Awaitable[list[tuple["np.ndarray | None", dict]]]]
 # Reference codes of a voice prompt (the server's codec): (mono float32 audio, sample rate) -> [[code] * C] * frames.
 EncodeVoice = Callable[[np.ndarray, int], Awaitable[list[list[int]]]]
@@ -319,7 +327,7 @@ def decode_upload(path: str) -> tuple[np.ndarray, int]:
             wav = Path(tmp) / "audio.wav"
             proc = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", path, "-vn", "-map", "0:a:0",
-                 "-ac", "1", "-ar", str(P.SAMPLE_RATE), "-c:a", "pcm_f32le", str(wav)],
+                 "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_f32le", str(wav)],
                 capture_output=True, text=True,
             )
             if proc.returncode != 0:
@@ -423,7 +431,7 @@ class DubRuntime:
             "max_segments": P.MAX_SEGMENTS,
             "default_min_pause_s": P.DEFAULT_MIN_PAUSE_S,
             "min_pause_range": list(P.MIN_PAUSE_RANGE),
-            "sample_rate": P.SAMPLE_RATE,
+            "sample_rate": SAMPLE_RATE,
             "frame_rate": P.FRAME_RATE,
             "rate_edges": self.rate_edges,
             "n_buckets": self.n_buckets,
@@ -813,7 +821,7 @@ class DubRuntime:
             reqs, paths = [], {}
             for i in valid:
                 paths[i] = str(Path(tmp) / f"take{i}.wav")
-                self._write_wav(Path(paths[i]), takes[i]["audio"], P.SAMPLE_RATE)
+                self._write_wav(Path(paths[i]), takes[i]["audio"], SAMPLE_RATE)
                 reqs.append({"audio": paths[i], "text": spoken_text(jobs[i]["text"]), "language": target_lang})
             if reqs:
                 for i, items in zip(valid, await self._align(reqs)):
@@ -868,12 +876,12 @@ class DubRuntime:
         nonempty = sorted(takes)
         items = [
             {"ref_start": info[k]["ref_start"], "ref_end": info[k]["ref_end"],
-             "take_len": len(takes[k]["audio"]) / P.SAMPLE_RATE, "s0": takes[k]["s0"], "s1": takes[k]["s1"]}
+             "take_len": len(takes[k]["audio"]) / SAMPLE_RATE, "s0": takes[k]["s0"], "s1": takes[k]["s1"]}
             for k in nonempty
         ]
         placed, timeline_len = P.place_segments(items, dub["duration"])
 
-        sr_out = P.SAMPLE_RATE
+        sr_out = SAMPLE_RATE
         fade = max(1, int(P.FADE_S * sr_out))
         chunks = []
         for k, p in zip(nonempty, placed):
@@ -967,7 +975,7 @@ class DubRuntime:
         """AV-sync's warp of the dub timeline onto the lips of the video (alignment worker), bounded by the guard and
         kept only when it lowers the mean SyncNet distance of lips and dub over the track by more than
         P.LIP_MIN_SYNC_GAIN; otherwise the unwarped dub comes back (``applied`` false, no lip map)."""
-        sr = P.SAMPLE_RATE
+        sr = SAMPLE_RATE
         with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
             src, out = Path(tmp) / "dub.wav", Path(tmp) / "synced.wav"
             pad = max(0, int(math.ceil(lips["end"] * sr)) - len(mix))  # the warp reads the whole face track

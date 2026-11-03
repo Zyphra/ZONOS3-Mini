@@ -2,6 +2,7 @@
 // that serves the v2 API in-process. Audio the worker cannot decode (it has no AudioContext) is decoded here: default
 // voices at init, speaker_audio_base64 per request (sent next to the JSON as 44.1 kHz mono PCM).
 import { b64DecodeStrict } from './b64';
+import { REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE } from './generation';
 import { fetchJson, modelsBaseUrl } from './gpu/weights';
 import type { InMsg, OutMsg } from './worker';
 
@@ -13,7 +14,6 @@ interface Pending {
   controller?: ReadableStreamDefaultController<Uint8Array>;
 }
 
-const MAX_REFERENCE_SECONDS = 60;
 const AUDIO_ROUTES: Record<string, true> = { '/v2/speakers': true, '/v2/generate': true, '/v1/audio/speech': true };
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 const pending = new Map<number, Pending>();
@@ -72,13 +72,14 @@ export interface InitOptions {
   cache?: boolean;
 }
 
-/** Decode any browser-supported audio file to 44.1 kHz mono (downmix + resample), cropped to 60 s. */
+/** Decode any browser-supported audio file to API-rate mono (downmix + resample), cropped to
+ *  REFERENCE_AUDIO_MAX_SECONDS. */
 export async function decodeTo44k(bytes: ArrayBuffer): Promise<Float32Array> {
-  const probe = new OfflineAudioContext(1, 1, 44100);
+  const probe = new OfflineAudioContext(1, 1, SAMPLE_RATE);
   const decoded = await probe.decodeAudioData(bytes);
-  const len = Math.min(Math.ceil(decoded.duration * 44100), MAX_REFERENCE_SECONDS * 44100);
+  const len = Math.min(Math.ceil(decoded.duration * SAMPLE_RATE), REFERENCE_AUDIO_MAX_SECONDS * SAMPLE_RATE);
   if (len <= 0) return new Float32Array(0);
-  const ctx = new OfflineAudioContext(1, len, 44100);
+  const ctx = new OfflineAudioContext(1, len, SAMPLE_RATE);
   const src = ctx.createBufferSource();
   src.buffer = decoded;
   src.connect(ctx.destination);

@@ -1,5 +1,7 @@
 // Minimal .npy codecs: a little-endian f32 reader (goldens) and ports of mp_load_reference_codes /
 // mp_save_reference_codes (model-paths.h) for ordinary [T,10] reference codes, with native error messages.
+import { REFERENCE_MAX_FRAMES } from './generation';
+
 export interface NpyArray { data: Float32Array; shape: number[] }
 
 export function parseNpyF32(buf: ArrayBuffer): NpyArray | null {
@@ -27,10 +29,10 @@ export function parseNpyF32(buf: ArrayBuffer): NpyArray | null {
   return { data, shape };
 }
 
-export const MAX_REFERENCE_FRAMES = 900;
 const DTYPES = ['<i4', '<i8', '<u4', '<u8', '<f4', '<f8'];
 
-/** Ordinary C-order reference codes [T][10] (1 <= T <= 900, integer IDs 0..4095) from .npy bytes. */
+/** Ordinary C-order reference codes [T][10] (T >= 1, integer IDs 0..4095) from .npy bytes: the whole array is
+ *  validated, its first REFERENCE_MAX_FRAMES frames are kept. */
 export function loadReferenceCodes(buf: ArrayBuffer): Int32Array {
   const u8 = new Uint8Array(buf);
   const fail = (why: string): never => { throw new Error(why); };
@@ -61,13 +63,13 @@ export function loadReferenceCodes(buf: ArrayBuffer): Int32Array {
   if (qe < 0) fail('invalid NPY dtype');
   const dtype = header.slice(qs + 1, qe);
   if (!DTYPES.includes(dtype)) fail('reference NPY needs little-endian i4/i8/u4/u8/f4/f8 dtype');
-  const shapeMsg = 'reference codes must have shape [T,10], 1 <= T <= 900 (60 seconds)';
+  const shapeMsg = 'reference codes must have shape [T,10], T >= 1';
   p = header.indexOf('(', shape);
   // sscanf("( %lld , %lld %n"): whitespace anywhere around the two integers
   const m = p < 0 ? null : /^\(\s*([+-]?\d+)\s*,\s*([+-]?\d+)\s*/.exec(header.slice(p));
   if (!m) return fail(shapeMsg);
   const frames = Number(m[1]), width = Number(m[2]);
-  if (frames < 1 || frames > MAX_REFERENCE_FRAMES || width !== 10) fail(shapeMsg);
+  if (frames < 1 || width !== 10) fail(shapeMsg);
   p += m[0].length;
   while (p < header.length && (header[p] === ' ' || header[p] === ',')) p++;
   if (p === header.length || header[p] !== ')') fail('reference codes must be two-dimensional');
@@ -76,7 +78,8 @@ export function loadReferenceCodes(buf: ArrayBuffer): Int32Array {
   const n = frames * 10;
   if (u8.length < off + n * bytes) fail('truncated reference codes');
   const dv = new DataView(buf, off);
-  const codes = new Int32Array(n);
+  const keep = Math.min(frames, REFERENCE_MAX_FRAMES) * 10;
+  const codes = new Int32Array(keep);
   for (let i = 0; i < n; i++) {
     const o = i * bytes;
     let v: number;
@@ -85,7 +88,7 @@ export function loadReferenceCodes(buf: ArrayBuffer): Int32Array {
     else v = bytes === 4 ? dv.getUint32(o, true) : Number(dv.getBigUint64(o, true));
     if (!Number.isFinite(v) || v < 0 || v > 4095 || v !== Math.floor(v))
       fail('reference codes must be ordinary integer codec IDs 0..4095');
-    codes[i] = v;
+    if (i < keep) codes[i] = v;
   }
   if (u8.length > off + n * bytes) fail('unexpected trailing data in reference NPY');
   return codes;

@@ -6,9 +6,10 @@
 import type { ProbeInput } from '../backbone';
 import { locateTextSpan, probeReduce } from '../probe';
 import {
-  buildCfgTwin, buildPrompt, conditionBucket, MAX_REFERENCE_FRAMES, MAX_SILENCE_PREFILL, NCB, prefillCodes,
-  type Conditioning, type Prompt,
-} from '../prompt';
+  DECODE_CONTEXT_FRAMES, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES, TAG_CFG_MAX_SCALE,
+  TAG_CFG_MIN_SCALE,
+} from '../generation';
+import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
 import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
@@ -17,15 +18,14 @@ import { defaultSampling, Sampler, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { newSlot, sampleFrame, type SlotState } from '../slot';
 import { applyFade, wavBytes } from '../wav';
-import { ACCENT_ADAPTERS, laciLanguages, MAX_FRAMES, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
+import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
 import type { Engine } from './engine';
 import {
-  bool, fail, HttpError, isSet, num, parseBody, pyList, pyRepr, sessionId, str, truthy, type EngineRequest, type Sink,
+  bool, fail, HttpError, isSet, num, parseBody, pyFloat, pyList, pyRepr, sessionId, str, truthy, type EngineRequest,
+  type Sink,
 } from './http';
 import type { Speakers } from './speakers';
 
-const TAG_CFG_MIN_SCALE = 1.0, TAG_CFG_MAX_SCALE = 4.0;
-const SAMPLE_RATE = 44100;
 const HOP = 2940;
 const VOCAB = 4098;
 /** Slot rows: native context_capacity = min(context_length, max_frames + 4096). */
@@ -81,10 +81,10 @@ function as400<T>(f: () => T): T {
 
 // ------------------------------------------------------------------------------------------------ resolve
 
-/** sgl _validate_tag_cfg. */
+/** zonos3.tts.plan validate_tag_cfg (R1). */
 function validateTagCfg(text: string, scale: number, speakerCfg: number, controlsCfg: number): void {
   if (!Number.isFinite(scale) || scale < TAG_CFG_MIN_SCALE || scale > TAG_CFG_MAX_SCALE)
-    fail(400, 'tag_cfg_scale must be finite and between 1.0 and 4.0.');
+    fail(400, `tag_cfg_scale must be finite and between ${pyFloat(TAG_CFG_MIN_SCALE)} and ${pyFloat(TAG_CFG_MAX_SCALE)}.`);
   if (scale === 1.0) return;
   if (!hasNonverbalMarkup(text) || stripNonverbalMarkup(text) === text) {
     const tags = NONVERBAL_MARKUP_TAGS.map(t => `<${t}/>`).join(', ');
@@ -95,7 +95,8 @@ function validateTagCfg(text: string, scale: number, speakerCfg: number, control
   if (controlsCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.');
 }
 
-/** sgl _resolve_condition_buckets: explicit ids win, raw values map through the edges, anything else is unknown. */
+/** zonos3.tts.plan resolve_condition_buckets (R3): explicit ids win, raw values map through the edges, anything else is
+ *  unknown. */
 export function resolveConditionBuckets(e: Engine, body: Body): number[] {
   const hp = e.hp;
   const buckets = isSet(body, 'condition_buckets') ? body.condition_buckets : null;
@@ -141,7 +142,7 @@ export function resolveConditionBuckets(e: Engine, body: Body): number[] {
   });
 }
 
-/** sgl _normalize_tts_request_language. */
+/** zonos3.languages normalize (R4). */
 function resolveLanguage(body: Body): string {
   const given = str(body, 'language') ?? 'en_us';
   const lang = given.trim().toLowerCase().replaceAll('-', '_');
@@ -154,7 +155,7 @@ function requestEmbedding(p: Plan): Float32Array | null {
   return p.speakerMode === 'embedding' && p.speakerEmbedding ? p.speakerEmbedding : null;
 }
 
-/** sgl _resolve_tts_request_accent: `accent` picks an accent adapter (ACCENT_ADAPTERS). */
+/** zonos3.tts.plan resolve_accent (R9): `accent` picks an accent adapter (ACCENT_ADAPTERS). */
 function checkAccent(body: Body): void {
   const accent = str(body, 'accent');
   if (accent === null || accent === '' || accent === 'none') return;
@@ -164,7 +165,7 @@ function checkAccent(body: Body): void {
   }
 }
 
-/** sgl _apply_request_controls. */
+/** zonos3.tts.plan request_rules' steering controls (R10). */
 function applyControls(e: Engine, body: Body, p: Plan): void {
   if (!truthy(body, 'controls') && !truthy(body, 'control_spans')) return;
   if (!e.steer)
@@ -177,7 +178,7 @@ function applyControls(e: Engine, body: Body, p: Plan): void {
   p.steering = as400(() => resolveControls(e.steer!, controls, spans, textChars(p.rawText), rate, embedding));
 }
 
-/** sgl _check_laci_request. */
+/** zonos3.tts.plan check_laci (R14). */
 function checkLaci(e: Engine, body: Body, language: string): void {
   if (!bool(body, 'laci')) return;
   if (!e.laci.size) fail(400, 'LACI is not enabled on this server (start it with --laci-heads LANG=PATH)');
@@ -224,6 +225,7 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   const text = str(body, 'text')!;
   const speakerCfg = num(body, 'speaker_cfg_scale', 1), controlsCfg = num(body, 'controls_cfg_scale', 1);
   validateTagCfg(text, num(body, 'tag_cfg_scale', 1), speakerCfg, controlsCfg);
+  // zonos3.tts.plan resolve_speaker_mode (R2)
   const modes = spk.checkpointModes();
   let mode = modes.length ? modes[0] : '';
   if (isSet(body, 'speaker_mode')) {
@@ -242,14 +244,22 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     followLead: 1, followLag: 0, prompt: null!, twin: null,
   };
   p.language = resolveLanguage(body);
+  // zonos3.tts.plan max_tokens_budget (R5; fit to the slot after the prompt is built) and silence_prefill_frames (R6)
   if (isSet(body, 'max_tokens')) {
     const requested = Number(body.max_tokens);
     if (requested <= 0) fail(400, 'max_tokens must be positive.');
     p.maxFrames = Math.min(requested, MAX_FRAMES);
   }
+  p.silencePrefill = SILENCE_PREFILL.on ? SILENCE_PREFILL.frames : 0;
+  if (isSet(body, 'silence_prefill_frames')) {
+    const frames = Number(body.silence_prefill_frames);
+    if (!Number.isInteger(frames) || frames < 0 || frames > SILENCE_PREFILL_MAX_FRAMES)
+      fail(400, `silence_prefill_frames must be 0..${SILENCE_PREFILL_MAX_FRAMES}`);
+    p.silencePrefill = frames;
+  }
   checkAccent(body);
   applyControls(e, body, p);
-  // sgl _span_follow
+  // zonos3.tts.plan request_rules' span follow (R11)
   if (str(body, 'control_span_follow') === 'reading' && p.steering.spans.length) {
     const heads = e.laci.get(p.language);
     if (heads) {
@@ -282,35 +292,29 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     p.twinSteered = false;
     p.cfgKind = 'controls';
   }
-  // check_phoneme_groups: this checkpoint has no phoneme tokens
+  // zonos3.tts.plan validate_phoneme_groups (R13): this checkpoint has no phoneme tokens
   if (text.includes('\uE000') || text.includes('\uE001'))
     fail(400, 'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups');
   checkLaci(e, body, p.language);
   if (bool(body, 'laci')) p.laci = e.laci.get(p.language)!;
-  // sampling (TTSSamplingParams)
+  // sampling (TTSSamplingParams; registry defaults)
   const sp = p.sp;
-  sp.temperature = num(body, 'temperature', 0.75);
-  sp.top_k = num(body, 'topk', 80);
-  sp.top_p = num(body, 'top_p', 0.69);
-  sp.min_p = num(body, 'min_p', 0);
-  sp.rep_penalty = num(body, 'repetition_penalty', 2.4);
-  sp.rep_window = num(body, 'repetition_window', 96);
-  sp.rep_codebooks = num(body, 'repetition_codebooks', 6);
+  sp.temperature = num(body, 'temperature', SAMPLING.temperature);
+  sp.top_k = num(body, 'topk', SAMPLING.topk);
+  sp.top_p = num(body, 'top_p', SAMPLING.top_p);
+  sp.min_p = num(body, 'min_p', SAMPLING.min_p);
+  sp.rep_penalty = num(body, 'repetition_penalty', SAMPLING.repetition_penalty);
+  sp.rep_window = num(body, 'repetition_window', SAMPLING.repetition_window);
+  sp.rep_codebooks = num(body, 'repetition_codebooks', SAMPLING.repetition_codebooks);
   if (sp.rep_codebooks < 0) sp.rep_codebooks = e.hp.nCodebooks;
   if (isSet(body, 'seed')) sp.seed = Number(body.seed) >>> 0;
   else sp.seed = crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;  // secrets.randbelow(2**31)
   sp.greedy = sp.temperature <= 0;
   p.fadeOutMs = num(body, 'fade_out_ms', 0);
   p.headroomDb = num(body, 'headroom_db', -1);
-  p.silencePrefill = SILENCE_PREFILL.on ? SILENCE_PREFILL.frames : 0;
-  if (isSet(body, 'silence_prefill_frames')) {
-    const frames = Number(body.silence_prefill_frames);
-    if (frames < 0 || frames > MAX_SILENCE_PREFILL) fail(400, `silence_prefill_frames must be 0..${MAX_SILENCE_PREFILL}`);
-    p.silencePrefill = frames;
-  }
   if (bool(body, 'decode_context') && p.referenceCodes?.length) {
-    const asked = num(body, 'decode_context_frames', 30);
-    const frames = asked ? asked : 30;
+    // unset or 0 = the registry's decode-context length
+    const frames = num(body, 'decode_context_frames', 0) || DECODE_CONTEXT_FRAMES;
     const refFrames = p.referenceCodes.length / NCB;
     const k = Math.max(0, Math.min(frames, refFrames));
     p.decodeContext = p.referenceCodes.slice(p.referenceCodes.length - k * NCB);
@@ -345,10 +349,10 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     // The same prompt and speaker, run without the hidden steering (twinSteered = false).
     p.twin = { ...p.prompt, cond: { ...p.prompt.cond } };
   }
-  // make_job: the slot capacity check
+  // make_job: the prompt takes its rows of the slot; the frame budget shrinks to what is left
   const rows = Math.max(p.prompt.nRows, p.twin?.nRows ?? 0);
-  if (rows + p.maxFrames > CONTEXT_CAPACITY)
-    fail(400, `reference, text and max_tokens exceed the slot context capacity (${CONTEXT_CAPACITY} rows)`);
+  if (rows >= CONTEXT_CAPACITY) fail(400, `TTS input len ${rows} exceeds ${CONTEXT_CAPACITY}`);
+  p.maxFrames = Math.min(p.maxFrames, CONTEXT_CAPACITY - rows);
   return p;
 }
 
@@ -666,5 +670,3 @@ export async function speechRoute(e: Engine, spk: Speakers, req: EngineRequest, 
   for (const k of ['model', 'input', 'voice', 'response_format']) delete body[k];
   await generate(e, spk, body, req, sink, aborted);
 }
-
-export { MAX_REFERENCE_FRAMES };

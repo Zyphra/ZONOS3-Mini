@@ -5,6 +5,7 @@ needs codes, not audio)."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import io
@@ -19,9 +20,11 @@ import soundfile as sf
 import torch
 from conftest import FIXTURES, REPO
 from fastapi.testclient import TestClient
+from zonos3.server.schemas import GenerateRequest
 from zonos3.tts.phonemes import normalize_headword
+from zonos3.tts.plan import Speaker
 from zonos3.tts.steering import controls_document, load_bundle
-from zonos3_mlx.engine import Engine, ResolvedSpeaker, plan_request
+from zonos3_mlx.engine import Engine, plan_request
 from zonos3_mlx.scheduler import Scheduler
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.app import create_app
@@ -99,6 +102,20 @@ def test_prefix_stream_is_the_whole_decode_without_the_silence_prefill(client):
     whole = np.frombuffer(client.post("/v2/generate", json={**body, "stream": False}).content, np.float32)
     assert len(streamed) > 0 and len(whole) == len(streamed) + 3 * HOP
     np.testing.assert_allclose(whole[3 * HOP:], streamed, atol=1e-5)
+
+
+def test_request_limits_follow_the_shared_rules(client):
+    """An explicit silence_prefill_frames outside 0..30 is refused (never clamped), inline reference codes keep their
+    first 900 frames (the registry's reference_max_frames) and decode_context_frames 0 decodes the registry's 30."""
+    r = client.post("/v2/generate", json={"text": "hi", "stream": False, "silence_prefill_frames": 31})
+    assert r.status_code == 400 and r.json()["detail"] == "silence_prefill_frames must be 0..30"
+    state = client.app.state.zonos3
+    long = np.tile(CODES, (24, 1))  # 960 frames
+    req = GenerateRequest(text="hi", speaker_mode="reference", speaker_reference_codes=long.tolist())
+    assert torch.equal(asyncio.run(speakers.resolve_reference(state, None, req)), torch.from_numpy(long[:900]))
+    speaker = Speaker("reference", reference_codes=torch.from_numpy(CODES))
+    plan = plan_request(state.engine, {"text": "hi", "decode_context": True, "decode_context_frames": 0}, speaker)
+    assert torch.equal(plan.context_codes, speaker.reference_codes[-30:])
 
 
 def test_edit_keeps_the_unedited_audio_and_reports_the_fill(client, monkeypatch):
@@ -322,7 +339,7 @@ def test_steer_gguf_serves_the_set_calibrations_in_controls_and_speakers(steered
 
 def test_controls_cfg_twins_the_prompt_without_the_hidden_delta(steered):
     engine = steered[0].app.state.zonos3.engine
-    speaker = ResolvedSpeaker("embedding", torch.ones(192), None)
+    speaker = Speaker("embedding", torch.ones(192))
     body = {"text": "hi", "speaker_mode": "embedding", "controls": {"mood.valence": 1.0}, "controls_cfg_scale": 2.0}
     plan = plan_request(engine, body, speaker)
     assert (plan.cfg_kind, plan.cfg_scale) == ("controls", 2.0) and plan.hidden_delta is not None

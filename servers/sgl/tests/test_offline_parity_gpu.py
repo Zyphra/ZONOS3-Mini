@@ -106,15 +106,3 @@ def test_voice_cloning_changes_tokens_and_produces_audio(tts):
     clone = tts.generate_one(TEXT, TTSSamplingParams(seed=SEED), speaker_embedding=emb)
     assert clone["audio_tokens"] != plain["audio_tokens"]
     assert clone["audio"] and len(clone["audio"]) > 0
-
-
-# --------------------------------------------------------------------------- #
-# Parameter-resolution helpers (server parity; need the real model config)
-# --------------------------------------------------------------------------- #
-def test_resolve_max_tokens_clamps(tts):
-    limit = max(1, int(tts.engine.max_seq_len))
-    assert tts.resolve_max_tokens(None) == limit
-    assert tts.resolve_max_tokens(10) == min(10, limit)
-    assert tts.resolve_max_tokens(10**9) == limit
-    with pytest.raises(ValueError):
-        tts.resolve_max_tokens(0)

@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from zonos3.generation import MAX_FRAMES
+
 from zonos3_mlx import paths
 
 
@@ -31,7 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(flag, default=None, help=help_)
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=1919, help="port (default 1919)")
-    p.add_argument("--max", type=int, default=2000, help="max frames per request (default 2000, ~133 s)")
+    p.add_argument("--max", type=int, default=MAX_FRAMES,
+                   help=f"max frames per request (default {MAX_FRAMES}, ~{MAX_FRAMES // 15} s at 15 frames/s)")
     p.add_argument("--batch", type=int, default=4,
                    help="concurrent generation slots (default 4); a CFG request takes two")
     p.add_argument("--reference-idle-unload", type=float, default=60.0,

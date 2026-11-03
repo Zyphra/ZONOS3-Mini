@@ -23,7 +23,7 @@ class _Frontend:
                 max_seq_len=4096, codebook_sizes=(4096,) * 10,
             ),
             max_seq_len=4096, tts_n_codebooks=10, tts_audio_pad_id=4097,
-            tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000",
+            tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000", accent_adapters=None, laci_heads={},
         )
         self.sent = []
 
@@ -143,9 +143,10 @@ def test_capabilities_document(frontend, tmp_path):
     api_server._model_trained_on_tags.cache_clear()
 
 
-def test_laci_refuses_tag_guidance():
-    config = SimpleNamespace(laci_heads={"en_us": "heads.pt"}, cache_type="naive")
-    with pytest.raises(HTTPException) as exc:
-        api_server._check_laci_request(config, True, "en_us", 1.0, 1.0, tag_cfg_scale=2.0)
-    assert exc.value.detail == "LACI needs tag_cfg_scale = 1"
-    api_server._check_laci_request(config, True, "en_us", 1.0, 1.0, tag_cfg_scale=1.0)   # markup at 1.0 is fine
+def test_laci_refuses_tag_guidance(frontend):
+    frontend.config.laci_heads = {"en_us": "heads.pt"}
+    detail = _refused(frontend, "generate", "Say <laugh/> hello", tag_cfg_scale=2.0, laci=True)
+    assert detail == "LACI needs tag_cfg_scale = 1"
+    _send("generate", _request("generate", "Say <laugh/> hello", tag_cfg_scale=1.0, laci=True))  # markup at 1.0 is fine
+    (message,) = frontend.sent
+    assert message.laci is True and message.sampling_params.tag_cfg_scale == 1.0

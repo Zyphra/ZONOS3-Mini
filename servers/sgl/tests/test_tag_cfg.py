@@ -23,6 +23,7 @@ from zonos3.tts.markup import (
     split_nonverbal_markup,
     strip_nonverbal_markup,
 )
+from zonos3.tts import plan
 from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
 
 C = 2                                   # codebooks
@@ -289,10 +290,10 @@ def test_tokenizer_twin_on_the_raw_reference_path(monkeypatch, tmp_path):
     assert torch.equal(user.plain_input_ids[prefix + CONDITIONS:], plain_rows)
 
 
-def test_plain_twin_prompt_refuses_a_prompt_not_ending_in_its_text_rows():
+def test_plain_twin_refuses_a_prompt_not_ending_in_its_text_rows():
     rows = torch.ones((4, C + 1), dtype=torch.int32)
     with pytest.raises(ValueError, match="does not end with its text rows"):
-        tokenizer_server._plain_twin_prompt(rows, rows[:2] + 1, rows[:1])
+        plan.PromptRows(rows, 0, -1, -1).with_text(rows[:2] + 1, rows[:1])
 
 
 # ------------------------------------------------------------------------------------------------ scheduler pair

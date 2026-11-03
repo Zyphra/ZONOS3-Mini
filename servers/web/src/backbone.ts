@@ -4,6 +4,7 @@
 // zonos3-graph.cpp: speaker/condition rows replace the summed embedding before emb_norm (prefill), hidden steering
 // deltas join their Full AttnRes sources (decode), and the alignment probe reads the global layers (slot 0 decode).
 // Two state sets: slot 0 = conditional, slot 1 = CFG twin.
+import { MAX_FRAMES } from './generation';
 import type { Gpu } from './gpu/device';
 import {
   ACT, addRmsnorm, attention, attentionMasked, attnres, condRows, elementwise, EW, gdn, gemm, matvec, matvecGlu, moe,
@@ -35,7 +36,6 @@ export const TOPK = 2;
 export const VOCAB = 4098;
 export const NCB = 10;
 export const LOGITS = VOCAB * NCB;
-export const MAX_FRAMES = 2000;
 /** Rows per slot: native context_capacity = min(context_length, max_frames + 4096). */
 export const CAP = MAX_FRAMES + 4096;
 export const CHUNK = 256;

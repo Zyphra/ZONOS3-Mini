@@ -80,13 +80,15 @@ def cmd_ssl(args) -> int:
 
 
 def cmd_encode(args) -> int:
+    from zonos3.generation import UPLOAD_MAX_SECONDS
+
     from zonos3_mlx.audio_io import decode_pcm
-    from zonos3_mlx.models.codec_encoder import MAX_SECONDS, CodecEncoder
+    from zonos3_mlx.models.codec_encoder import CodecEncoder
     from zonos3_mlx.models.ssl_teacher import SSLTeacher
 
     encoder = CodecEncoder.load(args.encoder, SSLTeacher.load(args.ssl))
-    pcm = decode_pcm(Path(args.audio).read_bytes(), max_seconds=MAX_SECONDS)
-    codes = encoder.encode(pcm, max_seconds=MAX_SECONDS)
+    pcm = decode_pcm(Path(args.audio).read_bytes(), max_seconds=UPLOAD_MAX_SECONDS)
+    codes = encoder.encode(pcm, max_seconds=UPLOAD_MAX_SECONDS)
     np.save(args.out, codes.astype(np.int32))
     print(f"{codes.shape[0]} frames -> {args.out}")
     return 0
@@ -94,6 +96,7 @@ def cmd_encode(args) -> int:
 
 def cmd_generate(args) -> int:
     import soundfile as sf
+    from zonos3.generation import SAMPLE_RATE
 
     from zonos3_mlx.engine import Engine
     from zonos3_mlx.scheduler import Scheduler
@@ -110,12 +113,12 @@ def cmd_generate(args) -> int:
         result = scheduler.synthesize(request)
     finally:
         scheduler.stop()
-    sf.write(args.out, result.pcm, 44100)
+    sf.write(args.out, result.pcm, SAMPLE_RATE)
     if args.dump_codes:
         n_cb = engine.lm.config.n_codebooks
         rows = np.stack([np.asarray(r)[:n_cb] for r in result.rows]).astype(np.int32)
         np.save(args.dump_codes, rows)
-    print(f"seed {result.seed}: {len(result.pcm) / 44100:.2f} s -> {args.out}")
+    print(f"seed {result.seed}: {len(result.pcm) / SAMPLE_RATE:.2f} s -> {args.out}")
     return 0
 
 

@@ -161,6 +161,19 @@ def test_stream_with_wav_is_400(client, frontend):
     assert not frontend.sent
 
 
+@pytest.mark.parametrize("frames", [31, -1])
+def test_silence_prefill_outside_the_registry_range_is_400(client, frontend, frames):
+    r = client.post("/v2/generate", json={"text": "hi", "silence_prefill_frames": frames})
+    assert r.status_code == 400 and r.json() == {"detail": "silence_prefill_frames must be 0..30"}
+    assert not frontend.sent
+
+
+@pytest.mark.parametrize("frames", [0, 30])
+def test_silence_prefill_in_range_reaches_the_tokenizer(client, frontend, frames):
+    r = client.post("/v2/generate", json={"text": "hi", "silence_prefill_frames": frames})
+    assert r.status_code == 200 and frontend.sent[0].silence_prefill_frames == frames
+
+
 @pytest.mark.parametrize("fields", [
     {"no_such_field": 1}, {"speed": 1.0}, {"prepend_silence": True}, {"quality_buckets": {"a": 1}},
     {"speaking_rate_bucket": 2}, {"clean_speaker_background": True}, {"accurate_mode": True},

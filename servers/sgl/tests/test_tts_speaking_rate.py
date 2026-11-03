@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from zonos3_sgl.server import api_server
 from zonos3.server.schemas import GenerateRequest, SpeechRequest
+from zonos3.tts import plan
 from zonos3.tts.prompt import (
     BYTE_TEXT_VOCAB_SIZE,
     text_to_byte_ids,
@@ -49,12 +50,13 @@ def test_byte_tokenizer_uses_training_byte_offset():
 
 
 def test_tts_max_tokens_default_resolves_to_model_max():
-    assert api_server._resolve_tts_max_tokens(_MaxTokenConfig(), None) == 4096
-    assert api_server._resolve_tts_max_tokens(_MaxTokenConfig(), 9999) == 4096
-    assert api_server._resolve_tts_max_tokens(_MaxTokenConfig(), 256) == 256
+    server_max = api_server._RulesContext(_MaxTokenConfig()).max_frames
+    assert plan.max_tokens_budget(None, server_max) == 4096
+    assert plan.max_tokens_budget(9999, server_max) == 4096
+    assert plan.max_tokens_budget(256, server_max) == 256
 
     with pytest.raises(ValueError, match="positive"):
-        api_server._resolve_tts_max_tokens(_MaxTokenConfig(), 0)
+        plan.max_tokens_budget(0, server_max)
 
 
 def test_zonos3_sidecar_loads_speaking_rate_conditioning(tmp_path):

@@ -157,7 +157,7 @@ class RpcEditEngine:
             return read_wav(out), int(reply["sample_rate"])
 
     async def embed(self, audio: bytes) -> list[float]:
-        from zonos3.tts.edit_runtime import EDIT_MAX_SECONDS
+        from zonos3.generation import EDIT_MAX_SECONDS
 
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-dub-") as tmp:
             reply = await self.pipe.call("embed", audio=write_upload(tmp, audio), max_seconds=EDIT_MAX_SECONDS)

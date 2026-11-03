@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, List, Literal
 
 import torch
 
+from zonos3.generation import SAMPLING
+
 if TYPE_CHECKING:
     from zonos3_sgl.attention import BaseAttnBackend, BaseAttnMetadata
     from zonos3_sgl.kvcache import BaseCacheHandle
@@ -55,17 +57,17 @@ def get_global_ctx() -> Context:
 
 @dataclass
 class TTSSamplingParams:
-    """Sampling parameters for TTS generation."""
+    """Sampling parameters for TTS generation (defaults: the generation registry's sampling defaults)."""
 
-    temperature: float = 0.75
-    topk: int = 80
-    top_p: float = 0.69
-    min_p: float = 0.0
+    temperature: float = SAMPLING["temperature"]
+    topk: int = SAMPLING["topk"]
+    top_p: float = SAMPLING["top_p"]
+    min_p: float = SAMPLING["min_p"]
     max_tokens: int = 1024
     ignore_eos: bool = False
-    repetition_window: int = 96
-    repetition_penalty: float = 2.4
-    repetition_codebooks: int = 6
+    repetition_window: int = SAMPLING["repetition_window"]
+    repetition_penalty: float = SAMPLING["repetition_penalty"]
+    repetition_codebooks: int = SAMPLING["repetition_codebooks"]
     seed: int | None = None
 
 

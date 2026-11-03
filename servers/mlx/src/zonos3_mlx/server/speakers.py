@@ -18,13 +18,14 @@ import numpy as np
 import torch
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import Response
-from zonos3.reference.synth import decode_base64_blob, load_embedding_vector, resolve_speaker_mode
+from zonos3.generation import REFERENCE_AUDIO_MAX_SECONDS
+from zonos3.reference.synth import decode_base64_blob, load_embedding_vector
 from zonos3.server.schemas import SpeakerCreateRequest
 from zonos3.tts.audio import _transcode_audio_bytes_to_wav
+from zonos3.tts.plan import Speaker, reference_codes, truncate_reference
 from zonos3.tts.steering import disabled_controls
 
 from zonos3_mlx.audio_io import decode_pcm
-from zonos3_mlx.engine import MAX_REFERENCE_FRAMES, ResolvedSpeaker
 from zonos3_mlx.server.state import ServerState
 
 AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"}
@@ -57,18 +58,10 @@ class Voice:
 # ----------------------------------------------------------------------------------------------------- modes
 
 
-def checkpoint_modes(state: ServerState) -> list[str]:
-    """The release architecture has both speaker paths (ggml checkpoint_speaker_modes)."""
-    modes = ["reference"]
-    if state.config.speaker_embedding_dim > 0:
-        modes.append("embedding")
-    return modes
-
-
 def voice_modes(state: ServerState, voice: Voice) -> list[str]:
     """The modes a voice supports given the loaded companions (ggml speakers.cpp ``voice_modes``)."""
     out = []
-    for mode in checkpoint_modes(state):
+    for mode in state.engine.speaker_modes:
         if voice.source_type == "embedding":
             if mode == "embedding":
                 out.append(mode)
@@ -89,7 +82,7 @@ def serialize(state: ServerState, voice: Voice) -> dict:
         "original_name": voice.original_name, "created_at": voice.created_at,
         "has_preview": voice.source_type == "audio" and (voice.is_default or bool(voice.audio_bytes)),
         "speaker_modes": modes, "embedding_dim": dim if dim > 0 else None, "transcript": voice.transcript,
-        "disabled_controls": disabled_controls(state.engine.bundle, voice.speaker_id),
+        "disabled_controls": disabled_controls(state.engine.steer_bundle, voice.speaker_id),
     }
 
 
@@ -250,7 +243,8 @@ async def resolve_embedding(state: ServerState, session_id: str | None, req) -> 
 # ----------------------------------------------------------------------------------------------------- reference
 
 
-async def encode_reference(state: ServerState, audio_bytes: bytes, max_seconds: float = 60.0) -> torch.Tensor:
+async def encode_reference(state: ServerState, audio_bytes: bytes,
+                           max_seconds: float = REFERENCE_AUDIO_MAX_SECONDS) -> torch.Tensor:
     """Reference prefix codes of a clip (the MLX reference encoder), cached per sha1 of the bytes (LRU of 64)."""
     if not state.engine.has_reference_encoder:
         raise ValueError(NO_REFERENCE_ENCODER)
@@ -271,24 +265,13 @@ async def encode_reference(state: ServerState, audio_bytes: bytes, max_seconds: 
     return codes
 
 
-def reference_codes_tensor(codes) -> torch.Tensor | None:
-    if codes is None:
-        return None
-    tensor = torch.as_tensor(codes, dtype=torch.int32)
-    if tensor.ndim != 2 or tensor.shape[0] == 0 or tensor.shape[1] != 10:
-        raise ValueError("speaker_reference_codes must be a non-empty [frames, 10] list")
-    if bool((tensor < 0).any()) or bool((tensor >= 4096).any()):
-        raise ValueError("speaker_reference_codes must be codec ids in [0, 4095]")
-    return tensor[:MAX_REFERENCE_FRAMES].contiguous()
-
-
 async def resolve_reference(state: ServerState, session_id: str | None, req) -> torch.Tensor | None:
     """speaker_mode=reference: inline codes, a default voice's codes or clip, a session clip, or an upload
     (sgl _resolve_speaker_reference_audio + the tokenizer's reference encode)."""
     if any((req.speaker_embedding_base64, req.speaker_blend_embedding_id_a, req.speaker_blend_embedding_id_b)):
         raise ValueError("This checkpoint conditions on raw reference audio and does not accept speaker embedding "
                          "files or embedding blends.")
-    codes = reference_codes_tensor(req.speaker_reference_codes)
+    codes = reference_codes(state.engine, req.speaker_reference_codes)
     if codes is not None:
         if req.speaker_audio_base64 or req.speaker_embedding_id:
             raise ValueError("Provide speaker_reference_codes or reference audio, not both.")
@@ -302,7 +285,8 @@ async def resolve_reference(state: ServerState, session_id: str | None, req) -> 
                 raise ValueError(f"Default voice '{voice.label}' is an embedding file; speaker_mode=reference needs "
                                  "reference audio.")
             if voice.codes_path is not None:
-                return torch.from_numpy(np.load(voice.codes_path).astype(np.int32))[:MAX_REFERENCE_FRAMES]
+                return truncate_reference(torch.from_numpy(np.load(voice.codes_path).astype(np.int32)),
+                                          state.engine.reference_max_frames)
             return await encode_reference(state, _voice_bytes(voice))
         voice = await session_voice(state, session_id, req.speaker_embedding_id)
         if not voice.audio_bytes:
@@ -313,11 +297,11 @@ async def resolve_reference(state: ServerState, session_id: str | None, req) -> 
     return await encode_reference(state, decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
 
 
-async def resolve_speaker(state: ServerState, session_id: str | None, req) -> ResolvedSpeaker:
-    mode = resolve_speaker_mode(state.config, req.speaker_mode)
+async def resolve_speaker(state: ServerState, session_id: str | None, req, mode: str | None) -> Speaker:
+    """The request's speaker inputs for its speaker mode (``zonos3.tts.plan.request_head``)."""
     if mode == "reference":
-        return ResolvedSpeaker(mode, None, await resolve_reference(state, session_id, req))
-    return ResolvedSpeaker(mode, await resolve_embedding(state, session_id, req), None)
+        return Speaker(mode, reference_codes=await resolve_reference(state, session_id, req))
+    return Speaker(mode, embedding=await resolve_embedding(state, session_id, req))
 
 
 # ----------------------------------------------------------------------------------------------------- routes

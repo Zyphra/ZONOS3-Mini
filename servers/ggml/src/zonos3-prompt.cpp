@@ -35,11 +35,13 @@ bool zonos3_build_prompt(const zonos3_model & model, const std::string & text,
     };
     if (opt.speaker_embedding && (opt.reference_codes || opt.reference_frames))
         return bad("a speaker embedding and a reference prefix are mutually exclusive");
-    if (opt.reference_frames < 0 || opt.reference_frames > ZONOS3_MAX_REFERENCE_FRAMES ||
+    // Internal bounds: request resolvers keep the first reference_max_frames frames and refuse longer prefills.
+    const zonos3_generation_registry & limits = zonos3_generation();
+    if (opt.reference_frames < 0 || opt.reference_frames > limits.reference_max_frames ||
         (opt.reference_frames > 0) != (opt.reference_codes != nullptr))
         return bad("invalid reference-code prefix");
-    if (opt.silence_prefill_frames < 0 || opt.silence_prefill_frames > ZONOS3_MAX_SILENCE_PREFILL)
-        return bad("silence prefill must be 0.." + std::to_string(ZONOS3_MAX_SILENCE_PREFILL) + " frames");
+    if (opt.silence_prefill_frames < 0 || opt.silence_prefill_frames > limits.silence_prefill_max_frames)
+        return bad("silence prefill must be 0.." + std::to_string(limits.silence_prefill_max_frames) + " frames");
     if (opt.speaker_embedding) {
         for (uint32_t i = 0; i < hp.speaker_dim; ++i)
             if (!std::isfinite(opt.speaker_embedding[i])) return bad("speaker embedding contains a non-finite value");

@@ -57,7 +57,7 @@ void usage(const char * a0) {
         "  --gpu | --cpu       backend (default cpu)\n"
         "  --dac-cpu           run the DAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
         "  --dac-gpu           run the DAC decoder on the --gpu backend (default)\n"
-        "  --max N             max frames per request (default 2000, ~133s)\n"
+        "  --max N             max frames per request (default %d, ~%ds; shrunk to the slot rows a prompt leaves)\n"
         "  --batch N           continuous-batching width / concurrent syntheses (default 8). A decode-graph\n"
         "                      ladder runs the narrowest width covering the active slots; cache/state memory\n"
         "                      scales with slots and context capacity.\n"
@@ -87,7 +87,8 @@ void usage(const char * a0) {
         "  --tts-phoneme-lexicon DIR   gold pronunciation lexicon (LMDB) for /v2/phonemize\n"
         "  --studio-projects-dir DIR   server-side studio projects and media (/v2/projects, /v2/media)\n"
         "  --studio-dir DIR    studio production build served at / (default: studio/dist of the checkout\n"
-        "                      holding the executable, else studio/ beside it)\n", a0);
+        "                      holding the executable, else studio/ beside it)\n",
+        a0, zonos3_generation().max_frames, (int) (zonos3_generation().max_frames / ZONOS3_FRAME_RATE));
 }
 
 bool env_int(const char * name, int dflt, int & out) {
@@ -236,11 +237,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         fprintf(stderr, "failed to load model %s\n", model_path.c_str());
         return 1;
     }
-    if (s.max_frames < 1 || s.max_frames + 16 >= (int) s.model.hp.n_ctx_train) {
-        fprintf(stderr, "error: --max must be positive and leave prompt headroom in model context\n");
+    if (std::string err; !configure_frame_budget(s, err)) {
+        fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
     }
-    s.context_capacity = std::min((int) s.model.hp.n_ctx_train, s.max_frames + 4096);
     // LACI / span-follow alignment heads (sgl: LaciHeads.load per --laci-heads at scheduler start); every head must be a
     // query head of a global-attention layer, the layers the probe reads.
     for (const auto & [lang, path] : s.laci_heads) {

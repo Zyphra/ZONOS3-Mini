@@ -26,6 +26,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from zonos3 import languages
+from zonos3.generation import EDIT_MAX_SECONDS, SAMPLE_RATE
 from zonos3.tts import edit_align, textmatch
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
@@ -43,10 +44,6 @@ from zonos3.tts.edit_align import (
     wildcard_verify,
 )
 from zonos3.tts.markup import strip_nonverbal_markup
-
-SAMPLE_RATE = 44100
-EDIT_ALIGN_MAX_SECONDS = 150.0  # /v2/edit/transcribe and /v2/edit/align
-EDIT_MAX_SECONDS = EDIT_ALIGN_MAX_SECONDS  # /v2/edit (the clip's codes and speaker row too)
 
 
 @dataclass(frozen=True)
@@ -133,7 +130,7 @@ def edit_capabilities(model: EditModel, available: bool) -> dict:
     editing = model.max_spans > 0
     return {"speech_editing": editing and available, "edit_max_spans": model.max_spans if editing else 0,
             "edit_frame_rate": model.frame_rate if editing else None, "edit_max_seconds": EDIT_MAX_SECONDS,
-            "edit_align_max_seconds": EDIT_ALIGN_MAX_SECONDS}
+            "edit_align_max_seconds": EDIT_MAX_SECONDS}
 
 
 def public_words(words) -> list[dict]:
@@ -224,7 +221,7 @@ class EditRuntime:
         self.require_editing()
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             path, duration = await self._write_audio(decode_base64_blob(req.audio_base64, "audio_base64"), tmp,
-                                                     EDIT_ALIGN_MAX_SECONDS)
+                                                     EDIT_MAX_SECONDS)
             language = await self.language(req.language)
             transcript = await self._transcribe(path, language)
             words = await self._aligned_words(path, transcript.text, language, transcript.utterances)
@@ -240,7 +237,7 @@ class EditRuntime:
             raise ValueError("text is empty.")
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             path, duration = await self._write_audio(decode_base64_blob(req.audio_base64, "audio_base64"), tmp,
-                                                     EDIT_ALIGN_MAX_SECONDS)
+                                                     EDIT_MAX_SECONDS)
             words = await self._aligned_words(path, text, await self.language(req.language))
         return {"text": text, "duration": duration, "words": public_words(words)}
 

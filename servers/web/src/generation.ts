@@ -1,0 +1,25 @@
+// The generation registry (model/src/zonos3/registries/generation.json, Python zonos3.generation): the request defaults
+// and limits every server shares. The ggml server embeds the same file at build time; api/openapi.yaml repeats the
+// sampling defaults.
+import registry from '../../../model/src/zonos3/registries/generation.json';
+
+/** The API's audio rate (Hz): generated audio, uploads and default-voice clips. */
+export const SAMPLE_RATE = registry.sample_rate;
+/** The v2 sampling defaults (temperature, topk, top_p, min_p, repetition_penalty / _window / _codebooks). */
+export const SAMPLING: Readonly<typeof registry.sampling> = Object.freeze({ ...registry.sampling });
+/** The tag-CFG scale range. */
+export const TAG_CFG_MIN_SCALE = registry.tag_cfg_scale.min;
+export const TAG_CFG_MAX_SCALE = registry.tag_cfg_scale.max;
+/** The silence prefill a request without silence_prefill_frames gets, and the longest a request may ask for. */
+export const SILENCE_PREFILL_DEFAULT_FRAMES = registry.silence_prefill_frames.default;
+export const SILENCE_PREFILL_MAX_FRAMES = registry.silence_prefill_frames.max;
+/** The reference tail decoded ahead of the stream when decode_context_frames is unset or 0. */
+export const DECODE_CONTEXT_FRAMES = registry.decode_context_frames;
+/** The reference prefix limit: longer reference codes keep their first REFERENCE_MAX_FRAMES frames. */
+export const REFERENCE_MAX_FRAMES = registry.reference_max_frames;
+/** The frame budget of a request (its max_tokens is capped here). */
+export const MAX_FRAMES = registry.max_frames;
+/** The longest reference clip (seconds) the reference and speaker encoders take. */
+export const REFERENCE_AUDIO_MAX_SECONDS = registry.audio_max_seconds.reference;
+/** The longest speech-edit source (seconds) the capabilities advertise. */
+export const EDIT_MAX_SECONDS = registry.audio_max_seconds.edit;

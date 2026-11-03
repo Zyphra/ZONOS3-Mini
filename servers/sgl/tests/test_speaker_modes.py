@@ -6,6 +6,7 @@ import pytest
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 from pydantic import ValidationError  # noqa: E402
 from zonos3.server.schemas import GenerateRequest  # noqa: E402
+from zonos3.tts import plan  # noqa: E402
 
 
 def cfg(reference: bool, embedding: bool):
@@ -13,20 +14,25 @@ def cfg(reference: bool, embedding: bool):
                                                          speaker_embedding_dim=256, audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000"))
 
 
+def mode(config, value):
+    """zonos3.tts.plan.resolve_speaker_mode over the server's rules context."""
+    return plan.resolve_speaker_mode(api_server._RulesContext(config).speaker_modes, value)
+
+
 def test_default_prefers_the_reference_prompt_then_the_embedding():
     assert api_server._speaker_modes(cfg(True, True)) == ["reference", "embedding"]
-    assert api_server._resolve_speaker_mode(cfg(True, True), None) == "reference"
-    assert api_server._resolve_speaker_mode(cfg(True, True), "embedding") == "embedding"
-    assert api_server._resolve_speaker_mode(cfg(True, False), None) == "reference"
-    assert api_server._resolve_speaker_mode(cfg(False, True), None) == "embedding"
-    assert api_server._resolve_speaker_mode(cfg(False, False), None) is None
+    assert mode(cfg(True, True), None) == "reference"
+    assert mode(cfg(True, True), "embedding") == "embedding"
+    assert mode(cfg(True, False), None) == "reference"
+    assert mode(cfg(False, True), None) == "embedding"
+    assert mode(cfg(False, False), None) is None
 
 
 def test_requests_for_a_missing_path_are_refused():
-    with pytest.raises(api_server.HTTPException):
-        api_server._resolve_speaker_mode(cfg(True, False), "embedding")
-    with pytest.raises(api_server.HTTPException):
-        api_server._resolve_speaker_mode(cfg(False, True), "reference")
+    with pytest.raises(ValueError, match="not available for this checkpoint"):
+        mode(cfg(True, False), "embedding")
+    with pytest.raises(ValueError, match="not available for this checkpoint"):
+        mode(cfg(False, True), "reference")
 
 
 def test_unknown_modes_fail_the_schema():

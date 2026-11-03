@@ -15,6 +15,7 @@ from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
+from zonos3.generation import REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE, UPLOAD_MAX_SECONDS
 
 from zonos3_mlx.audio_io import polyphase_resample
 from zonos3_mlx.gguf_io import GGUFFile, Weight
@@ -29,9 +30,6 @@ from zonos3_mlx.models.ssl_teacher import SSLTeacher
 
 ARCH = "mossdual_encoder"
 LANE, CONTEXT, HOP, INTERNAL_HOP = 300, 150, 2940, 2944
-# zonos3.tokenizer.dual_reference.prepare_reference's limit (dac-encoder.h DAC_ENCODER_MAX_SECONDS); the lanes keep
-# memory independent of length, and callers pass their own, shorter limit.
-MAX_SECONDS = 600
 
 
 def _snake(x: mx.array, alpha: mx.array, inv_alpha: mx.array) -> mx.array:
@@ -179,13 +177,15 @@ class CodecEncoder:
         return ((b - a) / (right - left)[:, None]).astype(np.float32)
 
     # ------------------------------------------------------------------------------------------------ public
-    def encode(self, pcm44100: np.ndarray, *, max_seconds: float = 60.0) -> np.ndarray:
+    def encode(self, pcm44100: np.ndarray, *, max_seconds: float = REFERENCE_AUDIO_MAX_SECONDS) -> np.ndarray:
         """Mono 44.1 kHz PCM -> ordinary codes [frames, 10] int32 (frames = ceil(samples / 2940)), cut to whole
-        codec frames at ``max_seconds`` (at most MAX_SECONDS)."""
-        if not 0 < max_seconds <= MAX_SECONDS:
-            raise ValueError(f"Codec input limit must be in (0, {MAX_SECONDS}] seconds")
+        codec frames at ``max_seconds``: at most the registry's UPLOAD_MAX_SECONDS, the limit of
+        zonos3.tokenizer.dual_reference.prepare_reference and dac-encoder.h DAC_ENCODER_MAX_SECONDS (the lanes keep
+        memory independent of length; callers pass their own, shorter limit)."""
+        if not 0 < max_seconds <= UPLOAD_MAX_SECONDS:
+            raise ValueError(f"Codec input limit must be in (0, {UPLOAD_MAX_SECONDS}] seconds")
         audio = np.asarray(pcm44100, dtype=np.float32)
-        limit = int(math.floor(max_seconds * 44100 / HOP)) * HOP
+        limit = int(math.floor(max_seconds * SAMPLE_RATE / HOP)) * HOP
         audio = audio[:limit]
         if not len(audio) or not np.isfinite(audio).all():
             raise ValueError("reference audio must be finite and nonempty")

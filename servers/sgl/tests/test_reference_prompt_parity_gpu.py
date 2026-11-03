@@ -5,11 +5,11 @@ Skipped unless ZONOS3_TEST_MODEL points at a checkpoint, e.g.
     ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k uv run pytest -m gpu \
         servers/sgl/tests/test_reference_prompt_parity_gpu.py
 
-The sgl side resolves each request with the api_server helpers, builds the text / silence rows with the tokenizer
-worker's functions (zonos3_sgl.tokenizer.server), assembles the TTSUserMsg as the worker does and lets the scheduler's
-``_schedule_prefill`` add the speaker rows and the CFG twin. The conditional and twin input_ids, speaker vectors (1e-6),
-condition rows and steering deltas must equal the reference's ``plan_prompt``. A fixture whose ``requires`` the loaded
-model and assets do not meet is skipped.
+The sgl side resolves each request with the request rules (zonos3.tts.plan) on api_server's rules context, builds the
+rows as the tokenizer worker does (zonos3_sgl.tokenizer.server: its silence prefill, plan.text_rows / prompt_rows) and
+lets the scheduler's ``_schedule_prefill`` add the speaker rows and the CFG twin. The conditional and twin input_ids,
+speaker vectors (1e-6), condition rows and steering deltas must equal the reference's ``plan_prompt``. A fixture whose
+``requires`` the loaded model and assets do not meet is skipped.
 """
 
 from __future__ import annotations
@@ -68,63 +68,51 @@ def _capabilities(lm, assets) -> set[str]:
 def _sgl_reqs(tts, request: dict):
     """The scheduler's TTSReq (and CFG twin) for a v2 request on the sgl path."""
     from zonos3.tokenizer.textnorm import collapse_line_breaks
-    from zonos3.server.schemas import GenerateRequest
+    from zonos3.tts import plan
+    from zonos3.utils.release import resolve_dir_or_local
     from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
     from zonos3_sgl.server import api_server as api
-    from zonos3_sgl.tokenizer.server import (
-        _plain_twin_prompt,
-        _tag_cfg_plain_text,
-        _text_prompt_rows,
-    )
+    from zonos3_sgl.tokenizer.server import _silence_rows, _tag_cfg_plain_text
     from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
 
     model_config = tts.engine.model_config
-    config = SimpleNamespace(model_config=model_config, model_path=MODEL, max_seq_len=tts.engine.max_seq_len,
+    config = SimpleNamespace(model_config=model_config, model_path=str(resolve_dir_or_local(MODEL)),
+                             max_seq_len=tts.engine.max_seq_len,
                              steer_bundle=str(STEER_BUNDLE) if STEER_BUNDLE.is_file() else None,
-                             accent_adapters=None, laci_heads={})
-    r = {"language": "en_us", "speaker_mode": None,
-         "speaker_cfg_scale": 1.0, "controls_cfg_scale": 1.0, "tag_cfg_scale": 1.0, **request}
-    # api_server: speaker mode, condition rows, speaker embedding, controls
-    mode = api._resolve_speaker_mode(config, r["speaker_mode"])
-    condition_ids = api._resolve_condition_buckets(config, r.get("condition_buckets"), r.get("condition_values"))
+                             accent_adapters=None, laci_heads={}, tts_audio_codec=model_config.audio_codec,
+                             tts_speaker_reference_max_seconds=float(model_config.speaker_reference_max_seconds))
+    # api_server: the request rules on the server's context, with the speaker embedding of the request's file
+    ctx = api._RulesContext(config)
+    r = plan.parse_request(request)
+    head = plan.request_head(ctx, r)
     embedding = None
-    if mode == "embedding" and r.get("speaker_embedding_base64"):
+    if head.mode == "embedding" and r.speaker_embedding_base64:
         embedding = api._compute_speaker_embedding_from_file(
-            r["speaker_embedding_base64"], int(model_config.speaker_embedding_dim), r.get("speaker_embedding_name"))
-    embedding, delta, schedule, _ = api._apply_request_controls(config, GenerateRequest(**request), embedding)
+            r.speaker_embedding_base64, int(model_config.speaker_embedding_dim), r.speaker_embedding_name)
+    codes = plan.reference_codes(ctx, r.speaker_reference_codes)
+    rules = plan.request_rules(ctx, r, head, plan.Speaker(head.mode, embedding, codes))
     # tokenizer worker
-    sampling = TTSSamplingParams(seed=r.get("seed"), speaker_cfg_scale=r["speaker_cfg_scale"],
-                                 controls_cfg_scale=r["controls_cfg_scale"], tag_cfg_scale=r["tag_cfg_scale"])
-    msg = SimpleNamespace(sampling_params=sampling, edit_codes=None,
-                          silence_prefill_frames=r.get("silence_prefill_frames"))
+    sampling = TTSSamplingParams(seed=rules.seed, speaker_cfg_scale=r.speaker_cfg_scale,
+                                 controls_cfg_scale=r.controls_cfg_scale, tag_cfg_scale=r.tag_cfg_scale)
+    msg = SimpleNamespace(sampling_params=sampling, edit_codes=None, silence_prefill_frames=r.silence_prefill_frames)
     vocoder = TTSVocoderManager(n_codebooks=tts.n_codebooks, audio_pad_id=tts.audio_pad_id,
                                 audio_codec=model_config.audio_codec)
     builder = tts._prompt_builder
-    text = tts._text_normalizer.normalize(collapse_line_breaks(r["text"]), r["language"])
-    t = text_rows = _text_prompt_rows(msg, text, builder=builder, vocoder_manager=vocoder, span_end_id=None)
+    text = tts._text_normalizer.normalize(collapse_line_breaks(r.text), rules.language)
+    prefill = _silence_rows(msg, builder=builder, vocoder_manager=vocoder)
+    text_rows = plan.text_rows(builder, text, silence=prefill)
+    rows = plan.prompt_rows(builder, text_rows, condition_count=len(rules.condition_ids or ()), reference_codes=codes,
+                            speaker_row=rules.embedding is not None)
     plain_text = _tag_cfg_plain_text(msg, text)
-    plain = None if plain_text is None else _text_prompt_rows(msg, plain_text, builder=builder, vocoder_manager=vocoder,
-                                                              span_end_id=None)
-    t = torch.cat((builder.condition_rows(tts.condition_count, dtype=t.dtype), t), dim=0)
-    prefix_length = 0
-    if r.get("speaker_reference_codes") is not None:
-        codes = torch.as_tensor(r["speaker_reference_codes"], dtype=torch.int32)
-        codes = codes[: int(model_config.speaker_reference_max_seconds * 44100 // vocoder.hop_length)]
-        prefix = builder.speaker_reference_prefix(codes)
-        prefix_length = len(prefix)
-        t = torch.cat((prefix, t), dim=0)
-    frames = len(text_rows) - len(builder.build(text))
-    prefill = None if frames <= 0 else text_rows[-frames:].to(torch.int32)
-    position = -1
-    if embedding is not None:
-        t = torch.cat([builder.speaker_slot(dtype=t.dtype, device=t.device), t], dim=0)
-        position = 0
+    prefill = None if prefill is None else prefill.to(torch.int32)
     user = TTSUserMsg(
-        uid=10_000 + len(tts.waiting_reqs), input_ids=t,
-        plain_input_ids=None if plain is None else _plain_twin_prompt(t, text_rows, plain),
-        speaker_reference_prefix_length=prefix_length, sampling_params=sampling, speaker_embedding=embedding,
-        speaker_token_position=position, steering_delta=delta, steer_schedule=schedule, condition_values=condition_ids,
-        condition_token_start=prefix_length + (1 if embedding is not None else 0), prefill_rows=prefill,
+        uid=10_000 + len(tts.waiting_reqs), input_ids=rows.input_ids,
+        plain_input_ids=None if plain_text is None else rows.with_text(
+            text_rows, plan.text_rows(builder, plain_text, silence=prefill)),
+        speaker_reference_prefix_length=rows.reference_prefix_length, sampling_params=sampling,
+        speaker_embedding=rules.embedding, speaker_token_position=rows.speaker_row, steering_delta=rules.hidden_delta,
+        steer_schedule=rules.schedule, condition_values=rules.condition_ids,
+        condition_token_start=rows.condition_token_start, prefill_rows=prefill,
     )
     tts.waiting_reqs.append(user)
     batch = tts._schedule_prefill()

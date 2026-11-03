@@ -92,11 +92,16 @@ endfunction()
 # Backbone and native audio paths are shared by CLI, server, and desktop.
 add_library(zonos3 STATIC
     src/zonos3.cpp src/zonos3-graph.cpp src/zonos3-sampler.cpp
-    src/zonos3-prompt.cpp src/zonos3-tokenizer.cpp src/zonos3-steer.cpp src/zonos3-markup.cpp src/zonos3-languages.cpp)
+    src/zonos3-prompt.cpp src/zonos3-tokenizer.cpp src/zonos3-steer.cpp src/zonos3-markup.cpp src/zonos3-languages.cpp
+    src/zonos3-generation.cpp)
 target_include_directories(zonos3 PUBLIC src ggml/include PRIVATE vendor ${CMAKE_CURRENT_BINARY_DIR}/generated)
 # The language registry shared with the Python package (zonos3.languages), parsed by src/zonos3-languages.cpp.
 zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/languages.json
     zonos3_languages_json zonos3-languages-json.h)
+# The request defaults and limits shared with the Python package (zonos3.generation), parsed by
+# src/zonos3-generation.cpp.
+zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/generation.json
+    zonos3_generation_json zonos3-generation-json.h)
 target_link_libraries(zonos3 PUBLIC ggml)
 
 add_library(zonos3-audio STATIC

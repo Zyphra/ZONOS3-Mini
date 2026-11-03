@@ -4,6 +4,7 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 #include "ggml-alloc.h"
+#include "zonos3-generation.h"
 #include "zonos3-tokenizer.h"
 
 #include <cstdint>
@@ -89,10 +90,6 @@ bool zonos3_model_load(zonos3_model & model, const char * path, bool use_gpu);
 void zonos3_model_free(zonos3_model & model);
 bool zonos3_set_expert_mask(zonos3_model & model, const std::map<int, std::vector<int>> & keep);
 
-constexpr int ZONOS3_MAX_REFERENCE_FRAMES = 900;
-constexpr int ZONOS3_DEFAULT_SILENCE_PREFILL = 3;
-constexpr int ZONOS3_MAX_SILENCE_PREFILL = 30;
-
 // Rows whose summed input embedding is REPLACED before emb_norm. Rows are absolute prompt rows.
 struct zonos3_conditioning {
     int speaker_row = -1;              // replaced by speaker_proj·speaker + bias; -1 = none
@@ -121,10 +118,10 @@ bool zonos3_moe_capture(const zonos3_model & model, const float * ids, int n_tok
 
 struct zonos3_prompt_options {
     const int32_t * reference_codes = nullptr; // ordinary undelayed [frames,10] (reference mode)
-    int reference_frames = 0;                  // 0..900
+    int reference_frames = 0;                  // 0..reference_max_frames (zonos3_generation())
     const float * speaker_embedding = nullptr; // [hp.speaker_dim] (embedding mode); exclusive with reference
     std::vector<int32_t> condition_buckets;    // empty = all unknown, else hp.n_cond entries
-    int silence_prefill_frames = ZONOS3_DEFAULT_SILENCE_PREFILL; // 0..30
+    int silence_prefill_frames = zonos3_generation().silence_prefill_default_frames; // 0..silence_prefill_max_frames
 };
 struct zonos3_prompt {
     std::vector<int32_t> ids;  // [n_rows, n_codebooks+1]
@@ -156,11 +153,14 @@ int  zonos3_condition_bucket(const zonos3_model & model, int index, double value
 std::vector<int32_t> zonos3_prefill_codes(const zonos3_model & model, const zonos3_prompt & p); // [prefill_frames,10] audio columns of the silence rows
 bool zonos3_check_conditioning(const zonos3_model & model, const float * ids, int n_rows, const zonos3_conditioning & c);
 
+// Defaults: the registry's v2 sampling defaults (zonos3_generation().sampling).
 struct zonos3_sampling {
-    float temperature = 0.75f;
-    int top_k = 80;
-    float top_p = 0.69f, min_p = 0.0f, rep_penalty = 2.4f;
-    int rep_window = 96, rep_codebooks = 6;
+    float temperature = zonos3_generation().sampling.temperature;
+    int top_k = zonos3_generation().sampling.topk;
+    float top_p = zonos3_generation().sampling.top_p, min_p = zonos3_generation().sampling.min_p,
+          rep_penalty = zonos3_generation().sampling.repetition_penalty;
+    int rep_window = zonos3_generation().sampling.repetition_window,
+        rep_codebooks = zonos3_generation().sampling.repetition_codebooks;
     uint32_t seed = 0;
     bool greedy = false;
 };

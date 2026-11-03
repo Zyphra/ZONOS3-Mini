@@ -59,7 +59,7 @@ static void usage(const char * a0) {
         "  --condition-buckets <a,b,c> explicit buckets 0..9 (10 = unknown) for loudness,fmax,speaking-rate;\n"
         "      wins per name over the values above; omitted conditions are unknown\n"
         "  --cfg-scale <s> speaker CFG scale, default 1 (off; needs a speaker source; --tts only)\n"
-        "  --silence-prefill <n> codec-silence frames appended to the prompt, 0..30 (default 3)\n"
+        "  --silence-prefill <n> codec-silence frames appended to the prompt, 0..%d (default %d)\n"
         "  --headroom-db <db> output attenuation 0..24 for decoded wavs (default: decoder's value; --tts only)\n"
         "  --steer <steer.gguf> steering directions (auto-detected next to backbone when a control flag is given; --tts only)\n"
         "  --control ID=DOSE (repeatable) --control-span START:END:ID=DOSE[,ID=DOSE...] (repeatable, hidden-space controls over\n"
@@ -78,7 +78,8 @@ static void usage(const char * a0) {
         "  --prune-mask <stats.bin> (--keep N | --mass-eps E | --drop-below-hits H)\n"
         "   or: %s --phonemize <lexicon dir> --language L [--no-guess] [--symbols <symbols.json>] --text T\n"
         "      prints the /v2/phonemize JSON (gold LMDB lexicon; espeak-ng guesses via ZONOS3_ESPEAK_NG_LIBRARY);\n"
-        "      --symbols (a JSON array of phoneme-token symbols) marks other pronunciations \"unsupported\"\n", a0, a0);
+        "      --symbols (a JSON array of phoneme-token symbols) marks other pronunciations \"unsupported\"\n", a0,
+        zonos3_generation().silence_prefill_max_frames, zonos3_generation().silence_prefill_default_frames, a0);
 }
 
 static bool ends_with(const std::string & s, const char * suf) {
@@ -559,6 +560,8 @@ static int request_prompt_main(int argc, char ** argv) {
     }
     if (!zonos3_model_load(s.model, path.c_str(), s.use_gpu)) return 1;
     s.model_path = path;
+    // The server's default --max and slot capacity, so R5 refuses what the server refuses.
+    if (!zs::configure_frame_budget(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     if (!steer_path.empty()) {
         if (!zonos3_steer_load(s.steer, steer_path.c_str(), s.model, err)) {
             fprintf(stderr, "error: --steer %s: %s\n", steer_path.c_str(), err.c_str()); return 1;
@@ -762,11 +765,12 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "error: --cfg-scale needs a speaker prompt (--clone, --reference-codes or --speaker-embedding)\n"); return 1;
         }
     }
-    int silence_prefill = ZONOS3_DEFAULT_SILENCE_PREFILL;
+    const zonos3_generation_registry & limits = zonos3_generation();
+    int silence_prefill = limits.silence_prefill_default_frames;
     if (!silence_arg.empty()) {
         double v;
-        if (!parse_finite(silence_arg.c_str(), v) || v != std::floor(v) || v < 0 || v > ZONOS3_MAX_SILENCE_PREFILL) {
-            fprintf(stderr, "error: --silence-prefill must be 0..%d\n", ZONOS3_MAX_SILENCE_PREFILL); return 1;
+        if (!parse_finite(silence_arg.c_str(), v) || v != std::floor(v) || v < 0 || v > limits.silence_prefill_max_frames) {
+            fprintf(stderr, "error: --silence-prefill must be 0..%d\n", limits.silence_prefill_max_frames); return 1;
         }
         silence_prefill = (int) v;
     }
@@ -898,7 +902,7 @@ int main(int argc, char ** argv) {
     std::vector<int32_t> reference_codes;
     std::vector<float> speaker_embedding;
     if (clone) {
-        auto pcm = audio_decode_file(clone_path.c_str(), 44100, 60);
+        auto pcm = audio_decode_file(clone_path.c_str(), 44100, (int) limits.reference_audio_max_seconds);
         if (pcm.empty()) {
             fprintf(stderr, "clone: failed to decode %s\n", clone_path.c_str());
             zonos3_model_free(model); return 1;
@@ -927,9 +931,12 @@ int main(int argc, char ** argv) {
                 zonos3_model_free(model); return 1;
             }
         }
+        // Like the server: a reference keeps its first reference_max_frames frames.
+        if (reference_codes.size() > (size_t) limits.reference_max_frames * 10)
+            reference_codes.resize((size_t) limits.reference_max_frames * 10);
     } else if (!reference_path.empty()) {
         std::string err;
-        if (!mp_load_reference_codes(reference_path, reference_codes, err)) {
+        if (!mp_load_reference_codes(reference_path, reference_codes, err, limits.reference_max_frames)) {
             fprintf(stderr, "reference: %s\n", err.c_str()); zonos3_model_free(model); return 1;
         }
     } else if (!speaker_embedding_path.empty()) {

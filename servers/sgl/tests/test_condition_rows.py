@@ -11,6 +11,7 @@ from zonos3_sgl.core import TTSBatch, TTSReq  # noqa: E402
 from zonos3_sgl.message.tts import TTSSamplingParams  # noqa: E402
 from zonos3_sgl.scheduler.scheduler import TTSScheduler  # noqa: E402
 from zonos3.server.schemas import GenerateRequest, SpeechRequest  # noqa: E402
+from zonos3.tts import plan  # noqa: E402
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig  # noqa: E402
 
 EDGES = {
@@ -26,6 +27,11 @@ def cfg(enabled=True, edges=EDGES):
         condition_names=("loudness", "fmax", "speaking_rate"), condition_edges=edges,
         condition_units={"loudness": "LUFS", "fmax": "Hz", "speaking_rate": "utf-8 bytes per second"},
         speaker_reference_prefix_enabled=True, speaker_enabled=True, speaker_embedding_dim=256, audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000"))
+
+
+def resolve(config, buckets, values):
+    """zonos3.tts.plan.resolve_condition_buckets on the server's rules context."""
+    return plan.resolve_condition_buckets(api_server._RulesContext(config), buckets, values)
 
 
 def test_condition_rows_are_all_pad_rows_with_the_text_pad():
@@ -45,33 +51,33 @@ def test_capabilities_describe_the_rows_and_models_without_them_report_none():
 
 def test_explicit_ids_raw_values_and_unknown_defaults():
     c = cfg()
-    assert api_server._resolve_condition_buckets(c, None, None) == [10, 10, 10]
-    assert api_server._resolve_condition_buckets(c, {"loudness": 3}, None) == [3, 10, 10]
-    assert api_server._resolve_condition_buckets(c, [0, None, 9], None) == [0, 10, 9]
+    assert resolve(c, None, None) == [10, 10, 10]
+    assert resolve(c, {"loudness": 3}, None) == [3, 10, 10]
+    assert resolve(c, [0, None, 9], None) == [0, 10, 9]
     # raw values: bucket i = [edge_{i-1}, edge_i) like the training loader (bisect_right)
-    assert api_server._resolve_condition_buckets(c, None, {"loudness": -40.0}) == [0, 10, 10]
-    assert api_server._resolve_condition_buckets(c, None, {"loudness": -29.002}) == [1, 10, 10]
-    assert api_server._resolve_condition_buckets(c, None, {"fmax": 8000.0}) == [10, 2, 10]      # the 16 kHz-source atom bucket
-    assert api_server._resolve_condition_buckets(c, None, {"fmax": 7999.9}) == [10, 1, 10]
-    assert api_server._resolve_condition_buckets(c, None, {"speaking_rate": 99.0}) == [10, 10, 9]
+    assert resolve(c, None, {"loudness": -40.0}) == [0, 10, 10]
+    assert resolve(c, None, {"loudness": -29.002}) == [1, 10, 10]
+    assert resolve(c, None, {"fmax": 8000.0}) == [10, 2, 10]      # the 16 kHz-source atom bucket
+    assert resolve(c, None, {"fmax": 7999.9}) == [10, 1, 10]
+    assert resolve(c, None, {"speaking_rate": 99.0}) == [10, 10, 9]
     # ids win over raw values per name
-    assert api_server._resolve_condition_buckets(c, {"fmax": 5}, {"fmax": 100.0, "speaking_rate": 14.3}) == [10, 5, 4]
+    assert resolve(c, {"fmax": 5}, {"fmax": 100.0, "speaking_rate": 14.3}) == [10, 5, 4]
 
 
 def test_bad_requests_are_refused():
     c = cfg()
     for bad in ({"volume": 1}, {"loudness": 11}, {"loudness": -1}):
-        with pytest.raises(api_server.HTTPException):
-            api_server._resolve_condition_buckets(c, bad, None)
-    with pytest.raises(api_server.HTTPException):
-        api_server._resolve_condition_buckets(c, [1, 2], None)
-    with pytest.raises(api_server.HTTPException):
-        api_server._resolve_condition_buckets(c, None, {"fmax": float("nan")})
-    with pytest.raises(api_server.HTTPException):
-        api_server._resolve_condition_buckets(cfg(enabled=False), {"loudness": 1}, None)
-    assert api_server._resolve_condition_buckets(cfg(enabled=False), None, None) is None
-    with pytest.raises(api_server.HTTPException):            # no edges for a name -> raw values cannot be mapped
-        api_server._resolve_condition_buckets(cfg(edges={}), None, {"loudness": -20.0})
+        with pytest.raises(ValueError):
+            resolve(c, bad, None)
+    with pytest.raises(ValueError):
+        resolve(c, [1, 2], None)
+    with pytest.raises(ValueError):
+        resolve(c, None, {"fmax": float("nan")})
+    with pytest.raises(ValueError):
+        resolve(cfg(enabled=False), {"loudness": 1}, None)
+    assert resolve(cfg(enabled=False), None, None) is None
+    with pytest.raises(ValueError):            # no edges for a name -> raw values cannot be mapped
+        resolve(cfg(edges={}), None, {"loudness": -20.0})
 
 
 def make_req(values, start, cached_len, device_len):
@@ -132,7 +138,6 @@ def test_encode_start_flag_row_is_a_fourth_row_with_two_values():
     assert spec["flags"] == {"encode_start": cfg_flag().model_config.condition_flags["encode_start"]}
     assert spec["layout"] == "[reference prefix | speaker row][loudness][fmax][speaking_rate][encode_start] BOS text EOS"
     assert spec["units"]["encode_start"] == "flag" and "encode_start" not in spec["edges"]
-    resolve = api_server._resolve_condition_buckets
     assert resolve(cfg_flag(), {"encode_start": 1}, None) == [10, 10, 10, 1]
     assert resolve(cfg_flag(), {"encode_start": 0, "loudness": 3}, None) == [3, 10, 10, 0]
     assert resolve(cfg_flag(), None, {"encode_start": True}) == [10, 10, 10, 1]

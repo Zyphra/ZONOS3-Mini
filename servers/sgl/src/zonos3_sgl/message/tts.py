@@ -5,22 +5,24 @@ from typing import Dict, List
 
 import torch
 
+from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING
+
 from .utils import deserialize_type, serialize_type
 
 
 @dataclass
 class TTSSamplingParams:
-    """Sampling parameters for TTS generation."""
+    """Sampling parameters for TTS generation (defaults: the generation registry's sampling defaults)."""
 
-    temperature: float = 0.75
-    topk: int = 80
-    top_p: float = 0.69
-    min_p: float = 0.0
+    temperature: float = SAMPLING["temperature"]
+    topk: int = SAMPLING["topk"]
+    top_p: float = SAMPLING["top_p"]
+    min_p: float = SAMPLING["min_p"]
     max_tokens: int = 1024
     ignore_eos: bool = False
-    repetition_window: int = 96
-    repetition_penalty: float = 2.4
-    repetition_codebooks: int = 6
+    repetition_window: int = SAMPLING["repetition_window"]
+    repetition_penalty: float = SAMPLING["repetition_penalty"]
+    repetition_codebooks: int = SAMPLING["repetition_codebooks"]
     seed: int | None = None
     # Which end token finishes generation: "utterance" stops on EOA and never
     # samples span-end; "span" (edit infill, needs a checkpoint with span_end_id)
@@ -83,7 +85,7 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     # request's reference prompt codes (their audio dropped), so the first generated frame is not the decoder's
     # position 0.
     decode_context: bool = False
-    decode_context_frames: int = 30
+    decode_context_frames: int = DECODE_CONTEXT_FRAMES
     # Optional speaker embedding for voice cloning; shape: (speaker_embedding_dim,)
     speaker_embedding: torch.Tensor | None = None
     # Encoded by the tokenizer into the raw delayed-DAC reference prefix used
@@ -279,7 +281,7 @@ class TTSAudioReply(BaseTTSFrontendMsg):
     uid: int
     audio_data: bytes  # PCM audio chunk (float32, 44.1kHz)
     finished: bool
-    sample_rate: int = 44100
+    sample_rate: int = SAMPLE_RATE
     # Final chunk of a LACI request only: the scheduler's LACI record (TTSDetokenizeMsg.laci).
     laci: Dict | None = None
 

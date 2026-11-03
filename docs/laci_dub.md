@@ -43,7 +43,7 @@ its own audio (raw reference prefix codes of the clip from the first source-voic
 Cast-bench controls (raw + hidden doses; the request's `X-TTS-Session-ID` reaches the session's saved voices). Each
 segment may override the voice (`segments[k].voice`) and add its own direction (`segments[k].controls`, summed per id
 with the voice's controls, as `/v2/edit`'s `region_controls`); speaker-embedding (raw) controls need a studio voice.
-Controls resolve through the same `_apply_request_controls` / `resolve_controls` path as `/v2/generate`. Target
+Controls resolve through the same request rules (`zonos3.tts.plan.request_rules`) as `/v2/generate`. Target
 texts may carry pronunciation groups (U+E000 IPA U+E001) on phoneme-token checkpoints: the TTS reads the group, the
 forced aligner its IPA, and the rate counts its symbols as 1.4 letters each (`edit_align.token_chars`). Rows echo
 `voice` (effective) and `controls` (the segment's own).

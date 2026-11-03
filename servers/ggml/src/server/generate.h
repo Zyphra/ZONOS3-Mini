@@ -27,12 +27,17 @@ struct GeneratePlan {
     std::string span_follow;          // X-Control-Span-Follow: "" (no control_spans) | "rate" | "reading"
 };
 
-// Throws HttpError (fail) with sgl's status and detail for an invalid request.
+// Throws HttpError (fail) with sgl's status and detail for an invalid request. The plan's frame budget is the
+// request's max_tokens (at most --max) shrunk to the slot rows its prompt leaves (fit_frame_budget).
 GeneratePlan plan_generate(ServerState & s, const nlohmann::json & body, const std::optional<std::string> & session);
 
-// The job of a planned request: the slot-capacity check, the decoder settings and, for LACI / span follow, the
-// alignment probe (attach_probe). fail() 400 when it cannot run; submit it with submit_job.
+// The job of a planned request: the decoder settings and, for LACI / span follow, the alignment probe
+// (attach_probe). fail() 400 when it cannot run; submit it with submit_job.
 std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan);
+
+// R5 against the slot context capacity: a prompt of prompt_rows >= capacity is a 400 "TTS input len {rows} exceeds
+// {capacity}"; otherwise the budget shrinks to min(budget, capacity - prompt_rows).
+int fit_frame_budget(const ServerState & s, int64_t prompt_rows, int budget);
 
 // A LACI take of the dub (the edit/dub worker's synthesize call, server/edit_dub.h). `request` is a GenerateRequest
 // body (schema-valid; laci=true, stream=false); `duration` the take's LACI duration target. `scale` puts the take on an
@@ -63,20 +68,24 @@ struct TakeResult {
 TakeResult wait_take(const std::shared_ptr<ReqJob> & job);
 
 // The silence-prefill default (sgl _silence_prefill_spec) from the environment: ZONOS3_SILENCE_PREFILL_FRAMES (default
-// 3; unparsable = 3) frames, off when ZONOS3_SILENCE_PREFILL_DEFAULT is 0/false/no/off. False when out of range.
+// and unparsable: the registry's silence_prefill_frames.default) frames, off when ZONOS3_SILENCE_PREFILL_DEFAULT is
+// 0/false/no/off. False when above the registry's maximum.
 bool configure_silence_prefill(ServerState & s, std::string & err);
+// --max against the loaded backbone: the frame budget must be positive and leave prompt headroom; sets the slot
+// context capacity (min(n_ctx_train, max_frames + 4096)). Call after the backbone is loaded. False with the reason.
+bool configure_frame_budget(ServerState & s, std::string & err);
 
 // Loads the accent adapters (accents.gguf; attached as model.accents) recorded in `s` (empty path = none). Call after
 // the backbone is loaded. False with the reason in `err`.
 bool load_accent_adapters(ServerState & s, std::string & err);
-// sgl _server_accents: the adapter accents.
+// The loaded accent adapters' names (zonos3.tts.plan RulesContext.accent_names).
 std::vector<std::string> server_accents(const ServerState & s);
 
-// Request pieces shared with /v2/edit (sgl helpers; fail() with sgl's 400 / 500 details):
-// _normalize_tts_request_language (body["language"], default en_us).
+// Request rules shared with /v2/edit (fail() with the rules' 400 / 500 details):
+// R4 zonos3.languages.normalize (body["language"], default en_us).
 std::string resolve_language(const nlohmann::json & body);
-// _resolve_condition_buckets (condition_buckets / condition_values): one bucket per condition row, n_cond_buckets =
-// unknown.
+// R3 zonos3.tts.plan.resolve_condition_buckets (condition_buckets / condition_values): one bucket per condition row,
+// n_cond_buckets = unknown.
 std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const nlohmann::json & body);
 // The tokenizer's TTSTextNormalizer step: `text` unchanged unless requested and a normalizer runs; a worker failure is
 // a 500 "text normalization failed: ...".

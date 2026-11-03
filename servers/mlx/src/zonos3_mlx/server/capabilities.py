@@ -4,17 +4,22 @@ GGUF metadata: servers/ggml/src/server/capabilities.cpp)."""
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from zonos3 import languages
+from zonos3.generation import (
+    DECODE_CONTEXT_FRAMES,
+    SAMPLE_RATE,
+    TAG_CFG_MAX_SCALE,
+    TAG_CFG_MIN_SCALE,
+)
 from zonos3.server.schemas import PhonemizeRequest
 from zonos3.tts.edit_runtime import EditModel, edit_capabilities
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
+from zonos3.tts.plan import silence_prefill_default
 from zonos3.tts.steering import controls_document
 
-from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
 
 
@@ -31,15 +36,11 @@ def condition_tokens(state: ServerState) -> dict | None:
 
 
 def silence_prefill(state: ServerState) -> dict:
-    """sgl _silence_prefill_spec: the default length (ZONOS3_SILENCE_PREFILL_FRAMES) and whether it is on."""
+    """sgl _silence_prefill_spec: the server default (``zonos3.tts.plan.silence_prefill_default``)."""
     hop = state.engine.decoder.hop
-    try:
-        frames = max(0, int(os.environ.get("ZONOS3_SILENCE_PREFILL_FRAMES", "3")))
-    except ValueError:
-        frames = 3
-    on = os.environ.get("ZONOS3_SILENCE_PREFILL_DEFAULT", "1").strip().lower() not in ("0", "false", "no", "off")
-    return {"available": True, "default_frames": frames, "default_on": on and frames > 0,
-                "default_seconds": round(frames * hop / 44100.0, 3), "frame_seconds": hop / 44100.0,
+    default = silence_prefill_default()
+    return {"available": True, "default_frames": default.frames, "default_on": default.on,
+                "default_seconds": round(default.frames * hop / SAMPLE_RATE, 3), "frame_seconds": hop / SAMPLE_RATE,
                 "codec": state.config.audio_codec,
                 "note": "codec-matched silence frames open the audio stream before the model starts (their audio is not "
                      "emitted); a request without silence_prefill_frames gets the server default, "
@@ -71,7 +72,7 @@ def edit_model(state: ServerState) -> EditModel:
 
     c = state.config
     max_spans = edit_marker_rows(c.text_extra_tokens, c.text_tokenizer_spec or None) if c.span_end_id is not None else 0
-    return EditModel(frame_rate=44100.0 / state.engine.decoder.hop, n_codebooks=c.n_codebooks,
+    return EditModel(frame_rate=SAMPLE_RATE / state.engine.decoder.hop, n_codebooks=c.n_codebooks,
                      audio_pad_id=c.audio_pad_id, codebook_sizes=tuple(int(s) for s in c.codebook_sizes),
                      max_spans=max_spans, speaker_row=c.speaker_embedding_dim > 0)
 
@@ -94,14 +95,14 @@ def dub_available(state: ServerState) -> bool:
 
 def capabilities(state: ServerState) -> dict:
     c, engine = state.config, state.engine
-    modes = speakers.checkpoint_modes(state)
+    modes = engine.speaker_modes
     embedding = c.speaker_embedding_dim > 0
     cfg = bool(modes) and state.options.batch >= 2
     caps = {
         "text_tokenizer_spec": c.text_tokenizer_spec or None,
         "text_normalization_enabled": engine.normalizer is not None,
         "text_norm_languages": list(languages.CODES),
-        "accents": engine.accent_names(),
+        "accents": engine.accent_names,
         "speaker_enabled": bool(modes),
         "speaker_conditioning_type": "raw_reference_prefix",
         "speaker_embedding_dim": c.speaker_embedding_dim if embedding else None,
@@ -114,8 +115,9 @@ def capabilities(state: ServerState) -> dict:
         "stream_decode_default": state.options.stream_decode_default,
         "silence_prefill": silence_prefill(state),
         "tag_cfg": {"available": state.options.batch >= 2, "trained": bool(c.tag_cfg_trained),
-                    "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": 1.0, "max_scale": 4.0, "default_scale": 1.0},
-        "decode_context": {"available": True, "default_frames": 30, "max_frames": 450,
+                    "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": TAG_CFG_MIN_SCALE, "max_scale": TAG_CFG_MAX_SCALE,
+                    "default_scale": 1.0},
+        "decode_context": {"available": True, "default_frames": DECODE_CONTEXT_FRAMES, "max_frames": 450,
                            "note": "decode the generated frames behind the last decode_context_frames of the "
                                    "raw-reference prompt (their audio dropped), so the first generated frame is not the "
                                    "decoder's position 0; no-op without a reference prompt"},
@@ -160,10 +162,10 @@ def router(state: ServerState) -> APIRouter:
 
     @r.get("/v2/controls")
     async def controls():
-        bundle = state.engine.bundle
+        bundle = state.engine.steer_bundle
         if bundle is None:
-            raise HTTPException(status_code=404, detail="This server has no steering bundle (place steer.gguf next to "
-                                                        "the backbone or pass --steer).")
+            raise HTTPException(status_code=404,
+                                detail=f"This server has no steering bundle ({state.engine.steer_hint}).")
         return controls_document(bundle, speaker_embedding_dim=state.config.speaker_embedding_dim or None)
 
     @r.post("/v2/phonemize")

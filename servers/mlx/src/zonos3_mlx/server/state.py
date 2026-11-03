@@ -10,6 +10,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from zonos3.generation import MAX_FRAMES
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
 
 from zonos3_mlx.engine import Engine
@@ -26,7 +27,7 @@ def asr_device() -> str | None:
 class ServerOptions:
     model_path: str
     batch: int = 4
-    max_frames: int = 2000
+    max_frames: int = MAX_FRAMES
     stream_decode_default: str = "prefix"  # "prefix" | "whole"
     default_voices_dir: Path | None = None
     studio_dir: Path | None = None

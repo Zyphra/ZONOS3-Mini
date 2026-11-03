@@ -7,9 +7,10 @@ import base64
 import numpy as np
 import pytest
 from zonos3.dub.runtime import AlignWorkerError, UnknownId
+from zonos3.generation import SAMPLE_RATE
 from zonos3.server.schemas import EditRequest
 from zonos3.tts.edit_align import AsrError, FuseAlignError
-from zonos3.tts.edit_runtime import SAMPLE_RATE, EditModel, EditRuntime, status_of
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, status_of
 
 K = 4
 FRAME_RATE = 10.0

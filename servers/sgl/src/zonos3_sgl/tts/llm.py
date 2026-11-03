@@ -19,6 +19,8 @@ from zonos3_sgl.message.tts import TTSSamplingParams
 from zonos3_sgl.scheduler import SchedulerConfig
 from zonos3_sgl.scheduler.scheduler import TTSScheduler
 from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
+from zonos3.generation import SAMPLE_RATE
+from zonos3.tts import plan
 from zonos3.tts.conditioning import default_quality_buckets
 from zonos3.tts.delay import shear_up
 
@@ -267,26 +269,6 @@ class TTSLLM(TTSScheduler):
             wav, sample_rate = torchaudio.load(path)
         return self.embed_speaker(wav, sample_rate)
 
-    def _server_config_adapter(self):
-        """Minimal stand-in for the server's ServerArgs.
-
-        The server resolution helpers only read ``model_config``, ``max_seq_len``
-        and optional ``tts_*`` overrides (getattr-defaulted), so this lets the
-        offline path reuse them verbatim for guaranteed parity.
-        """
-        from types import SimpleNamespace
-
-        return SimpleNamespace(
-            model_config=self.engine.model_config,
-            max_seq_len=self.engine.max_seq_len,
-        )
-
-    def resolve_max_tokens(self, requested: int | None) -> int:
-        """Clamp a requested max_tokens to the model limit (server parity)."""
-        from zonos3.tts.conditioning import _resolve_tts_max_tokens
-
-        return _resolve_tts_max_tokens(self._server_config_adapter(), requested)
-
     def _tokenize_one(
         self,
         prompt: str | List[List[int]],
@@ -350,7 +332,7 @@ class TTSLLM(TTSScheduler):
             items = list(codes)
         if len(items) != n:
             raise ValueError("speaker_reference_codes must have one entry per prompt")
-        max_frames = int(max_seconds * 44100 // self._reference_hop())
+        limit = plan.reference_frame_limit(max_seconds, self._reference_hop(), SAMPLE_RATE)
         out = []
         for item in items:
             if item is None:
@@ -359,7 +341,7 @@ class TTSLLM(TTSScheduler):
             tensor = torch.as_tensor(item, dtype=torch.int32)
             if tensor.ndim != 2 or tensor.shape[1] != self.n_codebooks or tensor.shape[0] == 0:
                 raise ValueError(f"reference codes must be [frames, {self.n_codebooks}]")
-            out.append(tensor[:max_frames].contiguous())
+            out.append(plan.truncate_reference(tensor, limit))
         return out
 
     def _reference_hop(self) -> int:
@@ -605,7 +587,7 @@ class TTSLLM(TTSScheduler):
                 - "audio_tokens": List of generated frames [[cb0, ..., cb8], ...]
                 - "eos_frame": Frame index where EOS was detected (or None)
                 - "audio": PCM audio bytes if decode_audio=True, else None
-                - "sample_rate": Audio sample rate (44100)
+                - "sample_rate": Audio sample rate (zonos3.generation.SAMPLE_RATE)
                 - "laci": the LACI record (attempts, end, failures, ...) of a LACI prompt, else None
         """
         # Validate the language code up front, as the server does.
@@ -624,9 +606,9 @@ class TTSLLM(TTSScheduler):
             sampling_params = [sampling_params] * len(prompts)
         for sp in sampling_params:
             self._request_stop_id(sp)
-        # Clamp max_tokens to the model limit and apply to every request.
+        # Clamp max_tokens to the model limit (zonos3.tts.plan.max_tokens_budget) and apply to every request.
         if max_tokens is not None:
-            clamped = self.resolve_max_tokens(max_tokens)
+            clamped = plan.max_tokens_budget(max_tokens, self.engine.max_seq_len)
             sampling_params = [replace(sp, max_tokens=clamped) for sp in sampling_params]
         speaker_embeddings = self._broadcast_per_prompt(speaker_embedding, len(prompts))
         reference_codes = self._resolve_reference_codes(
@@ -764,7 +746,7 @@ class TTSLLM(TTSScheduler):
                             "audio_tokens": audio_tokens,
                             "eos_frame": status.eos_frame,
                             "audio": b"",
-                            "sample_rate": 44100,
+                            "sample_rate": SAMPLE_RATE,
                             "laci": status.laci,
                         }
                     )
@@ -780,7 +762,7 @@ class TTSLLM(TTSScheduler):
                     "audio_tokens": audio_tokens,
                     "eos_frame": status.eos_frame,
                     "audio": audio_bytes,
-                    "sample_rate": 44100,
+                    "sample_rate": SAMPLE_RATE,
                     "laci": status.laci,
                 }
             )
@@ -827,7 +809,7 @@ class TTSLLM(TTSScheduler):
         self,
         audio_bytes: bytes,
         path: str,
-        sample_rate: int = 44100,
+        sample_rate: int = SAMPLE_RATE,
     ) -> None:
         """Save PCM audio bytes to a WAV file.
 

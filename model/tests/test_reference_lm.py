@@ -165,6 +165,7 @@ def test_edit_fill_generation_stops_on_span_end_and_is_seeded():
 
 def test_laci_rollback_keeps_the_rows_before_the_failure(monkeypatch):
     import zonos3.reference.synth as synth
+    from zonos3.tts import plan as P
     from zonos3.tts.laci import Detector, Failure, LaciConfig, LaciHeads
     from zonos3.tts.prompt import TTSPromptConfig, silence_rows_from_codes
 
@@ -199,9 +200,9 @@ def test_laci_rollback_keeps_the_rows_before_the_failure(monkeypatch):
     monkeypatch.setattr(synth, "LaciSession", OneSkip)
     monkeypatch.setattr(synth, "LaciConfig", lambda: LaciConfig(max_retries=1))
     heads = LaciHeads(((1, 0), (1, 2)), {(1, 0): 3, (1, 2): 3}, 1.5)
-    plan = synth.PromptPlan(
-        request=synth.parse_request({"text": "x"}), text="x", language="en_us",
-        cond=synth.Branch(ids, condition_values=[4, 4, 4], condition_token_start=0), twin=None, cfg_kind=None,
+    plan = P.PromptPlan(
+        request=P.parse_request({"text": "x"}), text="x", language="en_us",
+        cond=P.Branch(ids, condition_values=[4, 4, 4], condition_token_start=0), twin=None, cfg_kind=None,
         cfg_scale=1.0, reference_prefix_length=0, prefill_rows=prefill, context_codes=None, sources=(),
         hidden_delta=None, schedule=None, follow_tokens=None, follow_gate=None, accent=None, max_tokens=12, seed=3,
         laci="en_us",

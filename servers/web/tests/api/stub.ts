@@ -1,5 +1,6 @@
-// A deterministic stub engine for the API tests: the real tokenizer, prompt layout, steering bundle and LACI heads;
-// the backbone, codec and encoders replaced by stand-ins (EOA after a few frames, a sine per decoded frame).
+// Deterministic stub engines for the API tests: the real tokenizer and prompt layout with the backbone, codec and
+// encoders replaced by stand-ins (EOA after a few frames, a sine per decoded frame). stubApi adds the exported models'
+// hyper-parameters, steering bundle and LACI heads (public/models); bareApi needs no exported models.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ProbeInput } from '../../src/backbone';
@@ -7,7 +8,7 @@ import type { Engine } from '../../src/api/engine';
 import { Api } from '../../src/api/router';
 import type { EngineRequest, Sink } from '../../src/api/http';
 import { parseGguf } from '../../src/gguf';
-import { modelHp, type Conditioning } from '../../src/prompt';
+import { modelHp, type Conditioning, type ModelHp } from '../../src/prompt';
 import { LaciHeads } from '../../src/request/laci';
 import { controlsDocument, loadSteer } from '../../src/request/steer';
 import { createTokenizer } from '../../src/tokenizer';
@@ -79,6 +80,37 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
     voices: voices.map(v => ({ ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) })),
     headroomDb: 3,
     async embedSpeaker(pcm) { return new Float32Array(hp.speakerDim).fill(pcm[0] ?? 0.1); },
+    async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
+  };
+  return { api: new Api(engine, 1000), engine, backbone };
+}
+
+/** Release-like checkpoint hyper-parameters (ZONOS3 Mini): three condition rows of 10 buckets, the speaker row, no
+ *  phoneme tokens. */
+const RELEASE_HP: ModelHp = {
+  nCodebooks: NCB, audioPad: 4097, textVocab: 8196, nCond: 3, nCondBuckets: 10,
+  condNames: ['loudness', 'fmax', 'speaking_rate'],
+  condEdges: [
+    [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
+    [7578.125, 8000, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
+    [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208],
+  ],
+  silenceFrame: [1918, 746, 3544, 234, 1267, 2914, 3944, 2849, 326, 1337], speakerDim: 192, contextLength: 32768,
+  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', tagCfgTrained: false,
+  nEmbd: 1024, nLayer: 11,
+};
+
+/** A stub engine without exported models: RELEASE_HP, no steering bundle, no LACI heads, no accent adapters, one
+ *  default voice. */
+export function bareApi(): StubSet {
+  const hp = RELEASE_HP;
+  const backbone = new StubBackbone([]);
+  const engine: Engine = {
+    hp, modelFile: 'zonos3-qat.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
+    steer: null, controlsDoc: null, laci: new Map(),
+    voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) }],
+    headroomDb: 3,
+    async embedSpeaker() { return new Float32Array(hp.speakerDim).fill(0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
   };
   return { api: new Api(engine, 1000), engine, backbone };

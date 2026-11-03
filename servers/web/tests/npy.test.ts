@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { REFERENCE_MAX_FRAMES } from '../src/generation';
 import { loadReferenceCodes, saveReferenceCodes } from '../src/npy';
 
 /** v1.0 .npy bytes with the same header layout saveReferenceCodes uses (64-byte aligned, trailing '\n'). */
@@ -27,9 +28,15 @@ describe('reference codes npy', () => {
     expect(Array.from(loadReferenceCodes(bytes.buffer as ArrayBuffer))).toEqual(Array.from(codes));
   });
 
-  it('rejects more than 900 frames', () => {
-    const buf = npyBytes("{'descr': '<i4', 'fortran_order': False, 'shape': (901, 10), }", new Uint8Array(901 * 40));
-    expect(() => loadReferenceCodes(buf)).toThrow('reference codes must have shape [T,10], 1 <= T <= 900 (60 seconds)');
+  it('keeps the first REFERENCE_MAX_FRAMES frames of a longer file, validating all of it', () => {
+    const frames = REFERENCE_MAX_FRAMES + 50;
+    const dict = `{'descr': '<i4', 'fortran_order': False, 'shape': (${frames}, 10), }`;
+    const vals = Array.from({ length: frames * 10 }, (_, i) => Math.floor(i / 10));
+    const codes = loadReferenceCodes(npyBytes(dict, i4(vals)));
+    expect(codes.length).toBe(REFERENCE_MAX_FRAMES * 10);
+    expect(Array.from(codes)).toEqual(vals.slice(0, REFERENCE_MAX_FRAMES * 10));
+    vals[vals.length - 1] = 4096;
+    expect(() => loadReferenceCodes(npyBytes(dict, i4(vals)))).toThrow('reference codes must be ordinary integer codec IDs 0..4095');
   });
 
   it('rejects codes outside 0..4095', () => {

@@ -112,3 +112,8 @@ export function pyRepr(s: string): string {
 export function pyList(items: string[]): string {
   return '[' + items.map(pyRepr).join(', ') + ']';
 }
+
+/** Python str() of a float for error messages (4 -> '4.0'). */
+export function pyFloat(v: number): string {
+  return Number.isInteger(v) ? v.toFixed(1) : String(v);
+}

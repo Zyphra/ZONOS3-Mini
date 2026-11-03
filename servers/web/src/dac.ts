@@ -10,10 +10,10 @@ import type { Model } from './gpu/weights';
 import { IstftHead } from './istft';
 import { Resampler } from './resample';
 
-export const SAMPLE_RATE = 44100;
 export const HOP = 2940;
 export const BLOCK_FRAMES = 16;
-/** Stream frames per utterance: 30 silence-prefill + 900 decode-context + 2000 generated frames fit. */
+/** Stream frames per utterance: the registry's longest silence prefill (30), decode context (at most the 900-frame
+ *  reference prefix) and frame budget (2000) fit. */
 export const MAX_FRAMES = 3072;
 
 interface Stage { inDim: number; outDim: number; d: number; nl: number; ff: number; ctx: number; patch: number }

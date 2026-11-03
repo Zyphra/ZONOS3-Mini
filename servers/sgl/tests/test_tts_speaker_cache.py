@@ -6,7 +6,8 @@ import pytest
 np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
-from zonos3.server.schemas import GenerateRequest, SpeakerCreateRequest  # noqa: E402
+from zonos3.server.schemas import SpeakerCreateRequest  # noqa: E402
+from zonos3.tts import plan  # noqa: E402
 
 
 class _DummyModelConfig:
@@ -131,6 +132,9 @@ class _RawReferenceModelConfig:
 
 class _RawReferenceConfig:
     model_config = _RawReferenceModelConfig()
+    model_path = ""
+    accent_adapters = None
+    max_seq_len = 4096
 
     def __init__(self, default_voices_dir, steer_bundle):
         self.tts_default_voices_dir = str(default_voices_dir)
@@ -153,21 +157,22 @@ def _write_bank_bundle(root, hidden=4):
     return root / "bundle.json"
 
 
-def test_raw_reference_model_steers_without_speaker_embedding(tmp_path):
+def test_raw_reference_model_steers_without_speaker_embedding(tmp_path, monkeypatch):
     """A hidden-space (attnres_source) bundle set steers raw-reference checkpoints: controls give a hidden delta
     with no embedding at their raw dose (the set's calibration is exposed, not applied), and a voice the
     calibration gives dose 0 lists the control in its disabled_controls."""
     from types import SimpleNamespace
 
     api_server._STEER_BUNDLE_CACHE.clear()
+    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda model_path: None)  # byte text
     config = _RawReferenceConfig(tmp_path / "voices", _write_bank_bundle(tmp_path))
 
     assert api_server._steering_sources(config) == (4,)
-    emb, delta, schedule, _ = api_server._apply_request_controls(
-        config, GenerateRequest(text="Hello.", controls={"mood.sad": -1.5}), None
-    )
-    assert emb is None and schedule is None
-    assert torch.allclose(delta, torch.tensor([0.0, -1.5, 0.0, 0.0]))
+    ctx = api_server._RulesContext(config)
+    request = plan.parse_request({"text": "Hello.", "controls": {"mood.sad": -1.5}})
+    rules = plan.request_rules(ctx, request, plan.request_head(ctx, request), plan.Speaker("reference"))
+    assert rules.embedding is None and rules.schedule is None and rules.sources == (4,)
+    assert torch.allclose(rules.hidden_delta, torch.tensor([0.0, -1.5, 0.0, 0.0]))
 
     def speaker(speaker_id):
         entry = SimpleNamespace(speaker_id=speaker_id, label=speaker_id, source_type="audio", embedding=torch.empty(0),
@@ -273,11 +278,11 @@ def test_accents_are_adapters_only(monkeypatch):
     """`accent` picks an accent adapter; anything else is refused with the loaded adapter names."""
     from types import SimpleNamespace
 
-    config = SimpleNamespace(accent_adapters=None)
-    assert api_server._resolve_tts_request_accent(config, None, 2.0) == (None, 1.0)
+    ctx = api_server._RulesContext(SimpleNamespace(accent_adapters=None))
+    assert plan.resolve_accent(ctx.accent_names, None, 2.0) is None
     with pytest.raises(ValueError, match=r"^Unknown accent 'cmn'; loaded accents: none \(load accent adapters\)\.$"):
-        api_server._resolve_tts_request_accent(config, "cmn", 1.0)
+        plan.resolve_accent(ctx.accent_names, "cmn", 1.0)
     monkeypatch.setattr(api_server, "_adapter_accents", lambda config: ["cmn", "spa"])
-    assert api_server._resolve_tts_request_accent(config, "cmn", 0.5) == ("cmn", 0.5)
+    assert plan.resolve_accent(ctx.accent_names, "cmn", 0.5) == ("cmn", 0.5)
     with pytest.raises(ValueError, match=r"^Unknown accent 'kor'; loaded accents: cmn, spa\.$"):
-        api_server._resolve_tts_request_accent(config, "kor", 1.0)
+        plan.resolve_accent(ctx.accent_names, "kor", 1.0)
