@@ -30,7 +30,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 
 ```bash
 hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
-pnpm --dir servers/web export          # public/models/ (~4.5 GB; first load fetches backbone + zac, ~1.9 GB; uploads add encoder + teacher, ~2.6 GB, and spk)
+pnpm --dir servers/web export          # public/models/ (~3.8 GB; first load fetches backbone + zac (zac-keep2.gguf), ~1.0 GB; uploads add encoder + teacher, ~2.8 GB, and spk)
 pnpm --dir servers/web build           # dist/engine.js + dist/worker.js
 pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (or /lite?api=web)
 ```

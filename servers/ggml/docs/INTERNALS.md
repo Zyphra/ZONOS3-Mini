@@ -125,8 +125,8 @@ T="uv run --package zonos3-tools python ../../tools/convert_gguf.py"
 mkdir -p models
 $T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o models/zonos3-f16.gguf
 $T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o models/zonos3-ptq.gguf   # default backbone (PTQ)
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf   # default decoder
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf               # full-size (--zac)
 $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-encoder.gguf
 $T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/zac-encoder.gguf
 $T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf

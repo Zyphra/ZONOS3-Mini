@@ -30,8 +30,8 @@ from zonos3_mlx import companions
 from zonos3_mlx.models.codec_decoder import CodecDecoder
 from zonos3_mlx.models.lm import LMConfig, Zonos3MLX
 
-COMPANIONS = {
-    "zac": "zac.gguf", "spk_encoder": "spk-encoder.gguf", "zac_encoder": "zac-encoder.gguf",
+COMPANIONS = {  # zac: the default decoder (keep2_plain head); --zac zac.gguf selects the full-size one
+    "zac": "zac-keep2.gguf", "spk_encoder": "spk-encoder.gguf", "zac_encoder": "zac-encoder.gguf",
     "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "accent_adapters": "accents.gguf",
 }
 
@@ -171,7 +171,7 @@ class Engine:
         given = {"zac": zac, **{k: kwargs.pop(k) for k in list(kwargs) if k in COMPANIONS}}
         paths = find_companions(model, given)
         if not paths.get("zac"):
-            raise FileNotFoundError(f"--zac <zac.gguf> is required (also auto-detected when zac.gguf sits next to {model})")
+            raise FileNotFoundError(f"--zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to {model})")
         lm = Zonos3MLX.load(model)
         return cls(lm, CodecDecoder.load(paths["zac"]), paths=paths, **kwargs)
 

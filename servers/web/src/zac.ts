@@ -1,5 +1,6 @@
 // mossdual_istft (15 Hz) streaming codec decoder on WebGPU over a fixed 16-frame graph: RVQ lookup, causal
-// ConvNeXt semantic head, 5 MOSS transformer stages with patch-up, the causal ConvNeXt iSTFT head projecting two
+// ConvNeXt semantic head, 5 MOSS transformer stages with patch-up (layers per stage from the meta: 32/12/12/12/12 for
+// the full decoder, 2 each for the KEEP-2 pruned one), the causal ConvNeXt iSTFT head projecting two
 // spectrogram resolutions at 240 rows/s, then the host iSTFT + FIR mixer (44160 Hz) and sinc resampler (44100 Hz).
 // Mirrors decode_chunk + zac_stream_decode/flush (zac.cpp).
 import type { Gpu } from './gpu/device';
@@ -16,13 +17,13 @@ export const BLOCK_FRAMES = 16;
  *  reference prefix) and frame budget (2000) fit. */
 export const MAX_FRAMES = 3072;
 
-interface Stage { inDim: number; outDim: number; d: number; nl: number; ff: number; ctx: number; patch: number }
+interface Stage { inDim: number; outDim: number; d: number; ff: number; ctx: number; patch: number }
 const STAGES: Stage[] = [
-  { inDim: 1024, outDim: 1280, d: 1280, nl: 32, ff: 5120, ctx: 150, patch: 2 },
-  { inDim: 640, outDim: 768, d: 768, nl: 12, ff: 3072, ctx: 300, patch: 2 },
-  { inDim: 384, outDim: 768, d: 768, nl: 12, ff: 3072, ctx: 480, patch: 2 },
-  { inDim: 384, outDim: 768, d: 768, nl: 12, ff: 3072, ctx: 480, patch: 2 },
-  { inDim: 384, outDim: 0, d: 768, nl: 12, ff: 3072, ctx: 480, patch: 1 },
+  { inDim: 1024, outDim: 1280, d: 1280, ff: 5120, ctx: 150, patch: 2 },
+  { inDim: 640, outDim: 768, d: 768, ff: 3072, ctx: 300, patch: 2 },
+  { inDim: 384, outDim: 768, d: 768, ff: 3072, ctx: 480, patch: 2 },
+  { inDim: 384, outDim: 768, d: 768, ff: 3072, ctx: 480, patch: 2 },
+  { inDim: 384, outDim: 0, d: 768, ff: 3072, ctx: 480, patch: 1 },
 ];
 const HEAD_DIM = 64;
 const SEM = 768;
@@ -48,11 +49,11 @@ interface HistOp {
 /** History-prefixed activation: `xf` rows [0,R) are the previous chunk's tail, the producer writes at float `off`. */
 interface HistBuf { xf: GPUBuffer; hist: GPUBuffer; off: number }
 
-function checkMeta(meta: Record<string, unknown>): void {
+/** Checks the fixed architecture; returns the MOSS layer count of each stage (`stage.n_layer`). */
+function checkMeta(meta: Record<string, unknown>): number[] {
   const want: Record<string, unknown> = {
     'general.architecture': 'mossdual_istft',
     'stage.d_model': STAGES.map(s => s.d),
-    'stage.n_layer': STAGES.map(s => s.nl),
     'stage.context': STAGES.map(s => s.ctx),
     'stage.patch': STAGES.map(s => s.patch),
     'stage.out_dim': STAGES.map(s => s.outDim),
@@ -66,6 +67,10 @@ function checkMeta(meta: Record<string, unknown>): void {
     if (JSON.stringify(meta[k]) !== JSON.stringify(v)) throw new Error('zac: unsupported codec; re-export with pnpm export');
   if (typeof meta['head.max_log_magnitude'] !== 'number' || typeof meta['headroom_db'] !== 'number')
     throw new Error('zac: unsupported codec; re-export with pnpm export');
+  const nl = meta['stage.n_layer'];
+  if (!Array.isArray(nl) || nl.length !== STAGES.length || !nl.every(n => Number.isInteger(n) && n > 0))
+    throw new Error('zac: unsupported codec; re-export with pnpm export');
+  return nl as number[];
 }
 
 export class ZacStream {
@@ -81,9 +86,10 @@ export class ZacStream {
   private needReset = true;
   private istft: IstftHead;
   private rs: Resampler;
+  private readonly nLayer: number[];
 
   constructor(private gpu: Gpu, private w: Model) {
-    checkMeta(w.meta);
+    this.nLayer = checkMeta(w.meta);
     const host = (n: string): Float32Array => {
       const v = w.host.get(n);
       if (!v) throw new Error(`zac: missing ${n}; re-export with pnpm export`);
@@ -161,6 +167,7 @@ export class ZacStream {
     for (const [si, st] of STAGES.entries()) {
       const rows = F * cpf;
       const { d, ff } = st;
+      const nl = this.nLayer[si];
       const nh = d / HEAD_DIM;
       const ring = st.ctx - 1 + rows;
       const xa = b.buf(rows * d * 4, 'zac.xa');
@@ -174,7 +181,7 @@ export class ZacStream {
       // outDim 0 and patch 1: the last layer writes straight into the head's history-prefixed input.
       const last = st.outDim === 0 && st.patch === 1;
       g(x, M(sp + 'in.weight'), xa, { T: rows, O: d, IC: st.inDim });
-      for (let l = 0; l < st.nl; l++) {
+      for (let l = 0; l < nl; l++) {
         const p = `${sp}l${l}.`;
         const kr = b.buf(ring * nh * HEAD_DIM * 4, `zac.k${si}.${l}`);
         const vr = b.buf(ring * nh * HEAD_DIM * 4, `zac.v${si}.${l}`);
@@ -186,7 +193,7 @@ export class ZacStream {
         g(ao, M(p + 'wo.weight'), xb, { T: rows, O: d, IC: d }, { scale: T(p + 'attn_scale'), res: xa });
         layernorm(b, xb, T(p + 'norm2.weight'), T(p + 'norm2.bias'), xn, rows, d, LN_EPS);
         g(xn, M(p + 'ffn1.weight'), f1, { T: rows, O: ff, IC: d, act: ACT.gelu });
-        if (last && l === st.nl - 1) {
+        if (last && l === nl - 1) {
           headIn = withHistory(d, 6);
           g(f1, M(p + 'ffn2.weight'), headIn.xf, { T: rows, O: d, IC: ff, y_off: headIn.off }, { scale: T(p + 'ffn_scale'), res: xb });
         } else {

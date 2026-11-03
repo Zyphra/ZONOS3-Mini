@@ -1,6 +1,7 @@
 // model-paths.h — companion-GGUF discovery and local converter hints.
-// zac.gguf / zac-encoder.gguf / ssl-teacher.gguf are conventional backbone siblings;
-// when the flags are omitted we look there before giving up.
+// zac-keep2.gguf (the default decoder: the keep2_plain head) / zac-encoder.gguf / ssl-teacher.gguf are conventional
+// backbone siblings; when the flags are omitted we look there before giving up. The full-size decoder (full_mr head,
+// zac.gguf) is selected with --zac.
 #pragma once
 
 #include <algorithm>
@@ -12,6 +13,9 @@
 #include <limits>
 #include <vector>
 
+
+// The decoder the CLI and server load next to the backbone when --zac is omitted.
+static constexpr const char * MP_DEFAULT_ZAC = "zac-keep2.gguf";
 static inline bool mp_file_exists(const std::string & p) {
     if (FILE * f = fopen(p.c_str(), "rb")) { fclose(f); return true; }
     return false;
@@ -30,7 +34,7 @@ static inline std::string mp_find_companion(const std::string & backbone, const 
 
 static inline void mp_print_missing_hint(const char * name, const std::string & tried) {
     const std::string label(name);
-    const char * script = label == "zac.gguf" ? "codec-decoder" :
+    const char * script = label == "zac.gguf" || label == MP_DEFAULT_ZAC ? "codec-decoder" :
                           label == "zac-encoder.gguf" ? "codec-encoder" :
                           label == "ssl-teacher.gguf" ? "ssl-teacher" :
                           label == "spk-encoder.gguf" ? "speaker-encoder" :

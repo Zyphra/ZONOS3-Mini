@@ -40,7 +40,7 @@ def files(tmp_path_factory):
     root = tmp_path_factory.mktemp("srv")
     subprocess.run([sys.executable, str(REPO / "servers/ggml/scripts/make-dummy-model.py"), "-o", str(root / "m.gguf"),
                     "--edit-markers", "3", "--span-end", "--phonemes", PHONES], check=True, capture_output=True)
-    (root / "zac.gguf").write_bytes((FIXTURES / "dummy-zac.gguf").read_bytes())
+    (root / "zac-keep2.gguf").write_bytes((FIXTURES / "dummy-zac.gguf").read_bytes())
     lexicon = root / "lexicon.lmdb"
     env = lmdb.open(str(lexicon), map_size=1 << 24, max_dbs=8, subdir=True)
     with env.begin(write=True) as txn:

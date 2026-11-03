@@ -64,7 +64,8 @@ static void usage(const char * a0) {
         "  --steer <steer.gguf> steering directions (auto-detected next to backbone when a control flag is given; --tts only)\n"
         "  --control ID=DOSE (repeatable) --control-span START:END:ID=DOSE[,ID=DOSE...] (repeatable, hidden-space controls over\n"
         "    code-point range [START,END) of the --tts text) --control-span-rate R (frames per character, default 1)\n"
-        "  --zac <zac.gguf> decodes output; companions auto-discover next to backbone\n"
+        "  --zac <zac.gguf> decodes output (default zac-keep2.gguf next to the backbone; zac.gguf = full-size decoder);\n"
+        "    companions auto-discover next to backbone\n"
         "  --max N --seed N --greedy --recompute\n"
         "  --dump-ids <ids.npy> saves the full teacher-forcing sequence for calibration\n"
         "  --probe-heads <heads.json> alignment probe of the decode steps (a laci_heads/ JSON: its heads, weight 1) over\n"
@@ -115,7 +116,7 @@ static bool emit_output(const std::string & out, const zonos3_model & model, con
         printf("wrote %s\n", out.c_str());
     }
     if (want_wav && zac_path.empty()) {
-        fprintf(stderr, "error: .wav output requested but no --zac <zac.gguf> given (also auto-detected next to <model.gguf>)\n");
+        fprintf(stderr, "error: .wav output requested but no --zac <zac.gguf> given (zac-keep2.gguf is auto-detected next to <model.gguf>)\n");
         return false;
     }
     if (!zac_path.empty() && n_frames > 0) {
@@ -719,12 +720,12 @@ int main(int argc, char ** argv) {
     // Companion discovery, gated on the modes that actually need the file (an unconditional
     // zac pickup would silently start emitting sibling .wavs on .npy outputs).
     if (zac_path.empty() && !out_codes.empty() && ends_with(out_codes, ".wav")) {
-        zac_path = mp_find_companion(path, "zac.gguf");
-        if (!zac_path.empty()) fprintf(stderr, "zonos3-cli: using zac.gguf found next to model: %s\n", zac_path.c_str());
+        zac_path = mp_find_companion(path, MP_DEFAULT_ZAC);
+        if (!zac_path.empty()) fprintf(stderr, "zonos3-cli: using %s found next to model: %s\n", MP_DEFAULT_ZAC, zac_path.c_str());
         else {
             // fail before generation rather than after minutes of decode
-            fprintf(stderr, "error: .wav output requested but no --zac <zac.gguf> given (also auto-detected next to <model.gguf>)\n");
-            mp_print_missing_hint("zac.gguf", mp_parent_dir(path) + "/zac.gguf");
+            fprintf(stderr, "error: .wav output requested but no --zac <zac.gguf> given (zac-keep2.gguf is auto-detected next to <model.gguf>)\n");
+            mp_print_missing_hint(MP_DEFAULT_ZAC, mp_parent_dir(path) + "/" + MP_DEFAULT_ZAC);
             return 1;
         }
     }

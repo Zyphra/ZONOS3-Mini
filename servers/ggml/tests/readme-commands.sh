@@ -91,15 +91,15 @@ if out="$("$CLI" "$MODEL" --tts "ci steer" "$WORK/steer-bad.wav" --steer tests/f
 echo "$out" | grep -q "need speaker_mode=embedding" || { echo "$out"; fail "raw control without embedding gave the wrong error"; }
 pass "--control (raw) without --speaker-embedding -> error"
 
-# same, with --zac dropped: zac.gguf sitting next to the backbone is auto-detected
+# same, with --zac dropped: zac-keep2.gguf (the default decoder) sitting next to the backbone is auto-detected
 # (README CLI section's models/ example)
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-q6_k.gguf"
-cp "$ZAC"   "$WORK/models/zac.gguf"
+cp "$ZAC"   "$WORK/models/zac-keep2.gguf"
 out=$("$CLI" "$WORK/models/zonos3-q6_k.gguf" --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
-  || { echo "$out"; fail "--tts with sibling zac.gguf exited nonzero"; }
-is_riff "$WORK/auto.wav" || fail "--tts with sibling zac.gguf did not write a RIFF WAV"
-pass "--tts (sibling zac.gguf auto-detected) -> WAV"
+  || { echo "$out"; fail "--tts with sibling zac-keep2.gguf exited nonzero"; }
+is_riff "$WORK/auto.wav" || fail "--tts with sibling zac-keep2.gguf did not write a RIFF WAV"
+pass "--tts (sibling zac-keep2.gguf auto-detected) -> WAV"
 
 # standalone codes -> wav (zac-cli), if present
 ZACCLI="$(find_bin zac-cli "")"

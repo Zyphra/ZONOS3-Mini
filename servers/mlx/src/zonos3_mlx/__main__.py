@@ -1,8 +1,9 @@
 """zonos3-mlx-server: the v2 HTTP API on Apple Silicon (MLX) over the ggml server's GGUF files.
 
-python -m zonos3_mlx <model.gguf> [--zac zac.gguf] [--port 1919] [options]
+python -m zonos3_mlx <model.gguf> [--zac zac-keep2.gguf] [--port 1919] [options]
 
-zac.gguf, spk-encoder.gguf, zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are auto-detected next to
+zac-keep2.gguf (the default decoder; --zac zac.gguf = the full-size one), spk-encoder.gguf, zac-encoder.gguf,
+ssl-teacher.gguf, steer.gguf and accents.gguf are auto-detected next to
 <model.gguf> when their flags are omitted (servers/ggml main.cpp).
 """
 
@@ -24,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m zonos3_mlx", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("model", help="backbone GGUF (zonos3-ptq.gguf / zonos3-f16.gguf)")
-    for flag, help_ in (("--zac", "codec decoder (zac.gguf)"),
+    for flag, help_ in (("--zac", "codec decoder (default zac-keep2.gguf next to the model; zac.gguf = full-size)"),
                         ("--spk-encoder", "speaker encoder for speaker-embedding cloning of audio voices"),
                         ("--zac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),
                         ("--ssl-teacher", "SSL teacher of the reference encoder"),

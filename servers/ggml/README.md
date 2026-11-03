@@ -32,7 +32,7 @@ The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model
 
 ```bash
 hf auth login
-hf download Zyphra/ZONOS3_Mini_GGUF zonos3-ptq.gguf zac.gguf spk-encoder.gguf --local-dir models
+hf download Zyphra/ZONOS3_Mini_GGUF zonos3-ptq.gguf zac-keep2.gguf spk-encoder.gguf --local-dir models
 # Optional raw-reference cloning companions:
 hf download Zyphra/ZONOS3_Mini_GGUF zac-encoder.gguf ssl-teacher.gguf --local-dir models
 # Optional voice-direction steering bundle (request `controls`: voice design, emotion, accent directions; the
@@ -70,7 +70,7 @@ $T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o models/zonos3-ptq
 $T lm QAT/lm/mect_60k_q4q8_qat \
   --silence-frame "$R/registries/silence_frame_opus_dual_3n_600k_sched600k_r4096_step600000.json" \
   -o models/zonos3-qat.gguf
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf
 $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-encoder.gguf
 
 # Optional: raw-reference cloning companions.
@@ -80,8 +80,8 @@ $T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf
 # Optional: the steering bundle (repo-root steering/ assets).
 $T steer ../../steering/studio_bundle_mect60k.json -o models/steer.gguf
 
-# Optional: the keep2_plain decoder variant (2 layers per transformer stage).
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf
+# Optional: the full-size full_mr decoder (32/12/12/12/12 layers per transformer stage; select with --zac models/zac.gguf).
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf
 ```
 
 ```text
@@ -89,7 +89,8 @@ models/
   zonos3-ptq.gguf     default backbone (Q4_0 experts, Q8_0 mixers) + embedded tokenizer, condition edges and silence frame
   zonos3-qat.gguf     optional previous mect_60k QAT backbone (select with --quant qat)
   zonos3-f16.gguf     optional F16 reference backbone (select with --quant f16)
-  zac.gguf            MR-iSTFT waveform decoder (full_mr); needed for WAV/PCM output
+  zac-keep2.gguf      default MR-iSTFT waveform decoder (keep2_plain: 2 layers per stage); needed for WAV/PCM output
+  zac.gguf            optional full-size decoder (full_mr; select with --zac, launcher --zac zac)
   spk-encoder.gguf    speaker encoder; speaker-embedding cloning from audio
   zac-encoder.gguf    optional acoustic/semantic encoder + RVQ
   ssl-teacher.gguf    optional frozen SSL teacher; raw-reference audio cloning needs both
@@ -199,7 +200,7 @@ Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `co
 
 ```bash
 ./build/zonos3-cli models/zonos3-ptq.gguf --build-prompt 'Hello.' ids.npy   # + ids.cond.json
-./build/zac-cli models/zac.gguf codes.npy decoded.wav
+./build/zac-cli models/zac-keep2.gguf codes.npy decoded.wav
 ./build/spk-encoder-cli models/spk-encoder.gguf --audio voice.mp3 voice-emb.npy --cpu
 ./build/zac-encoder-cli models/zac-encoder.gguf models/ssl-teacher.gguf \
   --audio voice.mp3 voice-codes.npy --cpu

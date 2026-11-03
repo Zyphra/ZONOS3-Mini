@@ -145,7 +145,7 @@ def main(argv=None) -> int:
     c.set_defaults(fn=cmd_encode)
     g = sub.add_parser("generate", help="one in-process synthesis (Engine + Scheduler, no HTTP)")
     g.add_argument("model"); g.add_argument("text"); g.add_argument("out")
-    g.add_argument("--zac", help="decoder GGUF (default: zac.gguf next to the model)")
+    g.add_argument("--zac", help="decoder GGUF (default: zac-keep2.gguf next to the model)")
     g.add_argument("--seed", type=int); g.add_argument("--dump-codes")
     g.add_argument("--request", help="extra GenerateRequest fields as JSON")
     g.set_defaults(fn=cmd_generate)

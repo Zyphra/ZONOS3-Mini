@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 GPU_DEFAULT=cpu   # CI stamps this to "gpu" in the vulkan/metal release archives
 ZONOS3_QUANT="${ZONOS3_QUANT:-ptq}"
+ZONOS3_ZAC="${ZONOS3_ZAC:-zac-keep2}"
 ZONOS3_MODEL_DIR="${ZONOS3_MODEL_DIR:-$SCRIPT_DIR/models}"
 ZONOS3_HOST="${ZONOS3_HOST:-127.0.0.1}"
 ZONOS3_PORT="${ZONOS3_PORT:-1919}"
@@ -24,12 +25,13 @@ usage() {
     cat <<EOF
 usage: $0 [options] [-- <extra zonos3-server args>]
   --quant Q      backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
+  --zac Z        decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one)
   --cpu | --gpu  backend (archive default: $GPU_DEFAULT)
   --host H       bind address (default $ZONOS3_HOST)
   --port P       port (default $ZONOS3_PORT)
   -y, --yes      don't ask before fetching ffmpeg
   --no-browser   don't open the web UI
-env overrides: ZONOS3_QUANT ZONOS3_MODEL_DIR ZONOS3_HOST ZONOS3_PORT
+env overrides: ZONOS3_QUANT ZONOS3_ZAC ZONOS3_MODEL_DIR ZONOS3_HOST ZONOS3_PORT
                ZONOS3_SERVER_BIN ZONOS3_ASSUME_YES ZONOS3_NO_BROWSER ZONOS3_FFMPEG_URL
 ffmpeg (voice cloning only) is fetched into $ZONOS3_MODEL_DIR/bin if not already there or
 on PATH; basic TTS needs no ffmpeg.
@@ -41,6 +43,7 @@ die() { echo "start-zonos3: error: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --quant)      [ $# -ge 2 ] || die "--quant needs a value"; ZONOS3_QUANT="$2"; shift 2 ;;
+        --zac)        [ $# -ge 2 ] || die "--zac needs a value"; ZONOS3_ZAC="$2"; shift 2 ;;
         --cpu)        GPU_MODE=cpu; shift ;;
         --gpu)        GPU_MODE=gpu; shift ;;
         --host)       [ $# -ge 2 ] || die "--host needs a value"; ZONOS3_HOST="$2"; shift 2 ;;
@@ -93,8 +96,9 @@ ffmpeg_download() {
 [ -x "$ZONOS3_SERVER_BIN" ] || die "zonos3-server not found at $ZONOS3_SERVER_BIN (run this script from the extracted release archive, or set ZONOS3_SERVER_BIN)"
 
 BACKBONE="zonos3-$ZONOS3_QUANT.gguf"
+DECODER="$ZONOS3_ZAC.gguf"
 MISSING=()
-for f in "$BACKBONE" zac.gguf; do
+for f in "$BACKBONE" "$DECODER"; do
     [ -f "$ZONOS3_MODEL_DIR/$f" ] || MISSING+=("$f")
 done
 [ "${#MISSING[@]}" -eq 0 ] ||
@@ -139,7 +143,7 @@ sibling() {  # $1 = name: echo the archive-layout path, falling back to the repo
 }
 
 args=("$ZONOS3_MODEL_DIR/$BACKBONE"
-      --zac "$ZONOS3_MODEL_DIR/zac.gguf"
+      --zac "$ZONOS3_MODEL_DIR/$DECODER"
       --host "$ZONOS3_HOST" --port "$ZONOS3_PORT")
 [ -d "$(sibling default_voices)" ]     && args+=(--tts-default-voices-dir "$(sibling default_voices)")
 [ -f "$ZONOS3_MODEL_DIR/zac-encoder.gguf" ] && args+=(--zac-encoder "$ZONOS3_MODEL_DIR/zac-encoder.gguf")

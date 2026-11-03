@@ -23,7 +23,7 @@ mkdir -p "$O"
 # --validate reads the conditioning from full_ids.cond.json (written by --dump-ids)
 "$B/zonos3-cli" "$M/zonos3-ptq.gguf" --cpu --validate "$O/full_ids.npy" "$O/validate"
 "$BM/zonos3-cli" "$M/zonos3-ptq.gguf" --gpu --validate "$O/full_ids.npy" "$O/validate_metal"
-"$B/zac-cli" "$M/zac.gguf" "$O/tts.npy" "$O/zac_audio.npy" --cpu
+"$B/zac-cli" "$M/zac-keep2.gguf" "$O/tts.npy" "$O/zac_audio.npy" --cpu
 "$B/spk-encoder-cli" "$M/spk-encoder.gguf" --audio default_voices/AmericanFemale.mp3 "$O/spk.npy" --dump-dir "$O/spk" --cpu
 # The exact 44.1 kHz PCM the CLI's ffmpeg decode produced (audio-decode.cpp flags), for speaker_embed_pcm.
 ffmpeg -nostdin -v error -i default_voices/AmericanFemale.mp3 -ac 1 -ar 44100 -t 60 -f f32le - |

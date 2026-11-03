@@ -8,7 +8,7 @@ codec `autoencoder/generator.pt` + its semantic teacher `autoencoder/teacher`, t
 `zonos3.utils.release` resolves `hf://owner/repo/path` locations (files via `hf_hub_download`, folders via `snapshot_download`,
 into `HF_HOME`; set `HF_TOKEN` or log in once while the repo is private). Defaults: `--model-path` =
 `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo`; the registries in `model/src/zonos3/registries/`
-(`codec_registry.json` (full-size head), `codec_registry_keep2_plain.json`, `speaker_encoder_registry.json`) point at
+(`codec_registry_keep2_plain.json` (the default: keep2 head), `codec_registry.json` (full-size head), `speaker_encoder_registry.json`) point at
 the same repo (`ZONOS3_CODEC_REGISTRY` / `ZONOS3_SPEAKER_ENCODER_REGISTRY` override them); the tokenizer path in a
 checkpoint may be relative to its folder. Local paths pass through unchanged.
 

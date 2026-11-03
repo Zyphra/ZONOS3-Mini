@@ -178,8 +178,9 @@ checkpoint's `audio_codec`). Only matched codecs of the codec registry are accep
 
 ### Codec registry
 
-`zonos3/registries/codec_registry.json` (override: `ZONOS3_CODEC_REGISTRY`; `zonos3/registries/codec_registry_keep2_plain.json`
-selects the pruned `keep2_plain` decoder head) holds one entry per codec. The ZONOS3 Mini entry
+`zonos3/registries/codec_registry_keep2_plain.json` (the default: the pruned `keep2_plain` decoder head; override:
+`ZONOS3_CODEC_REGISTRY`, e.g. `zonos3/registries/codec_registry.json` for the full-size `full_mr` head) holds one entry
+per codec. The ZONOS3 Mini entry
 (`opus_dual_3n_600k_sched600k_r4096_step600000`, family `dual`) declares:
 
 - `codebooks` 10, `codebook_sizes` 10 × 4096, `hop` 2940 samples at 44.1 kHz (`frame_rate` 15), `codec_step`;

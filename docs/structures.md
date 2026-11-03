@@ -21,7 +21,7 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 3. Rank 0 scheduler receives the request and broadcasts it to other TP ranks when needed.
 4. The engine runs Zonos3 prefill/decode and samples multi-codebook audio frames.
 5. The scheduler sends audio code frames to the tokenizer worker.
-6. The tokenizer worker decodes frames through the matched codec (`model/src/zonos3/registries/codec_registry.json`) and sends PCM bytes back to the API server.
+6. The tokenizer worker decodes frames through the matched codec (`model/src/zonos3/registries/codec_registry_keep2_plain.json` by default: the keep2 decoder head) and sends PCM bytes back to the API server.
 
 ## Code Organization
 

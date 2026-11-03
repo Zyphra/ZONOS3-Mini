@@ -48,7 +48,8 @@ using namespace zs;
 void usage(const char * a0) {
     fprintf(stderr,
         "usage: %s <model.gguf> [--zac <zac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--zac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
-        "  (zac.gguf, spk-encoder.gguf, zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
+        "  (zac-keep2.gguf (the default keep2 decoder; --zac zac.gguf = the full-size one), spk-encoder.gguf,\n"
+        "   zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
         "   auto-detected next to <model.gguf> when their flags are omitted)\n"
         "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
         "                      raw-reference cloning needs --zac-encoder + --ssl-teacher instead)\n"
@@ -180,8 +181,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         if (path.empty()) path = mp_find_companion(model_path, name);
     };
     if (zac_path.empty()) {
-        zac_path = mp_find_companion(model_path, "zac.gguf");
-        if (!zac_path.empty()) fprintf(stderr, "zonos3-server: using zac.gguf found next to model: %s\n", zac_path.c_str());
+        zac_path = mp_find_companion(model_path, MP_DEFAULT_ZAC);
+        if (!zac_path.empty()) fprintf(stderr, "zonos3-server: using %s found next to model: %s\n", MP_DEFAULT_ZAC, zac_path.c_str());
     }
     companion(s.encoder_path, "zac-encoder.gguf");
     companion(s.teacher_path, "ssl-teacher.gguf");
@@ -198,8 +199,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         if (!open_phoneme_lexicon(s, err)) { fprintf(stderr, "error: --tts-phoneme-lexicon: %s\n", err.c_str()); return 1; }
     }
     if (zac_path.empty()) {
-        fprintf(stderr, "error: --zac <zac.gguf> is required (also auto-detected when zac.gguf sits next to <model.gguf>)\n");
-        mp_print_missing_hint("zac.gguf", mp_parent_dir(model_path) + "/zac.gguf");
+        fprintf(stderr, "error: --zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to <model.gguf>)\n");
+        mp_print_missing_hint(MP_DEFAULT_ZAC, mp_parent_dir(model_path) + "/" + MP_DEFAULT_ZAC);
         return 1;
     }
     if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
@@ -282,7 +283,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
 
     if (!zac_load(s.zac, zac_path.c_str(), s.use_gpu && !zac_cpu)) {
         fprintf(stderr, "failed to load zac %s\n", zac_path.c_str());
-        if (!mp_file_exists(zac_path)) mp_print_missing_hint("zac.gguf", zac_path);
+        if (!mp_file_exists(zac_path)) mp_print_missing_hint(MP_DEFAULT_ZAC, zac_path);
         return 1;
     }
     s.zac_name = std::filesystem::path(zac_path).filename().string();

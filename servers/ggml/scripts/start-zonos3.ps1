@@ -3,6 +3,7 @@
 # scripts/start-zonos3.sh — keep the two in sync.
 param(
     [string]$Quant,
+    [string]$Zac,
     [switch]$Cpu,
     [switch]$Gpu,
     [string]$BindHost,
@@ -18,6 +19,7 @@ $GPU_DEFAULT = 'cpu'   # CI stamps this to 'gpu' in the vulkan release archive
 $ScriptDir = $PSScriptRoot
 
 if (-not $Quant)    { $Quant    = if ($env:ZONOS3_QUANT)     { $env:ZONOS3_QUANT }     else { 'ptq' } }
+if (-not $Zac)      { $Zac      = if ($env:ZONOS3_ZAC)       { $env:ZONOS3_ZAC }       else { 'zac-keep2' } }
 $ModelDir           = if ($env:ZONOS3_MODEL_DIR)             { $env:ZONOS3_MODEL_DIR } else { Join-Path $ScriptDir 'models' }
 if (-not $BindHost) { $BindHost = if ($env:ZONOS3_HOST)      { $env:ZONOS3_HOST }      else { '127.0.0.1' } }
 if (-not $Port)     { $Port     = if ($env:ZONOS3_PORT)      { [int]$env:ZONOS3_PORT } else { 1919 } }
@@ -35,12 +37,13 @@ if ($Help) {
     Write-Host @"
 usage: start-zonos3.bat [options] [extra zonos3-server args]
   -Quant Q     backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
+  -Zac Z       decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one)
   -Cpu | -Gpu  backend (archive default: $GPU_DEFAULT)
   -BindHost H  bind address (default 127.0.0.1)
   -Port P      port (default 1919)
   -Yes         don't ask before fetching ffmpeg
   -NoBrowser   don't open the web UI
-env overrides: ZONOS3_QUANT ZONOS3_MODEL_DIR ZONOS3_HOST ZONOS3_PORT
+env overrides: ZONOS3_QUANT ZONOS3_ZAC ZONOS3_MODEL_DIR ZONOS3_HOST ZONOS3_PORT
                ZONOS3_SERVER_BIN ZONOS3_ASSUME_YES ZONOS3_NO_BROWSER ZONOS3_FFMPEG_URL
 ffmpeg (voice cloning only) is fetched into <ModelDir>\bin if not already there or on PATH.
 "@
@@ -84,8 +87,9 @@ function Download-Ffmpeg {
 }
 
 $Backbone = "zonos3-$Quant.gguf"
+$Decoder = "$Zac.gguf"
 $Missing = @()
-foreach ($f in @($Backbone, 'zac.gguf')) {
+foreach ($f in @($Backbone, $Decoder)) {
     if (-not (Test-Path (Join-Path $ModelDir $f))) { $Missing += $f }
 }
 if ($Missing.Count -gt 0) {
@@ -134,7 +138,7 @@ function Get-Sibling([string]$name) {
 }
 
 $srvArgs = @((Join-Path $ModelDir $Backbone),
-             '--zac', (Join-Path $ModelDir 'zac.gguf'),
+             '--zac', (Join-Path $ModelDir $Decoder),
              '--host', $BindHost, '--port', $Port)
 if (Test-Path (Get-Sibling 'default_voices')) {
     $srvArgs += @('--tts-default-voices-dir', (Get-Sibling 'default_voices'))

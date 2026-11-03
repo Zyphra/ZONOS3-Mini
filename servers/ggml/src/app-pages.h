@@ -60,7 +60,7 @@ static const char * ZONOS3_APP_SETUP_PAGE = R"html(
       <div class="row"><input type="text" id="model_in" placeholder="zonos3-ptq.gguf">
         <button onclick="browse('model')">Browse&hellip;</button></div>
       <label>ZAC decoder (.gguf)</label>
-      <div class="row"><input type="text" id="zac_in" placeholder="zac.gguf">
+      <div class="row"><input type="text" id="zac_in" placeholder="zac-keep2.gguf">
         <button onclick="browse('zac')">Browse&hellip;</button></div>
       <label>Speaker encoder (.gguf, optional; speaker-embedding cloning)</label>
       <div class="row"><input type="text" id="spk_encoder_in" placeholder="spk-encoder.gguf">

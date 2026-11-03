@@ -611,7 +611,7 @@ def export_laci(laci, out):
 
 # --------------------------------------------------------------------------- main
 
-MODEL_FILES = ("zonos3-ptq.gguf", "zac.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + COMPANIONS
+MODEL_FILES = ("zonos3-ptq.gguf", "zac-keep2.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + COMPANIONS
 
 
 def main():
@@ -628,7 +628,7 @@ def main():
     m = a.models
     os.makedirs(a.out, exist_ok=True)
     export_backbone(os.path.join(m, "zonos3-ptq.gguf"), a.out)
-    export_zac(os.path.join(m, "zac.gguf"), a.out)
+    export_zac(os.path.join(m, "zac-keep2.gguf"), a.out)
     export_encoder(os.path.join(m, "zac-encoder.gguf"), a.out)
     export_teacher(os.path.join(m, "ssl-teacher.gguf"), a.out)
     export_spk(os.path.join(m, "spk-encoder.gguf"), a.out)

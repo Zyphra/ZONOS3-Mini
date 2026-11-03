@@ -76,7 +76,7 @@ stop_launcher() {
 echo "== launcher: local models =="
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-ptq.gguf"
-cp "$ZAC"   "$WORK/models/zac.gguf"
+cp "$ZAC"   "$WORK/models/zac-keep2.gguf"
 run_launcher
 pass "local models -> server up"
 curl -fsS "$BASE/v2/generate" \
@@ -106,11 +106,11 @@ stop_launcher
 unset ZONOS3_SKIP_PATH_FFMPEG ZONOS3_FFMPEG_URL
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
 echo "== launcher: missing decoder =="
-rm "$WORK/models/zac.gguf"
+rm "$WORK/models/zac-keep2.gguf"
 if ZONOS3_MODEL_DIR="$WORK/models" ZONOS3_SERVER_BIN="$SRV" \
    ZONOS3_ASSUME_YES=1 ZONOS3_NO_BROWSER=1 bash "$LAUNCHER" \
    >"$WORK/missing.log" 2>&1; then
-  fail "launcher accepted missing zac.gguf"
+  fail "launcher accepted missing zac-keep2.gguf"
 fi
 pass "missing decoder rejected without download"
 
