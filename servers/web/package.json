@@ -1,0 +1,32 @@
+{
+  "name": "zonos3-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "gen:api": "openapi-typescript ../../api/openapi.json -o src/api/schema.ts --default-non-nullable false --empty-objects-unknown --array-length",
+    "build": "pnpm gen:api && tsc --noEmit -p . && tsc --noEmit -p tests && vite build",
+    "typecheck": "pnpm gen:api && tsc --noEmit -p . && tsc --noEmit -p tests",
+    "test": "vitest run",
+    "export": "uv run --package zonos3-tools python scripts/export_web_models.py --models ../ggml/models --voices ../../default_voices --laci ../../laci_heads --out public/models",
+    "goldens": "cd ../.. && bash servers/web/scripts/make_goldens.sh",
+    "parity": "node harness/parity.mjs",
+    "harness": "pnpm build && node harness/server.mjs --port 1920",
+    "upload-models": "bash scripts/upload_models.sh",
+    "deploy": "pnpm --dir ../../studio build && pnpm --dir ../../studio build:web && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261103.1",
+    "@puppeteer/browsers": "^3.2.6",
+    "@types/node": "^26.6.6",
+    "@webgpu/types": "^0.1.74",
+    "openapi-typescript": "^7.13.0",
+    "puppeteer-core": "^25.16.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.156.2"
+  },
+  "packageManager": "pnpm@10.34.9+sha512.f49b5a8ea0fdedb44bb3c0c1d6575092a53c2950d95b7ad15df11f17974877a2de3a01c07e934e9b28ce716e51c09a94962c7306d09be2e1e4b18a8c8762fd32"
+}

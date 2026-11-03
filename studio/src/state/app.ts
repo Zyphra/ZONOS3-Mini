@@ -4,6 +4,8 @@ import type { History } from './history';
 
 export const backend = signal<Backend | null>(null);
 export const bootError = signal<string | null>(null);
+/** Boot-screen status while a backend loads (the in-browser server's model download). */
+export const bootProgress = signal<string | null>(null);
 
 /**
  * Settings of the open project: the language (Direct / Scene renders, Edit clips, pronunciation lookups), the

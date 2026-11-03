@@ -18,6 +18,7 @@ embedding.
 | `servers/sgl/` | The `zonos3-sgl` package (`zonos3_sgl`): the CUDA server built on [Mini-SGLang](https://github.com/sgl-project/mini-sglang), its launch scripts and benchmark |
 | `servers/ggml/` | The C++/ggml server and CLI (CPU, CUDA, Metal, Vulkan); ggml is the submodule `servers/ggml/ggml` |
 | `servers/mlx/` | The `zonos3-mlx` package (`zonos3_mlx`): the Apple Silicon server running the ggml server's GGUF files in MLX |
+| `servers/web/` | The `zonos3-web` package: the in-browser server (WebGPU in a Web Worker, the v2 API behind a fetch-compatible transport) the studio runs with `?api=web` |
 | `studio/` | Zonos Voice Studio (Preact, pnpm); `studio/dist/` is the committed production build every server serves at `/` |
 | `tools/` | Checkpoint and GGUF conversion tools (`zonos3-tools`) |
 | `default_voices/`, `steering/`, `laci_heads/` | Runtime assets shared by the servers |
@@ -63,7 +64,8 @@ The launcher sources `servers/sgl/scripts/env.sh` (CUDA toolchain, the TileLang 
 naive`, two running requests and CUDA graphs. Extra server flags are appended (e.g. `servers/sgl/scripts/serve.sh --port 1920`).
 The first start JIT-compiles kernels and builds the text-normalization grammar cache, which takes several minutes.
 On Apple Silicon, `servers/mlx/scripts/serve.sh` serves the GGUF files of `Zyphra/ZONOS3_Mini_GGUF` on the same port
-with the same variables.
+with the same variables. Without any server, the studio runs ZONOS3 in the browser on WebGPU (`?api=web`; models from
+the GGUF files, see [servers/web/README.md](servers/web/README.md)).
 
 | Variable | Effect |
 | --- | --- |
@@ -195,6 +197,8 @@ uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0
 The ggml parity tests compare the C++ build with the reference:
 `uv run --package zonos3-tools pytest servers/ggml/tests/parity --ggml-build servers/ggml/build`. On Apple Silicon,
 `uv run --package zonos3-mlx pytest servers/mlx/tests` runs the MLX server's tests (they skip elsewhere).
+`pnpm --dir servers/web test` runs the in-browser server's unit tests, and `pnpm --dir servers/web parity` its WebGPU
+parity checks against CPU ggml goldens in headless Chrome.
 
 ## License
 

@@ -1,0 +1,719 @@
+// POST /v2/generate and POST /v1/audio/speech: a GenerateRequest resolved against the loaded models, run by a
+// one-request scheduler (CFG twin on the backbone's second slot, LACI, span follow, hidden steering) and answered as
+// streamed / buffered float32 PCM or a buffered 16-bit WAV. Ports servers/ggml/src/server/generate.cpp (resolve,
+// plan_generate, make_job, the routes) and scheduler.cpp (attach_probe, laci_resume, step_steer, the worker tick,
+// the DAC lane's prefix / whole decode).
+import type { ProbeInput } from '../backbone';
+import { locateTextSpan, probeReduce } from '../probe';
+import {
+  buildCfgTwin, buildPrompt, conditionBucket, MAX_REFERENCE_FRAMES, MAX_SILENCE_PREFILL, NCB, prefillCodes,
+  type Conditioning, type Prompt,
+} from '../prompt';
+import { accentSteering, addHiddenDelta, applyEmotion, calibrate, hiddenDelta, type EmotionSliders } from '../request/directions';
+import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
+import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
+import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
+import { resolveControls, Steering, textChars, type ControlSpan } from '../request/steer';
+import { defaultSampling, Sampler, type Sampling } from '../sampler';
+import { buildIdx, BLOCK } from '../schedule';
+import { newSlot, sampleFrame, type SlotState } from '../slot';
+import { applyFade, wavBytes } from '../wav';
+import { laciLanguages, MAX_FRAMES, serverAccents, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
+import type { Engine } from './engine';
+import {
+  bool, fail, HttpError, isSet, num, parseBody, pyList, pyRepr, sessionId, str, truthy, type EngineRequest, type Sink,
+} from './http';
+import type { Speakers } from './speakers';
+
+const TAG_CFG_MIN_SCALE = 1.0, TAG_CFG_MAX_SCALE = 4.0;
+const SAMPLE_RATE = 44100;
+const HOP = 2940;
+const VOCAB = 4098;
+/** Slot rows: native context_capacity = min(context_length, max_frames + 4096). */
+export const CONTEXT_CAPACITY = MAX_FRAMES + 4096;
+/** probe_max_text = min(2048, context_capacity) with LACI heads. */
+const PROBE_MAX_TEXT = 2048;
+/** Prefix streaming (PrefixStreamSettings defaults). */
+const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3;
+
+/** A validated GenerateRequest resolved into what the scheduler runs (generate.cpp GenReq + GeneratePlan). */
+interface Plan {
+  text: string;                       // tokenized text (no normalization here)
+  rawText: string;
+  language: string;
+  sp: Sampling;
+  maxFrames: number;
+  speakerMode: string;
+  referenceCodes: Int32Array | null;
+  speakerEmbedding: Float32Array | null;
+  speakerId: string;
+  conditionBuckets: number[];
+  silencePrefill: number;
+  decodeContext: Int32Array | null;   // the reference's last frames, ordinary [K][10]
+  cfgScale: number;
+  cfgKind: '' | 'speaker' | 'tag' | 'emotion';
+  twinSteered: boolean;
+  headroomDb: number;
+  fadeOutMs: number;
+  stream: boolean;
+  wav: boolean;
+  prefix: boolean;
+  steering: Steering;
+  speakerDelta: Float32Array | null;  // proj-space emotion delta (none with the shipped attnres_source directions)
+  spanFollow: '' | 'rate' | 'reading';
+  laci: LaciHeads | null;
+  follow: LaciHeads | null;
+  followTokens: Range[];
+  followLead: number;
+  followLag: number;
+  prompt: Prompt;
+  twin: Prompt | null;
+}
+
+type Body = Record<string, unknown>;
+
+/** Library errors carry the C++ 400 details: re-raise them as 400 (HttpError passes through). */
+function as400<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    fail(400, e instanceof Error ? e.message : String(e));
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ resolve
+
+/** sgl _validate_tag_cfg. */
+function validateTagCfg(text: string, scale: number, speakerCfg: number, emotionCfg: number): void {
+  if (!Number.isFinite(scale) || scale < TAG_CFG_MIN_SCALE || scale > TAG_CFG_MAX_SCALE)
+    fail(400, 'tag_cfg_scale must be finite and between 1.0 and 4.0.');
+  if (scale === 1.0) return;
+  if (!hasNonverbalMarkup(text) || stripNonverbalMarkup(text) === text) {
+    const tags = NONVERBAL_MARKUP_TAGS.map(t => `<${t}/>`).join(', ');
+    fail(400, `tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags ${tags}` +
+      ' or the same names as span tags (<shouting>...</shouting>).');
+  }
+  if (speakerCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.');
+  if (emotionCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with emotion_cfg_scale; set emotion_cfg_scale to 1.0.');
+}
+
+/** sgl _resolve_condition_buckets: explicit ids win, raw values map through the edges, anything else is unknown. */
+export function resolveConditionBuckets(e: Engine, body: Body): number[] {
+  const hp = e.hp;
+  const buckets = isSet(body, 'condition_buckets') ? body.condition_buckets : null;
+  const values = isSet(body, 'condition_values') ? body.condition_values : null;
+  const nonEmpty = (v: unknown) => v !== null && (Array.isArray(v) ? v.length > 0 : Object.keys(v as object).length > 0);
+  if (hp.nCond === 0) {
+    if (nonEmpty(buckets) || nonEmpty(values)) fail(400, 'This checkpoint has no condition rows (loudness / fmax / speaking rate)');
+    return [];
+  }
+  const names = hp.condNames, nBuckets = hp.nCondBuckets;
+  const asMap = (raw: unknown, what: string): Map<string, unknown> => {
+    const out = new Map<string, unknown>();
+    if (raw === null) return out;
+    if (!Array.isArray(raw)) {
+      const unknown: string[] = [];
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (!names.includes(k)) unknown.push(k);
+        else out.set(k, v);
+      }
+      if (unknown.length) fail(400, `${what}: unknown condition name(s) ${pyList(unknown)}; expected ${pyList(names)}`);
+      return out;
+    }
+    if (raw.length !== names.length) fail(400, `${what}: expected ${names.length} entries in the order ${pyList(names)}`);
+    names.forEach((n, i) => out.set(n, raw[i]));
+    return out;
+  };
+  const ids = asMap(buckets, 'condition_buckets'), vals = asMap(values, 'condition_values');
+  return names.map((name, i) => {
+    const id = ids.get(name), val = vals.get(name);
+    if (id !== undefined && id !== null) {
+      const b = Number(id);
+      if (b < 0 || b > nBuckets) fail(400, `condition_buckets[${name}] must be in [0, ${nBuckets - 1}] or ${nBuckets} (= unknown)`);
+      return b;
+    }
+    if (val !== undefined && val !== null) {
+      const v = Number(val);
+      if (!Number.isFinite(v)) fail(400, `condition_values[${name}] must be finite`);
+      const edges = hp.condEdges[i] ?? [];
+      if (!edges.length) fail(400, `the checkpoint carries no edges for ${name}; send condition_buckets[${name}] instead`);
+      return conditionBucket(edges, v);
+    }
+    return nBuckets;
+  });
+}
+
+/** sgl _normalize_tts_request_language. */
+function resolveLanguage(body: Body): string {
+  const given = str(body, 'language') ?? 'en_us';
+  const lang = given.trim().toLowerCase().replaceAll('-', '_');
+  if (!TEXT_NORM_LANGUAGES.includes(lang))
+    fail(400, `Unsupported language code: ${pyRepr(given)}. Supported: ${TEXT_NORM_LANGUAGES.join(', ')}.`);
+  return lang;
+}
+
+const calibrated = (body: Body) => bool(body, 'emotion_calibrated') ?? true;
+
+function requestEmbedding(p: Plan): Float32Array | null {
+  return p.speakerMode === 'embedding' && p.speakerEmbedding ? p.speakerEmbedding : null;
+}
+
+/** sgl _apply_request_emotion: raw / lda directions move the embedding; hidden ones return their delta. */
+function applyRequestEmotion(e: Engine, body: Body, p: Plan): Float32Array | null {
+  if (!bool(body, 'emotion_enabled')) return null;
+  const sliders: EmotionSliders = isSet(body, 'emotion_sliders')
+    ? Object.entries(body.emotion_sliders as Record<string, number>).map(([k, v]) => [k, Number(v)]) : [];
+  const va = { valence: num(body, 'emotion_valence', 0), arousal: num(body, 'emotion_arousal', 0) };
+  if (!sliders.length && va.valence === 0 && va.arousal === 0) return null;
+  if (!e.emotion)
+    fail(400, 'Emotion control requested but no emotion directions are configured for this model. ' +
+      'Start the server with --emotion-directions (or place emotion.gguf next to the backbone).');
+  const d = e.emotion;
+  const embedding = requestEmbedding(p);
+  if (!embedding && d.space !== 'attnres_source') return null;
+  if (calibrated(body)) calibrate(d, p.speakerId, sliders, va);
+  const strength = num(body, 'emotion_strength', 1.0);
+  if (d.hidden()) return as400(() => hiddenDelta(d, sliders, va.valence, va.arousal, strength, true));
+  const moved = as400(() => applyEmotion(d, embedding!, sliders, va.valence, va.arousal, strength, true, true));
+  embedding!.set(moved);
+  return null;
+}
+
+/** sgl _resolve_tts_request_accent + _apply_steering_accent (direction accents only: no adapters in the export). */
+function applyAccent(e: Engine, body: Body, p: Plan): Float32Array | null {
+  const accent = str(body, 'accent');
+  if (accent === null || accent === '' || accent === 'none') return null;
+  const accents = serverAccents(e);
+  if (!accents.includes(accent)) {
+    const loaded = accents.length ? accents.join(', ') : 'none (start the server with --accent-adapters or --accent-directions)';
+    fail(400, `Unknown accent ${pyRepr(accent)}; loaded accents: ${loaded}.`);
+  }
+  const d = e.accentDirections!;
+  return as400(() => accentSteering(d, accent, num(body, 'accent_strength', 1.0), p.speakerId, calibrated(body), requestEmbedding(p)));
+}
+
+/** sgl _layout_steering_delta. */
+function addSteeringDelta(e: Engine, p: Plan, source: number, delta: Float32Array | null): void {
+  if (!delta) return;
+  if (!p.steering.sources.length) {
+    p.steering.sources = e.steerSources.slice();
+    p.steering.hiddenSize = e.hp.nEmbd;
+  }
+  const out = addHiddenDelta(p.steering.sources, p.steering.hiddenSize, source, delta, p.steering.hidden);
+  if (!out) fail(500, `steering source ${source} is not among the server's steered sources`);
+  p.steering.hidden = out;
+}
+
+/** sgl _apply_request_controls. */
+function applyControls(e: Engine, body: Body, p: Plan): void {
+  if (!truthy(body, 'controls') && !truthy(body, 'control_spans')) return;
+  if (!e.steer)
+    fail(400, 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); ' +
+      '`controls` are unavailable.');
+  if (bool(body, 'emotion_enabled') &&
+      (truthy(body, 'emotion_sliders') || num(body, 'emotion_valence', 0) !== 0 || num(body, 'emotion_arousal', 0) !== 0))
+    fail(400, '`controls` and the emotion_* fields cannot be combined; send the emotion as controls.');
+  const controls = isSet(body, 'controls') ? body.controls as Record<string, number> : {};
+  const spans = isSet(body, 'control_spans') ? body.control_spans as ControlSpan[] : [];
+  const rate = num(body, 'control_span_rate', 0);
+  const embedding = p.speakerMode === 'embedding' ? p.speakerEmbedding : null;
+  p.steering = as400(() => resolveControls(e.steer!, controls, spans, textChars(p.rawText), rate, embedding));
+}
+
+/** sgl _check_laci_request. */
+function checkLaci(e: Engine, body: Body, language: string): void {
+  if (!bool(body, 'laci')) return;
+  if (!e.laci.size) fail(400, 'LACI is not enabled on this server (start it with --laci-heads LANG=PATH)');
+  if (!e.laci.has(language))
+    fail(400, `No LACI alignment heads for language ${pyRepr(language)} (configured: ${laciLanguages(e).join(', ')})`);
+  if (num(body, 'speaker_cfg_scale', 1) !== 1 || num(body, 'emotion_cfg_scale', 1) !== 1)
+    fail(400, 'LACI needs speaker_cfg_scale = emotion_cfg_scale = 1');
+  if (num(body, 'tag_cfg_scale', 1) !== 1) fail(400, 'LACI needs tag_cfg_scale = 1');
+}
+
+/** The tokenizer's follow tokens (span_follow.span_token_ranges). */
+function resolveFollowTokens(e: Engine, p: Plan): void {
+  if (!p.follow) return;
+  const tok = e.tokenizer;
+  const enc = new TextEncoder();
+  // SuperBPE offsets: a token's characters run from the character of its first byte to the one of its last.
+  const bpe = (piece: string): Range[] => {
+    const out: Range[] = [];
+    const utf8 = enc.encode(piece);
+    const nChars = Array.from(piece).length;
+    const charOf = new Array<number>(utf8.length + 1).fill(nChars);
+    for (let b = 0, c = 0; b < utf8.length; b++) {
+      if (b > 0 && (utf8[b] & 0xc0) !== 0x80) c++;
+      charOf[b] = c;
+    }
+    const ids = tok.encode(piece);
+    let at = 0;
+    for (let i = 1; i + 1 < ids.length; i++) {
+      const n = tok.tokenBytes(ids[i]);
+      if (n === 0) continue;
+      out.push([charOf[at], charOf[at + n - 1] + 1]);
+      at += n;
+    }
+    return out;
+  };
+  const spans: Range[] = p.steering.spans.map(s => [s.charStart, s.charEnd]);
+  const ranges = tokenCharRanges(p.text, bpe, null);
+  p.followTokens = spanTokenRanges(p.rawText, p.text, spans, ranges, nonverbalMarkerSpans(p.text));
+}
+
+/** GenerateRequest -> Plan (generate.cpp resolve + plan_generate). */
+export async function planGenerate(e: Engine, spk: Speakers, body: Body, session: string | null,
+                                   pcm: Float32Array | undefined): Promise<Plan> {
+  const text = str(body, 'text')!;
+  const speakerCfg = num(body, 'speaker_cfg_scale', 1), emotionCfg = num(body, 'emotion_cfg_scale', 1);
+  validateTagCfg(text, num(body, 'tag_cfg_scale', 1), speakerCfg, emotionCfg);
+  const modes = spk.checkpointModes();
+  let mode = modes.length ? modes[0] : '';
+  if (isSet(body, 'speaker_mode')) {
+    mode = str(body, 'speaker_mode')!;
+    if (!modes.includes(mode))
+      fail(400, `speaker_mode=${pyRepr(mode)} is not available for this checkpoint (supported: ${pyList(modes)})`);
+  }
+  const conditionBuckets = resolveConditionBuckets(e, body);
+  const rs = await spk.resolveRequest(body, session, mode, pcm);
+  const p: Plan = {
+    text, rawText: text, language: 'en_us', sp: defaultSampling(), maxFrames: MAX_FRAMES, speakerMode: rs.mode,
+    referenceCodes: rs.codes, speakerEmbedding: rs.embedding ? Float32Array.from(rs.embedding) : null,
+    speakerId: str(body, 'speaker_embedding_id') ?? '', conditionBuckets, silencePrefill: 0, decodeContext: null,
+    cfgScale: 1, cfgKind: '', twinSteered: true, headroomDb: -1, fadeOutMs: 0, stream: true, wav: false, prefix: false,
+    steering: new Steering(), speakerDelta: null, spanFollow: '', laci: null, follow: null, followTokens: [],
+    followLead: 1, followLag: 0, prompt: null!, twin: null,
+  };
+  const emotionDelta = applyRequestEmotion(e, body, p);
+  p.language = resolveLanguage(body);
+  if (isSet(body, 'max_tokens')) {
+    const requested = Number(body.max_tokens);
+    if (requested <= 0) fail(400, 'max_tokens must be positive.');
+    p.maxFrames = Math.min(requested, MAX_FRAMES);
+  }
+  const accentDelta = applyAccent(e, body, p);
+  applyControls(e, body, p);
+  if (e.emotion && e.emotion.space === 'proj') p.speakerDelta = emotionDelta;
+  else if (e.emotion) addSteeringDelta(e, p, e.emotion.sourceIndex, emotionDelta);
+  if (e.accentDirections) addSteeringDelta(e, p, e.accentDirections.sourceIndex, accentDelta);
+  // sgl _span_follow
+  if (str(body, 'control_span_follow') === 'reading' && p.steering.spans.length) {
+    const heads = e.laci.get(p.language);
+    if (heads) {
+      const d = defaultFollowConfig();
+      p.follow = heads;
+      p.followLead = num(body, 'control_span_lead', d.lead);
+      p.followLag = num(body, 'control_span_lag', d.lag);
+    }
+  }
+  if (truthy(body, 'control_spans')) p.spanFollow = p.follow ? 'reading' : 'rate';
+  p.stream = bool(body, 'stream') ?? true;
+  p.prefix = p.stream && (isSet(body, 'stream_decode') ? str(body, 'stream_decode') === 'prefix' : true);
+  if (speakerCfg !== 1.0) {
+    const hasPrompt = (p.speakerMode === 'reference' && !!p.referenceCodes?.length) ||
+      (p.speakerMode === 'embedding' && !!p.speakerEmbedding?.length);
+    if (!hasPrompt)
+      fail(400, 'Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or ' +
+        'speaker_mode=embedding with a clip or an embedding');
+    if (emotionCfg !== 1.0) fail(400, 'Speaker and emotion CFG cannot be combined');
+    p.cfgScale = speakerCfg;
+    p.cfgKind = 'speaker';
+  }
+  const tagCfg = num(body, 'tag_cfg_scale', 1);
+  if (tagCfg > 1.0) {
+    p.cfgScale = tagCfg;
+    p.cfgKind = 'tag';
+  }
+  if (emotionCfg !== 1.0 && (p.steering.hidden || p.speakerDelta) && requestEmbedding(p)) {
+    p.cfgScale = emotionCfg;
+    p.twinSteered = false;
+    p.cfgKind = 'emotion';
+  }
+  // check_phoneme_groups: this checkpoint has no phoneme tokens
+  if (text.includes('\uE000') || text.includes('\uE001'))
+    fail(400, 'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups');
+  checkLaci(e, body, p.language);
+  if (bool(body, 'laci')) p.laci = e.laci.get(p.language)!;
+  // sampling (TTSSamplingParams)
+  const sp = p.sp;
+  sp.temperature = num(body, 'temperature', 0.75);
+  sp.top_k = num(body, 'topk', 80);
+  sp.top_p = num(body, 'top_p', 0.69);
+  sp.min_p = num(body, 'min_p', 0);
+  sp.rep_penalty = num(body, 'repetition_penalty', 2.4);
+  sp.rep_window = num(body, 'repetition_window', 96);
+  sp.rep_codebooks = num(body, 'repetition_codebooks', 6);
+  if (sp.rep_codebooks < 0) sp.rep_codebooks = e.hp.nCodebooks;
+  if (isSet(body, 'seed')) sp.seed = Number(body.seed) >>> 0;
+  else sp.seed = crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;  // secrets.randbelow(2**31)
+  sp.greedy = sp.temperature <= 0;
+  p.fadeOutMs = num(body, 'fade_out_ms', 0);
+  p.headroomDb = num(body, 'headroom_db', -1);
+  p.silencePrefill = SILENCE_PREFILL.on ? SILENCE_PREFILL.frames : 0;
+  if (isSet(body, 'silence_prefill_frames')) {
+    const frames = Number(body.silence_prefill_frames);
+    if (frames < 0 || frames > MAX_SILENCE_PREFILL) fail(400, `silence_prefill_frames must be 0..${MAX_SILENCE_PREFILL}`);
+    p.silencePrefill = frames;
+  }
+  if (bool(body, 'decode_context') && p.referenceCodes?.length) {
+    const asked = num(body, 'decode_context_frames', 30);
+    const frames = asked ? asked : 30;
+    const refFrames = p.referenceCodes.length / NCB;
+    const k = Math.max(0, Math.min(frames, refFrames));
+    p.decodeContext = p.referenceCodes.slice(p.referenceCodes.length - k * NCB);
+  }
+  // text normalization is not available in the browser: the text is tokenized as sent
+  resolveFollowTokens(e, p);
+
+  // plan_generate: prompt and CFG twin
+  const opt = {
+    referenceCodes: p.speakerMode === 'reference' && p.referenceCodes?.length ? p.referenceCodes : undefined,
+    speakerEmbedding: p.speakerMode === 'embedding' && p.speakerEmbedding?.length ? p.speakerEmbedding : undefined,
+    buckets: p.conditionBuckets,
+    silencePrefill: p.silencePrefill,
+  };
+  const build = (t: string, what: string) => {
+    try {
+      return buildPrompt(e.tokenizer, t, opt, e.hp);
+    } catch (err) {
+      fail(400, `${what}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  p.prompt = build(p.text, 'could not build the prompt');
+  if (p.prompt.cond.speakerRow >= 0) p.prompt.cond.speakerDelta = p.speakerDelta;
+  if (p.cfgKind === 'speaker') {
+    try {
+      p.twin = buildCfgTwin(p.prompt, e.hp.nCondBuckets);
+    } catch {
+      fail(400, 'could not build the speaker-CFG twin prompt');
+    }
+  } else if (p.cfgKind === 'tag') {
+    p.twin = build(stripNonverbalMarkup(p.text), 'could not build the tag-CFG twin prompt');
+    if (p.twin.cond.speakerRow >= 0) p.twin.cond.speakerDelta = p.speakerDelta;
+  } else if (p.cfgKind === 'emotion') {
+    p.twin = { ...p.prompt, cond: { ...p.prompt.cond, speakerDelta: null } };
+  }
+  // make_job: the slot capacity check
+  const rows = Math.max(p.prompt.nRows, p.twin?.nRows ?? 0);
+  if (rows + p.maxFrames > CONTEXT_CAPACITY)
+    fail(400, `reference, text and max_tokens exceed the slot context capacity (${CONTEXT_CAPACITY} rows)`);
+  return p;
+}
+
+// ------------------------------------------------------------------------------------------------ job
+
+interface Probe { textStart: number; textLen: number; heads: { layer: number; head: number }[]; windows: Windows }
+
+/** attach_probe: the probed text span, the span follower and the LACI session (400 when the request cannot run it). */
+function attachProbe(e: Engine, p: Plan): { probe: Probe | null; follower: SpanFollower | null; laci: LaciSession | null } {
+  const heads = p.laci ?? p.follow;
+  if (!heads) return { probe: null, follower: null, laci: null };
+  const span = locateTextSpan(p.prompt.ids, NCB);
+  if (!span) fail(400, 'the prompt has no complete text span for the alignment probe');
+  if (span.len > PROBE_MAX_TEXT)
+    fail(400, `the text is too long for the alignment probe (${span.len} text rows; at most ${PROBE_MAX_TEXT})`);
+  const probe: Probe = { textStart: span.start, textLen: span.len, heads: heads.heads.map(h => ({ ...h })), windows: [] };
+  let follower: SpanFollower | null = null;
+  if (p.follow && p.steering.spans.length) {
+    const cfg = { ...defaultFollowConfig(), lead: p.followLead, lag: p.followLag };
+    follower = new SpanFollower(p.followTokens.map(r => [r[0], r[1]] as Range), p.steering.spans.map(s => s.delta), cfg);
+  }
+  if (!p.laci) return { probe, follower, laci: null };
+  const W = NCB + 1, P = p.prompt.prefillFrames;
+  const prefillRows: Int32Array[] = [];
+  for (let r = p.prompt.nRows - P; r < p.prompt.nRows; r++) prefillRows.push(p.prompt.ids.slice(r * W, (r + 1) * W));
+  let rates: RateBuckets | null = null;
+  const hp = e.hp;
+  hp.condNames.forEach((name, i) => {
+    if (name === 'speaking_rate' && hp.condEdges[i]?.length) rates = new RateBuckets(i, hp.condEdges[i].slice(), hp.nCondBuckets);
+  });
+  const laci = as400(() => new LaciSession({
+    heads: p.laci!, cfg: defaultLaciConfig(), prefillRows, seed: p.sp.seed, maxTokens: p.maxFrames, nCodebooks: NCB,
+    rates, conditionValues: hp.nCond > 0 ? p.prompt.cond.buckets.slice() : null, bucket: null, rateDeltas: null, follower,
+  }));
+  return { probe, follower, laci };
+}
+
+/** The first H delayed rows of the stream behind the decode-context frames (scheduler.cpp decode_rows). */
+function decodeRows(codes: number[], H: number, ctx: Int32Array | null, K: number): number[] {
+  if (K === 0) return codes.slice(0, H * NCB);
+  const rows = new Array<number>((K + H) * NCB).fill(4097);
+  const c0 = ctx!.length / NCB - K;
+  for (let r = 0; r < K + H; r++) {
+    if (r >= K) for (let c = 0; c < NCB; c++) rows[r * NCB + c] = codes[(r - K) * NCB + c];
+    for (let c = 0; c < NCB; c++) {
+      const frame = r - c;
+      if (frame >= 0 && frame < K) rows[r * NCB + c] = ctx![(c0 + frame) * NCB + c];
+    }
+  }
+  return rows;
+}
+
+/** Runs one planned request to completion; PCM goes to `emit` (gain applied, prefill/context dropped). */
+export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => void, aborted: () => boolean): Promise<void> {
+  const { probe, follower, laci } = attachProbe(e, p);
+  const bb = e.backbone, codec = e.codec;
+  const ncb = NCB, W = ncb + 1;
+  const ctxFrames = p.decodeContext ? p.decodeContext.length / ncb : 0;
+  let skip = (p.prompt.prefillFrames + ctxFrames) * HOP;
+  const gain = p.headroomDb < 0 ? codec.gain : Math.fround(10 ** (-p.headroomDb / 20));
+  const finish = (pcm: Float32Array): Float32Array => {
+    let out = pcm;
+    if (skip > 0) {
+      const n = Math.min(out.length, skip);
+      out = out.subarray(n);
+      skip -= n;
+    }
+    if (gain !== 1) {
+      const g = new Float32Array(out.length);
+      for (let i = 0; i < out.length; i++) g[i] = Math.fround(out[i] * gain);
+      out = g;
+    }
+    return out;
+  };
+
+  const slot: SlotState = newSlot(p.prompt.prefillFrames);
+  let smp = new Sampler({ ...p.sp }, ncb, VOCAB);
+  const codes: number[] = Array.from(prefillCodes(p.prompt));   // stream rows: silence prefill first
+  let eosFrame = -1;
+  let attemptMax = p.maxFrames, historyRows = 0;
+  let steer: Float32Array | null = p.steering.hidden;
+  const twin = p.twin;
+  const twinSteered = p.twinSteered;
+  let windows: Windows = laci?.probeMask() ?? [];
+  const probeCtl: ProbeControl = { textLen: probe?.textLen ?? 0, mask: null, stop: false };
+  let readout: { argmax: number; centroid: number } | null = null;
+  let hidden = p.steering.hidden;
+
+  // codec stream state (prefix streaming: incremental; whole: decoded at the end through the same causal stream)
+  codec.reset();
+  let decoded = 0;         // frames handed to the codec
+  const decodeUpTo = async (rows: number[], H: number, fHi: number) => {
+    while (decoded < fHi) {
+      const n = Math.min(BLOCK, fHi - decoded);
+      const out = await codec.chunk(buildIdx(rows, H, decoded, n), decoded, n);
+      decoded += n;
+      const pcm = finish(out);
+      if (pcm.length) emit(pcm);
+    }
+  };
+  let emitted = p.prompt.prefillFrames;   // prefix streaming: frames handed to the codec (scheduler job->emitted)
+  const prefixReady = async () => {
+    const H = codes.length / ncb;
+    let complete = H - (ncb - 1);
+    if (eosFrame >= 0) complete = Math.min(complete, eosFrame);
+    const decodable = complete - PREFIX_HOLD_BACK_FRAMES;
+    if (decodable - emitted < PREFIX_CHUNK_FRAMES) return;
+    await decodeUpTo(decodeRows(codes, H, p.decodeContext, ctxFrames), H + ctxFrames, decodable + ctxFrames);
+    emitted = decodable;
+  };
+
+  const probeInput = (): ProbeInput | null => probe ? { ...probe, windows } : null;
+
+  // admit: prefill the conditional slot (and the twin)
+  let logits = (await bb.prefill(0, p.prompt.ids, p.prompt.cond)).logits;
+  let twinLogits = twin ? (await bb.prefill(1, twin.ids, twin.cond)).logits : null;
+  const guided = twin ? new Float32Array(logits.length) : null;
+
+  for (;;) {
+    if (aborted()) return;
+    // 3. sample one frame from the current logits
+    let source = logits;
+    if (twinLogits && guided) {
+      const s = Math.fround(p.cfgScale);
+      for (let i = 0; i < guided.length; i++) guided[i] = twinLogits[i] + s * (logits[i] - twinLogits[i]);
+      source = guided;
+    }
+    if (readout) {
+      const ro = readout;
+      readout = null;
+      if (laci) {
+        try {
+          laci.onStep(probeCtl, slot.step, ro.argmax, ro.centroid);
+        } catch (err) {
+          throw new Error(`LACI: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        windows = probeCtl.mask ?? [];
+      } else if (follower) {
+        follower.onStep(slot.step, ro.argmax);
+      }
+    }
+    if (laci) {
+      sampleFrame(slot, smp, source, attemptMax);
+      const eos = slot.eosFrame >= 0 ? Math.max(0, slot.eosFrame - laci.attemptStart) : null;
+      laci.append(Int32Array.from(slot.nextIds), eos);
+      if (probeCtl.stop) slot.done = true;
+      if (!slot.done) {
+        const r = laci.drain();
+        for (let i = r.begin; i < r.end; i++) for (let c = 0; c < ncb; c++) codes.push(laci.stream[i][c]);
+      }
+    } else {
+      const frame = sampleFrame(slot, smp, source, attemptMax);
+      for (const c of frame) codes.push(c);
+      eosFrame = slot.eosFrame;
+    }
+    if (p.prefix) await prefixReady();
+
+    // 4. a finished slot: LACI rollback, or the final decode
+    if (slot.done) {
+      if (laci) {
+        const c = laci.finishAttempt();
+        if (c) {
+          // laci_resume: re-prefill the prompt (without its silence rows) plus the kept stream rows
+          const base = p.prompt.nRows - p.prompt.prefillFrames;
+          const ids = new Int32Array((base + c.nRows) * W);
+          ids.set(p.prompt.ids.subarray(0, base * W));
+          for (let r = 0; r < c.nRows; r++) ids.set(laci.stream[r].subarray(0, W), (base + r) * W);
+          const cond: Conditioning = { ...p.prompt.cond };
+          if (c.conditionValues) cond.buckets = c.conditionValues.slice();
+          if (c.swapDelta) hidden = c.speakerEmotionDelta;
+          Object.assign(slot, newSlot(c.nRows));
+          steer = hidden;
+          windows = laci.probeMask() ?? [];
+          probeCtl.mask = null;
+          probeCtl.stop = false;
+          readout = null;
+          historyRows = c.historyRows;
+          attemptMax = c.maxTokens;
+          smp = new Sampler({ ...p.sp, seed: (c.seed ?? p.sp.seed) >>> 0 }, ncb, VOCAB);
+          for (let r = p.prompt.prefillFrames; r < c.nRows; r++) smp.accept(laci.stream[r].subarray(0, ncb));
+          smp.generated = 0;
+          logits = (await bb.prefill(0, ids, cond)).logits;
+          const r = laci.drain();
+          for (let i = r.begin; i < r.end; i++) for (let k = 0; k < ncb; k++) codes.push(laci.stream[i][k]);
+          if (p.prefix) await prefixReady();
+          continue;
+        }
+        const r = laci.drain(true);
+        for (let i = r.begin; i < r.end; i++) for (let k = 0; k < ncb; k++) codes.push(laci.stream[i][k]);
+        eosFrame = laci.end && laci.end[1] !== null ? laci.end[1] : -1;
+      }
+      // submit_finalize: EOS inside the silence prefill leaves no audio
+      if (eosFrame >= 0 && eosFrame <= p.prompt.prefillFrames) throw new Error('generation failed');
+      const nf = codes.length / ncb;
+      const H = nf + ctxFrames;
+      const E = Math.min(eosFrame >= 0 ? eosFrame + ctxFrames : H, H - (ncb - 1));
+      if (E > 0) {
+        const rows = decodeRows(codes, nf, p.decodeContext, ctxFrames);
+        const tail: Float32Array[] = [];
+        const keep = (pcm: Float32Array) => { if (pcm.length) tail.push(pcm); };
+        // the frames prefix streaming has not decoded yet, then the codec's tail
+        while (decoded < E) {
+          const n = Math.min(BLOCK, E - decoded);
+          keep(finish(await codec.chunk(buildIdx(rows, H, decoded, n), decoded, n)));
+          decoded += n;
+        }
+        keep(finish(codec.flush()));
+        const total = tail.reduce((a, b) => a + b.length, 0);
+        const out = new Float32Array(total);
+        let o = 0;
+        for (const t of tail) { out.set(t, o); o += t.length; }
+        applyFade(out, p.fadeOutMs, SAMPLE_RATE);
+        if (out.length) emit(out);
+      }
+      return;
+    }
+
+    // 5. one decode step (step_steer first)
+    const frame = historyRows + slot.step;
+    if (follower) {
+      const span = follower.delta(frame);
+      if (span) {
+        if (hidden) for (let i = 0; i < hidden.length && i < span.length; i++) span[i] += hidden[i];
+        steer = span;
+      } else {
+        steer = hidden;
+      }
+    } else if (p.steering.spans.length) {
+      const out = { v: null as Float32Array | null };
+      p.steering.deltaAt(frame, out);
+      steer = out.v;
+    }
+    const next = Int32Array.from(slot.nextIds);
+    const res = await bb.step(0, next, steer, probeInput());
+    logits = res.logits;
+    if (twin) twinLogits = (await bb.step(1, next, twinSteered ? steer : null, null)).logits;
+    if (probe && res.probe) readout = probeReduce(res.probe, probe.textLen);
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ routes
+
+async function generate(e: Engine, spk: Speakers, body: Body, req: EngineRequest, sink: Sink, aborted: () => boolean): Promise<void> {
+  const wav = str(body, 'format') === 'wav';
+  const stream = bool(body, 'stream') ?? true;
+  if (stream && wav) fail(400, 'format=wav needs stream=false');
+  const p = await planGenerate(e, spk, body, sessionId(req), req.pcm);
+  p.wav = wav;
+  const headers: Record<string, string> = {
+    'x-audio-sample-rate': String(SAMPLE_RATE),
+    'x-audio-channels': '1',
+    'x-audio-format': wav ? 'pcm16' : 'float32',
+    'x-seed': String(p.sp.seed),
+  };
+  if (p.spanFollow) headers['x-control-span-follow'] = p.spanFollow;
+  if (p.stream) {
+    let started = false;
+    const start = () => { if (!started) { started = true; sink.start(200, { ...headers, 'content-type': 'audio/pcm' }); } };
+    // an error before the first byte answers as JSON; afterwards the stream ends (the client sees a short body)
+    try {
+      await runJob(e, p, pcm => { start(); sink.chunk(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)); }, aborted);
+    } catch (err) {
+      if (!started) throw err;
+      console.error('generate:', err);
+    }
+    start();
+    sink.end();
+    return;
+  }
+  const parts: Float32Array[] = [];
+  try {
+    await runJob(e, p, pcm => parts.push(pcm.slice()), aborted);
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    console.error('generate:', err);
+    fail(500, 'generation failed');
+  }
+  const audio = new Float32Array(parts.reduce((a, b) => a + b.length, 0));
+  let o = 0;
+  for (const part of parts) { audio.set(part, o); o += part.length; }
+  if (wav) {
+    sink.start(200, { ...headers, 'content-type': 'audio/wav' });
+    sink.chunk(wavBytes(audio, SAMPLE_RATE, 'trunc'));
+  } else {
+    sink.start(200, { ...headers, 'content-type': 'audio/pcm' });
+    sink.chunk(new Uint8Array(audio.buffer));
+  }
+  sink.end();
+}
+
+const SPEAKER_INPUT_FIELDS = [
+  'speaker_audio_base64', 'speaker_audio_name', 'speaker_reference_codes', 'speaker_embedding_base64',
+  'speaker_embedding_name', 'speaker_embedding_id', 'speaker_blend_embedding_id_a', 'speaker_blend_embedding_id_b',
+  'speaker_blend_t',
+];
+
+export async function generateRoute(e: Engine, spk: Speakers, req: EngineRequest, sink: Sink, aborted: () => boolean): Promise<void> {
+  await generate(e, spk, parseBody(req, 'GenerateRequest'), req, sink, aborted);
+}
+
+/** OpenAI-compatible: the /v2/generate request of `input`, with `voice` as its speaker_embedding_id. */
+export async function speechRoute(e: Engine, spk: Speakers, req: EngineRequest, sink: Sink, aborted: () => boolean): Promise<void> {
+  const body = parseBody(req, 'SpeechRequest');
+  const session = sessionId(req);
+  const format = str(body, 'response_format') ?? 'pcm';
+  if (isSet(body, 'voice')) {
+    for (const field of SPEAKER_INPUT_FIELDS) if (isSet(body, field)) fail(400, 'voice cannot be combined with speaker_* fields');
+    const voice = str(body, 'voice')!;
+    if (!spk.known(session, voice)) fail(400, `unknown voice '${voice}'`);
+    body.speaker_embedding_id = voice;
+  }
+  body.text = body.input;
+  body.stream = format === 'pcm';
+  body.format = format;
+  for (const k of ['model', 'input', 'voice', 'response_format']) delete body[k];
+  await generate(e, spk, body, req, sink, aborted);
+}
+
+export { MAX_REFERENCE_FRAMES };

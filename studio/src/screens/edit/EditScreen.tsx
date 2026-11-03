@@ -680,7 +680,7 @@ function Unavailable() {
         The checkpoint it serves has no span-end token, so it can only speak whole utterances. Serve the speech-editing checkpoint to edit words in recordings:
       </p>
       <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=steering/studio_bundle_mect60k.json</pre>
-      <p class="muted small">{b.kind === 'live' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
+      <p class="muted small">{b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
     </div>
   );
 }

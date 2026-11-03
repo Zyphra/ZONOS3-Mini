@@ -1,0 +1,8 @@
+# The repository ignores *.json; the package needs its manifest, lockfile, tsconfig and fixtures.
+!*.json
+node_modules/
+# exported model shards (pnpm export) and parity goldens (scripts/make_goldens.sh)
+public/models/
+public/goldens/
+.wrangler/
+harness/.chrome/

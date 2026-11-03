@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>zonos3-web harness</title>
+</head>
+<body>
+  <pre id="status">loading…</pre>
+  <script type="module">
+    // The in-browser server behind the harness HTTP bridge (harness/server.mjs): window.zfetch serves /v1 and /v2.
+    import { engine, localFetch } from '/web-engine/engine.js';
+    const status = document.getElementById('status');
+    window.zfetch = localFetch;
+    engine.onFatal(m => { window.zfatal = m; status.textContent = 'fatal: ' + m; });
+    engine.init(p => { status.textContent = `${p.model} ${p.loaded}/${p.total}`; })
+      .then(() => { window.zready = true; status.textContent = 'ready'; },
+            e => { window.zfatal = String(e && e.message || e); status.textContent = 'failed: ' + window.zfatal; });
+  </script>
+</body>
+</html>

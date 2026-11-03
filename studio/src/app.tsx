@@ -5,7 +5,7 @@ import * as api from './api';
 import { startPreview, playSide } from './audio/preview';
 import * as player from './audio/player';
 import { Icon } from './components/Icon';
-import { act, activeHistory, backend, bootError, modalOpen, primaryAction, screenKeys, toasts, type Act } from './state/app';
+import { act, activeHistory, backend, bootError, bootProgress, modalOpen, primaryAction, screenKeys, toasts, type Act } from './state/app';
 import { embeddingsSynthetic, loadAllEmbeddings, refreshSpeakers } from './state/library';
 import { openLastProject } from './state/projects';
 import { CastScreen } from './screens/cast/CastScreen';
@@ -84,18 +84,22 @@ function BackendPill() {
   const b = backend.value;
   if (!b) return null;
   const text =
-    b.kind === 'live'
-      ? `Live · ${b.spec.bundle}`
-      : b.kind === 'fixture'
-        ? 'Fixture controls · server can’t steer yet'
-        : 'Offline · synthesized audio';
+    b.kind === 'web'
+      ? `In-browser · ${b.spec.bundle}`
+      : b.kind === 'live'
+        ? `Live · ${b.spec.bundle}`
+        : b.kind === 'fixture'
+          ? 'Fixture controls · server can’t steer yet'
+          : 'Offline · synthesized audio';
   const detail =
-    b.kind === 'live'
-      ? `Connected to ${b.server || location.origin}; controls and spans are applied by the server.`
-      : b.kind === 'fixture'
-        ? 'This server has no /v2/controls: controls come from the bundled fixture and renders are sent without them (you hear the base voice).' +
-          (embeddingsSynthetic.value ? ' Embeddings are synthetic, so saving designed voices is off.' : '')
-        : 'No server answered: voices, embeddings and audio come from the client-side fixture (a babbling synthesizer that follows every control).';
+    b.kind === 'web'
+      ? 'ZONOS3 runs in this tab on WebGPU; models are cached in the browser (Cache Storage).'
+      : b.kind === 'live'
+        ? `Connected to ${b.server || location.origin}; controls and spans are applied by the server.`
+        : b.kind === 'fixture'
+          ? 'This server has no /v2/controls: controls come from the bundled fixture and renders are sent without them (you hear the base voice).' +
+            (embeddingsSynthetic.value ? ' Embeddings are synthetic, so saving designed voices is off.' : '')
+          : 'No server answered: voices, embeddings and audio come from the client-side fixture (a babbling synthesizer that follows every control).';
   return (
     <span class={`pill pill-${b.kind}`} title={detail}>
       <span class="pill-dot" />
@@ -251,7 +255,7 @@ export function App() {
         ) : !backend.value ? (
           <div class="empty">
             <div class="loader" />
-            <p>Opening the studio…</p>
+            <p>{bootProgress.value ?? 'Opening the studio…'}</p>
           </div>
         ) : act.value === 'cast' ? (
           <CastScreen />

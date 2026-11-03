@@ -8,7 +8,10 @@
  *             speakers / previews / renders are real, and steering fields are stripped (the server can't apply them).
  *  - offline: no server answers: fixture controls, fixture voices, renders from a small client-side synthesizer
  *             that applies the contract's steering math so every control is audible.
- * Force one with `?api=live|fixture|offline` (or VITE_ZONOS_API); point at another server with `?server=URL`.
+ *  - web:     the in-browser server (servers/web): ZONOS3 runs in this tab on WebGPU behind a fetch-compatible
+ *             transport loaded from `?engine=URL` (default /web-engine/engine.js); models stream from /models/.
+ *             Picked in `auto` when no server answers and the browser has WebGPU and the engine is deployed.
+ * Force one with `?api=live|fixture|offline|web` (or VITE_ZONOS_API); point at another server with `?server=URL`.
  */
 import createClient from 'openapi-fetch';
 import type { Readable } from 'openapi-typescript-helpers';
@@ -23,6 +26,7 @@ import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
 import { encodeNpy, encodeWav, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
+import { bootProgress } from './state/app';
 
 // ── Contract types ────────────────────────────────────────────────────────────────────────────────
 
@@ -128,7 +132,7 @@ export interface Rendered {
   spanFollow?: SpanFollow;
 }
 
-export type BackendKind = 'live' | 'fixture' | 'offline';
+export type BackendKind = 'live' | 'fixture' | 'offline' | 'web';
 
 export interface Backend {
   kind: BackendKind;
@@ -235,6 +239,18 @@ export class MissingMedia extends ApiError {
 const params = new URLSearchParams(location.search);
 const forced = (params.get('api') || import.meta.env.VITE_ZONOS_API || 'auto') as BackendKind | 'auto';
 const server = (params.get('server') || import.meta.env.VITE_ZONOS_SERVER_URL || '').replace(/\/+$/, '');
+
+/** The in-browser server's module (servers/web dist/engine.js). */
+interface WebEngine {
+  init(progress: (p: { model: string; loaded: number; total: number }) => void, opts?: { base?: string; cache?: boolean }): Promise<void>;
+}
+const engineUrl = params.get('engine') || import.meta.env.VITE_ZONOS_WEB_ENGINE || '/web-engine/engine.js';
+interface WebEngineModule { engine: WebEngine; localFetch: typeof fetch }
+let webEngine: Promise<WebEngineModule> | null = null;
+const loadWebEngine = (): Promise<WebEngineModule> => (webEngine ??= import(/* @vite-ignore */ engineUrl));
+let useWeb = forced === 'web';
+/** Every request goes through here: the in-browser server once the web backend is picked, else the network. */
+const transport: typeof fetch = (input, init) => (useWeb ? loadWebEngine().then((m) => m.localFetch(input, init)) : fetch(input, init));
 export const SAMPLE_RATE = 44100;
 
 function sessionId(): string {
@@ -299,7 +315,7 @@ async function fail(res: Response): Promise<never> {
 }
 
 /** Every JSON route: typed by the spec's `paths`, with the session (and keep-alive) headers. */
-const client = createClient<paths>({ baseUrl: server });
+const client = createClient<paths>({ baseUrl: server, fetch: transport });
 client.use({
   onRequest({ request, schemaPath }) {
     request.headers.set('X-TTS-Session-ID', sessionId());
@@ -440,19 +456,34 @@ function projectCaps(c: Schemas['ProjectsCapability'] | undefined): ProjectCaps 
   return { max_media_bytes: c.max_media_bytes, max_project_bytes: c.max_project_bytes, fixture: false };
 }
 
+/** The in-browser server: load the engine and its models (progress on the boot screen), then serve from this tab. */
+async function startWeb(make: (kind: BackendKind, spec: ControlsSpec) => Promise<Backend>): Promise<Backend> {
+  useWeb = true;
+  const { engine } = await loadWebEngine();
+  await engine.init((p) => (bootProgress.value = `Loading ${p.model} … ${Math.round((100 * p.loaded) / Math.max(1, p.total))}%`));
+  bootProgress.value = null;
+  return make('web', await getControls());
+}
+
 export async function connect(): Promise<Backend> {
   const make = async (kind: BackendKind, spec: ControlsSpec): Promise<Backend> => {
     const caps = kind === 'offline' ? null : await ok<Capabilities>(client.GET('/v2/capabilities')).catch(() => null);
-    return (backend = { kind, server, spec, steering: kind !== 'fixture', edit: editCaps(kind, caps), pron: pronCaps(kind, caps), dub: await dubCaps(kind), projects: projectCaps(caps?.projects), tags: tagCaps(kind, caps?.tag_cfg) });
+    // The in-browser server answers like a live one; its capabilities say which features are off.
+    const as = kind === 'web' ? 'live' : kind;
+    return (backend = { kind, server, spec, steering: kind !== 'fixture', edit: editCaps(as, caps), pron: pronCaps(as, caps), dub: await dubCaps(as), projects: projectCaps(caps?.projects), tags: tagCaps(as, caps?.tag_cfg) });
   };
   if (forced === 'offline') return make('offline', fixture);
+  if (forced === 'web') return startWeb(make);
   try {
     return await make('live', await getControls());
   } catch (err) {
     if (forced === 'live') throw err;
     if (err instanceof ApiError && err.status === 404) return make('fixture', fixture);
     if (forced === 'fixture') return make('fixture', fixture);
-    // Nothing (or not a ZONOS server) answered: run on the client-side fixture.
+    // Nothing (or not a ZONOS server) answered: the in-browser server when this browser and site can run it.
+    if (forced === 'auto' && 'gpu' in navigator && (await fetch(engineUrl, { method: 'HEAD' }).then((r) => r.ok, () => false)))
+      return startWeb(make);
+    // Else run on the client-side fixture.
     return make('offline', fixture);
   }
 }
@@ -501,7 +532,7 @@ export async function getEmbedding(speaker: Speaker): Promise<{ embedding: Float
       const body = await ok<Schemas['SpeakerEmbedding']>(client.GET('/v2/speakers/{speaker_id}/embedding', { params: { path: { speaker_id: speaker.id } } }));
       return { embedding: Float32Array.from(body.embedding), synthetic: false };
     } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 404 || b.kind === 'live') throw err;
+      if (!(err instanceof ApiError) || err.status !== 404 || b.kind === 'live' || b.kind === 'web') throw err;
     }
   }
   const own = offlineVoices.get(speaker.id)?.embedding;
@@ -519,7 +550,7 @@ export async function getPreview(speaker: Speaker): Promise<ArrayBuffer> {
     fixtureEdit.remember(pcm, SAMPLE_RATE, { text, words, embedding });
     return encodeWav(pcm, SAMPLE_RATE);
   }
-  const res = await fetch(`${server}/v2/speakers/${encodeURIComponent(speaker.id)}/preview`, { headers: headers() });
+  const res = await transport(`${server}/v2/speakers/${encodeURIComponent(speaker.id)}/preview`, { headers: headers() });
   if (!res.ok) await fail(res);
   return res.arrayBuffer();
 }
@@ -575,7 +606,7 @@ export async function generate(req: GenerateRequest, opts: GenerateOptions = {})
   if (!b.tags || (body.tag_cfg_scale ?? 1) <= 1) delete body.tag_cfg_scale;
   if (b.kind === 'offline' || b.tags?.fixture) return offlineGenerate(body, opts, t0);
 
-  const res = await fetch(`${server}/v2/generate`, { method: 'POST', headers: headers(true), body: JSON.stringify(body), signal: opts.signal });
+  const res = await transport(`${server}/v2/generate`, { method: 'POST', headers: headers(true), body: JSON.stringify(body), signal: opts.signal });
   if (!res.ok) await fail(res);
   const spanFollow: SpanFollow | undefined = body.control_spans?.length ? (res.headers.get('X-Control-Span-Follow') === 'reading' ? 'reading' : 'rate') : undefined;
   const sr = Number(res.headers.get('X-Audio-Sample-Rate')) || SAMPLE_RATE;
@@ -706,6 +737,7 @@ const dubFixture = () => !!current().dub?.fixture;
 
 /** POST raw bytes with upload progress (fetch has none); JSON back, errors as ApiError. */
 function postBytes<T>(path: string, body: Blob | ArrayBuffer, onProgress?: (f: number) => void, signal?: AbortSignal): Promise<T> {
+  if (useWeb) throw new ApiError(404, 'Not Found');   // the in-browser server has no byte-upload routes (dub is off)
   const { promise, resolve, reject } = Promise.withResolvers<T>();
   const xhr = new XMLHttpRequest();
   xhr.open('POST', server + path);
@@ -773,7 +805,7 @@ export function dubRegenerate(req: DubRegenerateRequest, signal?: AbortSignal): 
 /** The video with the dub as its audio track (MP4). */
 export async function dubMux(dubId: string, video: Blob, name: string): Promise<Blob> {
   if (dubFixture()) return fixtureDub.mux(dubId, video);
-  const res = await fetch(`${server}/v2/dub/mux/${encodeURIComponent(dubId)}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/octet-stream' }, body: video });
+  const res = await transport(`${server}/v2/dub/mux/${encodeURIComponent(dubId)}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/octet-stream' }, body: video });
   if (!res.ok) await fail(res);
   return res.blob();
 }
@@ -830,7 +862,7 @@ export async function deleteProject(id: string): Promise<void> {
 /** Whether the server holds media `hash` (HEAD: 200 / 404). */
 export async function hasMedia(hash: string): Promise<boolean> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.hasMedia(hash));
-  const res = await fetch(mediaUrl(hash), { method: 'HEAD', headers: headers() });
+  const res = await transport(mediaUrl(hash), { method: 'HEAD', headers: headers() });
   if (res.status === 404) return false;
   if (!res.ok) await fail(res);
   return true;
@@ -838,7 +870,7 @@ export async function hasMedia(hash: string): Promise<boolean> {
 
 export async function getMedia(hash: string, type?: string): Promise<Blob> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.getMedia(hash));
-  const res = await fetch(mediaUrl(hash), { headers: headers() });
+  const res = await transport(mediaUrl(hash), { headers: headers() });
   if (!res.ok) await fail(res);
   const blob = await res.blob();
   // The stored type when the server kept one, else the document's.
@@ -848,6 +880,6 @@ export async function getMedia(hash: string, type?: string): Promise<Blob> {
 /** Upload media under its SHA-256 (the server checks it; idempotent: 201 stored, 200 already held). */
 export async function putMedia(hash: string, blob: Blob): Promise<void> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.putMedia(hash, blob));
-  const res = await fetch(mediaUrl(hash), { method: 'PUT', headers: { ...headers(), 'Content-Type': blob.type || 'application/octet-stream' }, body: blob });
+  const res = await transport(mediaUrl(hash), { method: 'PUT', headers: { ...headers(), 'Content-Type': blob.type || 'application/octet-stream' }, body: blob });
   if (!res.ok) await fail(res);
 }

@@ -37,9 +37,15 @@ drives the TypeScript 5 compiler API, which the native TypeScript 7 the app type
 gives it its own TypeScript 5.
 
 Backends are detected at startup: **live** (server has `GET /v2/controls`), **fixture** (server answers but
-`/v2/controls` is 404: bundled controls, renders sent without steering fields) or **offline** (no server:
-fixture voices and a client-side babbling synthesizer that applies every control). Force one with
-`?api=live|fixture|offline`; point a build at another server with `?server=https://…` (CORS is open).
+`/v2/controls` is 404: bundled controls, renders sent without steering fields), **web** (no server answered, but the
+browser has WebGPU and the site serves the in-browser engine at `/web-engine/engine.js`: ZONOS3 runs in the tab,
+`../servers/web`) or **offline** (no server and no engine: fixture voices and a client-side babbling synthesizer that
+applies every control). Force one with `?api=live|fixture|offline|web` (`?engine=URL` points at another engine
+build); point a build at another server with `?server=https://…` (CORS is open). Every request goes through one
+transport (`fetch`, or the engine's `localFetch` on the web backend). `pnpm dev` / `pnpm preview` serve the engine
+(`../servers/web/dist`, `pnpm --dir ../servers/web build`) at `/web-engine` and its models
+(`../servers/web/public/models`, `pnpm --dir ../servers/web export`) at `/models`; `pnpm build:web` (after `build`)
+copies the engine into `dist/web-engine/` for a deployment.
 Speech editing follows `/v2/capabilities.speech_editing` on a live server and runs on the client-side fixture
 offline; `?edit=fixture` forces the fixture, `?edit=0` a checkpoint that cannot edit.
 

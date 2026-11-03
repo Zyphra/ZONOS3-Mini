@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "zonos3-studio",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  // The deployed site is the studio build with the engine in web-engine/ (pnpm --dir ../../studio build:web).
+  "assets": {
+    "directory": "../../studio/dist/",
+    "binding": "ASSETS",
+    "run_worker_first": ["/models/*", "/v1/*", "/v2/*"]
+  },
+  // Its own bucket: web-zonos3's zonos3-models holds an older export under the same keys.
+  "r2_buckets": [{ "binding": "MODELS", "bucket_name": "zonos3-studio-models" }]
+}
