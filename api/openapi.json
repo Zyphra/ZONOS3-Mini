@@ -473,6 +473,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -1287,7 +1290,7 @@
         }
       },
       "Unavailable": {
-        "description": "A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker) is unavailable.",
+        "description": "A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker, the ggml server's edit/dub worker) is unavailable.",
         "content": {
           "application/json": {
             "schema": {

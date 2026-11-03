@@ -1,10 +1,6 @@
-// Speech editing: POST /v2/edit/transcribe, /v2/edit/align, /v2/edit and the edit capabilities (sgl tts_edit*).
-//
-// Transcripts come from the server's ASR worker (Qwen3-ASR, server/asr.h) and every word timing from its FuseAlign
-// worker (server/fusealign.h), through the long-form orchestration of server/edit_align.h; the edit tokens of the word
-// diff and the verify scores are computed here (src/zonos3-textmatch.h). Each edited region is one span-end-terminated
-// generation through the scheduler (src/zonos3-edit.h ports zonos3/tts/edit.py and the planning of edit_align.py), and
-// the spliced codes are decoded once.
+// Speech editing: POST /v2/edit/transcribe, /v2/edit/align, /v2/edit and the edit capabilities. The requests run in
+// the edit/dub worker (server/edit_dub.h: zonos3.tts.edit_runtime.EditRuntime), which calls back into the served model
+// for each region's span-end-terminated generation and the decode of the spliced codes.
 #pragma once
 
 #include "server/state.h"

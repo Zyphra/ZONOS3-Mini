@@ -8,17 +8,14 @@ import math
 import hashlib
 import io
 import os
-import random
-import re
 import secrets
 import subprocess
-import tempfile
 import time
 import uuid
 import wave
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Tuple
 
@@ -47,28 +44,9 @@ from zonos3.tts.audio import (
     _transcode_audio_bytes_to_wav,
 )
 from zonos3.tts.conditioning import _model_tts_max_tokens, _resolve_tts_max_tokens
-from zonos3.tts.edit import edit_marker_rows, extract_fill, splice_edit, validate_edit_spans
-from zonos3.tts import textmatch
-from zonos3.tts.edit_align import (
-    GROUP_OPEN,
-    AsrWorker,
-    FuseAlignWorker,
-    WorkerError,
-    canonical_markup,
-    diff_spans,
-    edit_aligned_words,
-    edit_language,
-    edit_words,
-    expected_fill_seconds,
-    fill_groups,
-    fusealign_installed,
-    plan_edit_windows,
-    seconds_to_spans,
-    target_tokens,
-    transcribe_audio,
-    whole_clip_window,
-    wildcard_verify,
-)
+from zonos3.tts.edit import edit_marker_rows
+from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, edit_capabilities
 from zonos3.tts.emotion import (
     HIDDEN_SPACES,
     EmotionCalibration,
@@ -85,16 +63,11 @@ from zonos3.tts.steering import (
     resolve_controls,
 )
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip_nonverbal_markup, trained_on_tags
+from zonos3.server.dub import make_router as _dub_router
+from zonos3.server.edit import make_router as _edit_router
 from zonos3.server.keepalive import KeepaliveMiddleware
 from zonos3.server.projects import ProjectStore, make_router as _projects_router
 from zonos3.server.schemas import (
-    DubAnalyzeRequest,
-    DubGenerateRequest,
-    DubRegenerateRequest,
-    DubTranscribeRequest,
-    EditAlignRequest,
-    EditRequest,
-    EditTranscribeRequest,
     GenerateRequest,
     PhonemizeRequest,
     SpeakerCreateRequest,
@@ -121,11 +94,6 @@ _DEFAULT_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _EMOTION_DIRECTIONS_CACHE: Dict[str, "EmotionDirections | None"] = {}
 # Loaded per-speaker emotion strength calibration, keyed by directory.
 _EMOTION_CALIBRATION_CACHE: Dict[str, "EmotionCalibration | None"] = {}
-# Speech editing: the longest clip transcribed (Qwen3-ASR) and aligned (FuseAlign) per request, and the clip limit.
-_EDIT_ALIGN_MAX_SECONDS = 150.0
-# A clip longer than max_context_seconds (at most 20 s) is edited on windows planned over its aligned
-# word timings, so the alignment limit bounds every edit.
-_EDIT_MAX_SECONDS = _EDIT_ALIGN_MAX_SECONDS
 # The server's ASR worker (zonos3/workers/asr.py: Qwen3-ASR in .venv-asr; ZONOS3_ASR_PYTHON / ZONOS3_ASR_DEVICE):
 # every speech recognition of speech editing and dubbing. It starts on the first call.
 _ASR = AsrWorker()
@@ -2219,15 +2187,7 @@ async def tts_capabilities():
         "speaker_embedding_blend": _model_supports_speaker_embedding(state.config),
         "default_voices_enabled": bool(_default_voice_root(state.config)),
         # editing needs the checkpoint's span-end/marker rows, Qwen3-ASR (.venv-asr) and FuseAlign (fusealign_hub)
-        "speech_editing": _model_supports_editing(state.config) and _ASR.installed and fusealign_installed(),
-        "edit_max_spans": (
-            _edit_max_spans(state.config) if _model_supports_editing(state.config) else 0
-        ),
-        "edit_frame_rate": (
-            _edit_frame_rate(state.config) if _model_supports_editing(state.config) else None
-        ),
-        "edit_max_seconds": _EDIT_MAX_SECONDS,
-        "edit_align_max_seconds": _EDIT_ALIGN_MAX_SECONDS,
+        **edit_capabilities(_EDIT_RUNTIME.model, _ASR.installed and fusealign_installed()),
         **_emotion_capabilities(state.config),
         **_phoneme_capabilities(state.config),
         # server-side studio projects (/v2/projects, /v2/media; --studio-projects-dir)
@@ -2315,67 +2275,17 @@ def _emotion_capabilities(config: ServerArgs) -> dict:
 
 
 # =============================================================================
-# Speech editing
+# Speech editing (zonos3.tts.edit_runtime: /v2/edit/transcribe, /v2/edit/align, /v2/edit)
 # =============================================================================
 
 
 def _edit_max_spans(config: ServerArgs) -> int:
-    """Edit marker rows: the extra text rows not claimed by phoneme tokens."""
+    """Edit marker rows: the extra text rows not claimed by phoneme tokens (0 without span_end_id: no editing)."""
+    if getattr(config.model_config, "span_end_id", None) is None:
+        return 0
     return edit_marker_rows(
         int(getattr(config.model_config, "text_extra_tokens", 0)), _text_tokenizer_spec(str(config.model_path))
     )
-
-
-def _model_supports_editing(config: ServerArgs) -> bool:
-    model_config = config.model_config
-    return (
-        getattr(model_config, "span_end_id", None) is not None
-        and _edit_max_spans(config) > 0
-    )
-
-
-def _require_editing(config: ServerArgs) -> None:
-    if not _model_supports_editing(config):
-        raise HTTPException(
-            status_code=400,
-            detail="The loaded checkpoint does not support speech editing (needs span_end_id and marker rows).",
-        )
-
-
-async def _edit_worker(fn, *args):
-    """A blocking ASR / FuseAlign call of zonos3.tts.edit_align in a thread: HTTP 503 when a worker is unavailable
-    (``WorkerError``), 400 when the input is at fault (``ValueError``); the messages are the workers' clients'."""
-    try:
-        return await asyncio.to_thread(fn, *args)
-    except WorkerError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-async def _edit_language(language: str) -> tuple[str, str]:
-    """``(Whisper-style code, Qwen3-ASR name)`` of a request's ``language`` (edit_align.edit_language over the ASR
-    worker's languages; HTTP 400 for one editing does not serve)."""
-    try:
-        normalized = _normalize_tts_request_language(language)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    supported = await _edit_worker(_ASR.languages)
-    try:
-        return edit_language(normalized, supported)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-async def _edit_transcribe(audio_path: str, language: tuple[str, str]):
-    """Qwen3-ASR transcript of a clip in the edit's language (edit_align.transcribe_audio: chunk-wise past 30 s)."""
-    return await _edit_worker(transcribe_audio, _ASR, _FUSEALIGN, audio_path, language[1])
-
-
-async def _edit_aligned_words(audio_path: str, text: str, language: tuple[str, str], utterances=None):
-    """The words of ``text`` in the clip with their edit tokens (edit_align.edit_aligned_words; ``utterances``: the
-    long-form anchors of a transcript of the same clip)."""
-    return await _edit_worker(edit_aligned_words, _ASR, _FUSEALIGN, audio_path, text, language, utterances)
 
 
 def _edit_frame_rate(config: ServerArgs) -> float:
@@ -2387,30 +2297,6 @@ def _edit_frame_rate(config: ServerArgs) -> float:
         audio_codec=config.tts_audio_codec,
     )
     return manager.sample_rate / manager.hop_length
-
-
-def _write_edit_audio(audio_bytes: bytes, directory: str, max_seconds: float) -> tuple[str, float]:
-    """Decode uploaded audio like the codec path does and store it as WAV for the ASR and FuseAlign workers."""
-    waveform, sample_rate = _decode_audio_bytes(audio_bytes)
-    duration = waveform.shape[-1] / sample_rate
-    if duration > max_seconds:
-        raise ValueError(f"Audio is {duration:.1f} s long; at most {max_seconds:.0f} s are supported here.")
-    path = os.path.join(directory, "original.wav")
-    sf.write(path, waveform[0].numpy(), sample_rate, subtype="FLOAT")
-    return path, duration
-
-
-def _public_words(words) -> list[dict]:
-    return [
-        {
-            "word": w.word,
-            "start": w.start,
-            "end": w.end,
-            "confidence": w.confidence,
-            "tokens": w.tokens,
-        }
-        for w in words
-    ]
 
 
 async def _backend_reply(state: FrontendManager, make_msg: Callable[[int], BaseTokenizerMsg]):
@@ -2428,338 +2314,108 @@ async def _backend_reply(state: FrontendManager, make_msg: Callable[[int], BaseT
     return reply
 
 
-def _edit_region_doses(config: ServerArgs, req: EditRequest) -> list[dict[str, float]] | None:
-    """Steering doses of each edited region: ``controls`` plus ``region_controls[k]``, summed per
-    id (zero doses dropped), or None without controls. Checks the ids and doses against the
-    steering bundle, and that speaker-embedding (raw) controls have a speaker row to move."""
-    if req.region_controls is not None:
-        if req.spans is None:
-            raise ValueError("region_controls needs explicit spans (one entry per span).")
-        if len(req.region_controls) != len(req.spans):
-            raise ValueError(
-                f"region_controls has {len(req.region_controls)} entries for {len(req.spans)} spans; "
-                "send one per span (null for none)."
+class _SglEditEngine:
+    """zonos3.tts.edit_runtime.EditEngine over this server: uploads decode like the codec path, the speaker row is the
+    speaker encoder's embedding, codes come from the tokenizer's codec encode / decode, and each region is one
+    span-end-terminated edit generation on the scheduler (steered like /v2/generate: the engine never steers the
+    prefilled prompt rows)."""
+
+    @property
+    def model(self) -> EditModel:
+        config = get_global_state().config
+        max_spans = _edit_max_spans(config)
+        return EditModel(
+            frame_rate=_edit_frame_rate(config) if max_spans > 0 else 0.0,
+            n_codebooks=int(config.tts_n_codebooks),
+            audio_pad_id=int(config.tts_audio_pad_id),
+            codebook_sizes=tuple(int(size) for size in config.model_config.codebook_sizes),
+            max_spans=max_spans,
+            speaker_row=_model_supports_speaker_embedding(config),
+        )
+
+    async def decode_audio(self, audio: bytes) -> tuple[np.ndarray, int]:
+        waveform, sample_rate = _decode_audio_bytes(audio)
+        return waveform[0].numpy(), int(sample_rate)
+
+    async def embed(self, audio: bytes) -> torch.Tensor:
+        config = get_global_state().config
+        waveform, sample_rate = _decode_audio_bytes(audio)
+        try:
+            return await _compute_speaker_embedding_from_waveform(
+                waveform, sample_rate, expected_dim=_model_speaker_dim(config), speaker_codec=_model_speaker_codec(config)
             )
-    regions = len(req.spans) if req.spans is not None else 1
-    doses = []
-    for k in range(regions):
-        merged = {did: float(v) for did, v in (req.controls or {}).items()}
-        extra = req.region_controls[k] if req.region_controls is not None else None
-        for did, v in (extra or {}).items():
-            merged[did] = merged.get(did, 0.0) + float(v)
-        doses.append({did: v for did, v in merged.items() if v != 0.0})
-    if not any(doses):
-        return None
-    bundle = _steer_bundle(config)
-    if bundle is None:
-        raise ValueError("This server has no steering bundle (start it with --steer-bundle); `controls` are unavailable.")
-    for region in doses:
-        check_controls(bundle, region)
-    raw = sorted({did for region in doses for did in region if bundle.directions[did].space == RAW_SPACE})
-    if raw and not _edit_uses_speaker_row(config, req):
-        raise ValueError(
-            f"Controls {', '.join(raw)} move the speaker embedding and need the speaker row "
-            "(speaker_embedding true or unset, on a speaker-embedding checkpoint)."
+        except RuntimeError as exc:  # the speaker encoder refused the clip: the request's fault (HTTP 400)
+            raise ValueError(str(exc)) from exc
+
+    async def encode(self, audio: bytes, max_seconds: float) -> np.ndarray:
+        reply = await _backend_reply(
+            get_global_state(), lambda uid: TTSEncodeAudioMsg(uid=uid, audio=audio, max_seconds=max_seconds)
         )
-    return doses
+        if reply.error is not None:
+            raise ValueError(reply.error)
+        return reply.codes.to(torch.int64).numpy()
 
-
-def _edit_uses_speaker_row(config: ServerArgs, req: EditRequest) -> bool:
-    return _model_supports_speaker_embedding(config) if req.speaker_embedding is None else bool(req.speaker_embedding)
-
-
-@app.post("/v2/edit/transcribe")
-async def tts_edit_transcribe(req: EditTranscribeRequest):
-    """Qwen3-ASR transcript of the audio to edit (chunk-wise past 30 s) and its words' FuseAlign timings."""
-    state = get_global_state()
-    _require_editing(state.config)
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            audio = _decode_base64_blob(req.audio_base64, "audio_base64")
-            path, duration = _write_edit_audio(audio, tmp, _EDIT_ALIGN_MAX_SECONDS)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        language = await _edit_language(req.language)
-        transcript = await _edit_transcribe(path, language)
-        words = await _edit_aligned_words(path, transcript.text, language, transcript.utterances)
-    return {"text": transcript.text, "duration": duration, "words": _public_words(words)}
-
-
-@app.post("/v2/edit/align")
-async def tts_edit_align(req: EditAlignRequest):
-    """FuseAlign forced alignment of the audio to ``text``: word timings, presences (``confidence``) and edit tokens."""
-    state = get_global_state()
-    _require_editing(state.config)
-    text = req.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is empty.")
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            audio = _decode_base64_blob(req.audio_base64, "audio_base64")
-            path, duration = _write_edit_audio(audio, tmp, _EDIT_ALIGN_MAX_SECONDS)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        words = await _edit_aligned_words(path, text, await _edit_language(req.language))
-    return {"text": text, "duration": duration, "words": _public_words(words)}
-
-
-@app.post("/v2/edit")
-async def tts_edit(req: EditRequest):
-    """Regenerate the edited regions of recorded speech; unedited codec frames are kept exactly.
-
-    Each region is one span-end-terminated generation over [speaker row][condition rows][text]
-    [unmasked context][earlier fills][marker]. A clip longer than ``max_context_seconds`` is cut
-    into word-snapped windows around the regions (``plan_edit_windows``): each window's prompts
-    hold its codes and its stretch of the target text, and every fill splices into the full
-    clip, which is decoded once. Region k's steering (``controls`` + ``region_controls[k]``)
-    moves its speaker row and adds its hidden delta on the frames it generates; like
-    /v2/generate, the engine never steers the prefilled prompt rows.
-    """
-    state = get_global_state()
-    config = state.config
-    _require_editing(config)
-    if req.tag_cfg_scale != 1.0:
-        raise HTTPException(
-            status_code=400,
-            detail="tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); use 1.0.",
-        )
-    max_spans = _edit_max_spans(config)
-    n_codebooks = int(config.tts_n_codebooks)
-    frame_rate = _edit_frame_rate(config)
-    # Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt
-    # text and never reach the ASR or FuseAlign (word diff, alignment, verify; target_tokens).
-    target_text = canonical_markup(req.target_text.strip())
-    plain_target_text = strip_nonverbal_markup(target_text)
-    edit_lang = await _edit_language(req.language)  # every ASR and FuseAlign call of the edit
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            if not target_text:
-                raise ValueError("target_text is empty.")
-            _validate_phoneme_groups(config, target_text)
-            if req.original_words is not None and not (req.original_text or "").strip():
-                raise ValueError("original_words needs the original_text they spell.")
-            region_doses = _edit_region_doses(config, req)
-            language = _normalize_tts_request_language(req.language)
-            use_speaker_row = _edit_uses_speaker_row(config, req)
-            if use_speaker_row and not _model_supports_speaker_embedding(config):
-                raise ValueError("speaker_embedding needs a checkpoint with a speaker-embedding row.")
-            condition_ids = _resolve_condition_buckets(config, req.condition_buckets, req.condition_values)
-            audio = _decode_base64_blob(req.audio_base64, "audio_base64")
-            original_path, duration = _write_edit_audio(audio, tmp, _EDIT_MAX_SECONDS)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        speaker_embedding = None
-        if use_speaker_row:
-            waveform, sample_rate = _decode_audio_bytes(audio)
-            try:
-                speaker_embedding = await _compute_speaker_embedding_from_waveform(
-                    waveform,
-                    sample_rate,
-                    expected_dim=_model_speaker_dim(config),
-                    speaker_codec=_model_speaker_codec(config),
+    async def check(self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets,
+                    condition_values) -> set[str]:
+        config = get_global_state().config
+        _validate_phoneme_groups(config, target_text)
+        raw: set[str] = set()
+        if doses is not None:
+            bundle = _steer_bundle(config)
+            if bundle is None:
+                raise ValueError(
+                    "This server has no steering bundle (start it with --steer-bundle); `controls` are unavailable."
                 )
-            except (ValueError, RuntimeError) as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        encoded = await _backend_reply(
-            state, lambda uid: TTSEncodeAudioMsg(uid=uid, audio=audio, max_seconds=_EDIT_MAX_SECONDS)
-        )
-        if encoded.error is not None:
-            raise HTTPException(status_code=400, detail=encoded.error)
-        codes = encoded.codes
-        # Longer clips are windowed and every fill gets a minimum length; both read word timings
-        # of the original (the caller's original_words, else a FuseAlign alignment) and the target
-        # words' edit tokens. Without original_text, a short clip with explicit spans is not
-        # transcribed: its regions' own lengths are expected.
-        windowed = len(codes) / frame_rate > req.max_context_seconds
-        target_words = target_text.split()
-        # [target tokens, tokens of each target word]; a pronunciation group is one target token (target_tokens).
-        normalized_target = target_tokens(target_text)
-        original_text, words = req.original_text, None
-        if original_text:
-            original_text = strip_nonverbal_markup(original_text)  # what the workers read (and the response reports)
-        if req.original_words is not None:
-            given = [w.model_dump() for w in req.original_words]
-            for w in given:
-                if w["tokens"] is None:
-                    w["tokens"] = textmatch.tokens(w["word"])
-            try:
-                words = edit_words(given, [w["tokens"] for w in given], textmatch.tokens(original_text),
-                                   duration=duration)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        elif req.spans is None or windowed or (req.min_fill_ratio > 0 and original_text):
-            utterances = None
-            if not original_text:
-                transcript = await _edit_transcribe(original_path, edit_lang)
-                original_text, utterances = transcript.text, transcript.utterances
-            words = await _edit_aligned_words(original_path, original_text, edit_lang, utterances)
-        # verify with pronunciation groups: the reference's tokens, each group a wildcard word
-        verify_reference = normalized_target[0] if req.verify and GROUP_OPEN in target_text else None
-        try:
-            if req.spans is not None:
-                spans = seconds_to_spans(req.spans, len(codes), frame_rate)
-            else:
-                spans = diff_spans(
-                    words,
-                    normalized_target[0],
-                    total_frames=len(codes),
-                    frame_rate=frame_rate,
-                    margin_seconds=req.margin_seconds,
-                    max_spans=max_spans,
-                ).spans
-            validate_edit_spans(spans, len(codes), max_spans)
-            windows = [whole_clip_window(spans, len(codes), target_text)]
-            if windowed:
-                windows = plan_edit_windows(
-                    spans,
-                    words,
-                    target_words,
-                    normalized_target[1:],
-                    total_frames=len(codes),
-                    frame_rate=frame_rate,
-                    context_seconds=req.context_seconds,
-                    target_text=target_text,
-                )
-            if words is not None:
-                expected = expected_fill_seconds(
-                    spans, words, target_words, normalized_target[1:], frame_rate=frame_rate
-                )
-            else:
-                expected = [length / frame_rate for _, length in spans]
-            # The span-end token is masked until a fill reaches min_fill_ratio of its expected length.
-            min_frames = [
-                min(int(req.min_fill_ratio * seconds * frame_rate), int(req.max_span_seconds * frame_rate))
-                for seconds in expected
-            ]
-            max_tokens = _resolve_tts_max_tokens(
-                config, int(req.max_span_seconds * frame_rate) + n_codebooks + 1
+            for region in doses:
+                check_controls(bundle, region)
+            raw = {did for region in doses for did in region if bundle.directions[did].space == RAW_SPACE}
+        _resolve_condition_buckets(config, condition_buckets, condition_values)
+        return raw
+
+    async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
+        state = get_global_state()
+        config = state.config
+        speaker_embedding, delta = job.speaker_embedding, None
+        if job.controls:
+            resolved = resolve_controls(
+                _steer_bundle(config), job.controls, None, text=job.controls_text,
+                speaker_embedding=job.speaker_embedding, sources=_steering_sources(config),
+                hidden_size=int(config.model_config.hidden_size),
             )
-            # Per region: (speaker-row embedding, hidden steering delta). Without explicit spans
-            # the request's controls apply to every diffed region alike.
-            steering = [(speaker_embedding, None)] * len(spans)
-            if region_doses is not None:
-                bundle = _steer_bundle(config)
-                steering = []
-                for k in range(len(spans)):
-                    resolved = resolve_controls(
-                        bundle, region_doses[k if req.spans is not None else 0], None, text=target_text,
-                        speaker_embedding=speaker_embedding, sources=_steering_sources(config),
-                        hidden_size=int(config.model_config.hidden_size),
-                    )
-                    steering.append((resolved.speaker_embedding, resolved.hidden_delta))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        base_seed = req.seed if req.seed is not None else random.randrange(2**31 - 8)
-        base_sampling = TTSSamplingParams(
-            temperature=req.temperature,
-            topk=req.topk,
-            top_p=req.top_p,
-            min_p=req.min_p,
-            max_tokens=max_tokens,
-            repetition_window=req.repetition_window,
-            repetition_penalty=req.repetition_penalty,
-            repetition_codebooks=req.repetition_codebooks,
-            seed=base_seed,
-            end_token="span",
+            speaker_embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
+        sampling = TTSSamplingParams(
+            **job.sampling, max_tokens=_resolve_tts_max_tokens(config, job.max_tokens), seed=job.seed,
+            end_token="span", min_frames=job.min_frames,
         )
+        condition_ids = _resolve_condition_buckets(config, job.condition_buckets, job.condition_values)
+        reply = await _backend_reply(
+            state,
+            lambda uid: TTSTokenizeMsg(
+                uid=uid,
+                text=job.text,
+                sampling_params=sampling,
+                language=job.language,
+                text_normalization=job.text_normalization,
+                edit_codes=torch.as_tensor(job.window_codes, dtype=torch.int64),
+                edit_spans=job.spans,
+                edit_fills=[torch.as_tensor(fill, dtype=torch.int32) for fill in job.fills],
+                speaker_embedding=speaker_embedding,
+                speaker_emotion_delta=delta,
+                condition_buckets=condition_ids,
+            ),
+        )
+        return np.asarray(reply.codes), -1 if reply.eos_frame is None else int(reply.eos_frame)
 
-        async def _edit_take(k: int) -> dict:
-            sampling_params = replace(base_sampling, seed=base_seed + k)
-            fills, stopped = [None] * len(spans), [None] * len(spans)
-            for window in windows:
-                window_codes = codes[window.start: window.end]
-                window_spans = [[int(start), int(length)] for start, length in window.spans(spans)]
-                window_fills = []
-                for region in window.regions:
-                    region_embedding, region_delta = steering[region]
-                    reply = await _backend_reply(
-                        state,
-                        lambda uid: TTSTokenizeMsg(
-                            uid=uid,
-                            text=window.text,
-                            sampling_params=replace(sampling_params, min_frames=min_frames[region]),
-                            language=language,
-                            text_normalization=req.text_normalization,
-                            edit_codes=window_codes,
-                            edit_spans=window_spans,
-                            edit_fills=list(window_fills),
-                            speaker_embedding=region_embedding,
-                            speaker_emotion_delta=region_delta,
-                            condition_buckets=condition_ids,
-                        ),
-                    )
-                    fill, ended = extract_fill(
-                        reply.codes,
-                        reply.eos_frame,
-                        audio_pad_id=config.tts_audio_pad_id,
-                        codebook_sizes=config.model_config.codebook_sizes,
-                    )
-                    window_fills.append(fill.to(torch.int32))
-                    fills[region], stopped[region] = window_fills[-1], ended
-            spliced = splice_edit(codes, spans, fills).to(torch.int32)
-            decoded = await _backend_reply(state, lambda uid: TTSDecodeCodesMsg(uid=uid, codes=spliced))
-            edited = np.frombuffer(decoded.audio_data, dtype=np.float32)
-            verify, take_words = None, None
-            if req.verify:
-                edited_path = os.path.join(tmp, f"take{k}.wav")
-                sf.write(edited_path, edited, 44100, subtype="FLOAT")
-                # The take's transcript (Qwen3-ASR) and its anchors for the alignment of the take's words.
-                transcript = await _edit_transcribe(edited_path, edit_lang)
-                if verify_reference is None:
-                    scored = textmatch.verify(plain_target_text, transcript.text)
-                    verify = {
-                        "asr_text": transcript.text,
-                        "wer": scored["word_errors"] / max(1, scored["ref_words"]),
-                        "cer": scored["cer"],
-                    }
-                    take_words = _public_words(await _edit_aligned_words(
-                        edited_path, plain_target_text, edit_lang, transcript.utterances))
-                else:
-                    # Groups are wildcard words: any one recognized word matches; the take's words
-                    # come from aligning the target with each group replaced by the word heard.
-                    scored = wildcard_verify(verify_reference, textmatch.tokens(transcript.text))
-                    verify = {
-                        "asr_text": transcript.text,
-                        "wer": scored["word_errors"] / max(1, scored["ref_words"]),
-                        "cer": scored["cer"],
-                        "groups": scored["groups"],
-                    }
-                    heard_text = fill_groups(plain_target_text, [g["heard"] for g in scored["groups"]])
-                    if heard_text:
-                        take_words = _public_words(await _edit_aligned_words(
-                            edited_path, heard_text, edit_lang, transcript.utterances))
-            wav = io.BytesIO()
-            sf.write(wav, edited, 44100, subtype="PCM_16", format="WAV")
-            edited_regions, shift = [], 0
-            for (start, length), fill in zip(spans, fills, strict=True):
-                edited_regions.append(
-                    [(start + shift) / frame_rate, (start + shift + len(fill)) / frame_rate]
-                )
-                shift += len(fill) - length
-            return {
-                "seed": base_seed + k,
-                "audio_base64": base64.b64encode(wav.getvalue()).decode("ascii"),
-                "duration": len(edited) / 44100,
-                "edited_regions": edited_regions,
-                "fill_seconds": [len(fill) / frame_rate for fill in fills],
-                "stopped": stopped,
-                "verify": verify,
-                "words": take_words,
-            }
+    async def decode(self, codes: np.ndarray) -> np.ndarray:
+        reply = await _backend_reply(
+            get_global_state(), lambda uid: TTSDecodeCodesMsg(uid=uid, codes=torch.as_tensor(codes, dtype=torch.int32))
+        )
+        return np.frombuffer(reply.audio_data, dtype=np.float32)
 
-        takes = await asyncio.gather(*(_edit_take(k) for k in range(req.num_takes)))
-    return {
-        "sample_rate": 44100,
-        "original_text": original_text,
-        "target_text": target_text,
-        "words": None if words is None else _public_words(words),
-        "spans": [[start / frame_rate, (start + length) / frame_rate] for start, length in spans],
-        # The audio the model saw per window (full-clip seconds); null when the clip was edited whole.
-        "contexts": [[w.start / frame_rate, w.end / frame_rate] for w in windows] if windowed else None,
-        # Each region's expected fill length (seconds); its fills last at least min_fill_ratio of it.
-        "expected_seconds": expected,
-        "takes": list(takes),
-    }
+
+# The server's speech editing, over the ASR and FuseAlign workers it shares with dubbing.
+_EDIT_RUNTIME = EditRuntime(_SglEditEngine(), _ASR, _FUSEALIGN)
+app.include_router(_edit_router(lambda: _EDIT_RUNTIME))
 
 
 # ----------------------------------------------------------------------------- dubbing (zonos3.dub, docs/laci_dub.md)
@@ -2768,7 +2424,6 @@ async def tts_edit(req: EditRequest):
 # LACI duration target, so dub takes use studio voices, steering controls and pronunciation groups.
 _DUB_RUNTIME = None
 _DUB_TAKE_SLOTS: asyncio.Semaphore | None = None
-_DUB_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 
 
 def _dub_rate_edges(config: ServerArgs) -> list[float]:
@@ -2781,31 +2436,11 @@ def _dub_available(config: ServerArgs) -> bool:
     return bool(getattr(config, "laci_heads", None)) and bool(_dub_rate_edges(config))
 
 
-def _dub_rate_scales(config: ServerArgs, bundle) -> dict:
-    """Voice mode ("studio" / "source") -> TTS language -> its speaking-rate scale with the tempo-steered buckets of the
-    steering bundle's rate_extension (README "Extended speaking-rate buckets"; source voices, in reference mode, only
-    on its reference_sides); empty without one, or when it was measured against other row edges."""
-    from zonos3.dub.plan import RateScale
-
-    ext = None if bundle is None else bundle.rate_extension
-    if ext is None:
-        return {}
-    edges = tuple(_dub_rate_edges(config))
-    if len(ext.row_edges) != len(edges) or not np.allclose(ext.row_edges, edges, rtol=0, atol=1e-6):
-        logger.warning("steering bundle rate_extension was measured on speaking-rate edges %s, the checkpoint has %s: "
-                       "dubs plan in the row buckets only", list(ext.row_edges), list(edges))
-        return {}
-    source = {lang: {b: d for b, d in doses.items() if ("slower" if b < 0 else "faster") in ext.reference_sides}
-              for lang, doses in ext.doses.items()}
-    return {mode: {lang: RateScale.extended(edges, ext.below, ext.above, doses) for lang, doses in by_lang.items() if doses}
-            for mode, by_lang in (("studio", ext.doses), ("source", source))}
-
-
 def _dub_runtime():
     """The server's DubRuntime (created on first use; its alignment worker starts with the first call that needs it)."""
     global _DUB_RUNTIME
     if _DUB_RUNTIME is None:
-        from zonos3.dub.runtime import DubModel, DubRuntime
+        from zonos3.dub.runtime import DubModel, DubRuntime, rate_scales
 
         config = get_global_state().config
         spec = _condition_spec(config)
@@ -2822,7 +2457,7 @@ def _dub_runtime():
                     did for did, d in (bundle.directions.items() if bundle is not None else ()) if d.space == RAW_SPACE
                 ),
                 phoneme_groups=_phoneme_capabilities(config)["phoneme_tokens"] is not None,
-                rate_scales=_dub_rate_scales(config, bundle),
+                rate_scales=rate_scales(bundle.rate_extension if bundle is not None else None, _dub_rate_edges(config)),
             ),
             _dub_synthesize,
             _dub_encode_voice,
@@ -2830,35 +2465,6 @@ def _dub_runtime():
             _FUSEALIGN,
         )
     return _DUB_RUNTIME
-
-
-def _dub_ready():
-    config = get_global_state().config
-    if not _dub_available(config):
-        raise HTTPException(
-            status_code=400,
-            detail="Dubbing is not enabled on this server: it needs --laci-heads (DUB=1 in servers/sgl/scripts/serve.sh) and a "
-                   "checkpoint with a speaking-rate condition row",
-        )
-    return _dub_runtime()
-
-
-async def _dub_call(awaitable):
-    """Run a DubRuntime call, mapping its errors to HTTP statuses."""
-    from zonos3.dub.runtime import AlignWorkerError, UnknownId
-
-    try:
-        return await awaitable
-    except UnknownId:
-        raise HTTPException(status_code=404, detail="unknown ref_id/dub_id; upload or generate again") from None
-    except AlignWorkerError as exc:
-        raise HTTPException(status_code=503, detail=f"alignment worker: {exc}") from exc
-    except WorkerError as exc:  # the ASR / FuseAlign worker is unavailable (the message says which)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def _dub_take_request(job: dict) -> GenerateRequest:
@@ -2958,101 +2564,11 @@ async def _dub_encode_voice(audio: np.ndarray, sample_rate: int) -> list[list[in
     return reply.codes.to(torch.int64).tolist()
 
 
-async def _dub_upload(request: Request, name: str, directory: str) -> Path:
-    """Stream a request body (a file named ``name``) into ``directory``; 413 past the dub's upload cap."""
-    from zonos3.dub.plan import MAX_VIDEO_BYTES
-
-    declared = request.headers.get("content-length")
-    if declared is not None and int(declared) > MAX_VIDEO_BYTES:
-        raise HTTPException(status_code=413, detail="upload too large")
-    suffix = Path(name).suffix.lower()
-    path = Path(directory) / f"input{suffix if suffix in _DUB_VIDEO_SUFFIXES | {'.wav', '.flac', '.mp3', '.ogg'} else '.bin'}"
-    size = 0
-    with open(path, "wb") as fh:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > MAX_VIDEO_BYTES:
-                raise HTTPException(status_code=413, detail="upload too large")
-            fh.write(chunk)
-    return path
-
-
-@app.get("/v2/dub/capabilities")
-async def dub_capabilities():
-    """Target languages, rate buckets, lip-sync, voice modes and limits of the dub (zonos3.dub.runtime)."""
-    config = get_global_state().config
-    return {**(await asyncio.to_thread(_dub_runtime().capabilities)), "enabled": _dub_available(config)}
-
-
-@app.post("/v2/dub/ref")
-async def dub_ref(request: Request, name: str = "audio"):
-    """A dub reference: raw audio bytes (any sound file), or a video whose audio track is taken."""
-    runtime = _dub_ready()
-    with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-        path = await _dub_upload(request, name, tmp)
-        return await _dub_call(asyncio.to_thread(runtime.add_ref, str(path)))
-
-
-@app.post("/v2/dub/lips/{ref_id}")
-async def dub_lips(ref_id: str, request: Request, name: str = "video"):
-    """Face track + lip embeddings of the reference's video, for generate / regenerate with lipsync (AV-sync)."""
-    runtime = _dub_ready()
-
-    async def run():
-        runtime.refs.get(ref_id)  # 404 before reading the body
-        with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-            video = await _dub_upload(request, name, tmp)
-            return await asyncio.to_thread(runtime.prepare_lips, ref_id, str(video))
-
-    return await _dub_call(run())
-
-
-@app.post("/v2/dub/transcribe")
-async def dub_transcribe(req: DubTranscribeRequest):
-    runtime = _dub_ready()
-    return await _dub_call(runtime.transcribe(req.ref_id, req.ref_lang))
-
-
-@app.post("/v2/dub/analyze")
-async def dub_analyze(req: DubAnalyzeRequest):
-    runtime = _dub_ready()
-    return await _dub_call(runtime.analyze(req.model_dump()))
-
-
-@app.post("/v2/dub/generate")
-async def dub_generate(
-    req: DubGenerateRequest,
-    x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID"),
-):
-    runtime = _dub_ready()
-    return await _dub_call(runtime.generate(req.model_dump(), x_tts_session_id))
-
-
-@app.post("/v2/dub/regenerate")
-async def dub_regenerate(
-    req: DubRegenerateRequest,
-    x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID"),
-):
-    runtime = _dub_ready()
-    return await _dub_call(runtime.regenerate(req.model_dump(), x_tts_session_id))
-
-
-@app.post("/v2/dub/mux/{dub_id}")
-async def dub_mux(dub_id: str, request: Request, name: str = "video"):
-    """The video with the dub as its audio track (raw video bytes in, MP4 out)."""
-    runtime = _dub_ready()
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._") or "video"
-
-    async def run():
-        runtime.dubs.get(dub_id)  # 404 before reading the body
-        with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-            video, out = await _dub_upload(request, name, tmp), Path(tmp) / "out.mp4"
-            await asyncio.to_thread(runtime.mux, dub_id, str(video), str(out))
-            return out.read_bytes()
-
-    data = await _dub_call(run())
-    return Response(data, media_type="video/mp4",
-                    headers={"Content-Disposition": f'attachment; filename="{stem}_dub.mp4"'})
+app.include_router(_dub_router(
+    _dub_runtime, lambda: _dub_available(get_global_state().config),
+    "Dubbing is not enabled on this server: it needs --laci-heads (DUB=1 in servers/sgl/scripts/serve.sh) and a "
+    "checkpoint with a speaking-rate condition row",
+))
 
 
 def _studio_dir() -> Path:

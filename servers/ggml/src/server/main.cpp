@@ -9,7 +9,8 @@
 //   capabilities.*    /v2/capabilities, /v2/controls, /v2/health, /v1/models
 //   projects.*        /v2/projects*, /v2/media/* (port of model/src/zonos3/server/projects.py)
 //   phonemize.*, edit.*, dub.*   their routes and capabilities
-//   workers.*, textnorm.*        JSON-lines helper processes (model/src/zonos3/workers/*.py)
+//   edit_dub.*                   the edit/dub worker (model/src/zonos3/workers/edit_dub.py) and its engine calls
+//   workers.*, textnorm.*        helper processes (model/src/zonos3/workers/*.py), text normalization
 #include "compat.h"
 
 #include "server/capabilities.h"
@@ -74,11 +75,12 @@ void usage(const char * a0) {
         "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
         "                      model/src of the checkout holding the executable, else python/ beside it)\n"
         "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
-        "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and the FuseAlign forced\n"
-        "                      aligner of speech editing and dubbing (fusealign.py: needs fusealign-hub installed),\n"
-        "                      each one persistent worker. Speech recognition (asr.py, Qwen3-ASR) runs in its own\n"
-        "                      interpreter: ZONOS3_ASR_PYTHON (default <repo>/.venv-asr/bin/python, set up by\n"
-        "                      tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE picks its device)\n"
+        "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and speech editing + dubbing\n"
+        "                      (edit_dub.py: zonos3.tts.edit_runtime and zonos3.dub.runtime; their word timings\n"
+        "                      need fusealign-hub installed), each one persistent worker. Speech recognition\n"
+        "                      (Qwen3-ASR) runs in its own interpreter: ZONOS3_ASR_PYTHON (default\n"
+        "                      <repo>/.venv-asr/bin/python, set up by tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE\n"
+        "                      picks its device)\n"
         "  --steer PATH        steering directions (steer.gguf) for request controls and /v2/controls\n"
         "  --emotion-directions PATH   emotion directions (emotion.gguf)\n"
         "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
@@ -209,24 +211,24 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
     if (!s.worker_python.empty()) {
         if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py") ||
-            !mp_file_exists(s.python_src + "/zonos3/workers/fusealign.py")) {
+            !mp_file_exists(s.python_src + "/zonos3/workers/edit_dub.py")) {
             fprintf(stderr, "error: --worker-python needs the zonos3 package: pass --python-src DIR "
-                            "(DIR/zonos3/workers/textnorm.py, DIR/zonos3/workers/fusealign.py)\n");
+                            "(DIR/zonos3/workers/textnorm.py, DIR/zonos3/workers/edit_dub.py)\n");
             return 1;
         }
         s.text_normalizer = std::make_unique<TextNormalizer>(s.worker_python, s.python_src);
-        s.aligner = std::make_unique<FuseAligner>(s.worker_python, s.python_src);
-        // edit_align.fusealign_installed, asked of the worker's interpreter once (the speech_editing capability)
+        s.edit_dub = std::make_unique<EditDubWorker>(s);
+        // zonos3.tts.edit_align.fusealign_installed, asked of the worker's interpreter once (the speech_editing
+        // capability)
         std::string err;
         s.fusealign_installed = run_process({s.worker_python, "-c",
                                              "import importlib.util, sys; "
                                              "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"}, err) == 0;
         if (!s.fusealign_installed)
-            fprintf(stderr, "zonos3-server: warning: %s has no fusealign_hub; speech editing and dubbing are off\n",
+            fprintf(stderr, "zonos3-server: warning: %s has no fusealign_hub; speech editing is off and dubs cannot be "
+                            "aligned\n",
                     s.worker_python.c_str());
     }
-    if (!s.python_src.empty() && mp_file_exists(s.python_src + "/zonos3/workers/asr.py"))
-        s.asr = std::make_unique<AsrWorker>(s.python_src);
     if (!projects_dir.empty()) {
         try {
             s.projects = std::make_unique<ProjectStore>(projects_dir);
@@ -334,11 +336,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         ok = svr.listen_after_bind();
     }
 
+    if (s.edit_dub) s.edit_dub->close();   // before the scheduler: its engine calls finish first
     stop_scheduler(s);   // stop the worker, reaper + DAC pool before returning
     stop_reference_reaper(s);
     if (s.text_normalizer) s.text_normalizer->close();
-    if (s.aligner) s.aligner->close();
-    if (s.asr) s.asr->close();
     if (ctl) ctl->svr = nullptr;   // svr is about to go out of scope
     if (!bound) { fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port); return 1; }
     // listen_after_bind() returns true on a graceful stop() and false only if the accept loop died on a real error.

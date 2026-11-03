@@ -11,6 +11,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
+from zonos3.server.dub import make_router as dub_router
+from zonos3.server.edit import make_router as edit_router
 from zonos3.server.keepalive import KeepaliveMiddleware
 from zonos3.server.projects import make_router as projects_router
 
@@ -68,8 +70,11 @@ def create_app(state: ServerState) -> FastAPI:
         return response
 
     app.include_router(projects_router(lambda: state.projects), prefix="/v2")
-    for module in (capabilities, speakers, generate, edit, dub):
+    for module in (capabilities, speakers, generate):
         app.include_router(module.router(state))
+    app.include_router(edit_router(lambda: edit.runtime(state)))
+    app.include_router(dub_router(lambda: dub.runtime(state), lambda: capabilities.dub_available(state),
+                                  dub.UNAVAILABLE))
 
     # Registered last, so every API route matches first: GET|HEAD / is the studio's index.html, GET|HEAD /<path> a
     # file inside the studio dir (never under /v1/ or /v2/); anything else is a 404. No SPA fallback. Pages (*.html)

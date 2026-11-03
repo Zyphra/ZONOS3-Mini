@@ -1,22 +1,18 @@
-// Speech editing: a port of model/src/zonos3/tts/edit.py (the edit prompt layout, fill extraction and splicing) and
-// of the transcript-diff / window planning / verify parts of model/src/zonos3/tts/edit_align.py.
+// Speech editing: the edit prompt layout of model/src/zonos3/tts/edit.py, which the edit/dub worker's fill calls build
+// over the served model (the planning, fill extraction and splice run in Python: zonos3.tts.edit_runtime).
 //
 // Codes are row-major int32 matrices: ordinary codec frames [frames, n_codebooks], prompt rows
-// [rows, n_codebooks + 1]. Text is UTF-8; lengths and edit distances count Unicode code points, as Python str does.
-// Invalid input throws std::invalid_argument with the Python ValueError message.
+// [rows, n_codebooks + 1]. Invalid input throws std::invalid_argument with the Python ValueError message.
 #pragma once
 
 #include <cstdint>
-#include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace zonos3_edit {
 
 struct Span { int start = 0, length = 0; };   // (start_frame, length_frames)
 
-// ---------------------------------------------------------------------------------------------------------- edit.py
 struct Layout {
     int n_codebooks = 10;
     int audio_pad_id = 4097;   // EOA = audio_pad_id - 1
@@ -32,85 +28,5 @@ std::vector<int32_t> sheared_block(const int32_t * frames, int n_frames, const L
 std::vector<int32_t> edit_prompt_tokens(const std::vector<int32_t> & text_rows, const std::vector<int32_t> & codes,
                                         const std::vector<Span> & spans,
                                         const std::vector<std::vector<int32_t>> & fills, const Layout & l);
-struct Fill {
-    std::vector<int32_t> frames;   // [n, n_codebooks]
-    bool ended = false;            // stopped on span-end
-};
-// `delayed_rows` are the generated delay-stacked rows without the finishing row [n, n_codebooks]; eos_frame < 0 = none.
-Fill extract_fill(const std::vector<int32_t> & delayed_rows, int eos_frame, int audio_pad_id,
-                  const std::vector<int> & codebook_sizes);
-std::vector<int32_t> splice_edit(const std::vector<int32_t> & codes, int n_codebooks, const std::vector<Span> & spans,
-                                 const std::vector<std::vector<int32_t>> & fills);
-
-// ---------------------------------------------------------------------------------------------------- edit_align.py
-// EDIT_LANGUAGES: server language code -> (the Whisper-style code the edit's words are tokenized by, align_tokens; the
-// Qwen3-ASR language name its recognition is forced to). edit_language serves the entries whose Qwen3-ASR name is in
-// `supported` (the ASR worker's languages) and throws the ValueError message for any other language.
-std::pair<std::string, std::string> edit_language(const std::string & language, const std::vector<std::string> & supported);
-
-struct AlignedWord {
-    std::string word;
-    double start = 0, end = 0;
-    std::optional<double> confidence;
-    std::vector<std::string> tokens;
-};
-
-bool is_group_token(const std::string & token);
-double token_chars(const std::string & token);
-bool is_marker_token(const std::string & token);
-std::string canonical_markup(const std::string & text);
-
-// target_tokens: [target tokens, tokens of target word 0, of word 1, ...] over the whitespace words of the target
-// (zonos3_textmatch::tokens); with groups or markup only the plain pieces between them are normalized, each group is a
-// token and each nonverbal marker none.
-std::vector<std::vector<std::string>> target_tokens(const std::string & target_text);
-
-std::vector<Span> seconds_to_spans(const std::vector<std::pair<double, double>> & pairs, int total_frames,
-                                   double frame_rate);
-
-// difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes(); tag: 'e'qual, 'r'eplace, 'd'elete, 'i'nsert.
-struct Opcode { char tag; int i1, i2, j1, j2; };
-std::vector<Opcode> sequence_opcodes(const std::vector<std::string> & a, const std::vector<std::string> & b);
-
-struct EditDiff { std::vector<Span> spans; std::vector<int> new_target_tokens; };
-EditDiff diff_spans(const std::vector<AlignedWord> & words, const std::vector<std::string> & target_tokens,
-                    int total_frames, double frame_rate, double margin_seconds, int min_gap_frames, int max_spans);
-
-// edit_words: caller-supplied word timings ({word, start, end, confidence}) with their edit tokens, checked.
-struct WordIn { std::string word; double start = 0, end = 0; std::optional<double> confidence; };
-std::vector<AlignedWord> edit_words(const std::vector<WordIn> & words,
-                                    const std::vector<std::vector<std::string>> & word_tokens,
-                                    const std::vector<std::string> & original_tokens, double duration);
-// aligned_words: FuseAlign's words (confidence = presence) with each word's edit tokens; words without tokens
-// (punctuation only) are dropped, then each overlap of neighbours is split at its midpoint (in order). Throws when the
-// lists differ in length.
-std::vector<AlignedWord> aligned_words(const std::vector<WordIn> & words,
-                                       const std::vector<std::vector<std::string>> & word_tokens);
-
-struct EditWindow {
-    int start = 0, end = 0;
-    std::vector<int> regions;
-    std::string text;
-    std::vector<Span> spans(const std::vector<Span> & all) const;   // window-relative
-};
-EditWindow whole_clip_window(const std::vector<Span> & spans, int total_frames, const std::string & target_text);
-std::vector<EditWindow> plan_edit_windows(const std::vector<Span> & spans, const std::vector<AlignedWord> & words,
-                                          const std::vector<std::string> & target_words,
-                                          const std::vector<std::vector<std::string>> & target_word_tokens,
-                                          int total_frames, double frame_rate, double context_seconds,
-                                          const std::optional<std::string> & target_text);
-std::vector<double> expected_fill_seconds(const std::vector<Span> & spans, const std::vector<AlignedWord> & words,
-                                          const std::vector<std::string> & target_words,
-                                          const std::vector<std::vector<std::string>> & target_word_tokens,
-                                          double frame_rate);
-
-struct VerifyGroup { std::string ipa; std::optional<std::string> heard; };
-struct Verify { int word_errors = 0, ref_words = 0; double cer = 0; std::vector<VerifyGroup> groups; };
-Verify wildcard_verify(const std::vector<std::string> & reference_tokens,
-                       const std::vector<std::string> & hypothesis_tokens);
-std::string fill_groups(const std::string & text, const std::vector<std::optional<std::string>> & heard);
-
-// Whitespace words of `text` (Python str.split()).
-std::vector<std::string> split_words(const std::string & text);
 
 }  // namespace zonos3_edit

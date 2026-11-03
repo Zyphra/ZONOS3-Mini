@@ -14,7 +14,7 @@ embedding.
 
 | Path | Contents |
 | --- | --- |
-| `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, registries and the Python workers (text normalization, speech-editing alignment, dub alignment) |
+| `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, the speech-editing and dubbing runtimes every server serves, registries and the Python workers (text normalization, speech recognition, forced alignment, dub alignment, the ggml server's edit/dub worker) |
 | `servers/sgl/` | The `zonos3-sgl` package (`zonos3_sgl`): the CUDA server built on [Mini-SGLang](https://github.com/sgl-project/mini-sglang), its launch scripts and benchmark |
 | `servers/ggml/` | The C++/ggml server and CLI (CPU, CUDA, Metal, Vulkan); ggml is the submodule `servers/ggml/ggml` |
 | `servers/mlx/` | The `zonos3-mlx` package (`zonos3_mlx`): the Apple Silicon server running the ggml server's GGUF files in MLX |

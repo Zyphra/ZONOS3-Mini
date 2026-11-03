@@ -1,11 +1,9 @@
-// edit-replay: run one src/zonos3-edit.h or src/zonos3-textmatch.h function on a JSON request {"fn", "args"} read from
-// stdin and print the result as JSON (matrices as nested lists, tuples as lists). A ValueError prints {"error":
-// "ValueError", "message"}. Parity against model/src/zonos3/tts/{edit,edit_align,textmatch}.py and Python's
-// str.upper()/str.lower(): servers/ggml/tests/parity/test_ggml_edit.py, which also
-// writes tests/fixtures/edit-replay/cases.json; `edit-replay --cases <file>` (ctest) replays those cases and prints
-// PASS when every answer equals the recorded Python one.
+// edit-replay: run one src/zonos3-edit.h function on a JSON request {"fn", "args"} read from stdin and print the result
+// as JSON (matrices as nested lists). A ValueError prints {"error": "ValueError", "message"}. Parity against
+// model/src/zonos3/tts/edit.py: servers/ggml/tests/parity/test_ggml_edit.py, which also writes
+// tests/fixtures/edit-replay/cases.json; `edit-replay --cases <file>` (ctest) replays those cases and prints PASS when
+// every answer equals the recorded Python one.
 #include "zonos3-edit.h"
-#include "zonos3-textmatch.h"
 
 #include "json.hpp"
 
@@ -20,16 +18,12 @@ using namespace zonos3_edit;
 
 namespace {
 
-std::vector<int32_t> flat(const json & m, int & cols) {
+std::vector<int32_t> flat(const json & m) {
     std::vector<int32_t> out;
-    for (const auto & row : m) {
-        cols = (int) row.size();
+    for (const auto & row : m)
         for (const auto & v : row) out.push_back(v.get<int32_t>());
-    }
     return out;
 }
-
-std::vector<int32_t> flat(const json & m) { int cols = 0; return flat(m, cols); }
 
 json rows(const std::vector<int32_t> & v, int cols) {
     json out = json::array();
@@ -44,36 +38,6 @@ std::vector<Span> spans_of(const json & j) {
     return out;
 }
 
-json spans_json(const std::vector<Span> & spans) {
-    json out = json::array();
-    for (const auto & s : spans) out.push_back({s.start, s.length});
-    return out;
-}
-
-std::vector<AlignedWord> words_of(const json & j) {
-    std::vector<AlignedWord> out;
-    for (const auto & w : j) {
-        AlignedWord a;
-        a.word = w.at("word").get<std::string>();
-        a.start = w.at("start").get<double>();
-        a.end = w.at("end").get<double>();
-        if (w.contains("confidence") && !w["confidence"].is_null()) a.confidence = w["confidence"].get<double>();
-        a.tokens = w.at("tokens").get<std::vector<std::string>>();
-        out.push_back(std::move(a));
-    }
-    return out;
-}
-
-json words_json(const std::vector<AlignedWord> & words) {
-    json out = json::array();
-    for (const auto & w : words)
-        out.push_back({{"word", w.word}, {"start", w.start}, {"end", w.end},
-                       {"confidence", w.confidence ? json(*w.confidence) : json()}, {"tokens", w.tokens}});
-    return out;
-}
-
-using Lists = std::vector<std::vector<std::string>>;
-
 json call(const std::string & fn, const json & a) {
     if (fn == "edit_prompt_tokens") {
         Layout l;
@@ -86,115 +50,9 @@ json call(const std::string & fn, const json & a) {
         return rows(edit_prompt_tokens(flat(a.at("text_rows")), flat(a.at("codes")), spans_of(a.at("spans")), fills, l),
                     l.n_codebooks + 1);
     }
-    if (fn == "extract_fill") {
-        const auto sizes = a.at("codebook_sizes").get<std::vector<int>>();
-        const Fill f = extract_fill(flat(a.at("delayed_rows")), a.at("eos_frame").is_null() ? -1 : a["eos_frame"].get<int>(),
-                                    a.at("audio_pad_id").get<int>(), sizes);
-        return {rows(f.frames, (int) sizes.size()), f.ended};
-    }
-    if (fn == "splice_edit") {
-        int k = 0;
-        const auto codes = flat(a.at("codes"), k);
-        std::vector<std::vector<int32_t>> fills;
-        for (const auto & f : a.at("fills")) fills.push_back(flat(f));
-        return rows(splice_edit(codes, k, spans_of(a.at("spans")), fills), k);
-    }
     if (fn == "validate_edit_spans") {
         validate_edit_spans(spans_of(a.at("spans")), a.at("total_frames").get<int>(), a.at("max_spans").get<int>());
         return nullptr;
-    }
-    if (fn == "seconds_to_spans") {
-        std::vector<std::pair<double, double>> pairs;
-        for (const auto & p : a.at("pairs")) pairs.emplace_back(p.at(0).get<double>(), p.at(1).get<double>());
-        return spans_json(seconds_to_spans(pairs, a.at("total_frames").get<int>(), a.at("frame_rate").get<double>()));
-    }
-    if (fn == "sequence_opcodes") {
-        json out = json::array();
-        for (const auto & o : sequence_opcodes(a.at("a").get<std::vector<std::string>>(), a.at("b").get<std::vector<std::string>>())) {
-            const char * tag = o.tag == 'e' ? "equal" : o.tag == 'r' ? "replace" : o.tag == 'd' ? "delete" : "insert";
-            out.push_back({tag, o.i1, o.i2, o.j1, o.j2});
-        }
-        return out;
-    }
-    if (fn == "diff_spans") {
-        const EditDiff d = diff_spans(words_of(a.at("words")), a.at("target_tokens").get<std::vector<std::string>>(),
-                                      a.at("total_frames").get<int>(), a.at("frame_rate").get<double>(),
-                                      a.at("margin_seconds").get<double>(), a.at("min_gap_frames").get<int>(),
-                                      a.at("max_spans").get<int>());
-        return {{"spans", spans_json(d.spans)}, {"new_target_tokens", d.new_target_tokens}};
-    }
-    if (fn == "plan_edit_windows") {
-        const auto spans = spans_of(a.at("spans"));
-        const auto ws = plan_edit_windows(
-            spans, words_of(a.at("words")), a.at("target_words").get<std::vector<std::string>>(),
-            a.at("target_word_tokens").get<Lists>(), a.at("total_frames").get<int>(), a.at("frame_rate").get<double>(),
-            a.at("context_seconds").get<double>(),
-            a.at("target_text").is_null() ? std::nullopt : std::optional<std::string>(a["target_text"].get<std::string>()));
-        json out = json::array();
-        for (const auto & w : ws)
-            out.push_back({{"start", w.start}, {"end", w.end}, {"regions", w.regions}, {"text", w.text},
-                           {"spans", spans_json(w.spans(spans))}});
-        return out;
-    }
-    if (fn == "expected_fill_seconds")
-        return expected_fill_seconds(spans_of(a.at("spans")), words_of(a.at("words")),
-                                     a.at("target_words").get<std::vector<std::string>>(),
-                                     a.at("target_word_tokens").get<Lists>(), a.at("frame_rate").get<double>());
-    if (fn == "wildcard_verify") {
-        const Verify v = wildcard_verify(a.at("reference_tokens").get<std::vector<std::string>>(),
-                                         a.at("hypothesis_tokens").get<std::vector<std::string>>());
-        json groups = json::array();
-        for (const auto & g : v.groups) groups.push_back({{"ipa", g.ipa}, {"heard", g.heard ? json(*g.heard) : json()}});
-        return {{"word_errors", v.word_errors}, {"ref_words", v.ref_words}, {"cer", v.cer}, {"groups", groups}};
-    }
-    if (fn == "fill_groups") {
-        std::vector<std::optional<std::string>> heard;
-        for (const auto & h : a.at("heard")) heard.push_back(h.is_null() ? std::nullopt : std::optional<std::string>(h.get<std::string>()));
-        return fill_groups(a.at("text").get<std::string>(), heard);
-    }
-    if (fn == "canonical_markup") return canonical_markup(a.at("text").get<std::string>());
-    if (fn == "target_tokens") return target_tokens(a.at("target_text").get<std::string>());
-    if (fn == "edit_words") {
-        std::vector<WordIn> ws;
-        for (const auto & w : a.at("words")) {
-            WordIn in;
-            in.word = w.at("word").get<std::string>();
-            in.start = w.at("start").get<double>();
-            in.end = w.at("end").get<double>();
-            if (w.contains("confidence") && !w["confidence"].is_null()) in.confidence = w["confidence"].get<double>();
-            ws.push_back(std::move(in));
-        }
-        return words_json(edit_words(ws, a.at("word_tokens").get<Lists>(),
-                                     a.at("original_tokens").get<std::vector<std::string>>(), a.at("duration").get<double>()));
-    }
-    if (fn == "aligned_words") {
-        std::vector<WordIn> ws;
-        for (const auto & w : a.at("words"))
-            ws.push_back({w.at("word").get<std::string>(), w.at("start").get<double>(), w.at("end").get<double>(),
-                          w.at("presence").get<double>()});
-        return words_json(aligned_words(ws, a.at("word_tokens").get<Lists>()));
-    }
-    if (fn == "edit_language") {
-        const auto [code, name] = edit_language(a.at("language").get<std::string>(),
-                                                a.at("supported").get<std::vector<std::string>>());
-        return json::array({code, name});
-    }
-    if (fn == "split_words") return split_words(a.at("text").get<std::string>());
-    if (fn == "token_chars") return token_chars(a.at("token").get<std::string>());
-    if (fn == "normalize") return zonos3_textmatch::normalize(a.at("text").get<std::string>());
-    if (fn == "tokens") return zonos3_textmatch::tokens(a.at("text").get<std::string>());
-    if (fn == "char_error_rate")
-        return zonos3_textmatch::char_error_rate(a.at("reference").get<std::string>(), a.at("hypothesis").get<std::string>());
-    if (fn == "word_errors")
-        return zonos3_textmatch::word_errors(a.at("reference").get<std::vector<std::string>>(),
-                                             a.at("hypothesis").get<std::vector<std::string>>());
-    if (fn == "upper") return zonos3_textmatch::py_upper(a.at("text").get<std::string>());
-    if (fn == "lower") return zonos3_textmatch::py_lower(a.at("text").get<std::string>());
-    if (fn == "verify") {   // textmatch.verify
-        const std::string ref = a.at("reference").get<std::string>(), hyp = a.at("hypothesis").get<std::string>();
-        const auto ref_tokens = zonos3_textmatch::tokens(ref);
-        return {{"word_errors", zonos3_textmatch::word_errors(ref_tokens, zonos3_textmatch::tokens(hyp))},
-                {"ref_words", ref_tokens.size()}, {"cer", zonos3_textmatch::char_error_rate(ref, hyp)}};
     }
     throw std::runtime_error("unknown fn " + fn);
 }

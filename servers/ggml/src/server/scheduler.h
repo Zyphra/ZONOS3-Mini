@@ -51,7 +51,7 @@ struct GenReq {
     bool wav = false;
     bool prefix = false;                    // streaming with stream_decode=prefix
     zonos3_steering steering;
-    // Speech-edit infill (edit.cpp): the stop id (-1 = EOA; span-end for an infill), masked until min_frames frames
+    // Speech-edit infill (edit_dub.cpp): the stop id (-1 = EOA; span-end for an infill), masked until min_frames frames
     // are generated (sgl min_frames); a codes-only job finishes with its generated rows in ReqJob::codes and decodes
     // nothing.
     int stop_id = -1;

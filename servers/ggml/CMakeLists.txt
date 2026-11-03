@@ -104,10 +104,6 @@ target_sources(zonos3 PRIVATE src/zonos3-phonemes.cpp)
 target_link_libraries(zonos3 PUBLIC zonos3-lmdb ${CMAKE_DL_LIBS})
 # --- end pronunciation lexicon ---
 
-# --- Dub planning (plan 7.12): port of model/src/zonos3/dub/plan.py ---
-target_sources(zonos3 PRIVATE src/dub-plan.cpp src/align-text.cpp)
-# --- end dub planning ---
-
 # --- LACI and span-follow (plan 7.8): ports of model/src/zonos3/tts/{laci,span_follow}.py ---
 target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp)
 # --- end LACI and span-follow ---
@@ -116,8 +112,8 @@ target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp)
 target_sources(zonos3 PRIVATE src/zonos3-accent.cpp src/zonos3-emotion.cpp)
 # --- end graph features ---
 
-# --- Speech editing (plan 7.11): port of model/src/zonos3/tts/edit.py, the edit_align.py planning and textmatch.py ---
-target_sources(zonos3 PRIVATE src/zonos3-edit.cpp src/zonos3-textmatch.cpp)
+# --- Speech editing (plan 7.11): the edit prompt layout of model/src/zonos3/tts/edit.py (the edit/dub worker's fills) ---
+target_sources(zonos3 PRIVATE src/zonos3-edit.cpp)
 # --- end speech editing ---
 
 add_executable(zonos3-cli src/main.cpp)
@@ -175,10 +171,9 @@ endif()
 
 # Everything of the server but main(): zonos3-server and the embedding zonos3-app share it.
 add_library(zonos3-server-core STATIC
-    src/server/http.cpp src/server/schema.cpp src/server/util.cpp src/server/workers.cpp src/server/textnorm.cpp src/server/fusealign.cpp
-    src/server/asr.cpp src/server/edit_align.cpp
+    src/server/http.cpp src/server/schema.cpp src/server/util.cpp src/server/workers.cpp src/server/textnorm.cpp
     src/server/scheduler.cpp src/server/speakers.cpp src/server/generate.cpp src/server/capabilities.cpp
-    src/server/projects.cpp src/server/phonemize.cpp src/server/edit.cpp src/server/dub.cpp)
+    src/server/projects.cpp src/server/phonemize.cpp src/server/edit_dub.cpp src/server/edit.cpp src/server/dub.cpp)
 target_include_directories(zonos3-server-core PUBLIC src vendor ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(zonos3-server-core PUBLIC zonos3 zonos3-audio zonos3-json-schema Threads::Threads)
 if (WIN32)
@@ -257,16 +252,6 @@ if (BUILD_TESTING)
     endforeach()
 endif()
 # --- end LACI replay ---
-
-# --- Dub planning replay (plan 7.14): parity driver for tests/parity/test_ggml_dub_plan.py ---
-if (BUILD_TESTING)
-    add_executable(dub-plan-replay tests/dub-plan-replay.cpp)
-    target_link_libraries(dub-plan-replay PRIVATE zonos3)
-    target_include_directories(dub-plan-replay PRIVATE vendor)
-    add_test(NAME dub-plan-replay COMMAND dub-plan-replay --smoke)
-    set_tests_properties(dub-plan-replay PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
-endif()
-# --- end dub planning replay ---
 
 # --- Speech-edit replay (plan 7.11): parity driver for tests/parity/test_ggml_edit.py; the ctest case replays
 #     tests/fixtures/edit-replay/cases.json (Python answers written by that test) ---

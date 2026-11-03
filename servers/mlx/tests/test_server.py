@@ -175,6 +175,7 @@ def test_edit_transcribe_and_align_time_words_with_fusealign(client, monkeypatch
     aligner, asr = FakeAligner(), FakeAsr()
     monkeypatch.setattr(state, "aligner", aligner)
     monkeypatch.setattr(state, "asr", asr)
+    monkeypatch.setattr(state, "edit_runtime", None)
     r = client.post("/v2/edit/transcribe", json={"audio_base64": wav_b64(), "language": "fr_fr"})
     assert r.status_code == 200, r.text
     assert r.json()["text"] == "hello there world" and r.json()["duration"] == pytest.approx(2.0)
@@ -192,6 +193,18 @@ def test_edit_transcribe_and_align_time_words_with_fusealign(client, monkeypatch
 
     r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "hello", "language": "ko"})
     assert r.status_code == 400 and r.json()["detail"].startswith("Speech editing does not serve language 'ko'")
+
+
+def test_edit_refuses_bad_condition_buckets_before_recognition(client, monkeypatch):
+    state = client.app.state.zonos3
+    asr = FakeAsr()
+    monkeypatch.setattr(state, "aligner", FakeAligner())
+    monkeypatch.setattr(state, "asr", asr)
+    monkeypatch.setattr(state, "edit_runtime", None)
+    r = client.post("/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hello world",
+                                      "condition_buckets": {"nope": 1}})
+    assert r.status_code == 400 and "unknown condition name" in r.json()["detail"]
+    assert asr.items == []
 
 
 def test_dub_shares_the_server_asr_and_fusealign_workers(client, monkeypatch):

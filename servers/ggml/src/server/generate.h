@@ -35,9 +35,9 @@ GeneratePlan plan_generate(ServerState & s, const nlohmann::json & body, const s
 // alignment probe (attach_probe). fail() 400 when it cannot run; submit it with submit_job.
 std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan);
 
-// A LACI take of the dub (sgl _dub_synthesize: _tts_generate_msg with laci_target_frames / laci_adjust_rate, then
-// _dub_take_rate_steering). `request` is a GenerateRequest body (schema-valid; laci=true, stream=false); `duration`
-// the take's LACI duration target. `scale` puts the take on an extended speaking-rate scale (dubplan::RateScale):
+// A LACI take of the dub (the edit/dub worker's synthesize call, server/edit_dub.h). `request` is a GenerateRequest
+// body (schema-valid; laci=true, stream=false); `duration` the take's LACI duration target. `scale` puts the take on an
+// extended speaking-rate scale (zonos3.dub.plan.RateScale):
 // in a steered bucket (one of `doses`) the take's hidden delta gains `doses[bucket]` of the bundle direction
 // `direction` (steer.gguf rate_extension); the take carries its delta in every bucket so a rate-adjusting retake can
 // switch buckets. Without `scale` retakes move along the checkpoint's speaking-rate row.

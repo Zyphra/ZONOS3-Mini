@@ -8,8 +8,6 @@
   zonos3/tts/phonemes.py ``_char_class``, and the NFC and str.casefold() data
   (canonical combining classes, canonical decompositions, primary composites,
   full case folding), used by the pronunciation lexicon (src/zonos3-phonemes.cpp).
-- Python str.upper() and str.lower() (full case mappings), used by the text
-  matching of speech editing (src/zonos3-textmatch.cpp: zonos3/tts/textmatch.py).
 
 Python 3.12's unicodedata is Unicode 15.0, the version of the Oniguruma bundled with tokenizers 0.22
 and of the Python that runs the reference.
@@ -120,28 +118,6 @@ def main():
             fold.append((cp, len(f), *(ord(x) for x in f), *([0] * (3 - len(f)))))
     emit(w, "{code point, length, folded[3]}: Python str.casefold() (full case folding)",
          "static const uint32_t ZONOS3_UNI_CASEFOLD[][5]", fold, per_line=2)
-
-    for name, method in (("UPPER", str.upper), ("LOWER", str.lower)):
-        rows = []
-        for cp in range(0x110000):
-            c = chr(cp)
-            m = method(c)
-            if m != c:
-                assert len(m) <= 3, hex(cp)
-                rows.append((cp, len(m), *(ord(x) for x in m), *([0] * (3 - len(m)))))
-        emit(w, f"{{code point, length, mapped[3]}}: Python str.{name.lower()}() of one character (full case mapping)",
-             f"static const uint32_t ZONOS3_UNI_{name}[][5]", rows, per_line=2)
-
-    # str.lower()'s Final_Sigma context (CPython handle_capital_sigma): case-ignorable characters are skipped, then the
-    # neighbour must (before) / must not (after) be cased. Probed through str.lower() itself: the cased-ness of a
-    # case-ignorable character is never read.
-    def sigma_class(cp):
-        c = chr(cp)
-        if (c + "\u03a3").lower()[-1] == "\u03c2":
-            return 2   # cased, not case-ignorable
-        return 1 if ("A" + c + "\u03a3").lower()[-1] == "\u03c2" else 0
-    emit(w, "{first, last, class}: str.lower() Final_Sigma context classes (1 case-ignorable, 2 cased)",
-         "static const uint32_t ZONOS3_UNI_SIGMA_CONTEXT[][3]", runs(sigma_class), per_line=3)
 
 
 if __name__ == "__main__":

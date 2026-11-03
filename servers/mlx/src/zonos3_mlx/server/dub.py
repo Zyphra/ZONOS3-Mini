@@ -1,4 +1,4 @@
-"""Dubbing (/v2/dub/*): ``zonos3.dub.runtime.DubRuntime`` over this server's scheduler (the sgl routes).
+"""Dubbing: the MLX parts of ``zonos3.dub.runtime.DubRuntime`` (served by ``zonos3.server.dub.make_router``).
 
 Every take is a /v2/generate request with laci=true and the take's LACI duration target, so dub takes use studio
 voices, steering controls and pronunciation groups; the source voice's prompt clip is encoded with the MLX reference
@@ -11,22 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import io
-import logging
-import re
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import Response
-from zonos3.server.schemas import (
-    DubAnalyzeRequest,
-    DubGenerateRequest,
-    DubRegenerateRequest,
-    DubTranscribeRequest,
-    GenerateRequest,
-)
+from zonos3.server.schemas import GenerateRequest
 from zonos3.tts.steering import RAW_SPACE, resolve_controls
 
 from zonos3_mlx.engine import LaciTake
@@ -35,36 +24,14 @@ from zonos3_mlx.server import speakers
 from zonos3_mlx.server.generate import JobRun, plan_generate
 from zonos3_mlx.server.state import ServerState, asr_device
 
-logger = logging.getLogger("zonos3_mlx.server")
-VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
-
-
-def rate_scales(state: ServerState) -> dict:
-    """Voice mode ("studio" / "source") -> TTS language -> its speaking-rate scale with the tempo-steered buckets of the
-    steering bundle's rate_extension (source voices only on its reference_sides); empty without one, or when it was
-    measured against other row edges (sgl _dub_rate_scales)."""
-    from zonos3.dub.plan import RateScale
-
-    bundle = state.engine.bundle
-    ext = None if bundle is None else bundle.rate_extension
-    if ext is None:
-        return {}
-    edges = tuple(caps.dub_rate_edges(state))
-    if len(ext.row_edges) != len(edges) or not np.allclose(ext.row_edges, edges, rtol=0, atol=1e-6):
-        logger.warning("steering bundle rate_extension was measured on speaking-rate edges %s, the checkpoint has %s: "
-                       "dubs plan in the row buckets only", list(ext.row_edges), list(edges))
-        return {}
-    source = {lang: {b: d for b, d in doses.items() if ("slower" if b < 0 else "faster") in ext.reference_sides}
-              for lang, doses in ext.doses.items()}
-    return {mode: {lang: RateScale.extended(edges, ext.below, ext.above, doses) for lang, doses in by_lang.items()
-                   if doses}
-            for mode, by_lang in (("studio", ext.doses), ("source", source))}
+UNAVAILABLE = ("Dubbing is not enabled on this server: it needs --laci-heads and a checkpoint with a speaking-rate "
+               "condition row")
 
 
 def runtime(state: ServerState):
     """The server's DubRuntime (created on first use; its alignment worker starts with the first call that needs it)."""
     if state.dub_runtime is None:
-        from zonos3.dub.runtime import DubModel, DubRuntime, WorkerSettings
+        from zonos3.dub.runtime import DubModel, DubRuntime, WorkerSettings, rate_scales
 
         modes = speakers.checkpoint_modes(state)
         bundle = state.engine.bundle
@@ -79,7 +46,7 @@ def runtime(state: ServerState):
             raw_controls=frozenset(did for did, d in (bundle.directions.items() if bundle is not None else ())
                                    if d.space == RAW_SPACE),
             phoneme_groups=caps.phonemes(state)["phoneme_tokens"] is not None,
-            rate_scales=rate_scales(state))
+            rate_scales=rate_scales(None if bundle is None else bundle.rate_extension, caps.dub_rate_edges(state)))
 
         async def synthesize(jobs, session_id):
             return await synthesize_takes(state, jobs, session_id)
@@ -168,114 +135,3 @@ async def encode_voice_prompt(state: ServerState, audio: np.ndarray, sample_rate
     sf.write(buf, audio, int(sample_rate), format="WAV", subtype="FLOAT")
     codes = await speakers.encode_reference(state, buf.getvalue(), max_seconds=VOICE_PROMPT_MAX_S)
     return codes.long().tolist()
-
-
-async def upload(request: Request, name: str, directory: str) -> Path:
-    """Stream a request body (a file named ``name``) into ``directory``; 413 past the dub's upload cap."""
-    from zonos3.dub.plan import MAX_VIDEO_BYTES
-
-    declared = request.headers.get("content-length")
-    if declared is not None and int(declared) > MAX_VIDEO_BYTES:
-        raise HTTPException(status_code=413, detail="upload too large")
-    suffix = Path(name).suffix.lower()
-    path = Path(directory) / f"input{suffix if suffix in VIDEO_SUFFIXES | {'.wav', '.flac', '.mp3', '.ogg'} else '.bin'}"
-    size = 0
-    with open(path, "wb") as fh:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > MAX_VIDEO_BYTES:
-                raise HTTPException(status_code=413, detail="upload too large")
-            fh.write(chunk)
-    return path
-
-
-async def call(awaitable):
-    """Run a DubRuntime call, mapping its errors to HTTP statuses."""
-    from zonos3.dub.runtime import AlignWorkerError, UnknownId
-    from zonos3.tts.edit_align import WorkerError
-
-    try:
-        return await awaitable
-    except UnknownId:
-        raise HTTPException(status_code=404, detail="unknown ref_id/dub_id; upload or generate again") from None
-    except AlignWorkerError as exc:
-        raise HTTPException(status_code=503, detail=f"alignment worker: {exc}") from exc
-    except WorkerError as exc:  # the ASR / FuseAlign worker is unavailable (the message says which)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-def router(state: ServerState) -> APIRouter:
-    r = APIRouter()
-
-    def ready():
-        if not caps.dub_available(state):
-            raise HTTPException(status_code=400, detail="Dubbing is not enabled on this server: it needs --laci-heads "
-                                                        "and a checkpoint with a speaking-rate condition row")
-        return runtime(state)
-
-    @r.get("/v2/dub/capabilities")
-    async def capabilities():
-        """Target languages, rate buckets, lip-sync, voice modes and limits of the dub (zonos3.dub.runtime)."""
-        return {**(await asyncio.to_thread(runtime(state).capabilities)), "enabled": caps.dub_available(state)}
-
-    @r.post("/v2/dub/ref")
-    async def ref(request: Request, name: str = "audio"):
-        """A dub reference: raw audio bytes (any sound file), or a video whose audio track is taken."""
-        rt = ready()
-        with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-            path = await upload(request, name, tmp)
-            return await call(asyncio.to_thread(rt.add_ref, str(path)))
-
-    @r.post("/v2/dub/lips/{ref_id}")
-    async def lips(ref_id: str, request: Request, name: str = "video"):
-        """Face track + lip embeddings of the reference's video, for generate / regenerate with lipsync (AV-sync)."""
-        rt = ready()
-
-        async def run():
-            rt.refs.get(ref_id)  # 404 before reading the body
-            with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-                video = await upload(request, name, tmp)
-                return await asyncio.to_thread(rt.prepare_lips, ref_id, str(video))
-
-        return await call(run())
-
-    @r.post("/v2/dub/transcribe")
-    async def transcribe(req: DubTranscribeRequest):
-        return await call(ready().transcribe(req.ref_id, req.ref_lang))
-
-    @r.post("/v2/dub/analyze")
-    async def analyze(req: DubAnalyzeRequest):
-        return await call(ready().analyze(req.model_dump()))
-
-    @r.post("/v2/dub/generate")
-    async def generate(req: DubGenerateRequest,
-                       x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
-        return await call(ready().generate(req.model_dump(), x_tts_session_id))
-
-    @r.post("/v2/dub/regenerate")
-    async def regenerate(req: DubRegenerateRequest,
-                         x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
-        return await call(ready().regenerate(req.model_dump(), x_tts_session_id))
-
-    @r.post("/v2/dub/mux/{dub_id}")
-    async def mux(dub_id: str, request: Request, name: str = "video"):
-        """The video with the dub as its audio track (raw video bytes in, MP4 out)."""
-        rt = ready()
-        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._") or "video"
-
-        async def run():
-            rt.dubs.get(dub_id)  # 404 before reading the body
-            with tempfile.TemporaryDirectory(prefix="dub-") as tmp:
-                video, out = await upload(request, name, tmp), Path(tmp) / "out.mp4"
-                await asyncio.to_thread(rt.mux, dub_id, str(video), str(out))
-                return out.read_bytes()
-
-        data = await call(run())
-        return Response(data, media_type="video/mp4",
-                        headers={"Content-Disposition": f'attachment; filename="{stem}_dub.mp4"'})
-
-    return r

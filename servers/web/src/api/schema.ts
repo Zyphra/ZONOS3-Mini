@@ -1889,7 +1889,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker) is unavailable. */
+        /** @description A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker, the ggml server's edit/dub worker) is unavailable. */
         Unavailable: {
             headers: {
                 [name: string]: unknown;
@@ -2299,6 +2299,7 @@ export interface operations {
                     "application/json": components["schemas"]["DubCapabilities"];
                 };
             };
+            503: components["responses"]["Unavailable"];
         };
     };
     dubRef: {

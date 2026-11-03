@@ -56,7 +56,8 @@ class ServerState:
     # starts on its first call
     asr: AsrWorker = field(default_factory=lambda: AsrWorker(device=asr_device()))
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
-    dub_runtime: object | None = None
+    edit_runtime: object | None = None  # zonos3.tts.edit_runtime.EditRuntime (zonos3_mlx.server.edit.runtime)
+    dub_runtime: object | None = None  # zonos3.dub.runtime.DubRuntime (zonos3_mlx.server.dub.runtime)
     dub_slots: asyncio.Semaphore | None = None
 
     @property

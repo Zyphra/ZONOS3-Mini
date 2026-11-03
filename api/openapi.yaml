@@ -301,6 +301,7 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DubCapabilities"}
+        "503": {$ref: "#/components/responses/Unavailable"}
 
   /v2/dub/ref:
     post:
@@ -704,7 +705,7 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
     Unavailable:
-      description: A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker) is unavailable.
+      description: A helper worker (Qwen3-ASR, FuseAlign, the dubbing worker, the ggml server's edit/dub worker) is unavailable.
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}

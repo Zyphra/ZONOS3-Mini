@@ -7,6 +7,7 @@ import pytest
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 HTTPException = api_server.HTTPException
 from pydantic import ValidationError  # noqa: E402
+from zonos3.server.edit import call as edit_call  # noqa: E402
 from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest  # noqa: E402
 
 
@@ -19,9 +20,10 @@ class _Frontend:
                 speaker_embedding_enabled=False, speaker_reference_prefix_enabled=False,
                 speaking_rate_num_buckets=0, quality_features=(), quality_num_buckets=0,
                 condition_tokens_enabled=False, condition_count=0, span_end_id=1026, text_extra_tokens=4,
-                max_seq_len=4096,
+                max_seq_len=4096, codebook_sizes=(4096,) * 10,
             ),
-            max_seq_len=4096,
+            max_seq_len=4096, tts_n_codebooks=10, tts_audio_pad_id=4097,
+            tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000",
         )
         self.sent = []
 
@@ -113,7 +115,7 @@ def test_default_is_the_unguided_path(frontend, endpoint):
 def test_speech_edit_refuses_tag_guidance(frontend):
     request = EditRequest(audio_base64="", target_text="Say <laugh/> hello", tag_cfg_scale=2.0)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(api_server.tts_edit(request))
+        asyncio.run(edit_call(api_server._EDIT_RUNTIME.edit(request)))
     assert exc.value.status_code == 400 and "not supported by /v2/edit" in exc.value.detail
     assert not frontend.sent
 

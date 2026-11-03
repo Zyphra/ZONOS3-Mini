@@ -12,10 +12,11 @@ from .support import check, error, needs
 
 @pytest.fixture(scope="module")
 def dub_caps(client, caps):
+    needs(caps["dub"], "dubbing is not available on this server")
     r = client.get("/v2/dub/capabilities")
     assert r.status_code == 200, r.text[:300]
     check(r.json(), "#/components/schemas/DubCapabilities")
-    needs(caps["dub"] and r.json()["enabled"] and r.json()["available"], "dubbing is not available on this server")
+    needs(r.json()["enabled"] and r.json()["available"], "dubbing is not available on this server")
     return r.json()
 
 

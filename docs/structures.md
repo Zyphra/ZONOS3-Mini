@@ -30,12 +30,12 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 - `zonos3.codec`: The vendored dual codec (encoder, quantizer, causal multi-resolution iSTFT decoder).
 - `zonos3.models`: Model config conversion, the MECT speaker encoder, speaker cloning and the accent adapter file format.
 - `zonos3.tokenizer`: Text normalization (`textnorm.py`), the matched-codec registry (`matched_codec.py`) and the reference encoder (`dual_reference.py`).
-- `zonos3.tts`: Prompt building, markup, conditioning, emotion, steering, LACI and span-follow, speech-edit prompts and alignment, sampling helpers.
-- `zonos3.dub`: The dub planner (`plan.py`) and the dub runtime behind `/v2/dub/*` of the Python servers (`runtime.py`).
-- `zonos3.server`: Pieces the Python servers share: request schemas, studio projects and the keepalive middleware.
+- `zonos3.tts`: Prompt building, markup, conditioning, emotion, steering, LACI and span-follow, speech-edit prompts and alignment, the speech-edit runtime (`edit_runtime.py`: `/v2/edit*` of every server over the server's `EditEngine`), sampling helpers.
+- `zonos3.dub`: The dub planner (`plan.py`) and the dub runtime behind `/v2/dub/*` of every server (`runtime.py`).
+- `zonos3.server`: Pieces the Python servers share: request schemas, the edit and dub routes (`edit.py`, `dub.py`), studio projects and the keepalive middleware.
 - `zonos3.reference`: The plain-PyTorch reference LM and synthesis (`python -m zonos3.reference`), the numerical oracle for every server.
 - `zonos3.registries`: Codec and speaker-encoder registries.
-- `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, Qwen3-ASR speech recognition, FuseAlign forced alignment and speech segmentation, dub word alignment / lip-sync).
+- `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, Qwen3-ASR speech recognition, FuseAlign forced alignment and speech segmentation, dub word alignment / lip-sync, and the ggml server's speech editing and dubbing: `edit_dub.py` runs the edit and dub runtimes and calls back into the C++ engine).
 
 `zonos3_sgl` (`servers/sgl/src/zonos3_sgl`):
 

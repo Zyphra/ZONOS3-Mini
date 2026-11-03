@@ -19,11 +19,6 @@ extern char ** environ;
 
 namespace zs {
 
-JsonLinesWorker::JsonLinesWorker(std::vector<std::string> argv, std::map<std::string, std::optional<std::string>> env)
-    : argv_(std::move(argv)), env_(std::move(env)) {}
-
-JsonLinesWorker::~JsonLinesWorker() { close(); }
-
 namespace {
 
 // The server environment with the overrides applied, as NAME=VALUE strings.
@@ -70,7 +65,8 @@ static std::string quote_arg(const std::string & a) {
     return q + "\"";
 }
 
-void JsonLinesWorker::start_locked() {
+ChildProcess::ChildProcess(const std::vector<std::string> & argv,
+                           const std::map<std::string, std::optional<std::string>> & env) {
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE in_r, in_w, out_r, out_w;
     if (!CreatePipe(&in_r, &in_w, &sa, 0)) throw WorkerError("cannot create the worker's stdin pipe");
@@ -78,9 +74,9 @@ void JsonLinesWorker::start_locked() {
     SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
     std::string cmd;
-    for (const auto & a : argv_) cmd += (cmd.empty() ? "" : " ") + quote_arg(a);
+    for (const auto & a : argv) cmd += (cmd.empty() ? "" : " ") + quote_arg(a);
     std::string envblock;
-    for (const auto & e : child_environment(env_)) { envblock += e; envblock += '\0'; }
+    for (const auto & e : child_environment(env)) { envblock += e; envblock += '\0'; }
     envblock += '\0';
     STARTUPINFOA si{};
     si.cb = sizeof(si);
@@ -95,48 +91,48 @@ void JsonLinesWorker::start_locked() {
     CloseHandle(out_w);
     if (!ok) {
         CloseHandle(in_w); CloseHandle(out_r);
-        throw WorkerError("cannot start " + argv_[0]);
+        throw WorkerError("cannot start " + argv[0]);
     }
     CloseHandle(pi.hThread);
     process_ = pi.hProcess; in_ = in_w; out_ = out_r;
-    pending_.clear();
 }
 
-void JsonLinesWorker::close_locked() {
-    if (!process_) return;
-    CloseHandle((HANDLE) in_);
-    WaitForSingleObject((HANDLE) process_, INFINITE);
-    CloseHandle((HANDLE) out_);
-    CloseHandle((HANDLE) process_);
-    process_ = in_ = out_ = nullptr;
-}
-
-bool JsonLinesWorker::alive() {
-    std::lock_guard<std::mutex> lk(m_);
-    return process_ && WaitForSingleObject((HANDLE) process_, 0) == WAIT_TIMEOUT;
-}
-
-static bool write_all(void * h, const std::string & s) {
+bool ChildProcess::write(const std::string & data) {
+    if (!in_) return false;
     DWORD done = 0;
-    for (size_t off = 0; off < s.size(); off += done)
-        if (!WriteFile((HANDLE) h, s.data() + off, (DWORD) (s.size() - off), &done, nullptr)) return false;
+    for (size_t off = 0; off < data.size(); off += done)
+        if (!WriteFile((HANDLE) in_, data.data() + off, (DWORD) (data.size() - off), &done, nullptr)) return false;
     return true;
 }
 
-bool JsonLinesWorker::read_line_locked(std::string & line) {
+bool ChildProcess::read_line(std::string & line) {
     for (;;) {
         const size_t nl = pending_.find('\n');
         if (nl != std::string::npos) { line = pending_.substr(0, nl); pending_.erase(0, nl + 1); return true; }
         char buf[65536];
         DWORD n = 0;
-        if (!ReadFile((HANDLE) out_, buf, sizeof(buf), &n, nullptr) || n == 0) return false;
+        if (!out_ || !ReadFile((HANDLE) out_, buf, sizeof(buf), &n, nullptr) || n == 0) return false;
         pending_.append(buf, n);
     }
 }
 
+void ChildProcess::close_input() {
+    if (in_) CloseHandle((HANDLE) in_);
+    in_ = nullptr;
+}
+
+void ChildProcess::wait() {
+    close_input();
+    if (process_) WaitForSingleObject((HANDLE) process_, INFINITE);
+    if (out_) CloseHandle((HANDLE) out_);
+    if (process_) CloseHandle((HANDLE) process_);
+    process_ = out_ = nullptr;
+}
+
 #else
 
-void JsonLinesWorker::start_locked() {
+ChildProcess::ChildProcess(const std::vector<std::string> & argv,
+                           const std::map<std::string, std::optional<std::string>> & env) {
     int in_pipe[2], out_pipe[2];
     if (pipe(in_pipe) != 0) throw WorkerError(std::string("cannot create the worker's stdin pipe: ") + strerror(errno));
     if (pipe(out_pipe) != 0) {
@@ -151,10 +147,11 @@ void JsonLinesWorker::start_locked() {
     posix_spawn_file_actions_adddup2(&fa, out_pipe[1], 1);
     posix_spawn_file_actions_addclose(&fa, in_pipe[0]);
     posix_spawn_file_actions_addclose(&fa, out_pipe[1]);
+    std::vector<std::string> args_copy = argv;
     std::vector<char *> args;
-    for (auto & a : argv_) args.push_back(a.data());
+    for (auto & a : args_copy) args.push_back(a.data());
     args.push_back(nullptr);
-    std::vector<std::string> envs = child_environment(env_);
+    std::vector<std::string> envs = child_environment(env);
     std::vector<char *> envp;
     for (auto & e : envs) envp.push_back(e.data());
     envp.push_back(nullptr);
@@ -165,45 +162,26 @@ void JsonLinesWorker::start_locked() {
     ::close(out_pipe[1]);
     if (rc != 0) {
         ::close(in_pipe[1]); ::close(out_pipe[0]);
-        throw WorkerError("cannot start " + argv_[0] + ": " + strerror(rc));
+        throw WorkerError("cannot start " + argv[0] + ": " + strerror(rc));
     }
     pid_ = pid; in_ = in_pipe[1]; out_ = out_pipe[0];
-    pending_.clear();
 }
 
-void JsonLinesWorker::close_locked() {
-    if (pid_ < 0) return;
-    ::close(in_);
-    ::close(out_);
-    int status = 0;
-    while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {}
-    pid_ = in_ = out_ = -1;
-}
-
-bool JsonLinesWorker::alive() {
-    std::lock_guard<std::mutex> lk(m_);
-    if (pid_ < 0) return false;
-    int status = 0;
-    const pid_t r = waitpid(pid_, &status, WNOHANG);
-    if (r == 0) return true;
-    ::close(in_); ::close(out_);
-    pid_ = in_ = out_ = -1;   // reaped (or gone)
-    return false;
-}
-
-static bool write_all(int fd, const std::string & s) {
-    for (size_t off = 0; off < s.size();) {
-        const ssize_t n = ::write(fd, s.data() + off, s.size() - off);
+bool ChildProcess::write(const std::string & data) {
+    if (in_ < 0) return false;
+    for (size_t off = 0; off < data.size();) {
+        const ssize_t n = ::write(in_, data.data() + off, data.size() - off);
         if (n < 0) { if (errno == EINTR) continue; return false; }
         off += (size_t) n;
     }
     return true;
 }
 
-bool JsonLinesWorker::read_line_locked(std::string & line) {
+bool ChildProcess::read_line(std::string & line) {
     for (;;) {
         const size_t nl = pending_.find('\n');
         if (nl != std::string::npos) { line = pending_.substr(0, nl); pending_.erase(0, nl + 1); return true; }
+        if (out_ < 0) return false;
         char buf[65536];
         const ssize_t n = ::read(out_, buf, sizeof(buf));
         if (n < 0 && errno == EINTR) continue;
@@ -212,28 +190,45 @@ bool JsonLinesWorker::read_line_locked(std::string & line) {
     }
 }
 
+void ChildProcess::close_input() {
+    if (in_ >= 0) ::close(in_);
+    in_ = -1;
+}
+
+void ChildProcess::wait() {
+    close_input();
+    if (pid_ >= 0) {
+        int status = 0;
+        while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {}
+        pid_ = -1;
+    }
+    if (out_ >= 0) ::close(out_);
+    out_ = -1;
+}
+
 #endif
+
+ChildProcess::~ChildProcess() { wait(); }
+
+JsonLinesWorker::JsonLinesWorker(std::vector<std::string> argv, std::map<std::string, std::optional<std::string>> env)
+    : argv_(std::move(argv)), env_(std::move(env)) {}
 
 void JsonLinesWorker::close() {
     std::lock_guard<std::mutex> lk(m_);
-    close_locked();
+    process_.reset();
 }
 
 nlohmann::json JsonLinesWorker::call(const nlohmann::json & request) {
     std::lock_guard<std::mutex> lk(m_);
-#ifdef _WIN32
-    if (!process_) start_locked();
-#else
-    if (pid_ < 0) start_locked();
-#endif
+    if (!process_) process_ = std::make_unique<ChildProcess>(argv_, env_);
     std::string line = request.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
-    if (!write_all(in_, line) || !read_line_locked(line)) {
-        close_locked();
+    if (!process_->write(line) || !process_->read_line(line)) {
+        process_.reset();
         throw WorkerError(argv_.size() > 1 ? argv_[1] + " exited" : argv_[0] + " exited");
     }
     nlohmann::json response = nlohmann::json::parse(line, nullptr, false);
     if (response.is_discarded()) {
-        close_locked();
+        process_.reset();
         throw WorkerError("worker answered with a line that is not JSON");
     }
     return response;

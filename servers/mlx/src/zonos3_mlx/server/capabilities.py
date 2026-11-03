@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from zonos3.server.schemas import PhonemizeRequest
+from zonos3.tts.edit_runtime import EditModel, edit_capabilities
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
 from zonos3.tts.steering import controls_document
 
@@ -16,8 +17,6 @@ from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
 
 TEXT_NORM_LANGUAGES = ("en_us", "en_gb", "fr_fr", "de", "es", "it", "pt_br", "ja", "cmn", "ko")
-EDIT_ALIGN_MAX_SECONDS = 150.0
-EDIT_MAX_SECONDS = EDIT_ALIGN_MAX_SECONDS
 
 
 def condition_tokens(state: ServerState) -> dict | None:
@@ -78,28 +77,21 @@ def phonemes(state: ServerState) -> dict:
     }
 
 
-def edit_max_spans(state: ServerState) -> int:
+def edit_model(state: ServerState) -> EditModel:
     from zonos3.tts.edit import edit_marker_rows
 
-    return edit_marker_rows(state.config.text_extra_tokens, state.config.text_tokenizer_spec or None)
-
-
-def model_supports_editing(state: ServerState) -> bool:
-    return state.config.span_end_id is not None and edit_max_spans(state) > 0
-
-
-def frame_rate(state: ServerState) -> float:
-    return 44100.0 / state.engine.decoder.hop
+    c = state.config
+    max_spans = edit_marker_rows(c.text_extra_tokens, c.text_tokenizer_spec or None) if c.span_end_id is not None else 0
+    return EditModel(frame_rate=44100.0 / state.engine.decoder.hop, n_codebooks=c.n_codebooks,
+                     audio_pad_id=c.audio_pad_id, codebook_sizes=tuple(int(s) for s in c.codebook_sizes),
+                     max_spans=max_spans, speaker_row=c.speaker_embedding_dim > 0)
 
 
 def edit(state: ServerState) -> dict:
     """Speech editing needs the checkpoint's span-end/marker rows, Qwen3-ASR (.venv-asr), FuseAlign (fusealign_hub in
     its worker's interpreter) and the reference encoder."""
-    model = model_supports_editing(state)
-    return {"speech_editing": model and state.asr.installed and state.options.fusealign
-                              and state.engine.has_reference_encoder,
-                "edit_max_spans": edit_max_spans(state) if model else 0, "edit_frame_rate": frame_rate(state) if model else None,
-                "edit_max_seconds": EDIT_MAX_SECONDS, "edit_align_max_seconds": EDIT_ALIGN_MAX_SECONDS}
+    return edit_capabilities(edit_model(state), state.asr.installed and state.options.fusealign
+                             and state.engine.has_reference_encoder)
 
 
 def dub_rate_edges(state: ServerState) -> list[float]:

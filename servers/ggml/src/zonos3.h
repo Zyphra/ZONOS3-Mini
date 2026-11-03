@@ -148,7 +148,7 @@ int zonos3_edit_marker_rows(const zonos3_model & model);
 inline int32_t zonos3_edit_marker_id(const zonos3_model & model, int index) {
     return (int32_t) model.hp.text_vocab + 1 + index;
 }
-// Whether the checkpoint can edit speech (sgl _model_supports_editing): span_end_id and at least one marker row.
+// Whether the checkpoint can edit speech (zonos3.tts.edit_runtime.EditModel.max_spans > 0): span_end_id and at least one marker row.
 inline bool zonos3_supports_editing(const zonos3_model & model) {
     return model.hp.span_end_id >= 0 && zonos3_edit_marker_rows(model) > 0;
 }

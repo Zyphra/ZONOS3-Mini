@@ -18,6 +18,7 @@ import collections
 import copy
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -40,6 +41,7 @@ from zonos3.dub import plan as P
 from zonos3.tts.align_text import align_tokens
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, WorkerError, align_words, asr_python, transcribe_audio
 
+logger = logging.getLogger("zonos3.dub")
 DUB_ROOT = Path(__file__).resolve().parents[4]  # the repo root
 WORD_ALIGNER_MODEL = "google-bert/bert-base-multilingual-cased"
 STORE_CAPACITY = 8
@@ -157,6 +159,25 @@ class DubModel:
     # voice mode ("source" / "studio") -> TTS language -> its speaking-rate scale when it has tempo-steered buckets past
     # the row (the steering bundle's rate_extension; source voices only on the sides it lists); otherwise the row's
     rate_scales: Mapping[str, Mapping[str, P.RateScale]] = field(default_factory=dict)
+
+
+def rate_scales(extension, row_edges) -> dict[str, dict[str, P.RateScale]]:
+    """Voice mode ("studio" / "source") -> TTS language -> its speaking-rate scale with the tempo-steered buckets of the
+    steering bundle's ``extension`` (zonos3.tts.steering.RateExtension; README "Extended speaking-rate buckets"; source
+    voices, in reference mode, only on its reference_sides): ``DubModel.rate_scales``. Empty without an extension, or
+    when it was measured against other row edges than the checkpoint's ``row_edges``."""
+    if extension is None:
+        return {}
+    edges = tuple(float(e) for e in row_edges)
+    if len(extension.row_edges) != len(edges) or not np.allclose(extension.row_edges, edges, rtol=0, atol=1e-6):
+        logger.warning("steering bundle rate_extension was measured on speaking-rate edges %s, the checkpoint has %s: "
+                       "dubs plan in the row buckets only", list(extension.row_edges), list(edges))
+        return {}
+    source = {lang: {b: d for b, d in doses.items() if ("slower" if b < 0 else "faster") in extension.reference_sides}
+              for lang, doses in extension.doses.items()}
+    return {mode: {lang: P.RateScale.extended(edges, extension.below, extension.above, doses)
+                   for lang, doses in by_lang.items() if doses}
+            for mode, by_lang in (("studio", extension.doses), ("source", source))}
 
 
 # Take synthesis (the server's): jobs -> per job (float32 audio at P.SAMPLE_RATE, or None for no audio; LACI record).
