@@ -9,7 +9,7 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 | Codec decoder | `dac.gguf` | causal multi-resolution iSTFT head, 44.1 kHz |
 | Speaker encoder | `spk-encoder.gguf` | MECT-B2 + ASTP, 192-d embeddings (`speaker_mode=embedding`) |
 | Reference encoder | `dac-encoder.gguf` + `ssl-teacher.gguf` | raw-reference cloning and speech editing; the BF16 autocast recipe of the release; loaded on first use, freed after `--reference-idle-unload` idle seconds |
-| Companions | `steer.gguf`, `emotion.gguf`, `accents.gguf`, `accent-directions.gguf` | request `controls`, emotion, accents |
+| Companions | `steer.gguf`, `accents.gguf` | the steering bundle (request `controls` / `control_spans` / `controls_cfg_scale`; `/v2/controls` with each set's calibration), accent adapters (request `accent`) |
 
 Every file is auto-detected next to the backbone. Generation runs on one worker thread that owns every MLX call; up to
 `--batch` requests (default 4; a CFG request takes two slots) advance one row per tick.

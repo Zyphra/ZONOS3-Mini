@@ -1,12 +1,10 @@
 #!/bin/bash
 # Exact-mode ZONOS3 server on 127.0.0.1:1919 (sources servers/sgl/scripts/env.sh). Extra flags are appended.
 # Defaults serve the ZONOS3 Mini release LM (hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k) with the voices in
-# default_voices/ and the emotion directions in steering/emotion_directions_mect60k_axes. Overrides:
+# default_voices/ and the steering bundle steering/studio_bundle_mect60k.json (the studio's controls). Overrides:
 #   SERVE_MODEL                 checkpoint dir or hf:// location (--model-path)
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)
-#   EMOTION_SERVE_DIRECTIONS    emotion direction set (--tts-emotion-directions-dir)
-#   ACCENT_SERVE_DIRECTIONS     accent direction set (--accent-directions: hidden-space or speaker-embedding steering)
-#   STEER_BUNDLE                steering bundle (--steer-bundle), e.g. steering/studio_bundle_mect60k.json for the studio's controls
+#   STEER_BUNDLE                steering bundle (--steer-bundle); empty serves no controls
 #   PHONEME_LEXICON             gold pronunciation lexicon (--tts-phoneme-lexicon: POST /v2/phonemize)
 #   ZONOS3_STUDIO_PROJECTS      shared studio project store (--studio-projects-dir); empty keeps projects in the browser
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
@@ -21,7 +19,8 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 source "$repo_root/servers/sgl/scripts/env.sh"
 
 cd "$repo_root"
-if [[ -n "${STEER_BUNDLE:-}" ]]; then
+steer_bundle="${STEER_BUNDLE-$repo_root/steering/studio_bundle_mect60k.json}"
+if [[ -n "$steer_bundle" ]]; then
     # The studio embeds every library voice and every upload: run the speaker encoder on the GPU.
     export ZONOS3_SPEAKER_EMBEDDER_DEVICE="${ZONOS3_SPEAKER_EMBEDDER_DEVICE:-cuda}"
 fi
@@ -43,9 +42,7 @@ exec uv run --locked --package zonos3-sgl --group phonemize python -m zonos3_sgl
     --max-running-requests 2 --cuda-graph-max-bs 2 \
     --max-prefill-length 256 --memory-ratio 0.5 \
     --tts-default-voices-dir "${SERVE_VOICES:-$repo_root/default_voices}" \
-    --tts-emotion-directions-dir "${EMOTION_SERVE_DIRECTIONS:-$repo_root/steering/emotion_directions_mect60k_axes}" \
-    ${ACCENT_SERVE_DIRECTIONS:+--accent-directions "$ACCENT_SERVE_DIRECTIONS"} \
-    ${STEER_BUNDLE:+--steer-bundle "$STEER_BUNDLE"} \
+    ${steer_bundle:+--steer-bundle "$steer_bundle"} \
     ${PHONEME_LEXICON:+--tts-phoneme-lexicon "$PHONEME_LEXICON"} \
     ${studio_projects:+--studio-projects-dir "$studio_projects"} \
     ${laci_args[@]+"${laci_args[@]}"} \

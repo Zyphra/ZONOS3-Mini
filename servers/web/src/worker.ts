@@ -10,7 +10,6 @@ import { Gpu, initGpu } from './gpu/device';
 import { fetchJson, loadModel } from './gpu/weights';
 import { loadReferenceCodes } from './npy';
 import { buildPrompt, modelHp, NCB, W, type ModelHp } from './prompt';
-import { loadDirections, type Directions } from './request/directions';
 import { LaciHeads } from './request/laci';
 import { controlsDocument, loadSteer, type SteerBundle } from './request/steer';
 import { SpeakerEncoder } from './speaker';
@@ -78,25 +77,11 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   const hp = modelHp(bbw.meta);
 
   const steerBuf = await companion(base, 'steer.gguf');
-  const emotionBuf = await companion(base, 'emotion.gguf');
-  const accentBuf = await companion(base, 'accent-directions.gguf');
   const steer: SteerBundle | null = steerBuf
     ? loadSteer(parseGguf(steerBuf), { nEmbd: hp.nEmbd, nLayer: hp.nLayer, speakerDim: hp.speakerDim }) : null;
-  // sgl _get_emotion_directions: an empty set leaves emotion control off
-  let emotion: Directions | null = emotionBuf ? loadDirections(parseGguf(emotionBuf), 'emotion.gguf') : null;
-  if (emotion && emotion.empty()) emotion = null;
-  const accentDirections = accentBuf ? loadDirections(parseGguf(accentBuf), 'accent-directions.gguf') : null;
-  // sgl _steering_sources
-  const sources = steer ? steer.sources.slice() : [];
-  if (emotion?.space === 'attnres_source') sources.push(emotion.sourceIndex);
-  if (accentDirections?.space === 'attnres_source') sources.push(accentDirections.sourceIndex);
-  const steerSources = [...new Set(sources)].sort((a, b) => a - b);
-  if (emotion?.space === 'proj' && steerSources.length)
-    throw new Error('hidden-space steering cannot be combined with proj-space emotion directions');
-  if (steer) steer.sources = steerSources;
   const laci = await loadLaci(base);
 
-  const backbone = new Backbone(gpu, bbw, steerSources);
+  const backbone = new Backbone(gpu, bbw, steer ? steer.sources : []);
   const dac = new DacStream(gpu, dacw);
   const tokenizer = createTokenizer();
   await warmup(backbone, dac, hp);
@@ -105,7 +90,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   let ref: Promise<RefEncoder> | null = null;
   const engine: Engine = {
     hp, modelFile: 'zonos3-qat.gguf', backbone, codec: dac, tokenizer,
-    steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, emotion, accentDirections, steerSources, laci,
+    steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci,
     voices, headroomDb: Number(dacw.meta.headroom_db ?? 3),
     async embedSpeaker(pcm) {
       const enc = await (spk ??= SpeakerEncoder.load(gpu, base, progress, cache).catch((e: unknown) => { spk = null; throw e; }));

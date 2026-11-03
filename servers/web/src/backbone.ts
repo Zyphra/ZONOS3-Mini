@@ -101,11 +101,6 @@ function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condName
     const cond = c.conditionRow >= 0 && r >= c.conditionRow && r < c.conditionRow + N_COND;
     if (!speaker && !cond) throw new Error(`zonos3: all-pad row ${r} has no speaker/condition embedding`);
   }
-  if (c.speakerDelta) {
-    if (c.speakerRow < 0 || c.speakerDelta.length !== D)
-      throw new Error(`zonos3: a speaker-row delta needs a speaker row and ${D} values`);
-    for (const v of c.speakerDelta) if (!Number.isFinite(v)) throw new Error('zonos3: speaker-row delta contains a non-finite value');
-  }
 }
 
 function checkMeta(meta: Record<string, unknown>): void {
@@ -132,7 +127,6 @@ export class Backbone {
   private dynData = new Uint32Array(4);   // a = position of the first row, b = steering on (decode)
   private condBuf: GPUBuffer;
   private spkIn: GPUBuffer;
-  private spkDelta: GPUBuffer;
   private spkProg: Program;
   private steerBuf: GPUBuffer;
   private probeBuf: GPUBuffer;
@@ -175,15 +169,14 @@ export class Backbone {
     this.dyn = gpu.uniform(16, 'bb.dyn');
     this.condBuf = gpu.buffer((COND_HDR + D) * 4, 'bb.cond');
     this.spkIn = gpu.buffer(SPK_DIM * 4, 'bb.spkIn');
-    this.spkDelta = gpu.buffer(D * 4, 'bb.spkDelta');
     this.steerBuf = gpu.buffer(Math.max(1, this.steerSources.length) * D * 4, 'bb.steer');
     this.probeBuf = gpu.buffer(PROBE_WORDS * 4, 'bb.probe');
     this.probeSc = gpu.buffer(PROBE_LAYERS.length * NH * PROBE_LMAX * 4, 'bb.probeSc');
     this.probeAcc = gpu.buffer(PROBE_LMAX * 4, 'bb.probeAcc');
     let b = new Builder(gpu);
-    // Projected speaker row = speaker_proj.weight . speaker + bias (+ delta) into condBuf (zonos3-graph.cpp:515-521).
+    // Projected speaker row = speaker_proj.weight . speaker + bias into condBuf (zonos3-graph.cpp:515-521).
     matvec(b, this.spkIn, w.get('speaker_proj.weight'), this.condBuf, { O: D, I: SPK_DIM, y_off: COND_HDR },
-      { bias: w.get('speaker_proj.bias').buf, res: this.spkDelta });
+      { bias: w.get('speaker_proj.bias').buf });
     this.spkProg = b.finish();
     const decodeLogits: GPUBuffer[] = [], decodeProg: Program[] = [], chunkLogits: GPUBuffer[] = [], chunkProg: Program[] = [];
     for (const s of [0, 1] as const) {
@@ -348,7 +341,6 @@ export class Backbone {
     this.gpu.write(this.condBuf, 0, hdr);
     if (!speaker) return false;
     this.gpu.write(this.spkIn, 0, c.speaker!);
-    this.gpu.write(this.spkDelta, 0, c.speakerDelta ?? new Float32Array(D));
     return true;
   }
 

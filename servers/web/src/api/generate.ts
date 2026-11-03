@@ -9,7 +9,6 @@ import {
   buildCfgTwin, buildPrompt, conditionBucket, MAX_REFERENCE_FRAMES, MAX_SILENCE_PREFILL, NCB, prefillCodes,
   type Conditioning, type Prompt,
 } from '../prompt';
-import { accentSteering, addHiddenDelta, applyEmotion, calibrate, hiddenDelta, type EmotionSliders } from '../request/directions';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
 import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
@@ -18,7 +17,7 @@ import { defaultSampling, Sampler, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { newSlot, sampleFrame, type SlotState } from '../slot';
 import { applyFade, wavBytes } from '../wav';
-import { laciLanguages, MAX_FRAMES, serverAccents, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
+import { ACCENT_ADAPTERS, laciLanguages, MAX_FRAMES, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
 import type { Engine } from './engine';
 import {
   bool, fail, HttpError, isSet, num, parseBody, pyList, pyRepr, sessionId, str, truthy, type EngineRequest, type Sink,
@@ -46,12 +45,11 @@ interface Plan {
   speakerMode: string;
   referenceCodes: Int32Array | null;
   speakerEmbedding: Float32Array | null;
-  speakerId: string;
   conditionBuckets: number[];
   silencePrefill: number;
   decodeContext: Int32Array | null;   // the reference's last frames, ordinary [K][10]
   cfgScale: number;
-  cfgKind: '' | 'speaker' | 'tag' | 'emotion';
+  cfgKind: '' | 'speaker' | 'tag' | 'controls';
   twinSteered: boolean;
   headroomDb: number;
   fadeOutMs: number;
@@ -59,7 +57,6 @@ interface Plan {
   wav: boolean;
   prefix: boolean;
   steering: Steering;
-  speakerDelta: Float32Array | null;  // proj-space emotion delta (none with the shipped attnres_source directions)
   spanFollow: '' | 'rate' | 'reading';
   laci: LaciHeads | null;
   follow: LaciHeads | null;
@@ -85,7 +82,7 @@ function as400<T>(f: () => T): T {
 // ------------------------------------------------------------------------------------------------ resolve
 
 /** sgl _validate_tag_cfg. */
-function validateTagCfg(text: string, scale: number, speakerCfg: number, emotionCfg: number): void {
+function validateTagCfg(text: string, scale: number, speakerCfg: number, controlsCfg: number): void {
   if (!Number.isFinite(scale) || scale < TAG_CFG_MIN_SCALE || scale > TAG_CFG_MAX_SCALE)
     fail(400, 'tag_cfg_scale must be finite and between 1.0 and 4.0.');
   if (scale === 1.0) return;
@@ -95,7 +92,7 @@ function validateTagCfg(text: string, scale: number, speakerCfg: number, emotion
       ' or the same names as span tags (<shouting>...</shouting>).');
   }
   if (speakerCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.');
-  if (emotionCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with emotion_cfg_scale; set emotion_cfg_scale to 1.0.');
+  if (controlsCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.');
 }
 
 /** sgl _resolve_condition_buckets: explicit ids win, raw values map through the edges, anything else is unknown. */
@@ -153,56 +150,18 @@ function resolveLanguage(body: Body): string {
   return lang;
 }
 
-const calibrated = (body: Body) => bool(body, 'emotion_calibrated') ?? true;
-
 function requestEmbedding(p: Plan): Float32Array | null {
   return p.speakerMode === 'embedding' && p.speakerEmbedding ? p.speakerEmbedding : null;
 }
 
-/** sgl _apply_request_emotion: raw / lda directions move the embedding; hidden ones return their delta. */
-function applyRequestEmotion(e: Engine, body: Body, p: Plan): Float32Array | null {
-  if (!bool(body, 'emotion_enabled')) return null;
-  const sliders: EmotionSliders = isSet(body, 'emotion_sliders')
-    ? Object.entries(body.emotion_sliders as Record<string, number>).map(([k, v]) => [k, Number(v)]) : [];
-  const va = { valence: num(body, 'emotion_valence', 0), arousal: num(body, 'emotion_arousal', 0) };
-  if (!sliders.length && va.valence === 0 && va.arousal === 0) return null;
-  if (!e.emotion)
-    fail(400, 'Emotion control requested but no emotion directions are configured for this model. ' +
-      'Start the server with --emotion-directions (or place emotion.gguf next to the backbone).');
-  const d = e.emotion;
-  const embedding = requestEmbedding(p);
-  if (!embedding && d.space !== 'attnres_source') return null;
-  if (calibrated(body)) calibrate(d, p.speakerId, sliders, va);
-  const strength = num(body, 'emotion_strength', 1.0);
-  if (d.hidden()) return as400(() => hiddenDelta(d, sliders, va.valence, va.arousal, strength, true));
-  const moved = as400(() => applyEmotion(d, embedding!, sliders, va.valence, va.arousal, strength, true, true));
-  embedding!.set(moved);
-  return null;
-}
-
-/** sgl _resolve_tts_request_accent + _apply_steering_accent (direction accents only: no adapters in the export). */
-function applyAccent(e: Engine, body: Body, p: Plan): Float32Array | null {
+/** sgl _resolve_tts_request_accent: `accent` picks an accent adapter (ACCENT_ADAPTERS). */
+function checkAccent(body: Body): void {
   const accent = str(body, 'accent');
-  if (accent === null || accent === '' || accent === 'none') return null;
-  const accents = serverAccents(e);
-  if (!accents.includes(accent)) {
-    const loaded = accents.length ? accents.join(', ') : 'none (start the server with --accent-adapters or --accent-directions)';
+  if (accent === null || accent === '' || accent === 'none') return;
+  if (!ACCENT_ADAPTERS.includes(accent)) {
+    const loaded = ACCENT_ADAPTERS.length ? ACCENT_ADAPTERS.join(', ') : 'none (load accent adapters)';
     fail(400, `Unknown accent ${pyRepr(accent)}; loaded accents: ${loaded}.`);
   }
-  const d = e.accentDirections!;
-  return as400(() => accentSteering(d, accent, num(body, 'accent_strength', 1.0), p.speakerId, calibrated(body), requestEmbedding(p)));
-}
-
-/** sgl _layout_steering_delta. */
-function addSteeringDelta(e: Engine, p: Plan, source: number, delta: Float32Array | null): void {
-  if (!delta) return;
-  if (!p.steering.sources.length) {
-    p.steering.sources = e.steerSources.slice();
-    p.steering.hiddenSize = e.hp.nEmbd;
-  }
-  const out = addHiddenDelta(p.steering.sources, p.steering.hiddenSize, source, delta, p.steering.hidden);
-  if (!out) fail(500, `steering source ${source} is not among the server's steered sources`);
-  p.steering.hidden = out;
 }
 
 /** sgl _apply_request_controls. */
@@ -211,9 +170,6 @@ function applyControls(e: Engine, body: Body, p: Plan): void {
   if (!e.steer)
     fail(400, 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); ' +
       '`controls` are unavailable.');
-  if (bool(body, 'emotion_enabled') &&
-      (truthy(body, 'emotion_sliders') || num(body, 'emotion_valence', 0) !== 0 || num(body, 'emotion_arousal', 0) !== 0))
-    fail(400, '`controls` and the emotion_* fields cannot be combined; send the emotion as controls.');
   const controls = isSet(body, 'controls') ? body.controls as Record<string, number> : {};
   const spans = isSet(body, 'control_spans') ? body.control_spans as ControlSpan[] : [];
   const rate = num(body, 'control_span_rate', 0);
@@ -227,8 +183,8 @@ function checkLaci(e: Engine, body: Body, language: string): void {
   if (!e.laci.size) fail(400, 'LACI is not enabled on this server (start it with --laci-heads LANG=PATH)');
   if (!e.laci.has(language))
     fail(400, `No LACI alignment heads for language ${pyRepr(language)} (configured: ${laciLanguages(e).join(', ')})`);
-  if (num(body, 'speaker_cfg_scale', 1) !== 1 || num(body, 'emotion_cfg_scale', 1) !== 1)
-    fail(400, 'LACI needs speaker_cfg_scale = emotion_cfg_scale = 1');
+  if (num(body, 'speaker_cfg_scale', 1) !== 1 || num(body, 'controls_cfg_scale', 1) !== 1)
+    fail(400, 'LACI needs speaker_cfg_scale = controls_cfg_scale = 1');
   if (num(body, 'tag_cfg_scale', 1) !== 1) fail(400, 'LACI needs tag_cfg_scale = 1');
 }
 
@@ -266,8 +222,8 @@ function resolveFollowTokens(e: Engine, p: Plan): void {
 export async function planGenerate(e: Engine, spk: Speakers, body: Body, session: string | null,
                                    pcm: Float32Array | undefined): Promise<Plan> {
   const text = str(body, 'text')!;
-  const speakerCfg = num(body, 'speaker_cfg_scale', 1), emotionCfg = num(body, 'emotion_cfg_scale', 1);
-  validateTagCfg(text, num(body, 'tag_cfg_scale', 1), speakerCfg, emotionCfg);
+  const speakerCfg = num(body, 'speaker_cfg_scale', 1), controlsCfg = num(body, 'controls_cfg_scale', 1);
+  validateTagCfg(text, num(body, 'tag_cfg_scale', 1), speakerCfg, controlsCfg);
   const modes = spk.checkpointModes();
   let mode = modes.length ? modes[0] : '';
   if (isSet(body, 'speaker_mode')) {
@@ -280,23 +236,19 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   const p: Plan = {
     text, rawText: text, language: 'en_us', sp: defaultSampling(), maxFrames: MAX_FRAMES, speakerMode: rs.mode,
     referenceCodes: rs.codes, speakerEmbedding: rs.embedding ? Float32Array.from(rs.embedding) : null,
-    speakerId: str(body, 'speaker_embedding_id') ?? '', conditionBuckets, silencePrefill: 0, decodeContext: null,
+    conditionBuckets, silencePrefill: 0, decodeContext: null,
     cfgScale: 1, cfgKind: '', twinSteered: true, headroomDb: -1, fadeOutMs: 0, stream: true, wav: false, prefix: false,
-    steering: new Steering(), speakerDelta: null, spanFollow: '', laci: null, follow: null, followTokens: [],
+    steering: new Steering(), spanFollow: '', laci: null, follow: null, followTokens: [],
     followLead: 1, followLag: 0, prompt: null!, twin: null,
   };
-  const emotionDelta = applyRequestEmotion(e, body, p);
   p.language = resolveLanguage(body);
   if (isSet(body, 'max_tokens')) {
     const requested = Number(body.max_tokens);
     if (requested <= 0) fail(400, 'max_tokens must be positive.');
     p.maxFrames = Math.min(requested, MAX_FRAMES);
   }
-  const accentDelta = applyAccent(e, body, p);
+  checkAccent(body);
   applyControls(e, body, p);
-  if (e.emotion && e.emotion.space === 'proj') p.speakerDelta = emotionDelta;
-  else if (e.emotion) addSteeringDelta(e, p, e.emotion.sourceIndex, emotionDelta);
-  if (e.accentDirections) addSteeringDelta(e, p, e.accentDirections.sourceIndex, accentDelta);
   // sgl _span_follow
   if (str(body, 'control_span_follow') === 'reading' && p.steering.spans.length) {
     const heads = e.laci.get(p.language);
@@ -316,7 +268,7 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     if (!hasPrompt)
       fail(400, 'Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or ' +
         'speaker_mode=embedding with a clip or an embedding');
-    if (emotionCfg !== 1.0) fail(400, 'Speaker and emotion CFG cannot be combined');
+    if (controlsCfg !== 1.0) fail(400, 'Speaker and controls CFG cannot be combined');
     p.cfgScale = speakerCfg;
     p.cfgKind = 'speaker';
   }
@@ -325,10 +277,10 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     p.cfgScale = tagCfg;
     p.cfgKind = 'tag';
   }
-  if (emotionCfg !== 1.0 && (p.steering.hidden || p.speakerDelta) && requestEmbedding(p)) {
-    p.cfgScale = emotionCfg;
+  if (controlsCfg !== 1.0 && p.steering.hidden && requestEmbedding(p)) {
+    p.cfgScale = controlsCfg;
     p.twinSteered = false;
-    p.cfgKind = 'emotion';
+    p.cfgKind = 'controls';
   }
   // check_phoneme_groups: this checkpoint has no phoneme tokens
   if (text.includes('\uE000') || text.includes('\uE001'))
@@ -381,7 +333,6 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     }
   };
   p.prompt = build(p.text, 'could not build the prompt');
-  if (p.prompt.cond.speakerRow >= 0) p.prompt.cond.speakerDelta = p.speakerDelta;
   if (p.cfgKind === 'speaker') {
     try {
       p.twin = buildCfgTwin(p.prompt, e.hp.nCondBuckets);
@@ -390,9 +341,9 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     }
   } else if (p.cfgKind === 'tag') {
     p.twin = build(stripNonverbalMarkup(p.text), 'could not build the tag-CFG twin prompt');
-    if (p.twin.cond.speakerRow >= 0) p.twin.cond.speakerDelta = p.speakerDelta;
-  } else if (p.cfgKind === 'emotion') {
-    p.twin = { ...p.prompt, cond: { ...p.prompt.cond, speakerDelta: null } };
+  } else if (p.cfgKind === 'controls') {
+    // The same prompt and speaker, run without the hidden steering (twinSteered = false).
+    p.twin = { ...p.prompt, cond: { ...p.prompt.cond } };
   }
   // make_job: the slot capacity check
   const rows = Math.max(p.prompt.nRows, p.twin?.nRows ?? 0);
@@ -567,7 +518,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
           for (let r = 0; r < c.nRows; r++) ids.set(laci.stream[r].subarray(0, W), (base + r) * W);
           const cond: Conditioning = { ...p.prompt.cond };
           if (c.conditionValues) cond.buckets = c.conditionValues.slice();
-          if (c.swapDelta) hidden = c.speakerEmotionDelta;
+          if (c.swapDelta) hidden = c.steeringDelta;
           Object.assign(slot, newSlot(c.nRows));
           steer = hidden;
           windows = laci.probeMask() ?? [];

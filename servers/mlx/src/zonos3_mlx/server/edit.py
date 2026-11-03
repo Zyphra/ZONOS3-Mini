@@ -15,8 +15,9 @@ from dataclasses import replace
 import numpy as np
 import torch
 from zonos3.reference.synth import Sampling, resolve_condition_buckets, validate_phoneme_groups
+from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_runtime import EditRuntime, FillJob
-from zonos3.tts.steering import RAW_SPACE, check_controls, resolve_controls
+from zonos3.tts.steering import check_controls, resolve_controls
 
 from zonos3_mlx.audio_io import decode_pcm
 from zonos3_mlx.engine import EditLayout, ResolvedSpeaker, plan_request

@@ -35,15 +35,15 @@ hf auth login
 hf download Zyphra/ZONOS3_Mini_GGUF zonos3-qat.gguf dac.gguf spk-encoder.gguf --local-dir models
 # Optional raw-reference cloning companions:
 hf download Zyphra/ZONOS3_Mini_GGUF dac-encoder.gguf ssl-teacher.gguf --local-dir models
-# Optional voice-design steering directions (request `controls`, the studio's design controls, dub tempo buckets):
+# Optional voice-direction steering bundle (request `controls`: voice design, emotion, accent directions; the
+# studio's design controls; dub tempo buckets):
 hf download Zyphra/ZONOS3_Mini_GGUF steer.gguf --local-dir models
-# Optional emotion and accent steering directions (`emotion_*`, `accent`):
-hf download Zyphra/ZONOS3_Mini_GGUF emotion.gguf accent-directions.gguf --local-dir models
 ```
 
 The server picks up every companion it finds next to the backbone. Backbones downloaded before 2026-11-01 lack
-`zonos3.text_tokenizer_spec` and are refused: re-download `zonos3-qat.gguf` (and `steer.gguf`, which gained the dub's
-`rate_extension`). Files downloaded before 2026-10-27 are the previous fullenc_120k release; re-download
+`zonos3.text_tokenizer_spec` and are refused: re-download `zonos3-qat.gguf`. A `steer.gguf` without
+`zonos3_steer.set.calibrations` (converted before 2026-11-03) is refused as well: re-download or reconvert it. Files
+downloaded before 2026-10-27 are the previous fullenc_120k release; re-download
 `zonos3-qat.gguf` and `spk-encoder.gguf` together (the backbone expects embeddings from the matching speaker encoder).
 
 Or convert the checkpoints locally as below.
@@ -74,10 +74,8 @@ $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-
 $T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/dac-encoder.gguf
 $T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf
 
-# Optional: steering, emotion and accent companions (repo-root steering/ assets).
+# Optional: the steering bundle (repo-root steering/ assets).
 $T steer ../../steering/studio_bundle_mect60k.json -o models/steer.gguf
-$T directions ../../steering/emotion_directions_mect60k_axes -o models/emotion.gguf
-$T directions ../../steering/accent_directions_mect60k -o models/accent-directions.gguf
 
 # Optional: the keep2_plain decoder variant (2 layers per transformer stage).
 $T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/dac-keep2.gguf
@@ -91,9 +89,7 @@ models/
   spk-encoder.gguf    speaker encoder; speaker-embedding cloning from audio
   dac-encoder.gguf    optional acoustic/semantic encoder + RVQ
   ssl-teacher.gguf    optional frozen SSL teacher; raw-reference audio cloning needs both
-  steer.gguf          optional steering directions (voice design controls); convert_gguf.py steer
-  emotion.gguf        optional emotion directions; convert_gguf.py directions
-  accent-directions.gguf  optional accent-steering directions; convert_gguf.py directions
+  steer.gguf          optional steering bundle (voice design, emotion and accent directions); convert_gguf.py steer
   accents.gguf        optional accent adapters; convert_gguf.py accents <adapter dir>
 ```
 
@@ -193,7 +189,7 @@ A `steer.gguf` next to the backbone (or `--steer PATH`) enables voice-design con
 uv run --package zonos3-tools python ../../tools/convert_gguf.py steer ../../steering/studio_bundle_mect60k.json -o models/steer.gguf
 ```
 
-Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `control_spans` (`[{"start": 0, "end": 12, "controls": {"delivery.whisper": 3}}]`, code-point offsets into the request text, answered with `X-Control-Span-Follow: rate`) and `control_span_rate`. With `--laci-heads LANG=PATH` for the request's language, `control_span_follow: "reading"` places the spans by the alignment heads' reading position instead (`control_span_lead` / `control_span_lag`; answered with `X-Control-Span-Follow: reading`), and `laci: true` runs LACI: skips, stalls and early EOS are rolled back and regenerated under an ACI attention window (no CFG). `GET /v2/controls` lists the sets, directions (raw vectors included), duration timing tables and the UI metadata. Raw controls need `speaker_mode` `embedding`; hidden controls work in both modes. The directions were fitted on the `mect_60k` backbone; other checkpoints may respond differently.
+Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `control_spans` (`[{"start": 0, "end": 12, "controls": {"delivery.whisper": 3}}]`, code-point offsets into the request text, answered with `X-Control-Span-Follow: rate`) and `control_span_rate`. Emotion (`mood.*`) and accent directions (`accents_en.*`, `accent_hidden.hin`, ...) are bundle sets like any other. `controls_cfg_scale` (default 1; needs `speaker_mode` `embedding` and `--batch >= 2`) guides a request with a hidden-space delta against a twin of the same prompt without it, `uncond + scale * (cond - uncond)`. With `--laci-heads LANG=PATH` for the request's language, `control_span_follow: "reading"` places the spans by the alignment heads' reading position instead (`control_span_lead` / `control_span_lag`; answered with `X-Control-Span-Follow: reading`), and `laci: true` runs LACI: skips, stalls and early EOS are rolled back and regenerated under an ACI attention window (no CFG). `GET /v2/controls` lists the sets (with the set's `calibration`: the doses of its `calibration.json`, when it has one), directions (raw vectors included), duration timing tables and the UI metadata; the server never applies a calibration (controls are raw doses), and every speaker object lists the `disabled_controls` its calibration doses to 0. Raw controls need `speaker_mode` `embedding`; hidden controls work in both modes. `accent` / `accent_strength` select an accent adapter of `accents.gguf` (`--accent-adapters`). The directions were fitted on the `mect_60k` backbone; other checkpoints may respond differently.
 
 ## Standalone tools
 

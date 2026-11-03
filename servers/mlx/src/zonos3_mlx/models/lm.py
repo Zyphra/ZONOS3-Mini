@@ -398,16 +398,12 @@ class Zonos3MLX:
         output = (down[:, :, 0, :] * weights[:, :, None]).sum(axis=1)
         return self._lin(p + "ffn_latent_up", output)
 
-    def _replace_rows(self, x, lo, speaker_rows, proj_deltas, condition_rows):
+    def _replace_rows(self, x, lo, speaker_rows, condition_rows):
         hi = lo + x.shape[0]
         for row, vec in (speaker_rows or {}).items():
             if lo <= row < hi:
                 projected = matmul(_to_mx(vec).reshape(1, -1), self.w["speaker_proj.weight"])[0]
-                projected = projected + self.t["speaker_proj.bias"]
-                delta = (proj_deltas or {}).get(row)
-                if delta is not None:
-                    projected = projected + _to_mx(delta).reshape(-1)
-                x[row - lo] = projected
+                x[row - lo] = projected + self.t["speaker_proj.bias"]
         for table, row in enumerate(sorted(condition_rows or {})):
             if lo <= row < hi:
                 x[row - lo] = self.t[f"cond_embd.{table}.weight"][int(condition_rows[row])]
@@ -415,7 +411,7 @@ class Zonos3MLX:
 
     # -- forward -----------------------------------------------------------------------------------------------------
 
-    def forward(self, ids, state: LMState, *, speaker_rows=None, proj_deltas=None, condition_rows=None,
+    def forward(self, ids, state: LMState, *, speaker_rows=None, condition_rows=None,
                 hidden_deltas=None, accents=None, probe: ProbeSpec | None = None, capture: dict | None = None
                 ) -> LMOutput:
         """Logits of ``ids`` [rows, n_codebooks + 1] continuing ``state`` (updated in place); the keyword arguments
@@ -437,7 +433,7 @@ class Zonos3MLX:
             x = x + self.t["text_embd.weight"][idx[:, c.n_codebooks]]
             self._save("emb_sum", x)
             if speaker_rows or condition_rows:
-                x = self._replace_rows(x, lo, speaker_rows, proj_deltas, condition_rows)
+                x = self._replace_rows(x, lo, speaker_rows, condition_rows)
             self._save("emb_cond", x)
             x = _rms(x, None, c.norm_eps)
             self._save("emb_norm", x)

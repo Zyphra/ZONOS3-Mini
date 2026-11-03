@@ -2,6 +2,7 @@
 // (port of servers/ggml/src/server/speakers.cpp; same 400 details).
 import { b64DecodeStrict } from '../b64';
 import { MAX_REFERENCE_FRAMES } from '../prompt';
+import { disabledControls } from '../request/steer';
 import { wavBytes } from '../wav';
 import type { Engine } from './engine';
 import { fail, isSet, parseBody, pyRepr, sendBytes, sendJson, sessionId, str, type EngineRequest, type Sink } from './http';
@@ -55,7 +56,6 @@ export class Speakers {
   }
 
   json(v: Voice): Record<string, unknown> {
-    const d = this.e.emotion;
     return {
       id: v.id,
       label: v.label,
@@ -68,7 +68,7 @@ export class Speakers {
       speaker_modes: this.voiceModes(v),
       embedding_dim: this.e.hp.speakerDim > 0 ? this.e.hp.speakerDim : null,
       transcript: null,
-      emotion_disabled: !!d && d.calibrated && d.calibration !== null && d.calibration.disabled(v.id, d.controls()).length > 0,
+      disabled_controls: disabledControls(this.e.steer, v.id),
     };
   }
 

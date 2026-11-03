@@ -11,7 +11,7 @@ The scheduler runs this for requests whose ``TTSUserMsg.laci`` names an alignmen
 (``TTSLLM.generate(laci=...)``) and in the server (``laci: true`` on the request) alike: a ``LaciSession`` per request
 owns the stream, a rollback becomes a continuation request (the prompt plus the kept rows, re-prefilled) under the same
 uid, and only rows no later rollback can change are handed downstream (``LaciSession.drain``), so the detokenizer and the
-streamed response see one uninterrupted stream. Constraints: no CFG twin (speaker and emotion CFG scale 1), the FA
+streamed response see one uninterrupted stream. Constraints: no CFG twin (speaker and controls CFG scale 1), the FA
 attention backend, tensor parallel size 1.
 
 Vocabulary
@@ -467,7 +467,7 @@ class Continuation:
     max_tokens: int
     condition_values: list[int] | None = None  # the condition-row ids to regenerate under (None: the prompt's)
     # the steering delta to regenerate under (the bucket's, on an extended rate scale); only when ``swap_delta``
-    speaker_emotion_delta: torch.Tensor | None = None
+    steering_delta: torch.Tensor | None = None
     swap_delta: bool = False
 
 
@@ -520,7 +520,7 @@ class LaciSession:
     rates: RateBuckets | None = None
     condition_values: list[int] | None = None  # the current attempt's condition-row ids
     bucket: int | None = None  # the current attempt's speaking-rate bucket (default: its condition-row id)
-    rate_deltas: list | None = None  # per bucket of ``rates``: the request's speaker_emotion_delta in that bucket
+    rate_deltas: list | None = None  # per bucket of ``rates``: the request's steering delta in that bucket
     pace: PaceMonitor | None = None
     pace_retries: int = 0
     # span steering by reading position (zonos3.tts.span_follow.SpanFollower): sees every readout, rolled back with
@@ -716,8 +716,8 @@ class LaciSession:
         return Continuation(torch.stack(self.stream), resume - self.n_prefill, seed,
                             self.max_tokens - (resume - self.n_prefill),
                             None if self.condition_values is None else list(self.condition_values),
-                            speaker_emotion_delta=(None if self.rate_deltas is None
-                                                   else self.rate_deltas[self.bucket - self.rates.first]),
+                            steering_delta=(None if self.rate_deltas is None
+                                            else self.rate_deltas[self.bucket - self.rates.first]),
                             swap_delta=self.rate_deltas is not None)
 
     # -- final -----------------------------------------------------------------------------------------------------

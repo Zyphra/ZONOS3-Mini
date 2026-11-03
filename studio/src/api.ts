@@ -501,7 +501,7 @@ const offlineSpeaker = (label: string, source_type: Speaker['source_type'], name
   speaker_modes: source_type === 'audio' ? ['embedding', 'reference'] : ['embedding'],
   embedding_dim: current().spec.embedding_dim,
   transcript: null,
-  emotion_disabled: false,
+  disabled_controls: [],
 });
 
 export async function getSpeakers(): Promise<Speaker[]> {
@@ -653,7 +653,7 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].start < sorted[i - 1].end) throw new ApiError(400, `control spans [${sorted[i - 1].start}, ${sorted[i - 1].end}) and [${sorted[i].start}, ...) overlap.`);
   }
-  // The server's tag-guidance rules: a recognized tag, and one twin per request (no speaker / emotion CFG).
+  // The server's tag-guidance rules: a recognized tag, and one twin per request (no speaker / controls CFG).
   const tagScale = req.tag_cfg_scale ?? 1;
   const nv = b.tags ? fixtureNv.prepare(req.text, req.control_spans ?? undefined) : null;
   if (tagScale > 1) {

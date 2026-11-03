@@ -557,7 +557,7 @@ std::optional<Continuation> LaciSession::finish_attempt() {
     c.swap_delta = p_.rate_deltas.has_value();
     if (p_.rate_deltas && bucket_) {
         const auto & d = (*p_.rate_deltas)[*bucket_ - p_.rates->first];
-        if (!d.empty()) c.speaker_emotion_delta = d;
+        if (!d.empty()) c.steering_delta = d;
     }
     return c;
 }

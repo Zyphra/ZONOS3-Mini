@@ -113,7 +113,7 @@ def run_laci(t: dict) -> dict:
         rec["continuation"] = None if cont is None else {
             "n_rows": int(cont.rows.shape[0]), "history_rows": cont.history_rows, "seed": cont.seed,
             "max_tokens": cont.max_tokens, "condition_values": cont.condition_values, "swap_delta": cont.swap_delta,
-            "speaker_emotion_delta": None if cont.speaker_emotion_delta is None else cont.speaker_emotion_delta.tolist(),
+            "steering_delta": None if cont.steering_delta is None else cont.steering_delta.tolist(),
             "probe_mask": _mask(s.probe_mask()),
         }
         out_attempts.append(rec)

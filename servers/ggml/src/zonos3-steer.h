@@ -1,5 +1,7 @@
 // Steering directions (steer.gguf): raw-space controls move the speaker embedding, hidden-space controls add
-// to Full AttnRes bank sources of generated frames. Semantics follow minisgl zonos2/tts/steering.py.
+// to Full AttnRes bank sources of generated frames. Semantics follow model/src/zonos3/tts/steering.py and
+// directions.py. A set may carry its calibration.json (zonos3_steer.set.calibrations, "" = none): served by
+// /v2/controls and the speakers' disabled_controls, never applied to the controls (they stay raw doses).
 #pragma once
 #include <cstdint>
 #include <map>
@@ -18,7 +20,25 @@ struct zonos3_steer_direction {
     int source = -1;               // bank source (hidden only)
     std::vector<float> vec;        // [speaker_dim] raw | [hidden_size] hidden
 };
-struct zonos3_steer_set { std::string name; bool hidden = false; int source = -1; };
+// Per-speaker, per-direction raw dose chosen offline (directions.Calibration). A dose of 0 disables the direction
+// for that speaker; a "<name>-" key is the negative pole's own dose.
+struct zonos3_steer_calibration {
+    std::map<std::string, std::map<std::string, double>> by_speaker;
+    std::map<std::string, double> defaults;   // Python `default`
+    double global_default = 1.0;
+    std::string document_json;                // Calibration.document() as JSON, file key order
+    // `speaker` empty = no speaker key.
+    double strength(const std::string & speaker, const std::string & name) const;
+    // Calibration.disabled: the names whose dose is 0 for `speaker`, "<name>-" when only the negative pole is 0.
+    std::vector<std::string> disabled(const std::string & speaker, const std::vector<std::string> & names) const;
+    static bool parse(const std::string & json_text, zonos3_steer_calibration & out, std::string & err);
+};
+struct zonos3_steer_set {
+    std::string name;
+    bool hidden = false;
+    int source = -1;
+    std::optional<zonos3_steer_calibration> calibration;
+};
 // Tempo-steered speaking-rate buckets past the condition row (bundle `rate_extension`, zonos3/tts/steering.py
 // RateExtension): the pace direction, the row edges they continue, the nominal edges past the row and, per TTS
 // language, the buckets measured safe with their dose; reference_sides ("slower" / "faster") also serve
@@ -43,6 +63,9 @@ struct zonos3_steer_bundle {
 void zonos3_steer_index(zonos3_steer_bundle & b);
 bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_model & model, std::string & err);
 std::string zonos3_steer_controls_json(const zonos3_steer_bundle & b, int embedding_dim);
+// steering.disabled_controls: per calibrated set, in direction order, "<set>.<name>" (or "<set>.<name>-") of every
+// direction calibrated to 0 for `speaker`.
+std::vector<std::string> zonos3_steer_disabled_controls(const zonos3_steer_bundle & b, const std::string & speaker);
 double zonos3_steer_duration_factor(const zonos3_steer_bundle & b, const std::map<std::string, double> & doses);
 int zonos3_steer_text_chars(const std::string & utf8);   // Unicode code points ((c & 0xC0) != 0x80 bytes)
 

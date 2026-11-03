@@ -21,10 +21,9 @@ struct GeneratePlan {
     GenReq gr;
     zonos3_prompt prompt;
     zonos3_prompt twin;               // n_rows == 0: no CFG twin
-    // "" | "speaker" (speaker row / reference prefix dropped) | "tag" (markup stripped) | "emotion" (same prompt,
-    // no emotion / steering delta)
+    // "" | "speaker" (speaker row / reference prefix dropped) | "tag" (markup stripped) | "controls" (same prompt,
+    // no steering delta)
     std::string cfg_kind;
-    std::vector<float> speaker_delta; // proj-space emotion delta on the projected speaker row (empty = none)
     std::string span_follow;          // X-Control-Span-Follow: "" (no control_spans) | "rate" | "reading"
 };
 
@@ -67,12 +66,10 @@ TakeResult wait_take(const std::shared_ptr<ReqJob> & job);
 // 3; unparsable = 3) frames, off when ZONOS3_SILENCE_PREFILL_DEFAULT is 0/false/no/off. False when out of range.
 bool configure_silence_prefill(ServerState & s, std::string & err);
 
-// Loads the emotion directions (emotion.gguf), accent adapters (accents.gguf; attached as model.accents) and accent
-// directions (accent-directions.gguf) recorded in `s` (empty path = none) and derives s.steer_sources (sgl
-// _steering_sources; the steering bundle, when loaded, adopts that layout). Call after the backbone and the steering
-// bundle are loaded. False with the reason in `err`.
-bool load_emotion_accents(ServerState & s, std::string & err);
-// sgl _server_accents: the adapter accents, then the accent directions (named, then axes).
+// Loads the accent adapters (accents.gguf; attached as model.accents) recorded in `s` (empty path = none). Call after
+// the backbone is loaded. False with the reason in `err`.
+bool load_accent_adapters(ServerState & s, std::string & err);
+// sgl _server_accents: the adapter accents.
 std::vector<std::string> server_accents(const ServerState & s);
 
 // Request pieces shared with /v2/edit (sgl helpers; fail() with sgl's 400 / 500 details):

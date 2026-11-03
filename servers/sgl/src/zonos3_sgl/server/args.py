@@ -36,10 +36,6 @@ class ServerArgs(SchedulerConfig):
     tts_quality_buckets: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     tts_quality_dropout: Dict[str, float] | None = None
     tts_default_voices_dir: str | None = None
-    tts_emotion_directions_dir: str | None = "steering/emotion_directions_mect60k_axes"
-    # Accent directions: hidden-space (attnres_source) or speaker-embedding (raw) manifest
-    # + calibration.json; requests pick one with accent / accent_strength like an adapter.
-    accent_directions: str | None = None
     # Steering bundle (zonos3.tts.steering): direction sets driven together by a request's `controls` and
     # `control_spans`, plus the studio's UI metadata (/v2/controls).
     steer_bundle: str | None = None
@@ -313,29 +309,12 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     )
 
     parser.add_argument(
-        "--tts-emotion-directions-dir",
-        type=str,
-        default=ServerArgs.tts_emotion_directions_dir,
-        help="Directory of emotion direction vectors (manifest.json + .npy). Defaults to "
-        "./steering/emotion_directions_mect60k_axes; emotion sliders auto-enable when that folder "
-        "is present. Pass an empty string to force-disable.",
-    )
-    parser.add_argument(
         "--accent-adapters",
         type=str,
         default=ServerArgs.accent_adapters,
         help="Directory of accent adapters (<accent>.pt, lingua apps.zonos.accent_adapter). "
         "Requests then pick one with 'accent' and 'accent_strength' and share batches "
         "across accents. Single GPU (tensor parallel size 1) only.",
-    )
-    parser.add_argument(
-        "--accent-directions",
-        type=str,
-        default=ServerArgs.accent_directions,
-        help="Directory of accent directions: hidden-space (manifest.json space attnres_source) or "
-        "speaker-embedding (space raw, speaker_mode=embedding only), <accent>.npy, optional "
-        "calibration.json (e.g. ./steering/accent_directions_mect60k). Requests pick one with 'accent' and 'accent_strength' (x its "
-        "calibrated dose); names must not repeat --accent-adapters.",
     )
     parser.add_argument(
         "--steer-bundle",
@@ -426,15 +405,11 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         kwargs["model_path"] = os.path.expanduser(kwargs["model_path"])
     if kwargs.get("tts_default_voices_dir"):
         kwargs["tts_default_voices_dir"] = os.path.expanduser(kwargs["tts_default_voices_dir"])
-    if kwargs.get("tts_emotion_directions_dir"):
-        kwargs["tts_emotion_directions_dir"] = os.path.expanduser(kwargs["tts_emotion_directions_dir"])
     if kwargs.get("accent_adapters"):
         from zonos3.models.accent_format import list_accent_adapters
 
         kwargs["accent_adapters"] = os.path.expanduser(kwargs["accent_adapters"])
         list_accent_adapters(kwargs["accent_adapters"])
-    if kwargs.get("accent_directions"):
-        kwargs["accent_directions"] = os.path.expanduser(kwargs["accent_directions"])
     if kwargs.get("steer_bundle"):
         kwargs["steer_bundle"] = os.path.abspath(os.path.expanduser(kwargs["steer_bundle"]))
         from zonos3.tts.steering import load_bundle

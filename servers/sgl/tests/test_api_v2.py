@@ -58,7 +58,7 @@ def _config(tmp_path, **extra):
                                      span_end_id=None, text_extra_tokens=0, hidden_size=4, codebook_sizes=(4096,) * 10),
         max_seq_len=4096, tts_n_codebooks=10, tts_audio_pad_id=4097, tts_audio_codec=CODEC,
         tts_default_voices_dir=None, studio_projects_dir=None, studio_dir=str(tmp_path / "studio"),
-        accent_adapters=None, accent_directions=None, steer_bundle=None, laci_heads={},
+        accent_adapters=None, steer_bundle=None, laci_heads={},
     )
     return SimpleNamespace(**{**fields, **extra})
 
@@ -167,6 +167,7 @@ def test_stream_with_wav_is_400(client, frontend):
     {"speaker_wav_base64": "AAAA"}, {"seed": -1}, {"seed": 2**32}, {"headroom_db": 25}, {"tag_cfg_scale": 5},
     {"speaker_mode": "x"}, {"stream_decode": "x"}, {"format": "mp3"}, {"speaker_blend_t": 2},
     {"speaker_reference_codes": []}, {"control_spans": [{"start": -1, "end": 2, "controls": {}}]},
+    {"emotion_enabled": True}, {"emotion_cfg_scale": 2.0},
 ])
 def test_schema_violations_are_422(client, frontend, fields):
     r = client.post("/v2/generate", json={"text": "hi", **fields})
@@ -184,7 +185,7 @@ def test_speakers_take_the_v2_shape(client):
     assert voice == {
         "id": voice["id"], "label": "Alice", "source_type": "embedding", "scope": "default", "is_default": True,
         "original_name": "Alice.npy", "created_at": voice["created_at"], "has_preview": False,
-        "speaker_modes": ["embedding"], "embedding_dim": 3, "transcript": None, "emotion_disabled": False,
+        "speaker_modes": ["embedding"], "embedding_dim": 3, "transcript": None, "disabled_controls": [],
     }
     assert client.post("/v2/speakers", json={"label": "x"}).status_code == 400            # no session header
     assert client.post("/v2/speakers", json={"speaker_wav_base64": "AAAA"}).status_code == 422

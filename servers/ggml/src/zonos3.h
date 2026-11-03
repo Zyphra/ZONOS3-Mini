@@ -100,8 +100,6 @@ struct zonos3_conditioning {
     int condition_row = -1;            // first of hp.n_cond rows; row i replaced by cond_embd[i][buckets[i]]
     std::vector<int32_t> buckets;      // [hp.n_cond], each 0..hp.n_cond_buckets (n_cond_buckets = unknown)
     // Optional, default off:
-    std::vector<float> speaker_delta; // [hp.n_embd] added to the projected speaker row (proj-space emotion,
-                                      // zonos3-emotion.h); empty = none; needs speaker_row >= 0
     int accent = -1;                  // accent adapter of model.accents for these rows (prefill/extend/uncached
     float accent_strength = 0.0f;     // forward): y += strength * adapter; -1 or strength 0 = none
 };

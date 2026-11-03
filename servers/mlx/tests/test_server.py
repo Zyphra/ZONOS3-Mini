@@ -1,10 +1,12 @@
 """The MLX HTTP server on a tiny backbone (servers/ggml/scripts/make-dummy-model.py with edit rows, span-end and a
-phoneme block) and the dummy decoder: what a client sees of streaming, speech editing, phonemize, session voices and
-the CFG slot rule. The reference encoder is replaced by the fixture codes (the edit test needs codes, not audio)."""
+phoneme block) and the dummy decoder: what a client sees of streaming, speech editing, phonemize, session voices,
+steering-bundle calibrations and the CFG rules. The reference encoder is replaced by the fixture codes (the edit test
+needs codes, not audio)."""
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import subprocess
@@ -18,7 +20,8 @@ import torch
 from conftest import FIXTURES, REPO
 from fastapi.testclient import TestClient
 from zonos3.tts.phonemes import normalize_headword
-from zonos3_mlx.engine import Engine
+from zonos3.tts.steering import controls_document, load_bundle
+from zonos3_mlx.engine import Engine, ResolvedSpeaker, plan_request
 from zonos3_mlx.scheduler import Scheduler
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.app import create_app
@@ -266,3 +269,65 @@ def test_cfg_needs_two_slots(files):
         assert one.get("/v2/capabilities").json()["speaker_cfg_supported"] is False
         r = one.post("/v2/generate", json=body)
         assert r.status_code == 400 and "--batch >= 2" in r.json()["detail"]
+
+
+VOICE_ID = "default_" + hashlib.sha1(b"v.npy").hexdigest()[:16]  # the default voice v.npy
+CALIBRATION = {"default": {"valence": 0.5}, "by_speaker": {VOICE_ID: {"valence-": 0.0}}, "global_default": 1.0}
+
+
+@pytest.fixture(scope="module")
+def steered(files, tmp_path_factory):
+    """A server with a steer.gguf (tools/convert_gguf.py steer) of a raw set and a calibrated hidden set, and one
+    default voice; yields (client, bundle JSON)."""
+    import convert_gguf
+
+    root = tmp_path_factory.mktemp("steer")
+    rng = np.random.default_rng(5)
+    for name, space, dim, direction, extra in (("who", "raw", 192, "gender", {}),
+                                               ("mood", "attnres_source", 32, "valence", {"source_index": 1})):
+        (root / name).mkdir()
+        np.save(root / name / f"{direction}.npy", rng.standard_normal(dim).astype(np.float32))
+        (root / name / "manifest.json").write_text(json.dumps(
+            {"dim": dim, "space": space, "directions": {direction: {"file": f"{direction}.npy", "kind": "axis"}},
+             **extra}))
+    (root / "mood" / "calibration.json").write_text(json.dumps(CALIBRATION))
+    bundle = root / "bundle.json"
+    bundle.write_text(json.dumps({"name": "tiny", "sets": {"who": "who", "mood": "mood"}, "ui": {}}))
+    convert_gguf.main(["steer", str(bundle), "-o", str(root / "steer.gguf")])
+    (root / "voices").mkdir()
+    np.save(root / "voices" / "v.npy", np.ones(192, np.float32))
+    engine = Engine.load(files / "m.gguf", steer=str(root / "steer.gguf"))
+    scheduler = Scheduler(engine, batch=2)
+    scheduler.start(warmup=False)
+    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=2, max_frames=60,
+                                                         default_voices_dir=root / "voices"))
+    with TestClient(create_app(state)) as c:
+        yield c, bundle
+
+
+def test_steer_gguf_serves_the_set_calibrations_in_controls_and_speakers(steered):
+    client, bundle = steered
+    doc = client.get("/v2/controls").json()
+    assert doc["sets"]["mood"]["calibration"] == CALIBRATION and "calibration" not in doc["sets"]["who"]
+    want = controls_document(load_bundle(bundle), speaker_embedding_dim=doc["embedding_dim"])
+    assert doc == json.loads(json.dumps(want))  # the GGUF bundle is the directory bundle
+    voices = {s["id"]: s for s in client.get("/v2/speakers").json()["speakers"]}
+    assert voices[VOICE_ID]["disabled_controls"] == ["mood.valence-"]
+    buf = io.BytesIO()
+    np.save(buf, np.ones(192, np.float32))
+    created = client.post("/v2/speakers", headers={"X-TTS-Session-ID": "s"}, json={
+        "speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode(), "speaker_embedding_name": "u.npy"})
+    assert created.status_code == 200 and created.json()["disabled_controls"] == []
+
+
+def test_controls_cfg_twins_the_prompt_without_the_hidden_delta(steered):
+    engine = steered[0].app.state.zonos3.engine
+    speaker = ResolvedSpeaker("embedding", torch.ones(192), None)
+    body = {"text": "hi", "speaker_mode": "embedding", "controls": {"mood.valence": 1.0}, "controls_cfg_scale": 2.0}
+    plan = plan_request(engine, body, speaker)
+    assert (plan.cfg_kind, plan.cfg_scale) == ("controls", 2.0) and plan.hidden_delta is not None
+    assert plan.cond.steered and not plan.twin.steered
+    assert torch.equal(plan.twin.input_ids, plan.cond.input_ids)
+    assert plan_request(engine, {**body, "controls": {"who.gender": 1.0}}, speaker).twin is None  # no hidden delta
+    with pytest.raises(ValueError, match="^Speaker and controls CFG cannot be combined$"):
+        plan_request(engine, {**body, "speaker_cfg_scale": 1.5}, speaker)

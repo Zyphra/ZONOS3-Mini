@@ -10,9 +10,10 @@ Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plai
   - [ZONOS3 Mini release (`lm/mect_60k`)](#zonos3-mini-release-lmmect_60k)
 - [Pronunciation input (phoneme tokens)](#pronunciation-input-phoneme-tokens)
 - [Nonverbal markup and tag CFG](#nonverbal-markup-and-tag-cfg)
-- [Emotion Control](#emotion-control)
-  - [Raw-reference checkpoints: hidden-space steering](#raw-reference-checkpoints-hidden-space-steering)
-  - [Accent steering](#accent-steering)
+- [Steering controls](#steering-controls)
+  - [Hidden-space steering](#hidden-space-steering)
+  - [Set calibration](#set-calibration)
+  - [Accent directions](#accent-directions)
 - [Zonos Voice Studio](#zonos-voice-studio)
   - [Span steering by reading position](#span-steering-by-reading-position)
   - [Projects on the server](#projects-on-the-server)
@@ -167,9 +168,8 @@ the file stem is the name requests use and
 `/v2/capabilities` lists the loaded names under `accents`. An unknown name
 returns 400. The studio shows an accent selector and a strength slider when
 adapters are loaded. Tensor parallelism is not supported with adapters.
-`--accent-directions DIR` serves accents as hidden-space steering directions
-through the same request fields (see [Accent steering](#accent-steering)); both
-can be loaded together, a name in both is refused.
+Accent directions (hidden-space or speaker-embedding vectors) are steering-bundle
+controls, not accents (see [Accent directions](#accent-directions)).
 
 ```bash
 servers/sgl/scripts/serve.sh --accent-adapters <adapter dir>
@@ -314,7 +314,7 @@ in lingua (`apps/zonos/configs/z3m_mect60k_phoneme_tokens.yaml`, see
 open token, a group close token and one token per IPA symbol of the 136-symbol
 inventory of the gold pronunciation lexicon. Only those rows were trained, so the
 checkpoint is the release LM bit for bit on text without groups: every steering
-direction (`steering/studio_bundle_mect60k.json`, emotion and accent directions) and
+direction (`steering/studio_bundle_mect60k.json`) and
 the release accent adapters apply to it unchanged. Phoneme checkpoints are not
 released; build one from the release LM and an exported row file.
 
@@ -422,7 +422,7 @@ same normalized text with the markers removed (enclosed words kept, whitespace c
 conditioning identical; both branches advance on the same sampled frames, and every step mixes the raw logits of
 all codebooks in float32 before any sampler transform, `plain + s · (tagged − plain)`. Rules: finite `1.0`–`4.0`
 (422 otherwise); above `1.0` the text must contain a recognized tag; one twin per request, so `speaker_cfg_scale`
-and `emotion_cfg_scale` must be `1.0` and `laci` false (400 otherwise). The offline `TTSLLM` does not build the twin (a request
+and `controls_cfg_scale` must be `1.0` and `laci` false (400 otherwise). The offline `TTSLLM` does not build the twin (a request
 above 1.0 there raises). The server logs both prompts (`tag CFG uid=…` from the tokenizer, `Tag CFG uid=… plain
 twin N rows` from the scheduler).
 
@@ -437,7 +437,7 @@ twin N rows` from the scheduler).
   the input had whitespace next to a marker (the ja grammar fails on a space next to a marker).
   Text without markup takes the previous path unchanged.
 - *Pronunciation groups*: markup and groups mix freely in one text; the plain twin keeps the groups.
-- *Steering*: `controls`, `control_spans`, emotion deltas and accent adapters apply to BOTH branches under tag CFG
+- *Steering*: `controls`, `control_spans` and accent adapters apply to BOTH branches under tag CFG
   (the twin differs in its text rows only), as under speaker CFG: steering is part of the generation, so the
   guidance amplifies only the tag contrast; a steered request with tag CFG is the steered request with stronger tags.
   The reading-position follower's per-frame decisions (from the tagged branch's LACI heads) are shared with the twin.
@@ -457,127 +457,127 @@ twin N rows` from the scheduler).
 - *Sampling*: the sampler draws each row over the narrowest vocabulary prefix (no span-end column for utterances), so
   an edit checkpoint consumes the random numbers of the same checkpoint without that row.
 
-## Emotion Control
+## Steering controls
 
-You can nudge a voice toward an emotion or along conceptual axes (valence,
-arousal, …) **without changing speaker identity**. Emotion is applied as additive
-*direction* vectors — no model or checkpoint changes — so the timbre is preserved
-while prosody shifts.
-
-The default direction set is `steering/emotion_directions_mect60k_axes/`, and the
-server **auto-loads it on startup when that folder is present** — emotion sliders
-appear in the studio automatically, no extra flags. Point elsewhere (or disable)
-with `--tts-emotion-directions-dir <dir>` (`EMOTION_SERVE_DIRECTIONS` for
-`servers/sgl/scripts/serve.sh`; pass an empty string to turn it off).
+You can move a voice along measured *direction* vectors (emotion axes, speaking
+styles, accents, voice qualities, pitch, …) **without changing the model**: no
+checkpoint changes, so the timbre is preserved while the delivery shifts. Every
+direction set is served through one steering bundle: `--steer-bundle FILE`
+(`STEER_BUNDLE` for `servers/sgl/scripts/serve.sh`, default
+`steering/studio_bundle_mect60k.json`; `STEER_BUNDLE=` serves no controls); the
+ggml, mlx and web servers read the same bundle packed as `steer.gguf`
+(`tools/convert_gguf.py steer`). A request picks raw doses with `controls`
+(`"<set>.<direction>": dose`) and, for hidden-space directions, `control_spans`
+over character ranges of the text (see [Zonos Voice Studio](#zonos-voice-studio));
+`GET /v2/controls` lists the sets and directions.
 
 ```bash
 curl -X POST http://localhost:1919/v2/generate \
   -H "Content-Type: application/json" \
   -d '{
         "text": "I cannot believe you did that!",
-        "emotion_enabled": true,
-        "emotion_valence": 0.8,
-        "emotion_arousal": 0.8,
+        "controls": {"mood.valence": 3.2, "mood.arousal": 3.2},
         "stream": true
       }' \
   --output excited.pcm
 ```
 
-`GET /v2/capabilities` reports what the loaded directions expose:
-`emotion_enabled`, `emotion_names`, `emotion_axes`, and `emotion_calibrated`
-(whether a per-speaker strength calibration is loaded). The shipped set includes a
-`calibration.json` so `emotion_strength: 1.0` is already a sensible per-voice,
-per-pole default; raise it to exaggerate. `emotion_cfg_scale` > 1 runs an
-unsteered twin and amplifies the difference (about 2× compute).
+`controls_cfg_scale` > 1 runs a twin without the request's hidden-space delta (the
+same prompt and speaker, its generated frames unsteered) and mixes
+`uncond + s · (cond − uncond)` in float32 (about 2× compute). The twin runs only for
+`speaker_mode: embedding` requests with a speaker and a hidden-space control;
+`controls_cfg_scale` other than 1 is refused (400) next to `speaker_cfg_scale`,
+`tag_cfg_scale` above 1 or `laci` (one twin per request).
 
-### Raw-reference checkpoints: hidden-space steering
+### Hidden-space steering
 
 ZONOS3 Mini clones from a raw reference prefix, so for reference-mode requests
-there is no speaker embedding for embedding-space directions to act on. The
-directions therefore live in the model's hidden space (`manifest.json`:
+there is no speaker embedding for embedding-space (`raw`) directions to act on.
+Hidden-space sets live in the model's hidden space (`manifest.json`:
 `"space": "attnres_source"`, `"source_index": k`): on every generated frame the
 request's delta is added to source `k` of the Full AttnRes bank (0 = embedding,
 `2i+1` = attention/GDN output of layer `i`, `2i+2` = FFN/MoE output of layer `i`)
 before later sublayers and the output head route from it. Reference and text rows
 are never steered. The add is captured in the decode CUDA graphs with a static row
-buffer; with no emotion requested the buffer is zero and the logits are
-bit-identical to a server without directions. The request API is unchanged
-(`emotion_sliders`, `emotion_valence`/`emotion_arousal`, `emotion_strength`,
-`emotion_calibrated`); default voices are selected by `speaker_embedding_id`
-and their audio becomes the reference prefix.
+buffer; with no control requested the buffer is zero and the logits are
+bit-identical to a server without a bundle. Sets may steer different sources: the
+engine keeps one row-buffer slot per steered source and the request delta carries
+one hidden-size slot per source. `raw` sets move the speaker embedding instead
+(their deltas summed, the result rescaled to the embedding's norm) and need
+`speaker_mode: embedding`. A set is `raw` or `attnres_source`; any other space is
+refused at load.
 
 Directions are measured, not trained: clips are teacher-forced through the offline
 engine, every bank source is mean-pooled over the clip's own frames, and a direction
 is a contrast of those means (e.g. style − neutral) at one source. The shipped
-`steering/emotion_directions_mect60k_axes/` uses the GDN output of layer 9
-(`source_index` 19, `L9.attn`) and folds the style directions into orthogonal
-conceptual axes: valence, arousal, dominance, loudness, tempo, clarity and
-articulation. `articulation` is the component enunciated and confused share, which
-clarity (their difference) cancels: positive is slow, deliberate delivery, negative
-quicker, looser speech. Its `calibration.json` carries per-voice doses.
+`steering/emotion_directions_mect60k_axes/` (bundle set `mood`) uses the GDN output
+of layer 9 (`source_index` 19, `L9.attn`) and folds the style directions into
+orthogonal conceptual axes: valence, arousal, dominance, loudness, tempo, clarity
+and articulation. `articulation` is the component enunciated and confused share,
+which clarity (their difference) cancels: positive is slow, deliberate delivery,
+negative quicker, looser speech.
 
 Doses are raw multiples of the measured mean style shift; the usable window
-is narrow (a style that responds at one dose can run away at twice that), which
-is what the per-voice, per-pole calibration absorbs.
+is narrow (a style that responds at one dose can run away at twice that).
 
-### Accent steering
+### Set calibration
 
-`--accent-directions DIR` (`ACCENT_SERVE_DIRECTIONS` for `servers/sgl/scripts/serve.sh`)
-loads `attnres_source` directions as accents: a request's `accent` /
-`accent_strength` adds `strength × dose × direction` to the set's bank source on
-every generated frame (dose from `DIR/calibration.json` per voice, 1 without
-one or with `emotion_calibrated: false`). A `raw` set moves the speaker
-embedding instead (see [Speaker-embedding accents](#speaker-embedding-accents)).
-`/v2/capabilities` lists them under
-`accents` and `accent_steering`. Emotion and accent sets may steer different
-sources: the engine keeps one row-buffer slot per steered source and the
-request delta carries one hidden-size slot per source (summed when they share
-one).
+A set directory may hold `calibration.json`, per-direction doses chosen offline:
+`{"default": {name: dose}, "by_speaker": {speaker_id: {name: dose}}, "global_default": 1.0}`
+(a `"<name>-"` key is the negative pole's own dose). The server never applies it:
+`controls` stay raw doses. It is exposed for clients instead:
 
-The shipped `steering/accent_directions_mect60k/` (lm/mect_60k) holds Hindi only,
-at L7.attn (`source_index` 15): accented English minus English, from
-English-labelled clips that MMS-LID hears as most Hindi-like against native
-English clips. The other accents did not work as one hidden vector (native speech
-minus English mostly switches language before the accent moves); they stay on
-`--accent-adapters` or the speaker-embedding directions below.
+- `GET /v2/controls`: `sets[<set>].calibration` (`ControlCalibration`: `default`,
+  `by_speaker`, `global_default`), present only for a set with a calibration;
+  `steer.gguf` carries it per set (`zonos3_steer.set.calibrations`).
+- Speaker objects (`GET /v2/speakers`, uploads): `disabled_controls`, the control
+  ids whose calibrated dose is 0 for that voice, `"<set>.<name>"`, or
+  `"<set>.<name>-"` when only the negative pole is 0, in bundle order (`[]` without
+  a bundle).
 
-```bash
-ACCENT_SERVE_DIRECTIONS=steering/accent_directions_mect60k servers/sgl/scripts/serve.sh
-```
+The shipped `mood` set carries seed doses (valence, arousal, dominance, tempo and
+articulation 4, loudness and clarity 2) and no per-voice entries, so
+`disabled_controls` is `[]` for every shipped voice.
+
+### Accent directions
+
+The `accent` / `accent_strength` request fields select accent adapters only (see
+[Accent adapters](#accent-adapters)); accent directions are controls of the bundle.
+The shipped `steering/accent_directions_mect60k/` (lm/mect_60k, bundle set
+`accent_hidden`, control `accent_hidden.hin`) holds Hindi only, at L7.attn
+(`source_index` 15): accented English minus English, from English-labelled clips
+that MMS-LID hears as most Hindi-like against native English clips. The other
+accents did not work as one hidden vector (native speech minus English mostly
+switches language before the accent moves); they stay on `--accent-adapters` or
+the speaker-embedding directions below.
 
 #### Speaker-embedding accents
 
-A `raw` set moves the ownmect_s2 speaker embedding by `strength × dose × direction`,
-rescaled to the embedding's norm as raw emotion directions are, and needs
-`speaker_mode: embedding` (a reference-mode request with such an accent gets a
-400). The direction is the mean over native L1 speakers minus the mean over native
+A `raw` set moves the ownmect_s2 speaker embedding by `dose × direction`, rescaled
+to the embedding's norm as every raw control is, and needs `speaker_mode: embedding`
+(a reference-mode request with such a control gets a 400). The direction is the
+mean over native L1 speakers minus the mean over native
 English speakers of the embedding (clips averaged per recording first; gender and
 age, `steering/speaker_attributes_mect60k/`, projected out). The embedding has no
 text in it, so unlike the hidden native-minus-English direction it does not carry
 a language switch. Strong doses trade voice identity for accent (the speaker partly
 becomes a different one), where the LoRA adapters keep it. The shipped
-`steering/speaker_accents_mect60k/` holds hin, spa, fra, por, deu, vie and pol;
-Mandarin, Korean and Japanese barely move in the embedding alone and stay on
-`--accent-adapters`.
-
-```bash
-EMOTION_SERVE_DIRECTIONS=steering/speaker_attributes_mect60k \
-ACCENT_SERVE_DIRECTIONS=steering/speaker_accents_mect60k servers/sgl/scripts/serve.sh
-```
+`steering/speaker_accents_mect60k/` (bundle set `accents_l1`) holds hin, spa, fra,
+por, deu, vie and pol; Mandarin, Korean and Japanese barely move in the embedding
+alone and stay on `--accent-adapters`.
 
 #### East Asian accents: embedding and hidden together
 
 Neither the speaker-embedding direction nor the hidden native − English direction
-gives Mandarin, Korean or Japanese alone. Served together (the raw set as emotion
-sliders, the hidden set as `--accent-directions`; the engine allows a raw emotion
-set beside hidden accents) the two add up for Mandarin, at the price of the voice:
-`steering/mandarin_mect60k/` (raw, `cmn`) and `steering/mandarin_hidden_mect60k/`
-(L7.attn, `cmn`) are that pair (in the studio bundle as `mandarin` and
-`mandarin_hidden`). Korean and Japanese stay on the LoRA adapters.
+gives Mandarin, Korean or Japanese alone. Served together the two add up for
+Mandarin, at the price of the voice: `steering/mandarin_mect60k/` (raw, `cmn`) and
+`steering/mandarin_hidden_mect60k/` (L7.attn, `cmn`) are that pair (in the studio
+bundle as `mandarin` and `mandarin_hidden`). Korean and Japanese stay on the LoRA
+adapters.
 
 #### Regional English accents
 
-`steering/english_accents_mect60k/` (raw) holds british, american, scottish, irish,
+`steering/english_accents_mect60k/` (raw, bundle set `accents_en`) holds british, american, scottish, irish,
 australian, indian and welsh, each relative to American English (american is
 the reverse of british, for British voices). They are fitted from speakers with a
 known accent, each contrast inside one corpus so its recording conditions cancel:
@@ -587,7 +587,7 @@ projected out. welsh also slows speech slightly.
 
 #### Voice quality
 
-`steering/voice_quality_mect60k/` (raw, served as emotion sliders) holds deep,
+`steering/voice_quality_mect60k/` (raw, bundle set `texture`) holds deep,
 shrill, husky, raspy, soft and authoritative: ParaSpeechCaps' human speaker tags
 (VoxCeleb / EARS / Expresso speakers on their original recordings), tagged minus
 untagged speakers inside each corpus and gender, gender and age projected out. The
@@ -614,7 +614,7 @@ bandwidth and slow speech slightly. Useful range −2 … +4.
 
 #### Speaking styles in hidden space (EARS)
 
-`steering/ears_styles_mect60k/` (attnres_source, L9.attn like the emotion axes)
+`steering/ears_styles_mect60k/` (attnres_source, L9.attn like the `mood` axes)
 holds whisper, loud, tempo (fast − slow), pitch (high − low) and conversational
 (spontaneous − read): EARS's speakers read the same passage and sentences in every
 style and talk freely, so each direction is a within-speaker contrast
@@ -656,17 +656,17 @@ disgusted and surprised (amazement) both in the speaker embedding
 (`steering/speaker_emotions_mect60k/`, raw, gender and age projected out) and at
 L9.attn (`steering/ears_emotions_mect60k/`, attnres_source). The speaker-embedding
 directions move the perceived emotion most, at a larger identity cost and in
-embedding mode only. The served emotion axes stay as they are; both EARS sets are
-there to combine (e.g. as accent directions next to the axes).
+embedding mode only. Neither set is in the studio bundle; add them to a bundle of
+your own to combine them with the `mood` axes.
 
 #### Persona presets
 
 `steering/speaker_traits_mect60k/` merges every speaker-embedding axis into one
-served raw set (gender, age, the seven regional accents, six voice qualities,
-pitch, pitch_range, clean) with six persona presets (`presets.json`), slider
-weights at `emotion_strength` 1 (raw doses). A hidden style can ride along through
-the accent field with `ears_styles_mect60k` as `--accent-directions` (its axes are
-accents).
+raw set (gender, age, the seven regional accents, six voice qualities, pitch,
+pitch_range, clean) with six persona presets (`presets.json`, raw doses of the
+set's directions). It is not in the studio bundle (whose `ui.presets` are its own
+personas over the bundle's sets); serve it in a bundle of your own, next to a
+hidden style set if you like:
 
 | preset | sliders |
 |---|---|
@@ -681,8 +681,10 @@ The components add up, except the Scottish and Irish accents, which weaken in a 
 A persona is a different speaker by design.
 
 ```bash
-EMOTION_SERVE_DIRECTIONS=steering/speaker_traits_mect60k \
-ACCENT_SERVE_DIRECTIONS=steering/ears_styles_mect60k servers/sgl/scripts/serve.sh
+cat > my_bundle.json <<'EOF'
+{"name": "personas", "sets": {"traits": "steering/speaker_traits_mect60k", "delivery": "steering/ears_styles_mect60k"}}
+EOF
+STEER_BUNDLE=my_bundle.json servers/sgl/scripts/serve.sh
 ```
 
 #### The controls on the speech-editing checkpoint
@@ -740,15 +742,15 @@ direction set above:
   timeline and exported as WAV.
 
 It needs a server with a steering bundle; `steering/studio_bundle_mect60k.json`
-holds 13 sets (identity, pitch, English and L1 accents, the Mandarin pair, texture,
-room, the EARS delivery styles, expressiveness, disfluency, the emotion axes and the
-EARS moods; set paths resolve relative to the bundle file), 24 UI controls with
-tested ranges, identity curves and duration factors read from each set's evaluation,
-15 accents, 8 personas, Who-map positions of the default voices and Mood-pad
-landmarks of the six named moods (see More moods).
+holds 14 sets (identity, pitch, English and L1 accents, the hidden Hindi accent, the
+Mandarin pair, texture, room, the EARS delivery styles, expressiveness, disfluency,
+the `mood` axes and the EARS moods; set paths resolve relative to the bundle file),
+24 UI controls with tested ranges, identity curves and duration factors read from
+each set's evaluation, 15 accents, 8 personas, Who-map positions of the default
+voices and Mood-pad landmarks of the six named moods (see More moods).
 
 ```bash
-STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
+servers/sgl/scripts/serve.sh  # STEER_BUNDLE defaults to steering/studio_bundle_mect60k.json
 # open http://127.0.0.1:1919/
 ```
 
@@ -762,7 +764,7 @@ the directions (raw vectors included, so the client computes positions and the
 steered embedding itself) and the UI metadata; `GET /v2/speakers/{id}/embedding`
 returns a voice's embedding. With a bundle the server embeds every default voice at
 startup on the GPU (`servers/sgl/scripts/serve.sh` sets `ZONOS3_SPEAKER_EMBEDDER_DEVICE=cuda`
-when `STEER_BUNDLE` is set), and `POST /v2/speakers` accepts embedding files on
+when `STEER_BUNDLE` is non-empty), and `POST /v2/speakers` accepts embedding files on
 dual-path checkpoints (designed voices).
 
 ### Span steering by reading position

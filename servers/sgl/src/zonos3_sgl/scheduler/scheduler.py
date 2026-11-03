@@ -444,9 +444,9 @@ class TTSScheduler(SchedulerIOMixin):
 
         if key not in self.laci_heads:
             raise ValueError(f"no LACI alignment heads for {key!r} (configured: {sorted(self.laci_heads) or 'none'})")
-        if (float(sampling_params.speaker_cfg_scale) != 1.0 or float(sampling_params.emotion_cfg_scale) != 1.0
+        if (float(sampling_params.speaker_cfg_scale) != 1.0 or float(sampling_params.controls_cfg_scale) != 1.0
                 or float(getattr(sampling_params, "tag_cfg_scale", 1.0)) != 1.0):
-            raise ValueError("LACI needs speaker_cfg_scale = emotion_cfg_scale = tag_cfg_scale = 1")
+            raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = tag_cfg_scale = 1")
         if sampling_params.end_token != "utterance":
             raise ValueError("LACI needs end_token = 'utterance' (no edit spans)")
         if not isinstance(self.engine.attn_backend, FlashAttentionBackend):
@@ -525,8 +525,8 @@ class TTSScheduler(SchedulerIOMixin):
                     history_rows=continuation.history_rows,
                     condition_values=(continuation.condition_values if continuation.condition_values is not None
                                       else t.condition_values),
-                    speaker_emotion_delta=(continuation.speaker_emotion_delta if continuation.swap_delta
-                                           else t.speaker_emotion_delta),
+                    steering_delta=(continuation.steering_delta if continuation.swap_delta
+                                           else t.steering_delta),
                 ))
                 failure = session.failures[-1]
                 logger.info("LACI uid=%s: %s (bin %s) at row %s, rolling back to row %s, retry %d/%d", req.uid,
@@ -732,19 +732,19 @@ class TTSScheduler(SchedulerIOMixin):
             elif self.condition_count:
                 raise ValueError(f"request {msg.uid}: the tokenizer sent no condition rows for a condition-row model")
 
-            # Emotion CFG: a guided request runs a paired unconditional twin (same
-            # prompt + speaker, but no emotion delta) that decodes in lockstep, so
+            # Controls CFG: a guided request runs a paired unconditional twin (same
+            # prompt + speaker, but no hidden steering delta) that decodes in lockstep, so
             # it consumes a second table slot / cache handle.
-            emotion_cfg = (
-                msg.speaker_emotion_delta is not None
+            controls_cfg = (
+                msg.steering_delta is not None
                 and msg.speaker_embedding is not None
-                and float(msg.sampling_params.emotion_cfg_scale) != 1.0
+                and float(msg.sampling_params.controls_cfg_scale) != 1.0
             )
             speaker_cfg = float(msg.sampling_params.speaker_cfg_scale) != 1.0
-            if speaker_cfg and emotion_cfg:
-                raise ValueError("Speaker and emotion CFG cannot be combined")
-            if tag_cfg and (speaker_cfg or float(msg.sampling_params.emotion_cfg_scale) != 1.0):
-                raise ValueError("Tag CFG cannot be combined with speaker or emotion CFG")
+            if speaker_cfg and controls_cfg:
+                raise ValueError("Speaker and controls CFG cannot be combined")
+            if tag_cfg and (speaker_cfg or float(msg.sampling_params.controls_cfg_scale) != 1.0):
+                raise ValueError("Tag CFG cannot be combined with speaker or controls CFG")
             # Speaker CFG on either path: the twin is the prompt without its speaker conditioning (the reference
             # prefix or the reserved speaker row), no speaker embedding, all-unknown condition rows = the evaluation
             # generator's twin (zonos3.speaker_cfg.speaker_cfg_twin).
@@ -756,7 +756,7 @@ class TTSScheduler(SchedulerIOMixin):
             twin_input_ids = (
                 cfg_twin_spec.input_ids if speaker_cfg else plain_input_ids if tag_cfg else input_ids
             )
-            use_cfg = speaker_cfg or emotion_cfg or tag_cfg
+            use_cfg = speaker_cfg or controls_cfg or tag_cfg
             needed_slots = 2 if use_cfg else 1
             if self.table_manager.available_size < needed_slots:
                 break  # don't start a CFG pair unless both slots are free
@@ -864,7 +864,7 @@ class TTSScheduler(SchedulerIOMixin):
                 rng=rng,
                 speaker_embedding=msg.speaker_embedding,
                 speaker_token_position=speaker_token_position,
-                speaker_emotion_delta=msg.speaker_emotion_delta,
+                steering_delta=msg.steering_delta,
                 steer_schedule=getattr(msg, "steer_schedule", None),
                 span_follower=span_follower,
                 condition_values=condition_values,
@@ -876,7 +876,7 @@ class TTSScheduler(SchedulerIOMixin):
                 cfg_scale=(
                     float(msg.sampling_params.speaker_cfg_scale) if speaker_cfg
                     else float(msg.sampling_params.tag_cfg_scale) if tag_cfg
-                    else float(msg.sampling_params.emotion_cfg_scale) if emotion_cfg
+                    else float(msg.sampling_params.controls_cfg_scale) if controls_cfg
                     else 1.0
                 ),
                 accent_slot=accent_slot,
@@ -888,9 +888,9 @@ class TTSScheduler(SchedulerIOMixin):
                 # Speaker CFG uses the target prompt with the full reference removed.
                 # Each branch has its own prompt length, positions and KV cache.
                 # The shared sampled target frames advance both branches together.
-                # Emotion CFG retains its existing no-emotion twin prompt; tag CFG
+                # Controls CFG retains its unsteered twin prompt; tag CFG
                 # uses the plain-text prompt with every conditioning kept. Under
-                # speaker and tag CFG a hidden-space steering delta (emotion delta,
+                # speaker and tag CFG the hidden-space steering (steering delta,
                 # span schedule / follower, accent adapter) applies to both
                 # branches: it is part of the generation, not of the contrast, so
                 # the guidance amplifies only the speaker / tag contrast.
@@ -919,15 +919,15 @@ class TTSScheduler(SchedulerIOMixin):
                     eoa_policy=self.eoa_policy,
                     rng=None,
                     # the speaker-CFG twin has every speaker conditioning removed (reference prefix or speaker row;
-                    # the emotion-CFG twin keeps its speaker) and all-unknown condition rows shifted back by the
+                    # the controls-CFG twin keeps its speaker) and all-unknown condition rows shifted back by the
                     # removed rows, as the evaluation generator's twin; the tag-CFG twin keeps all conditioning
-                    # (speaker, condition rows) and differs in its text rows only. A hidden-space (attnres_source)
-                    # emotion delta and the steering are part of the generation, not of the speaker conditioning or
+                    # (speaker, condition rows) and differs in its text rows only. The hidden-space (attnres_source)
+                    # steering delta and schedule are part of the generation, not of the speaker conditioning or
                     # the markup: under speaker or tag CFG they steer both branches so the guidance amplifies only
                     # the speaker / tag contrast (the follower's decisions are per frame, shared with the twin).
                     speaker_embedding=None if speaker_cfg else msg.speaker_embedding,
                     speaker_token_position=-1 if speaker_cfg else speaker_token_position,
-                    speaker_emotion_delta=msg.speaker_emotion_delta if speaker_cfg or tag_cfg else None,
+                    steering_delta=msg.steering_delta if speaker_cfg or tag_cfg else None,
                     steer_schedule=getattr(msg, "steer_schedule", None) if speaker_cfg or tag_cfg else None,
                     span_follower=span_follower if speaker_cfg or tag_cfg else None,
                     condition_values=cfg_twin_spec.condition_values if speaker_cfg else condition_values,
@@ -1108,14 +1108,10 @@ class TTSScheduler(SchedulerIOMixin):
         if not self.speaker_enabled:
             batch.speaker_emb_values = None
             batch.speaker_token_positions = None
-            batch.speaker_emotion_delta_values = None
             return
 
         emb_values: list[torch.Tensor] = []
         token_positions: list[int] = []
-        # Emotion deltas (post-projection hidden space), aligned 1:1 with emb_values.
-        emotion_deltas: list[torch.Tensor | None] = []
-        any_emotion = False
         offset = 0
 
         for req in batch.reqs:
@@ -1136,11 +1132,6 @@ class TTSScheduler(SchedulerIOMixin):
                 else:
                     emb_values.append(emb.to(torch.float32))
                     token_positions.append(offset + rel_pos)
-                    # With hidden-space (attnres_source) directions the engine adds the
-                    # delta on generated rows; it is not a speaker-row (proj) delta.
-                    delta = None if self.engine.model.steer_rows is not None else req.speaker_emotion_delta
-                    emotion_deltas.append(None if delta is None else delta.to(torch.float32))
-                    any_emotion = any_emotion or delta is not None
             offset += req.extend_len
 
         if emb_values:
@@ -1150,21 +1141,9 @@ class TTSScheduler(SchedulerIOMixin):
             batch.speaker_token_positions = torch.tensor(
                 token_positions, dtype=torch.long, device=self.device
             )
-            if any_emotion:
-                hidden = next(d.numel() for d in emotion_deltas if d is not None)
-                deltas = [
-                    d if d is not None else torch.zeros(hidden, dtype=torch.float32)
-                    for d in emotion_deltas
-                ]
-                batch.speaker_emotion_delta_values = torch.stack(deltas, dim=0).to(
-                    self.device, non_blocking=True
-                )
-            else:
-                batch.speaker_emotion_delta_values = None
         else:
             batch.speaker_emb_values = None
             batch.speaker_token_positions = None
-            batch.speaker_emotion_delta_values = None
 
     def _prepare_condition_rows(self, batch: TTSBatch) -> None:
         """Bucket ids + packed positions of the condition rows (loudness / fmax / speaking rate) that fall inside
@@ -1253,7 +1232,7 @@ class TTSScheduler(SchedulerIOMixin):
 
         if self.sample_fp32_logits:
             logits = logits.float()
-        # Emotion classifier-free guidance: combine cond/uncond rows.
+        # Classifier-free guidance (speaker / controls / tag): combine cond/uncond rows.
         logits = self._apply_cfg(logits, batch)
 
         # Debug: check logits stats for first 5 frames

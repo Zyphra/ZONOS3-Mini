@@ -243,7 +243,7 @@ export interface Continuation {
   maxTokens: number;
   conditionValues: number[] | null;
   swapDelta: boolean;
-  speakerEmotionDelta: Float32Array | null;
+  steeringDelta: Float32Array | null;
 }
 
 export interface FailureRecord {
@@ -448,15 +448,15 @@ export class LaciSession {
     this.eosRow = null;
     this.attemptStart = resume;
 
-    let speakerEmotionDelta: Float32Array | null = null;
+    let steeringDelta: Float32Array | null = null;
     if (this.p.rateDeltas && this.bucket !== null && this.p.rates) {
       const d = this.p.rateDeltas[this.bucket - this.p.rates.first];
-      if (d && d.length) speakerEmotionDelta = d;
+      if (d && d.length) steeringDelta = d;
     }
     return {
       nRows: resume, historyRows: resume - this.nPrefill, seed, maxTokens: this.p.maxTokens - (resume - this.nPrefill),
       conditionValues: this.conditionValues ? this.conditionValues.slice() : null,
-      swapDelta: !!this.p.rateDeltas, speakerEmotionDelta,
+      swapDelta: !!this.p.rateDeltas, steeringDelta,
     };
   }
 

@@ -8,6 +8,7 @@ Zonos3 serves Zonos3 TTS checkpoints from the Hugging Face Hub (e.g. `hf://Zyphr
 - `POST /v1/audio/speech` for an OpenAI-style speech endpoint.
 - `GET /v2/capabilities` for model feature flags.
 - `GET/POST /v2/speakers` for speaker reference upload, cache, and selection.
+- `GET /v2/controls` for the steering bundle's controls.
 
 For command-line arguments, run:
 
@@ -25,9 +26,9 @@ Speaker-conditioned checkpoints can use saved `.npy`/`.npz` embeddings or upload
 
 GDN / Full-AttnRes checkpoints (2026-10 family) clone from raw reference audio instead: the reference is encoded with the matched dual codec into a 10-codebook prefix (or supplied directly as `speaker_reference_codes`) and placed before the text exactly as in training; `speaker_cfg_scale` mixes the prompt with and without that prefix.
 
-## Emotion Control
+## Steering Controls
 
-Additive direction vectors nudge a voice toward an emotion or along conceptual axes (valence, arousal, dominance, loudness, tempo, clarity, articulation) while preserving speaker identity. Directions load from `--tts-emotion-directions-dir` (defaults to `./steering/emotion_directions_mect60k_axes`, auto-enabling sliders when present; an empty string disables them); per-request via `emotion_enabled` + `emotion_sliders`/`emotion_valence`/`emotion_arousal`, with `emotion_strength` and `emotion_cfg_scale` controlling intensity. The shipped set carries a per-voice `calibration.json`. See [guide.md](guide.md#emotion-control) for every shipped direction set and the studio bundle.
+Additive direction vectors move a voice along emotion axes (valence, arousal, dominance, loudness, tempo, clarity, articulation), speaking styles, accents, voice qualities and more while preserving speaker identity. Every direction set is served through one steering bundle, `--steer-bundle` (`STEER_BUNDLE` for `servers/sgl/scripts/serve.sh`, default `steering/studio_bundle_mect60k.json`; `steer.gguf` on the ggml, mlx and web servers); per request via `controls` (`"<set>.<direction>": dose`) and `control_spans`, with `controls_cfg_scale` guiding the hidden-space delta in embedding mode. A set's `calibration.json` (the `mood` axes ship one) is served in `GET /v2/controls` and as each speaker's `disabled_controls`; doses stay raw. See [guide.md](guide.md#steering-controls) for every shipped direction set and the studio bundle.
 
 ## LACI (alignment-guarded decoding)
 
@@ -37,7 +38,7 @@ While the request decodes, its alignment heads' attention over the text (read in
 
 Offline, a LACI prompt can also carry a duration target, `generate(..., laci=True, laci_duration=[DurationTarget(frames, adjust_rate)])` (`zonos3.tts.laci`). Once the reading reaches the last text token, the elapsed rows over the target estimate the take's duration ratio. A take more than 10 % + 3 frames early, or not done 10 % + 3 frames past the target, is retaken from its first row in the speaking-rate bucket that ratio asks for, at most twice and within the retry budget; with `adjust_rate=False` the miss is only recorded. With `adjust_rate`, a truncation (early EOS) also regenerates one speaking-rate bucket slower instead of reseeding in the same bucket. Whatever `adjust_rate` is, a reading position that stops advancing for three text bins at the target pace (at least 15 frames) before the text is read is a stall (`hallucination`), rolled back to its onset as usual. The rate switch re-prefills the prompt with new condition rows, so it needs `cache_type="naive"`. The record adds `pace_retries` and the final `rate_bucket`; each failure record names the `retry_bucket` it switched to.
 
-Constraints: speaker and emotion CFG scale 1 (no CFG twin), the `fa` attention backend (chosen automatically with `--laci-heads` when `--attn` is `auto`), tensor parallel size 1. `--align-probe-max-text` (default 2048 with `--laci-heads`) bounds the text the decode graphs read; longer texts decode their probed steps eagerly.
+Constraints: speaker and controls CFG scale 1 (no CFG twin), the `fa` attention backend (chosen automatically with `--laci-heads` when `--attn` is `auto`), tensor parallel size 1. `--align-probe-max-text` (default 2048 with `--laci-heads`) bounds the text the decode graphs read; longer texts decode their probed steps eagerly.
 
 ## Distributed Serving
 

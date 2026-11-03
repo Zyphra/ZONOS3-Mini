@@ -16,7 +16,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 from zonos3.server.schemas import GenerateRequest
-from zonos3.tts.steering import RAW_SPACE, resolve_controls
+from zonos3.tts.directions import RAW_SPACE
+from zonos3.tts.steering import resolve_controls
 
 from zonos3_mlx.engine import LaciTake
 from zonos3_mlx.server import capabilities as caps

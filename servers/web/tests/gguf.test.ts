@@ -22,10 +22,9 @@ describe('parseGguf', () => {
     expect(g.tensors.get('steer.dir.2')!.length).toBe(32);
     expect(g.tensors.get('steer.dir.0')!.every(Number.isFinite)).toBe(true);
   });
-  it('reads 2-D shapes and f32 kv', () => {
+  it('reads 2-D shapes', () => {
     const g = load('dummy-accents.gguf');
     expect(g.shapes.get('acc.0.blk.0.attn_output.lora_down')).toEqual([128, 4]);
-    expect(load('dummy-emotion.gguf').kv.get('zonos3_directions.ref_base_norm')).toBe(9.5);
   });
   it('rejects non-F32 tensors', () => {
     expect(() => load('dummy-zonos3.gguf')).toThrow('gguf: only F32 companion tensors are supported');

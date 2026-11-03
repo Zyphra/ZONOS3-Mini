@@ -48,8 +48,8 @@ using namespace zs;
 void usage(const char * a0) {
     fprintf(stderr,
         "usage: %s <model.gguf> [--dac <dac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--dac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
-        "  (dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf, emotion.gguf, accents.gguf and\n"
-        "   accent-directions.gguf are auto-detected next to <model.gguf> when their flags are omitted)\n"
+        "  (dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
+        "   auto-detected next to <model.gguf> when their flags are omitted)\n"
         "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
         "                      raw-reference cloning needs --dac-encoder + --ssl-teacher instead)\n"
         "  --host H            bind address (default 127.0.0.1)\n"
@@ -81,10 +81,8 @@ void usage(const char * a0) {
         "                      (Qwen3-ASR) runs in its own interpreter: ZONOS3_ASR_PYTHON (default\n"
         "                      <repo>/.venv-asr/bin/python, set up by tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE\n"
         "                      picks its device)\n"
-        "  --steer PATH        steering directions (steer.gguf) for request controls and /v2/controls\n"
-        "  --emotion-directions PATH   emotion directions (emotion.gguf)\n"
+        "  --steer PATH        steering bundle (steer.gguf) for request controls and /v2/controls\n"
         "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
-        "  --accent-directions PATH    accent steering directions (accent-directions.gguf)\n"
         "  --laci-heads LANG=PATH      LACI alignment heads of a language (repeatable)\n"
         "  --tts-phoneme-lexicon DIR   gold pronunciation lexicon (LMDB) for /v2/phonemize\n"
         "  --studio-projects-dir DIR   server-side studio projects and media (/v2/projects, /v2/media)\n"
@@ -121,9 +119,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         else if (a == "--ssl-teacher" && has_value) s.teacher_path = value(i);
         else if (a == "--spk-encoder" && has_value) s.spk_path = value(i);
         else if (a == "--steer" && has_value) s.steer_path = value(i);
-        else if (a == "--emotion-directions" && has_value) s.emotion_directions_path = value(i);
         else if (a == "--accent-adapters" && has_value) s.accent_adapters_path = value(i);
-        else if (a == "--accent-directions" && has_value) s.accent_directions_path = value(i);
         else if (a == "--tts-phoneme-lexicon" && has_value) s.phoneme_lexicon_dir = value(i);
         else if (a == "--laci-heads" && has_value) {
             const std::string spec = value(i);
@@ -190,11 +186,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     companion(s.teacher_path, "ssl-teacher.gguf");
     companion(s.spk_path, "spk-encoder.gguf");
     companion(s.steer_path, "steer.gguf");
-    companion(s.emotion_directions_path, "emotion.gguf");
     companion(s.accent_adapters_path, "accents.gguf");
-    companion(s.accent_directions_path, "accent-directions.gguf");
-    for (const std::string * p : {&s.encoder_path, &s.teacher_path, &s.spk_path, &s.steer_path, &s.emotion_directions_path,
-                                  &s.accent_adapters_path, &s.accent_directions_path}) {
+    for (const std::string * p : {&s.encoder_path, &s.teacher_path, &s.spk_path, &s.steer_path, &s.accent_adapters_path}) {
         if (!p->empty() && !mp_file_exists(*p)) { fprintf(stderr, "error: companion file %s does not exist\n", p->c_str()); return 1; }
     }
     for (const auto & [lang, path] : s.laci_heads)
@@ -283,7 +276,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
     {
         std::string err;
-        if (!load_emotion_accents(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+        if (!load_accent_adapters(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
     }
     if (s.studio_dir.empty()) s.studio_dir = zonos3_find_studio_dir();
 

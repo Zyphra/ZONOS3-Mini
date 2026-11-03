@@ -2,8 +2,8 @@
 
 python -m zonos3_mlx <model.gguf> [--dac dac.gguf] [--port 1919] [options]
 
-dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf, emotion.gguf, accents.gguf and
-accent-directions.gguf are auto-detected next to <model.gguf> when their flags are omitted (servers/ggml main.cpp).
+dac.gguf, spk-encoder.gguf, dac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are auto-detected next to
+<model.gguf> when their flags are omitted (servers/ggml main.cpp).
 """
 
 from __future__ import annotations
@@ -26,10 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
                         ("--spk-encoder", "speaker encoder for speaker-embedding cloning of audio voices"),
                         ("--dac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),
                         ("--ssl-teacher", "SSL teacher of the reference encoder"),
-                        ("--steer", "steering directions (steer.gguf): request controls and /v2/controls"),
-                        ("--emotion-directions", "emotion directions (emotion.gguf)"),
-                        ("--accent-adapters", "accent adapters (accents.gguf)"),
-                        ("--accent-directions", "accent steering directions (accent-directions.gguf)")):
+                        ("--steer", "steering bundle (steer.gguf): request controls and /v2/controls"),
+                        ("--accent-adapters", "accent adapters (accents.gguf): request accent")):
         p.add_argument(flag, default=None, help=help_)
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=1919, help="port (default 1919)")
@@ -119,8 +117,7 @@ def main(argv=None) -> int:
     if args.worker_python:
         normalizer = TextNormalizer(args.worker_python, Path(args.python_src))
     engine = Engine.load(args.model, dac=args.dac, spk_encoder=args.spk_encoder, dac_encoder=args.dac_encoder,
-                         ssl_teacher=args.ssl_teacher, steer=args.steer, emotion_directions=args.emotion_directions,
-                         accent_adapters=args.accent_adapters, accent_directions=args.accent_directions,
+                         ssl_teacher=args.ssl_teacher, steer=args.steer, accent_adapters=args.accent_adapters,
                          laci_heads=laci, max_frames=args.max, normalizer=normalizer,
                          reference_idle_unload=args.reference_idle_unload)
     voices = Path(args.tts_default_voices_dir) if args.tts_default_voices_dir else None

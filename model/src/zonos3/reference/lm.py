@@ -3,11 +3,10 @@
 Parameter names are the release checkpoint's flat state dict (``model.pth``; ``tools/convert_gguf.py lm`` maps them
 through ``LM_NAMES``), so ``Zonos3LM.load`` is a strict ``load_state_dict``. The forward is the golden CPU oracle
 (formerly ``tools/dump-golden.py`` ``Reference``; ``tools/dump_golden.py lm`` runs this module) with the serving-time
-inputs of the sgl server's ``Zonos3ForCausalLM._forward_model``: speaker and
-condition rows replace their summed embeddings before the weightless embedding norm, a ``proj`` emotion delta adds to the
-projected speaker row, and hidden steering deltas add to Full AttnRes bank sources (0 = embedding, 2i+1 = attention/GDN
-output of layer i, 2i+2 = FFN/MoE output of layer i). No custom kernels: the GDN recurrence runs token by token in
-float32, MoE experts run per (token, expert) pair.
+inputs of the sgl server's ``Zonos3ForCausalLM._forward_model``: speaker and condition rows replace their summed
+embeddings before the weightless embedding norm, and hidden steering deltas add to Full AttnRes bank sources (0 =
+embedding, 2i+1 = attention/GDN output of layer i, 2i+2 = FFN/MoE output of layer i). No custom kernels: the GDN
+recurrence runs token by token in float32, MoE experts run per (token, expert) pair.
 """
 
 from __future__ import annotations
@@ -551,7 +550,7 @@ class Zonos3LM(nn.Module):
                 output[token] += (expert_out.float() * weights[token, rank]).to(x.dtype)
         return self._lin(p + "latent_up", output, f.latent_up.weight)
 
-    def _replace_rows(self, x, lo, speaker_rows, proj_deltas, condition_rows):
+    def _replace_rows(self, x, lo, speaker_rows, condition_rows):
         """Speaker / condition rows (absolute positions) replace their summed embeddings (sgl index_copy)."""
         hi = lo + len(x)
         if not speaker_rows and not condition_rows:
@@ -561,9 +560,6 @@ class Zonos3LM(nn.Module):
             if lo <= row < hi:
                 w = self.speaker_projection
                 projected = F.linear(vec.to(x.device, w.weight.dtype).reshape(-1), w.weight, w.bias)
-                delta = (proj_deltas or {}).get(row)
-                if delta is not None:
-                    projected = projected + delta.to(projected.device, projected.dtype)
                 x[row - lo] = projected.to(x.dtype)
         # condition table i serves the i-th condition row (rows ascending)
         for table, row in enumerate(sorted(condition_rows or {})):
@@ -580,7 +576,6 @@ class Zonos3LM(nn.Module):
         cache: LMCache,
         *,
         speaker_rows: dict[int, torch.Tensor] | None = None,
-        proj_deltas: dict[int, torch.Tensor] | None = None,
         condition_rows: dict[int, int] | None = None,
         hidden_deltas: dict[int, torch.Tensor] | None = None,
         accents=None,
@@ -590,8 +585,7 @@ class Zonos3LM(nn.Module):
         """Logits of ``ids`` [rows, n_codebooks + 1] continuing ``cache`` (updated in place).
 
         Rows are absolute positions in ``speaker_rows`` (speaker embedding replacing that row through the speaker
-        projection), ``proj_deltas`` (hidden delta added to a speaker row after the projection: proj-space emotion) and
-        ``condition_rows`` (row -> bucket id; the i-th row in ascending order reads condition table i).
+        projection) and ``condition_rows`` (row -> bucket id; the i-th row in ascending order reads condition table i).
         ``hidden_deltas`` maps a Full AttnRes bank source to a delta ([rows, dim] or [dim]) added to that source.
         ``accents`` is a zonos3.reference.accents.AccentState; ``probe`` adds the alignment readout of every row;
         ``capture`` receives the named intermediates ``tools/dump_golden.py lm`` writes (float32 numpy)."""
@@ -605,7 +599,7 @@ class Zonos3LM(nn.Module):
             embedders = self.multi_embedder.embedders
             x = sum(F.embedding(ids[:, cb], embedders[cb].weight) for cb in range(c.n_codebooks + 1))
             self._save("emb_sum", x)
-            x = self._replace_rows(x, lo, speaker_rows, proj_deltas, condition_rows)
+            x = self._replace_rows(x, lo, speaker_rows, condition_rows)
             self._save("emb_cond", x)
             x = self._rms(x)
             self._save("emb_norm", x)

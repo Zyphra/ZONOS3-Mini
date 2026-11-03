@@ -1,5 +1,5 @@
-// Minimal GGUF v3 reader for the companion files (steer / emotion / accent directions): metadata of every kv type,
-// tensor infos, F32 tensor data only.
+// Minimal GGUF v3 reader for the companion file (steer.gguf): metadata of every kv type, tensor infos, F32 tensor data
+// only.
 //
 // kv values: integers and floats are numbers (64-bit integers through Number), bool is boolean, string is string,
 // arrays are plain JS arrays (nested arrays allowed). `types` keeps each key's GGUF type (and the element type of an

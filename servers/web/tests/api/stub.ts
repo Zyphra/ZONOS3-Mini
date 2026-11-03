@@ -1,5 +1,5 @@
-// A deterministic stub engine for the API tests: the real tokenizer, prompt layout, companions and LACI heads; the
-// backbone, codec and encoders replaced by stand-ins (EOA after a few frames, a sine per decoded frame).
+// A deterministic stub engine for the API tests: the real tokenizer, prompt layout, steering bundle and LACI heads;
+// the backbone, codec and encoders replaced by stand-ins (EOA after a few frames, a sine per decoded frame).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ProbeInput } from '../../src/backbone';
@@ -8,7 +8,6 @@ import { Api } from '../../src/api/router';
 import type { EngineRequest, Sink } from '../../src/api/http';
 import { parseGguf } from '../../src/gguf';
 import { modelHp, type Conditioning } from '../../src/prompt';
-import { loadDirections } from '../../src/request/directions';
 import { LaciHeads } from '../../src/request/laci';
 import { controlsDocument, loadSteer } from '../../src/request/steer';
 import { createTokenizer } from '../../src/tokenizer';
@@ -29,6 +28,7 @@ class StubBackbone {
   steerSources: number[];
   private steps: [number, number] = [0, 0];
   steered: (Float32Array | null)[] = [];
+  twinSteered: (Float32Array | null)[] = [];
   probes: (ProbeInput | null)[] = [];
   prefills: { slot: 0 | 1; rows: number; cond: Conditioning }[] = [];
   constructor(sources: number[], private frames = 14) { this.steerSources = sources; }
@@ -45,7 +45,7 @@ class StubBackbone {
   }
   async step(slot: 0 | 1, _next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null) {
     this.steps[slot]++;
-    if (slot === 0) { this.steered.push(steer); this.probes.push(probe); }
+    if (slot === 0) { this.steered.push(steer); this.probes.push(probe); } else this.twinSteered.push(steer);
     return { logits: this.logits(slot), probe: probe ? new Float32Array(2048).fill(0).map((_, j) => (j === 1 ? 1 : 0)) : null };
   }
 }
@@ -68,18 +68,14 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
   const hp = modelHp(man.meta);
   const g = (name: string) => parseGguf(file(models + 'companions/' + name));
   const steer = loadSteer(g('steer.gguf'), { nEmbd: hp.nEmbd, nLayer: hp.nLayer, speakerDim: hp.speakerDim });
-  const emotion = loadDirections(g('emotion.gguf'), 'emotion.gguf');
-  const accent = loadDirections(g('accent-directions.gguf'), 'accent-directions.gguf');
-  const sources = [...new Set([...steer.sources, emotion.sourceIndex, accent.sourceIndex])].sort((a, b) => a - b);
-  steer.sources = sources;
   const index: Record<string, string> = JSON.parse(readFileSync(models + 'laci/index.json', 'utf8'));
   const laci = new Map<string, LaciHeads>();
   for (const [lang, f] of Object.entries(index)) laci.set(lang, LaciHeads.parse(readFileSync(models + 'laci/' + f, 'utf8'), f));
   const voices = JSON.parse(readFileSync(models + 'voices/voices.json', 'utf8')) as { id: string; label: string; file: string }[];
-  const backbone = new StubBackbone(sources, opts.frames);
+  const backbone = new StubBackbone(steer.sources, opts.frames);
   const engine: Engine = {
     hp, modelFile: 'zonos3-qat.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
-    steer, controlsDoc: controlsDocument(steer, hp.speakerDim), emotion, accentDirections: accent, steerSources: sources, laci,
+    steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
     voices: voices.map(v => ({ ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) })),
     headroomDb: 3,
     async embedSpeaker(pcm) { return new Float32Array(hp.speakerDim).fill(pcm[0] ?? 0.1); },

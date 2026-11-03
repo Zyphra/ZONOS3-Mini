@@ -200,8 +200,8 @@ struct Continuation {
     std::optional<int64_t> seed;          // seed + 1000 * attempt, unreduced (the sampler takes it mod 2^32)
     int max_tokens = 0;
     std::optional<std::vector<int>> condition_values;  // condition-row ids to regenerate under (nullopt: the prompt's)
-    bool swap_delta = false;                           // regenerate under speaker_emotion_delta (rate_deltas given)
-    std::optional<std::vector<float>> speaker_emotion_delta;  // the bucket's steering delta; only with swap_delta
+    bool swap_delta = false;                           // regenerate under steering_delta (rate_deltas given)
+    std::optional<std::vector<float>> steering_delta;  // the bucket's steering delta; only with swap_delta
 };
 
 struct FailureRecord {
@@ -243,7 +243,7 @@ struct SessionParams {
     std::optional<RateBuckets> rates;
     std::optional<std::vector<int>> condition_values;  // the request's condition-row ids
     std::optional<int> bucket;                         // default: condition_values[rates.index]
-    // per bucket of `rates` (rates.first..rates.last): the request's speaker_emotion_delta in that bucket; an empty
+    // per bucket of `rates` (rates.first..rates.last): the request's steering_delta in that bucket; an empty
     // vector is Python's None
     std::optional<std::vector<std::vector<float>>> rate_deltas;
     zonos3_follow::SpanFollower * follower = nullptr;  // not owned: sees every readout, rolled back with the stream

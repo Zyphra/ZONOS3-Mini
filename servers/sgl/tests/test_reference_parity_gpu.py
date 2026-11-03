@@ -89,7 +89,7 @@ def test_prefill_logits_match_sgl(tts, reference, name):
     request = next(e["request"] for e in json.loads(FIXTURES.read_text()) if e["name"] == name)
     plan = plan_prompt(lm, request, assets=assets)
     cond = plan.cond
-    ours = lm(cond.input_ids, LMCache(), speaker_rows=cond.speaker_rows(), proj_deltas=cond.proj_deltas(),
+    ours = lm(cond.input_ids, LMCache(), speaker_rows=cond.speaker_rows(),
               condition_rows=cond.condition_rows()).logits.float()
     theirs = _sgl_prefill_logits(tts, plan).to(ours.device)
     assert theirs.shape == ours.shape

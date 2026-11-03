@@ -66,17 +66,6 @@ static json decoder(const ServerState & s, const std::string & dac_name) {
             {"causal", true}, {"codec", AUDIO_CODEC}};
 }
 
-// sgl _emotion_capabilities: the sliders / axes / presets of the emotion directions the backbone consumes.
-static json emotion_capabilities(const ServerState & s) {
-    if (!s.emotion)
-        return {{"emotion_enabled", false}, {"emotion_names", json::array()}, {"emotion_axes", json::array()},
-                {"emotion_tiers", json::object()}, {"emotion_presets", json::object()}, {"emotion_space", nullptr},
-                {"emotion_calibrated", false}};
-    return {{"emotion_enabled", true}, {"emotion_names", s.emotion->names}, {"emotion_axes", s.emotion->axes},
-            {"emotion_tiers", json::parse(s.emotion->tiers_json)}, {"emotion_presets", json::parse(s.emotion->presets_json)},
-            {"emotion_space", s.emotion->space}, {"emotion_calibrated", s.emotion->calibrated}};
-}
-
 json capabilities(const ServerState & s) {
     const auto & hp = s.model.hp;
     const auto modes = checkpoint_speaker_modes(s);
@@ -87,8 +76,6 @@ json capabilities(const ServerState & s) {
         {"text_normalization_enabled", s.text_normalizer != nullptr},
         {"text_norm_languages", text_norm_languages()},
         {"accents", server_accents(s)},
-        // the subset served as hidden-space steering directions (--accent-directions)
-        {"accent_steering", s.accent_directions ? json(s.accent_directions->controls()) : json::array()},
         {"speaker_enabled", !modes.empty()},
         {"speaker_conditioning_type", "raw_reference_prefix"},
         {"speaker_embedding_dim", embedding ? json(hp.speaker_dim) : json(nullptr)},
@@ -125,7 +112,7 @@ json capabilities(const ServerState & s) {
         {"default_voices_enabled", !s.default_voice_dir.empty()},
         {"projects", s.projects ? s.projects->capabilities() : json{{"enabled", false}}},
     };
-    for (const json & part : {edit_capabilities(s), emotion_capabilities(s), phoneme_capabilities(s)})
+    for (const json & part : {edit_capabilities(s), phoneme_capabilities(s)})
         for (auto it = part.begin(); it != part.end(); ++it) caps[it.key()] = it.value();
     return caps;
 }
