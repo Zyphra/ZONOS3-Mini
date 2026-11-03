@@ -7,7 +7,7 @@ import { createPortal } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { LANG_LABEL } from '../lib/languages';
 import { modalOpen, projectSettings } from '../state/app';
-import type { ProjectSummary } from '../state/projectDoc';
+import type { ProjectSummary } from '../state/projectSchema';
 import {
   browserProjects,
   conflictGone,

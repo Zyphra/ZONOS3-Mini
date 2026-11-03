@@ -11,7 +11,7 @@ import { isPronError, PronMarks, PronounceButton } from '../../components/Pron';
 import { TagButton, TagField, TagMarks } from '../../components/Tags';
 import { Waveform } from '../../components/Waveform';
 import { uid } from '../../lib/math';
-import { backend, notify, spec } from '../../state/app';
+import { backend, notify, requestContext, spec } from '../../state/app';
 import { applyPreset, baseSpeaker, design, designs, neighbours, steered, type Design, type Variation } from '../../state/design';
 import { presetToValues } from '../../state/engine';
 import { pinForMix } from '../../state/atlas';
@@ -211,7 +211,7 @@ function findVariations() {
   tilesFor.value = around;
   tiles.value = neighbours(around).map((v) => ({ ...v, id: uid(), audio: null, error: null, busy: true }));
   for (const t of tiles.value) {
-    const req = buildRequest(spec.value, t.design, phrase.value, PREVIEW_SEED);
+    const req = buildRequest(spec.value, requestContext.value, t.design, phrase.value, PREVIEW_SEED);
     render(req, { signal: ctrl.signal })
       .then((audio) => (tiles.value = tiles.value.map((x) => (x.id === t.id ? { ...x, audio, busy: false } : x))))
       .catch((e) => !isAbort(e) && (tiles.value = tiles.value.map((x) => (x.id === t.id ? { ...x, error: errorText(e), busy: false } : x))));

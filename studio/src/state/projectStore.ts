@@ -8,7 +8,7 @@ import { MissingMedia, RevisionConflict, type Revision, type ServerProjectEntry 
 import { hash128, isSha256, sha256Async } from '../lib/hash';
 import { committed, openDb, request } from '../lib/idb';
 import { stored } from './media';
-import { summaryOf, type ProjectDoc, type ProjectSummary } from './projectDoc';
+import { summaryOf, type ProjectDoc, type ProjectSummary } from './projectSchema';
 
 export interface ProjectMeta {
   id: string;

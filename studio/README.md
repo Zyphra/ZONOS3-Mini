@@ -119,11 +119,15 @@ regions, the last generation's takes) and in-flight work stay per session.
   session too: the source is uploaded again when the Dub screen opens; a restored track plays and exports as WAV,
   and a fresh generation is needed before regenerating single segments or muxing an MP4.
 - **Export / import**: one zip (`<name>.voice-studio.zip`): `project.json` (the document exactly as stored, schema
-  1, `src/state/projectDoc.ts`) and `media/<hash>.<wav|f32|…>`. Import checks every file against its hash (SHA-256,
+  1, `src/state/projectSchema.ts`) and `media/<hash>.<wav|f32|…>`. Import checks every file against its hash (SHA-256,
   or MurmurHash3 for older zips, re-addressed), keeps the project id unless it exists already, stores it (on the
   server: uploads the media, then creates the project) and opens it.
 - Without a store (blocked browser storage, or the server's projects not answering) the studio works for the
   session and says that nothing is saved.
+- **Opening a given project**: `/?project=<id>` opens that project at boot (the MCP server's links); an unknown id
+  falls back to the last one.
+- **MCP server**: `mcp/` (`zonos-studio-mcp`) lets LLM clients design voices, speak and edit speech into these
+  projects through the same request and schema code; see `mcp/README.md`.
 
 ## Moods
 
@@ -300,13 +304,14 @@ Transcript-first editing:
 - `src/state/` — signals per act: `design.ts` (Cast voice, undo via `history.ts`, roll, neighbours), `who.ts`
   (perceptual Who map from `ui.who`: measured library spots, base spot + gender/age doses), `geo.ts` + `atlas.ts`
   (Natural Earth 110m panels per tab, UK split into England/Scotland/Wales; pin depth → strength, borders blend), `library.ts` (voices, embeddings, saved cast),
-  `requests.ts` (design → `/v2/generate` body, spans), `script.ts` (Direct lines, non-overlapping painted spans,
+  `requests.ts` (design + `RequestContext` → `/v2/generate` body, spans; signal-free, shared with `mcp/`), `script.ts` (Direct lines, non-overlapping painted spans,
   takes, measured `control_span_rate` as the reading-position fallback), `scene.ts` (dialogue, timeline), `edit.ts` (Edit: versions, draft
   regions and direction, takes, send back). `src/edit/regions.ts` is the pure region planner (difflib port);
-  `src/fixtures/edit.ts` emulates the three edit endpoints offline. `projectDoc.ts` (schema, snapshot / restore,
-  id remap), `media.ts` (SHA-256-addressed media), `projectStore.ts` (server and browser stores, revisions,
-  re-addressing) and `projects.ts` (autosave, conflicts, voices on open, export / import, moving to the server) keep
-  every act in a project; `src/components/Projects.tsx` is the switcher and launcher.
+  `src/fixtures/edit.ts` emulates the three edit endpoints offline. `projectSchema.ts` (document types, settings,
+  summary, id remap; type imports only, shared with `mcp/`), `projectDoc.ts` (snapshot / restore), `media.ts`
+  (SHA-256-addressed media), `projectStore.ts` (server and browser stores, revisions, re-addressing) and
+  `projects.ts` (autosave, conflicts, voices on open, export / import, moving to the server) keep every act in a
+  project; `src/components/Projects.tsx` is the switcher and launcher.
 - `src/audio/` — `player.ts` (one AudioContext, clip and streaming playback, playhead signal), `render.ts`
   (request-keyed cache, de-dup, 4 parallel), `preview.ts` (always-on preview: 250 ms debounce, stale-request
   abort, A/B against the unsteered voice), `mix.ts` (sequences, WAV export).
