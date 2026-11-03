@@ -1,6 +1,8 @@
 [submodule "servers/ggml/ggml"]
 	path = servers/ggml/ggml
 	url = https://github.com/ggml-org/ggml
+	# CMake applies servers/ggml/patches/*.patch to this worktree at configure time (see patches/README.md).
+	ignore = dirty
 [submodule "third_party/fusealign-multilingual"]
 	path = third_party/fusealign-multilingual
 	url = https://github.com/Zyphra/fusealign-multilingual.git
