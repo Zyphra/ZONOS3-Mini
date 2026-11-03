@@ -1,8 +1,10 @@
 """Speech editing: /v2/edit/transcribe, /v2/edit/align and /v2/edit (a port of the sgl routes, servers/ggml edit.cpp).
 
-MMS alignment runs in z-speech-alignment's interpreter (ZSA_ROOT; ``zonos3.tts.edit_align.MMSWorker``). The original
-clip is encoded with the MLX reference encoder, every region is one span-end-terminated job on the scheduler over the
-training edit layout (``plan_request(edit=...)``), and the spliced codes are decoded once.
+MMS-1B-all transcribes clips and normalizes words to zsa tokens in z-speech-alignment's interpreter (ZSA_ROOT;
+``zonos3.tts.edit_align.MMSWorker``); every word timing comes from the server's FuseAlign worker
+(``zonos3.tts.edit_align.FuseAlignWorker``, shared with dubbing). The original clip is encoded with the MLX reference
+encoder, every region is one span-end-terminated job on the scheduler over the training edit layout
+(``plan_request(edit=...)``), and the spliced codes are decoded once.
 """
 
 from __future__ import annotations
@@ -27,9 +29,11 @@ from zonos3.reference.synth import (
     validate_phoneme_groups,
 )
 from zonos3.server.schemas import EditAlignRequest, EditRequest, EditTranscribeRequest
+from zonos3.tts.align_text import align_tokens
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
     GROUP_OPEN,
+    FuseAlignError,
     MMSWorker,
     aligned_words,
     canonical_markup,
@@ -65,7 +69,7 @@ def require_editing(state: ServerState) -> None:
 
 
 def write_edit_audio(audio: bytes, directory: str, max_seconds: float) -> tuple[str, float, np.ndarray]:
-    """Decode an upload (44.1 kHz mono), check its length and store it as WAV for MMS."""
+    """Decode an upload (44.1 kHz mono), check its length and store it as WAV for the MMS and FuseAlign workers."""
     pcm = decode_pcm(audio, max_seconds=EDIT_DECODE_MAX_SECONDS)
     duration = len(pcm) / SAMPLE_RATE
     if duration > max_seconds:
@@ -80,12 +84,12 @@ def public_words(words) -> list[dict]:
             for w in words]
 
 
-# ----------------------------------------------------------------------------------------------------- MMS
+# ------------------------------------------------------------------------------------------------- workers
 
 
 def mms_worker(state: ServerState, language: str) -> MMSWorker:
-    """The server's MMS process of ``language`` (device from ZONOS3_MMS_DEVICE), restarted after it dies; the least
-    recently used one closes beyond ZONOS3_MMS_MAX_WORKERS (default 2)."""
+    """The server's MMS process of ``language`` (ASR and zsa token normalization; device from ZONOS3_MMS_DEVICE),
+    restarted after it dies; the least recently used one closes beyond ZONOS3_MMS_MAX_WORKERS (default 2)."""
     with state.mms_lock:
         worker = state.mms_workers.get(language)
         if worker is None or not worker.alive:
@@ -98,26 +102,48 @@ def mms_worker(state: ServerState, language: str) -> MMSWorker:
         return worker
 
 
-def edit_mms_language(language: str) -> str:
+def edit_language(language: str) -> str:
+    """The worker language (Whisper-style code) of a request's ``language`` (HTTP 400 for one editing does not
+    serve)."""
     try:
         return mms_language(normalize_language(language))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def mms_run(state: ServerState, requests: list[dict], language: str) -> list[dict]:
-    try:
-        responses = await asyncio.to_thread(lambda: mms_worker(state, language).run(requests))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=f"MMS alignment is unavailable: {exc}") from exc
-    for request, response in zip(requests, responses, strict=True):
-        if "error" in response:
-            raise HTTPException(status_code=400, detail=f"MMS {request['op']} failed: {response['error']}")
-    return responses
-
-
 async def mms_one(state: ServerState, request: dict, language: str) -> dict:
-    return (await mms_run(state, [request], language))[0]
+    """One MMS worker request (transcribe / normalize); HTTP 503 when the worker is unavailable, 400 when it fails."""
+    try:
+        (response,) = await asyncio.to_thread(lambda: mms_worker(state, language).run([request]))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"MMS is unavailable: {exc}") from exc
+    if "error" in response:
+        raise HTTPException(status_code=400, detail=f"MMS {request['op']} failed: {response['error']}")
+    return response
+
+
+async def fusealign(state: ServerState, items: list[dict]) -> list[list[dict]]:
+    """FuseAlign words of ``[{audio, tokens, language}]`` (the server's worker; HTTP 503 when it is unavailable)."""
+    try:
+        return await asyncio.to_thread(state.aligner.align, items)
+    except FuseAlignError as exc:
+        raise HTTPException(status_code=503, detail=f"FuseAlign alignment is unavailable: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"FuseAlign alignment failed: {exc}") from exc
+
+
+async def edit_aligned_words(state: ServerState, audio_path: str, text: str, language: str, normalize=()):
+    """The words of ``text`` in the audio (FuseAlign over ``align_tokens``) with their zsa tokens, and the zsa tokens
+    of each ``normalize`` text (the same MMS normalize call). ``language`` is the worker language."""
+    tokens = align_tokens(text, language)
+    normalizing = mms_one(state, {"id": "words", "op": "normalize", "normalize": list(normalize) + tokens}, language)
+    if tokens:
+        aligned, normalized = await asyncio.gather(
+            fusealign(state, [{"audio": audio_path, "tokens": tokens, "language": language}]), normalizing)
+    else:
+        aligned, normalized = [[]], await normalizing
+    normalized = normalized["normalized"]
+    return aligned_words(aligned[0], normalized[len(normalize):]), normalized[: len(normalize)]
 
 
 # ----------------------------------------------------------------------------------------------------- edit
@@ -191,7 +217,7 @@ async def handle_edit(state: ServerState, req: EditRequest) -> dict:
     n_cb = c.n_codebooks
     frame_rate = caps.frame_rate(state)
     # Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt text and
-    # never reach MMS (word diff, alignment, verify; target_normalize_request).
+    # never reach MMS or FuseAlign (word diff, alignment, verify; target_normalize_request).
     target_text = canonical_markup(req.target_text.strip())
     plain_target_text = strip_nonverbal_markup(target_text)
     with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
@@ -203,7 +229,7 @@ async def handle_edit(state: ServerState, req: EditRequest) -> dict:
                 raise ValueError("original_words needs the original_text they spell.")
             doses = region_doses(state, req)
             language = normalize_language(req.language)
-            mms_lang = mms_language(language)
+            worker_lang = mms_language(language)  # every MMS and FuseAlign call of the edit
             use_row = uses_speaker_row(state, req)
             if use_row and c.speaker_embedding_dim <= 0:
                 raise ValueError("speaker_embedding needs a checkpoint with a speaker-embedding row.")
@@ -217,44 +243,43 @@ async def handle_edit(state: ServerState, req: EditRequest) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         # Longer clips are windowed and every fill gets a minimum length; both read word timings of the original (the
-        # caller's original_words, else an MMS alignment) and the target words' zsa tokens. Without original_text, a
-        # short clip with explicit spans is not transcribed: its regions' own lengths are expected.
+        # caller's original_words, else a FuseAlign alignment) and the target words' zsa tokens. Without original_text,
+        # a short clip with explicit spans is not transcribed: its regions' own lengths are expected.
         windowed = len(codes) / frame_rate > req.max_context_seconds
         target_words = target_text.split()
         target_texts, assemble_target = target_normalize_request(target_text)
         original_text, words, response = req.original_text, None, None
         if original_text:
-            original_text = strip_nonverbal_markup(original_text)
+            original_text = strip_nonverbal_markup(original_text)  # what the workers read (and the response reports)
         if req.original_words is not None:
             given = [w.model_dump() for w in req.original_words]
             missing = [k for k, w in enumerate(given) if w["tokens"] is None]
             normalized = (await mms_one(state, {
                 "id": "original_words", "op": "normalize",
                 "normalize": [original_text] + target_texts + [given[k]["word"] for k in missing],
-            }, mms_lang))["normalized"]
+            }, worker_lang))["normalized"]
             for k, tokens in zip(missing, normalized[1 + len(target_texts):]):
                 given[k]["tokens"] = tokens
             try:
                 words = edit_words(given, [w["tokens"] for w in given], normalized[0], duration=duration)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # the layout of the target's normalize: the target text, then each target word
             response = {"normalized": assemble_target(normalized[1: 1 + len(target_texts)])}
         elif req.spans is None or windowed or (req.min_fill_ratio > 0 and original_text):
-            request = {"id": "original", "op": "align" if original_text else "transcribe", "audio": original_path,
-                       "normalize": target_texts}
-            if original_text:
-                request["text"] = original_text
-            response = await mms_one(state, request, mms_lang)
-            response["normalized"] = assemble_target(response["normalized"])
-            original_text = original_text or response["text"]
-            words = aligned_words(response)
+            if not original_text:
+                original_text = (await mms_one(
+                    state, {"id": "original", "op": "transcribe", "audio": original_path}, worker_lang))["text"]
+            words, normalized = await edit_aligned_words(state, original_path, original_text, worker_lang,
+                                                         target_texts)
+            response = {"normalized": assemble_target(normalized)}
         verify_reference = None
         if req.verify and GROUP_OPEN in target_text:
             if words is not None:
                 verify_reference = response["normalized"][0]
             else:
                 verify_reference = assemble_target((await mms_one(
-                    state, {"id": "target", "op": "normalize", "normalize": target_texts}, mms_lang))["normalized"])[0]
+                    state, {"id": "target", "op": "normalize", "normalize": target_texts}, worker_lang))["normalized"])[0]
         try:
             if req.spans is not None:
                 spans = seconds_to_spans(req.spans, len(codes), frame_rate)
@@ -316,28 +341,25 @@ async def handle_edit(state: ServerState, req: EditRequest) -> dict:
                 edited_path = os.path.join(tmp, f"take{k}.wav")
                 sf.write(edited_path, edited, SAMPLE_RATE, subtype="FLOAT")
                 if verify_reference is None:
-                    requests = [{"id": f"take{k}", "op": "transcribe", "audio": edited_path,
-                                 "reference": plain_target_text}]
-                    if len(edited) / SAMPLE_RATE <= caps.EDIT_ALIGN_MAX_SECONDS:
-                        requests.append({"id": f"take{k}:words", "op": "align", "audio": edited_path,
-                                         "text": plain_target_text})
-                    asr, *aligned = await mms_run(state, requests, mms_lang)
+                    asr, (aligned, _) = await asyncio.gather(
+                        mms_one(state, {"id": f"take{k}", "op": "transcribe", "audio": edited_path,
+                                        "reference": plain_target_text}, worker_lang),
+                        edit_aligned_words(state, edited_path, plain_target_text, worker_lang))
                     verify = {"asr_text": asr["text"], "wer": asr["word_errors"] / max(1, asr["ref_words"]),
                               "cer": asr["cer"]}
+                    take_words = public_words(aligned)
                 else:
                     # Groups are wildcard words: any one recognized word matches; the take's words come from aligning
                     # the target with each group replaced by the word heard.
-                    asr = await mms_one(state, {"id": f"take{k}", "op": "transcribe", "audio": edited_path}, mms_lang)
-                    scored = wildcard_verify(verify_reference, [t for w in asr["words"] for t in w["tokens"]])
+                    asr = await mms_one(state, {"id": f"take{k}", "op": "transcribe", "audio": edited_path},
+                                        worker_lang)
+                    scored = wildcard_verify(verify_reference, asr["tokens"])
                     verify = {"asr_text": asr["text"], "wer": scored["word_errors"] / max(1, scored["ref_words"]),
                               "cer": scored["cer"], "groups": scored["groups"]}
-                    aligned = []
                     heard_text = fill_groups(plain_target_text, [g["heard"] for g in scored["groups"]])
-                    if heard_text and len(edited) / SAMPLE_RATE <= caps.EDIT_ALIGN_MAX_SECONDS:
-                        aligned = await mms_run(state, [{"id": f"take{k}:words", "op": "align", "audio": edited_path,
-                                                         "text": heard_text}], mms_lang)
-                if aligned:
-                    take_words = public_words(aligned_words(aligned[0]))
+                    if heard_text:
+                        take_words = public_words(
+                            (await edit_aligned_words(state, edited_path, heard_text, worker_lang))[0])
             wav = io.BytesIO()
             sf.write(wav, edited, SAMPLE_RATE, subtype="PCM_16", format="WAV")
             edited_regions, shift = [], 0
@@ -364,7 +386,7 @@ def router(state: ServerState) -> APIRouter:
 
     @r.post("/v2/edit/transcribe")
     async def transcribe(req: EditTranscribeRequest):
-        """MMS greedy transcript and word timings of the audio to edit."""
+        """MMS greedy transcript of the audio to edit and its words' FuseAlign timings."""
         require_editing(state)
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             try:
@@ -372,13 +394,15 @@ def router(state: ServerState) -> APIRouter:
                                                      caps.EDIT_ALIGN_MAX_SECONDS)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            response = await mms_one(state, {"id": "original", "op": "transcribe", "audio": path},
-                                     edit_mms_language(req.language))
-        return {"text": response["text"], "duration": duration, "words": public_words(aligned_words(response))}
+            language = edit_language(req.language)
+            text = (await mms_one(state, {"id": "original", "op": "transcribe", "audio": path}, language))["text"]
+            words, _ = await edit_aligned_words(state, path, text, language)
+        return {"text": text, "duration": duration, "words": public_words(words)}
 
     @r.post("/v2/edit/align")
     async def align(req: EditAlignRequest):
-        """MMS forced alignment of the audio to ``text``: word timings, confidences and zsa tokens."""
+        """FuseAlign forced alignment of the audio to ``text``: word timings, presences (``confidence``) and zsa
+        tokens."""
         require_editing(state)
         text = req.text.strip()
         if not text:
@@ -389,9 +413,8 @@ def router(state: ServerState) -> APIRouter:
                                                      caps.EDIT_ALIGN_MAX_SECONDS)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            response = await mms_one(state, {"id": "original", "op": "align", "audio": path, "text": text},
-                                     edit_mms_language(req.language))
-        return {"text": text, "duration": duration, "words": public_words(aligned_words(response))}
+            words, _ = await edit_aligned_words(state, path, text, edit_language(req.language))
+        return {"text": text, "duration": duration, "words": public_words(words)}
 
     @r.post("/v2/edit")
     async def edit(req: EditRequest):

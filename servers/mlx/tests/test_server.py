@@ -113,6 +113,77 @@ def test_edit_refuses_tag_cfg(client):
     assert r.status_code == 400 and "tag_cfg_scale" in r.json()["detail"]
 
 
+class FakeAligner:
+    """The server's FuseAlign worker: every token at 0.1-0.9 s with presence 0.5."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+        self.closed = False
+
+    def model(self) -> str:
+        return "Zyphra/fusealign/fake.safetensors"
+
+    def align(self, items):
+        self.items += items
+        return [[{"word": t, "start": 0.1, "end": 0.9, "presence": 0.5, "placed": True} for t in it["tokens"]]
+                for it in items]
+
+    def close(self):
+        self.closed = True
+
+
+def fake_mms(calls: list[dict]):
+    """The MMS worker: a fixed transcript, and each normalized text upper-cased per word."""
+
+    async def mms_one(state, request, language):
+        calls.append({**request, "language": language})
+        if request["op"] == "transcribe":
+            return {"id": request["id"], "text": "hello there world", "tokens": ["HELLO", "THERE", "WORLD"]}
+        assert request["op"] == "normalize", request
+        return {"id": request["id"], "normalized": [t.upper().split() for t in request["normalize"]]}
+
+    return mms_one
+
+
+def test_edit_transcribe_and_align_time_words_with_fusealign(client, monkeypatch):
+    from zonos3_mlx.server import edit
+
+    aligner, calls = FakeAligner(), []
+    monkeypatch.setattr(client.app.state.zonos3, "aligner", aligner)
+    monkeypatch.setattr(edit, "mms_one", fake_mms(calls))
+    r = client.post("/v2/edit/transcribe", json={"audio_base64": wav_b64(), "language": "fr_fr"})
+    assert r.status_code == 200, r.text
+    assert r.json()["text"] == "hello there world" and r.json()["duration"] == pytest.approx(2.0)
+    assert [(w["word"], w["tokens"], w["confidence"]) for w in r.json()["words"]] == [
+        ("hello", ["HELLO"], 0.5), ("there", ["THERE"], 0.5), ("world", ["WORLD"], 0.5)]
+    assert aligner.items[0]["tokens"] == ["hello", "there", "world"] and aligner.items[0]["language"] == "fr"
+    assert [c["op"] for c in calls] == ["transcribe", "normalize"]
+
+    aligner.items.clear()
+    r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "我们 去公园。", "language": "cmn"})
+    assert r.status_code == 200, r.text
+    assert aligner.items[0]["tokens"] == ["我", "们", "去", "公", "园。"] and aligner.items[0]["language"] == "zh"
+    assert [w["word"] for w in r.json()["words"]] == ["我", "们", "去", "公", "园。"]
+    assert all(c["op"] != "align" for c in calls)  # MMS only transcribes and normalizes
+
+
+def test_dub_shares_the_server_fusealign_worker(client, monkeypatch):
+    state = client.app.state.zonos3
+    aligner = FakeAligner()
+    monkeypatch.setattr(state, "aligner", aligner)
+    monkeypatch.setattr(state, "dub_runtime", None)
+    caps = client.get("/v2/dub/capabilities").json()
+    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors"
+    assert state.dub_runtime.aligner is aligner
+
+
+def test_shutdown_closes_the_fusealign_worker(files):
+    aligner = FakeAligner()
+    with make_client(files, batch=1) as c:
+        c.app.state.zonos3.aligner = aligner
+    assert aligner.closed
+
+
 def test_phonemize_marks_pronunciations_outside_the_phone_inventory(client):
     r = client.post("/v2/phonemize", json={"text": "hello abba zork", "language": "en_us", "guess": False})
     assert r.status_code == 200

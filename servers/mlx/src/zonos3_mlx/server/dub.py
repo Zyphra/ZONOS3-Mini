@@ -2,8 +2,9 @@
 
 Every take is a /v2/generate request with laci=true and the take's LACI duration target, so dub takes use studio
 voices, steering controls and pronunciation groups; the source voice's prompt clip is encoded with the MLX reference
-encoder. The alignment worker (Qwen3-ASR, forced aligner, SimAlign, AV-sync) runs in its own venv
-(ZONOS3_DUB_ALIGN_PYTHON; ZONOS3_DUB_ALIGN_DEVICE, default mps here).
+encoder. Word timings come from the server's FuseAlign worker (shared with speech editing); the alignment worker
+(Qwen3-ASR, SimAlign, AV-sync) runs in its own venv (ZONOS3_DUB_ALIGN_PYTHON; ZONOS3_DUB_ALIGN_DEVICE, default mps
+here).
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def runtime(state: ServerState):
         async def encode_voice(audio, sample_rate):
             return await encode_voice_prompt(state, audio, sample_rate)
 
-        state.dub_runtime = DubRuntime(model, synthesize, encode_voice, settings)
+        state.dub_runtime = DubRuntime(model, synthesize, encode_voice, state.aligner, settings)
     return state.dub_runtime
 
 
@@ -192,6 +193,7 @@ async def upload(request: Request, name: str, directory: str) -> Path:
 async def call(awaitable):
     """Run a DubRuntime call, mapping its errors to HTTP statuses."""
     from zonos3.dub.runtime import AlignWorkerError, UnknownId
+    from zonos3.tts.edit_align import FuseAlignError
 
     try:
         return await awaitable
@@ -199,6 +201,8 @@ async def call(awaitable):
         raise HTTPException(status_code=404, detail="unknown ref_id/dub_id; upload or generate again") from None
     except AlignWorkerError as exc:
         raise HTTPException(status_code=503, detail=f"alignment worker: {exc}") from exc
+    except FuseAlignError as exc:
+        raise HTTPException(status_code=503, detail=f"forced aligner: {exc}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -217,7 +221,7 @@ def router(state: ServerState) -> APIRouter:
     @r.get("/v2/dub/capabilities")
     async def capabilities():
         """Target languages, rate buckets, lip-sync, voice modes and limits of the dub (zonos3.dub.runtime)."""
-        return {**runtime(state).capabilities(), "enabled": caps.dub_available(state)}
+        return {**(await asyncio.to_thread(runtime(state).capabilities)), "enabled": caps.dub_available(state)}
 
     @r.post("/v2/dub/ref")
     async def ref(request: Request, name: str = "audio"):

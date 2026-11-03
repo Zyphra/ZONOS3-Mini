@@ -93,11 +93,13 @@ def frame_rate(state: ServerState) -> float:
 
 
 def edit(state: ServerState) -> dict:
-    """Speech editing needs the checkpoint's edit rows, and MMS alignment (ZSA_ROOT) and the reference encoder."""
+    """Speech editing needs the checkpoint's span-end/marker rows, MMS (ZSA_ROOT), FuseAlign (fusealign_hub in its
+    worker's interpreter) and the reference encoder."""
     from zonos3.tts import edit_align
 
     model = model_supports_editing(state)
-    return {"speech_editing": model and bool(edit_align.ZSA_ROOT) and state.engine.has_reference_encoder,
+    return {"speech_editing": model and bool(edit_align.ZSA_ROOT) and state.options.fusealign
+                              and state.engine.has_reference_encoder,
                 "edit_max_spans": edit_max_spans(state) if model else 0, "edit_frame_rate": frame_rate(state) if model else None,
                 "edit_max_seconds": EDIT_MAX_SECONDS, "edit_align_max_seconds": EDIT_ALIGN_MAX_SECONDS}
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,9 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "embeddings (default default_voices; empty disables)")
     p.add_argument("--python-src", default=str(paths.PYTHON_SRC),
                    help="directory holding the zonos3 package for the text-normalization worker (default model/src)")
-    p.add_argument("--text-normalizer-python", default=None,
-                   help="enable text normalization: PY runs <python-src>/zonos3/workers/textnorm.py (NeMo grammars, "
-                        "needs pynini) as a persistent worker")
+    p.add_argument("--worker-python", default=None, metavar="PY",
+                   help="interpreter of the helper workers of model/src/zonos3/workers, each one persistent process: "
+                        "text normalization (textnorm.py under <python-src>: NeMo grammars, needs pynini; off without "
+                        "this flag) and the FuseAlign forced aligner of speech editing and dubbing (fusealign.py: needs "
+                        "fusealign-hub; default this server's interpreter)")
     p.add_argument("--laci-heads", nargs="+", default=None, metavar="LANG=PATH",
                    help="LACI alignment heads of a language (repeatable)")
     p.add_argument("--tts-phoneme-lexicon", default=None, help="gold pronunciation lexicon (LMDB) for /v2/phonemize")
@@ -75,12 +78,29 @@ def parse_laci_heads(parser: argparse.ArgumentParser, entries) -> dict[str, str]
     return heads
 
 
+def fusealign_available(python: str) -> bool:
+    """Whether the FuseAlign worker's interpreter can import ``fusealign_hub`` (third_party/fusealign-multilingual)."""
+    from zonos3.tts.edit_align import fusealign_installed
+
+    if python == sys.executable:
+        return fusealign_installed()
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}  # as FuseAlignWorker runs it
+    try:
+        probe = subprocess.run([python, "-c", "import importlib.util, sys; "
+                                "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"],
+                               env=env, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     import uvicorn
+    from zonos3.tts.edit_align import FuseAlignWorker
 
     from zonos3_mlx.engine import Engine, TextNormalizer
     from zonos3_mlx.scheduler import Scheduler
@@ -93,9 +113,10 @@ def main(argv=None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     laci = parse_laci_heads(parser, args.laci_heads)
+    worker_python = args.worker_python or sys.executable
     normalizer = None
-    if args.text_normalizer_python:
-        normalizer = TextNormalizer(args.text_normalizer_python, Path(args.python_src))
+    if args.worker_python:
+        normalizer = TextNormalizer(args.worker_python, Path(args.python_src))
     engine = Engine.load(args.model, dac=args.dac, spk_encoder=args.spk_encoder, dac_encoder=args.dac_encoder,
                          ssl_teacher=args.ssl_teacher, steer=args.steer, emotion_directions=args.emotion_directions,
                          accent_adapters=args.accent_adapters, accent_directions=args.accent_directions,
@@ -106,9 +127,9 @@ def main(argv=None) -> int:
                             stream_decode_default=args.stream_decode_default, default_voices_dir=voices,
                             studio_dir=Path(args.studio_dir) if args.studio_dir else None,
                             phoneme_lexicon=args.tts_phoneme_lexicon, text_normalization=normalizer is not None,
-                            prefix=prefix)
+                            prefix=prefix, fusealign=fusealign_available(worker_python))
     scheduler = Scheduler(engine, batch=args.batch)
-    state = ServerState(engine, scheduler, options)
+    state = ServerState(engine, scheduler, options, aligner=FuseAlignWorker(python=worker_python))
     if args.studio_projects_dir:
         from zonos3.server.projects import ProjectStore
 

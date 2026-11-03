@@ -8,11 +8,13 @@
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)
 #   PHONEME_LEXICON             gold pronunciation lexicon (--tts-phoneme-lexicon: POST /v2/phonemize)
 #   ZONOS3_STUDIO_PROJECTS      shared studio project store (--studio-projects-dir); empty keeps projects in the browser
-#   TEXTNORM_PYTHON             interpreter with pynini for text normalization (--text-normalizer-python)
+#   WORKER_PYTHON               interpreter of the helper workers (--worker-python): text normalization (needs pynini;
+#                               off without it) and the FuseAlign forced aligner (needs fusealign-hub; default this
+#                               venv's interpreter; ZONOS3_FUSEALIGN_DEVICE, default cpu on macOS)
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
 #   DUB=1                       serve the studio's Dub screen: LACI heads for every dub language from LACI_HEADS_DIR
 #                               (default laci_heads/) and the alignment worker of tools/setup_dub_align_env.sh
-#                               (ZONOS3_DUB_ALIGN_DEVICE defaults to mps here)
+#                               (Qwen3-ASR, SimAlign, AV-sync; ZONOS3_DUB_ALIGN_DEVICE defaults to mps here)
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -43,7 +45,7 @@ exec uv run --locked --package zonos3-mlx --group phonemize python -m zonos3_mlx
     --host 127.0.0.1 --port 1919 \
     --tts-default-voices-dir "${SERVE_VOICES:-$repo_root/default_voices}" \
     ${PHONEME_LEXICON:+--tts-phoneme-lexicon "$PHONEME_LEXICON"} \
-    ${TEXTNORM_PYTHON:+--text-normalizer-python "$TEXTNORM_PYTHON"} \
+    ${WORKER_PYTHON:+--worker-python "$WORKER_PYTHON"} \
     ${studio_projects:+--studio-projects-dir "$studio_projects"} \
     ${laci_args[@]+"${laci_args[@]}"} \
     "$@"

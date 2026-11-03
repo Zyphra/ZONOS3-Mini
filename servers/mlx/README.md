@@ -23,16 +23,26 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919, the studio at /
 ```
 
 `serve.sh` takes the same variables as the sgl launcher (`SERVE_MODEL`, `SERVE_VOICES`, `PHONEME_LEXICON`,
-`ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `DUB=1`) plus `MODELS_DIR` and `TEXTNORM_PYTHON`; extra flags are appended.
-`python -m zonos3_mlx --help` lists the flags.
+`ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `DUB=1`) plus `MODELS_DIR` and `WORKER_PYTHON` (`--worker-python`); extra
+flags are appended. `python -m zonos3_mlx --help` lists the flags.
 
-- **Text normalization** (NeMo grammars) needs pynini, which has no macOS wheel on PyPI: point
-  `--text-normalizer-python` at an interpreter that has it (e.g. a conda env with `pynini==2.1.6`); it runs
-  `model/src/zonos3/workers/textnorm.py` as a persistent worker, as the ggml server does. Without it requests are
-  served unnormalized.
-- **Speech editing** needs an edit checkpoint and `ZSA_ROOT` (MMS alignment); **dubbing** the alignment worker of
-  `tools/setup_dub_align_env.sh` (`ZONOS3_DUB_ALIGN_DEVICE`, default `mps`). Both run their models in their own
-  interpreters.
+- **Helper workers** (`--worker-python PY`, as on the ggml server): text normalization
+  (`model/src/zonos3/workers/textnorm.py`) and the FuseAlign forced aligner (`model/src/zonos3/workers/fusealign.py`)
+  run as persistent worker processes under `PY`. Without the flag, text normalization is off and FuseAlign runs under
+  the server's own interpreter.
+- **Text normalization** (NeMo grammars) needs pynini, which has no macOS wheel on PyPI: point `--worker-python` at
+  an interpreter that has it (e.g. a conda env with `pynini==2.1.6`; FuseAlign then runs there too, so it also needs
+  the workspace's `fusealign-hub`). Without it requests are served unnormalized.
+- **Forced alignment** (every word timing of speech editing and dubbing) is FuseAlign (`fusealign-hub`, the
+  `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`
+  before `uv sync`; the checkpoint downloads from [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) on
+  first use): one worker per server, started on the first alignment. `ZONOS3_FUSEALIGN_DEVICE` picks its torch
+  device; without it the worker takes `cuda:0` when available, else the CPU, so it runs on the CPU on macOS.
+- **Speech editing** needs an edit checkpoint, FuseAlign and `ZSA_ROOT` = a
+  [z-speech-alignment](https://github.com/Zyphra/z-speech-alignment) checkout with its uv environment (MMS-1B-all
+  transcribes clips and normalizes zsa tokens, one worker per language; `ZONOS3_MMS_DEVICE`, `ZONOS3_MMS_MAX_WORKERS`);
+  **dubbing** FuseAlign and the alignment worker of `tools/setup_dub_align_env.sh` (Qwen3-ASR, SimAlign, AV-sync;
+  `ZONOS3_DUB_ALIGN_DEVICE`, default `mps`). MMS and the dub alignment worker run in their own interpreters.
 
 ## Tools
 

@@ -8,6 +8,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from zonos3.tts.edit_align import FuseAlignWorker, fusealign_installed
+
 from zonos3_mlx.engine import Engine
 from zonos3_mlx.scheduler import Scheduler
 
@@ -23,6 +25,8 @@ class ServerOptions:
     phoneme_lexicon: str | None = None
     text_normalization: bool = False
     prefix: tuple[int, int, int] = (15, 3, 450)  # chunk, hold-back, context frames
+    # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and dubbing need it)
+    fusealign: bool = field(default_factory=fusealign_installed)
 
 
 @dataclass
@@ -39,9 +43,11 @@ class ServerState:
     default_lock: threading.Lock = field(default_factory=threading.Lock)
     # reference codes of encoded clips, by sha1 of the audio bytes (LRU of 64)
     reference_codes: OrderedDict = field(default_factory=OrderedDict)
-    # speech editing and dubbing
+    # speech editing and dubbing: MMS workers (ASR and zsa normalization) by language, and the server's FuseAlign
+    # worker (zonos3/workers/fusealign.py; every forced alignment of both; it starts on the first call)
     mms_workers: OrderedDict = field(default_factory=OrderedDict)
     mms_lock: threading.Lock = field(default_factory=threading.Lock)
+    aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     dub_runtime: object | None = None
     dub_slots: asyncio.Semaphore | None = None
 
@@ -59,5 +65,6 @@ class ServerState:
             worker.close()
         if self.dub_runtime is not None:
             self.dub_runtime.close()
+        self.aligner.close()
         if self.engine.normalizer is not None:
             self.engine.normalizer.close()
