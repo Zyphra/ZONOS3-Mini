@@ -81,9 +81,10 @@ export function SliderGroup({ group, b, only, compact, detailed }: { group: stri
 
 /**
  * Valence × arousal pad (the first two bipolar mood controls) with every measured mood as a landmark, and a chip
- * per named mood (large: with sliders for the active ones).
+ * per named mood (large: with sliders for the active ones). `padOpens`: the pad is a preview whose click falls through
+ * to the card (which opens large); the chips still work in place.
  */
-export function MoodControls({ b, compact, large }: { b: Binding; compact?: boolean; large?: boolean }) {
+export function MoodControls({ b, compact, large, padOpens }: { b: Binding; compact?: boolean; large?: boolean; padOpens?: boolean }) {
   const axes = padAxes.value;
   const cx = axes?.x;
   const cy = axes?.y;
@@ -113,13 +114,14 @@ export function MoodControls({ b, compact, large }: { b: Binding; compact?: bool
   const active = all.filter((m) => (b.values[m.control.id] ?? 0) > 0);
   const pick = (m: Mood) => toggleMood(b, m);
   return (
-    <div class={`mood${compact ? ' is-compact' : ''}${large ? ' is-large' : ''}${marked ? ' has-landmarks' : ''}`} style={{ '--fam': color }}>
+    <div class={`mood${compact ? ' is-compact' : ''}${large ? ' is-large' : ''}${marked ? ' has-landmarks' : ''}${padOpens ? ' pad-opens' : ''}`} style={{ '--fam': color }}>
       {cx && cy && (
         <div
           ref={pad}
           class={`mood-pad zone-${zx === 'safe' && zy === 'safe' ? 'safe' : 'strong'}`}
           role="group"
           aria-label={`Mood pad: ${cx.label} (x) and ${cy.label} (y)${marked ? ', with measured moods as landmarks' : ''}`}
+          inert={padOpens ? true : undefined}
           onDblClick={(e) => !(e.target as Element).closest('.mlm, .mlm-handle') && (b.begin(), b.set(cx.id, 0), b.set(cy.id, 0), b.end())}
           onPointerDown={(e) => {
             if ((e.target as Element).closest('.mlm, .mlm-handle')) return;

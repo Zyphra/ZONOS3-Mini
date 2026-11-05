@@ -189,8 +189,8 @@ body {
   height: 100%;
 }
 .bench {
-  /* Map size: the hero fills what the header, strip and paddings leave of the viewport. */
-  --map-h: clamp(250px, calc(100vh - 500px), 500px);
+  /* Map size: the hero fills what the header, Speak, strip and paddings leave of the viewport. */
+  --map-h: clamp(220px, calc(100vh - 660px), 500px);
   min-width: 0;
   overflow-y: auto;
   padding: 10px 14px 14px;
@@ -827,25 +827,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.radar-keys {
-  display: grid;
-  gap: 2px;
-  margin-top: 6px;
-}
-.radar-key {
-  display: grid;
-  grid-template-columns: 74px 1fr 30px auto;
-  align-items: center;
-  gap: 8px;
-}
-.radar-key input {
-  accent-color: var(--fam);
-}
-.radar-key b {
-  font-weight: 500;
-  color: var(--text);
-  text-align: right;
-}
 
 /* Room */
 .room {
@@ -1026,23 +1007,38 @@ body {
 /* Expandable cards and their dialogs */
 .panel.is-expandable {
   cursor: zoom-in;
-  transition: border-color var(--t), box-shadow var(--t);
-}
-.panel.is-expandable:hover {
-  border-color: color-mix(in srgb, var(--fam) 35%, var(--line));
+  transition: border-color var(--t), background var(--t);
 }
 .panel.is-expandable .panel-body {
   cursor: auto;
 }
-.panel.is-expandable .panel-head {
-  cursor: zoom-in;
+.panel.is-whole .panel-body,
+.panel.is-whole .panel-body * {
+  cursor: inherit;
+}
+.panel.is-expandable:not(.is-whole) .panel-head {
   border-radius: 6px;
   margin: -3px -4px 3px;
   padding: 3px 4px;
 }
-.panel.is-expandable .panel-head:hover,
+.panel.is-expandable:not(.is-whole) .panel-head:hover,
 .panel.is-expandable .panel-head:focus-visible {
   background: color-mix(in srgb, var(--fam) 8%, transparent);
+}
+/* The Cast mood card: the pad is a preview, its click opens the card; the chips work in place. */
+.mood.pad-opens .mood-pad {
+  pointer-events: none;
+}
+.mood.pad-opens {
+  cursor: zoom-in;
+}
+.panel.is-expandable:hover {
+  border-color: color-mix(in srgb, var(--fam) 35%, var(--line));
+  background: color-mix(in srgb, var(--fam) 4%, var(--surface));
+}
+.panel.is-expandable:focus-visible {
+  outline: 2px solid var(--fam);
+  outline-offset: 2px;
 }
 .panel-expand {
   display: grid;
@@ -1052,6 +1048,7 @@ body {
   transition: color var(--t), transform var(--t);
 }
 .panel.is-expandable:hover .panel-expand,
+.panel.is-expandable:focus-visible .panel-expand,
 .panel-head:focus-visible .panel-expand {
   color: var(--fam);
   transform: scale(1.15);
@@ -1502,9 +1499,6 @@ body {
   gap: 10px;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
 }
-.monitor > .preview {
-  flex: none;
-}
 .monitor-scroll {
   flex: 1;
   min-height: 0;
@@ -1533,25 +1527,74 @@ body {
   letter-spacing: 0.1em;
   color: var(--text-2);
 }
-.phrase {
+/* Speak: the first thing on Cast */
+.speak {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+}
+.speak:focus-within {
+  border-color: color-mix(in srgb, var(--o) 55%, var(--line-2));
+}
+.speak-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.speak-area {
   width: 100%;
+  min-height: 58px;
   border: 0;
-  border-bottom: 1px dashed var(--line-2);
   background: transparent;
-  padding: 4px 0 6px;
-  margin-bottom: 8px;
-  font-size: 13.5px;
+  padding: 2px 0;
+  font-size: 18px;
+  line-height: 1.45;
   color: var(--text);
+  resize: none;
+  field-sizing: content;
+  max-height: 9em;
 }
-.phrase:focus {
+.speak-area:focus {
   outline: none;
-  border-bottom-color: var(--o);
 }
-.transport {
+.speak-area::placeholder {
+  color: var(--text-3);
+}
+.speak-tools {
+  display: flex;
+  gap: 2px;
+  padding-top: 4px;
+}
+.speak-bar {
   display: flex;
   align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.speak-go {
+  min-width: 104px;
+  justify-content: center;
+}
+.speak-bar .wave {
+  flex: 1 1 160px;
+  min-width: 100px;
+}
+.speak-bar .metrics {
+  flex: 0 1 auto;
+}
+.preview-settings {
+  display: grid;
   gap: 8px;
-  margin-top: 8px;
+}
+.preview-settings .monitor-head {
+  margin-bottom: 0;
+}
+.speak.is-stale .speak-bar .wave {
+  opacity: 0.4;
 }
 .ab {
   display: inline-flex;
@@ -1914,18 +1957,47 @@ body {
   flex-direction: column;
   gap: 14px;
 }
-.dub-dropping {
-  position: absolute;
-  inset: 10px;
+.file-drop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
   display: grid;
   place-items: center;
+  padding: 14px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+  animation: file-drop-in 120ms var(--ease) both;
+}
+.file-drop::before {
+  content: '';
+  position: absolute;
+  inset: 14px;
   border: 2px dashed var(--o);
   border-radius: var(--r);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
+}
+.file-drop-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  color: var(--o);
+  text-align: center;
+}
+.file-drop-card b {
   color: var(--text);
-  font-size: 18px;
-  pointer-events: none;
-  z-index: 20;
+  font-size: 20px;
+  font-weight: 600;
+}
+.file-drop.is-busy::before {
+  border-color: var(--line-2);
+}
+.file-drop.is-busy .file-drop-card {
+  color: var(--text-3);
+}
+@keyframes file-drop-in {
+  from {
+    opacity: 0;
+  }
 }
 .dub-drop {
   display: flex;
@@ -2644,16 +2716,11 @@ body {
   font-family: var(--mono);
   font-size: 11px;
 }
-.phrase-row,
 .dline-textrow,
 .line-edit-row {
   display: flex;
   align-items: center;
   gap: 4px;
-}
-.phrase-row .phrase {
-  flex: 1;
-  min-width: 0;
 }
 .line-edit-row .line-edit {
   flex: 1;

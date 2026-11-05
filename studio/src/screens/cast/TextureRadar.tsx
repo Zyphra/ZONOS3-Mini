@@ -1,6 +1,6 @@
 import { useRef, useState } from 'preact/hooks';
 import { drag } from '../../components/drag';
-import { Slider, ZONE_TEXT } from '../../components/Slider';
+import { Slider } from '../../components/Slider';
 import { clamp } from '../../lib/math';
 import { hue, spec } from '../../state/app';
 import { design, designs, setValue } from '../../state/design';
@@ -60,7 +60,6 @@ export function TextureRadar({ large }: { large?: boolean }) {
 
   const rings = [0.25, 0.5, 0.75, 1];
   const safeF = controls[0].safe[1] / controls[0].range[1];
-  const fc = controls.find((c) => c.id === focus);
 
   return (
     <div class={`radar${large ? ' is-large' : ''}`} style={{ '--fam': color }}>
@@ -102,7 +101,7 @@ export function TextureRadar({ large }: { large?: boolean }) {
           return <circle class={`radar-handle zone-${z}`} cx={x} cy={y} r="7" onPointerDown={(e) => (e.stopPropagation(), grab(e, i))} />;
         })}
       </svg>
-      {large ? (
+      {large && (
         <div class="radar-detail">
           {controls.map((c) => (
             <div class={`radar-row${focus === c.id ? ' is-on' : ''}`} onFocusIn={() => setFocus(c.id)} onPointerEnter={() => setFocus(c.id)}>
@@ -110,36 +109,6 @@ export function TextureRadar({ large }: { large?: boolean }) {
             </div>
           ))}
         </div>
-      ) : (
-        <details class="pro">
-          <summary>{fc ? `${fc.label}: ${fc.effect ?? ''}` : 'Numbers'}</summary>
-          <div class="radar-keys">
-          {controls.map((c) => {
-            const v = values[c.id] ?? 0;
-            const z = zoneOf(c, v);
-            return (
-              <label class={`radar-key zone-${z}`} title={c.effect}>
-                <span>{c.label}</span>
-                <input
-                  type="range"
-                  min={c.range[0]}
-                  max={c.range[1]}
-                  step={0.1}
-                  value={v}
-                  aria-label={`${c.label} (${c.effect ?? ''})`}
-                  onFocus={() => setFocus(c.id)}
-                  onPointerDown={() => designs.begin()}
-                  onKeyDown={() => designs.begin()}
-                  onInput={(e) => setValue(c.id, Number((e.currentTarget as HTMLInputElement).value))}
-                  onChange={() => designs.end()}
-                />
-                <b>{v.toFixed(1)}</b>
-                {ZONE_TEXT[z] && <em class={`zone-tag zone-${z}`}>{ZONE_TEXT[z]}</em>}
-              </label>
-            );
-          })}
-          </div>
-        </details>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { embeddingOnly, type Speaker } from '../../api';
 import { nowPlaying } from '../../audio/player';
+import { FileDrop } from '../../components/FileDrop';
 import { Icon } from '../../components/Icon';
 import { notify } from '../../state/app';
 import { design, designs, setBase } from '../../state/design';
@@ -98,6 +99,15 @@ function PersonaRow({ p }: { p: Persona }) {
   );
 }
 
+/** A chosen or dropped clip becomes a voice of the project and the bench's base. */
+async function cloneFile(f: File) {
+  const s = await uploadClip(f, f.name.replace(/\.[^.]+$/, ''), f.name);
+  if (s) {
+    setBase(s.id);
+    void ensureEmbedding(s);
+  }
+}
+
 export function LibraryRail() {
   const file = useRef<HTMLInputElement>(null);
   const defaults = speakers.value.filter((s) => s.is_default);
@@ -121,7 +131,7 @@ export function LibraryRail() {
       </div>
       <div class="rail-section">
         <h4>Your voices</h4>
-        {mine.length ? <ul class="voices">{mine.map((s) => <VoiceRow key={s.id} s={s} />)}</ul> : <p class="muted small">Upload or record a clip to clone a voice. Designed voices you save appear here too.</p>}
+        {mine.length ? <ul class="voices">{mine.map((s) => <VoiceRow key={s.id} s={s} />)}</ul> : <p class="muted small">Upload, drop or record a clip to clone a voice. Designed voices you save appear here too.</p>}
         <div class="row gap-s">
           <button class="btn" disabled={uploading.value} onClick={() => file.current?.click()}>
             <Icon name="upload" /> {uploading.value ? 'Uploading…' : 'Upload'}
@@ -132,15 +142,10 @@ export function LibraryRail() {
             type="file"
             accept="audio/*"
             hidden
-            onChange={async (e) => {
+            onChange={(e) => {
               const f = (e.currentTarget as HTMLInputElement).files?.[0];
               (e.currentTarget as HTMLInputElement).value = '';
-              if (!f) return;
-              const s = await uploadClip(f, f.name.replace(/\.[^.]+$/, ''), f.name);
-              if (s) {
-                setBase(s.id);
-                void ensureEmbedding(s);
-              }
+              if (f) void cloneFile(f);
             }}
           />
         </div>
@@ -153,6 +158,7 @@ export function LibraryRail() {
           <p class="muted small">Design a voice, then “Save to cast” to keep it for Direct and Scene.</p>
         )}
       </div>
+      <FileDrop label="Drop to clone this voice" hint="An audio clip of 5–30 s of clean speech" busy={uploading.value ? 'Wait for the current upload…' : null} onFile={(f) => void cloneFile(f)} />
     </aside>
   );
 }

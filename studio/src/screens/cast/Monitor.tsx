@@ -3,7 +3,7 @@ import { useRef, useState } from 'preact/hooks';
 import type { Rendered } from '../../api';
 import { nowPlaying } from '../../audio/player';
 import * as player from '../../audio/player';
-import { autoplay, ID_A, ID_B, phrase, playSide, preview, previewText, reference, retry, side } from '../../audio/preview';
+import { autoplay, autoRender, ID_A, ID_B, phrase, playSide, preview, previewText, reference, retry, side, speak } from '../../audio/preview';
 import { errorText, isAbort, render } from '../../audio/render';
 import { exportWav } from '../../audio/mix';
 import { Icon } from '../../components/Icon';
@@ -41,6 +41,7 @@ function statusText(): string {
   const a = p.a;
   if (p.status === 'waiting') return 'listening…';
   if (p.status === 'rendering') return 'rendering…';
+  if (p.status === 'idle') return a ? 'out of date' : 'not generated yet';
   return a ? `${(a.pcm.length / a.sr).toFixed(1)} s · ${Math.round(a.ttfbMs)} ms` : '';
 }
 
@@ -80,76 +81,101 @@ export function PreviewStrip() {
   );
 }
 
-export function PreviewPanel() {
+/** The project's preview line from what was typed ('' when it is the bundle's own). */
+function setPhrase(text: string) {
+  previewText.value = text.trim() === spec.value.ui.preview_text ? '' : text;
+}
+
+/**
+ * The first thing on Cast: type a line and hear the bench voice (picked in the library rail) say it. Every design
+ * move below re-renders this line, so it is also the A/B monitor for the bench.
+ */
+export function SpeakPanel() {
   const p = preview.value;
   const a = p.a;
   const v = shown();
   const [draft, setDraft] = useState<string | null>(null);
-  const phraseEl = useRef<HTMLInputElement>(null);
+  const area = useRef<HTMLTextAreaElement>(null);
   const noSteer = backend.value?.kind === 'fixture';
+  const text = draft ?? phrase.value;
+  const playingA = nowPlaying.value?.id === ID_A;
+  const pending = p.status === 'waiting' || p.status === 'rendering';
+  const go = () => {
+    // The element's value, not `draft`: an edit made just before (Pronounce) is not in state yet.
+    const typed = area.current?.value ?? text;
+    if (typed !== phrase.value) setPhrase(typed);
+    setDraft(null);
+    speak();
+  };
   return (
-    <section class="monitor-card preview" aria-label="Preview">
-      <header class="monitor-head">
-        <h3>Preview</h3>
-        <label class="toggle" title="Play every new render automatically">
-          <input type="checkbox" checked={autoplay.value} onChange={(e) => (autoplay.value = (e.currentTarget as HTMLInputElement).checked)} />
-          <span>auto-play</span>
-        </label>
-      </header>
-      <div class="phrase-row">
-      <TagField text={draft ?? phrase.value}>
-      <input
-        ref={phraseEl}
-        class="phrase"
-        value={draft ?? phrase.value}
-        aria-label="Preview phrase"
-        data-tags
-        onInput={(e) => setDraft((e.currentTarget as HTMLInputElement).value)}
-        onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
-        onBlur={(e) => {
-          // The tag palette borrows focus and gives it back.
-          if ((e.relatedTarget as HTMLElement | null)?.closest?.('.tag-palette')) return;
-          // The element's value, not `draft`: an edit made just before blurring (Pronounce) is not rendered yet.
-          const v = (e.currentTarget as HTMLInputElement).value;
-          if (v !== phrase.value) previewText.value = v.trim() === spec.value.ui.preview_text ? '' : v;
-          setDraft(null);
-        }}
-      />
-      </TagField>
-      <PronounceButton input={() => phraseEl.current} onDone={() => phraseEl.current?.blur()} />
-      <TagButton input={() => phraseEl.current} />
+    <section class={`speak${p.status === 'idle' && a ? ' is-stale' : ''}`} aria-label="Speak">
+      <div class="speak-text">
+        <TagField text={text} block>
+          <textarea
+            ref={area}
+            class="speak-area"
+            rows={2}
+            value={text}
+            placeholder="Type what the voice should say"
+            aria-label="Text to speak"
+            data-tags
+            onInput={(e) => setDraft((e.currentTarget as HTMLTextAreaElement).value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.shiftKey) return;
+              e.preventDefault();
+              go();
+            }}
+            onBlur={(e) => {
+              // The tag palette borrows focus and gives it back.
+              if ((e.relatedTarget as HTMLElement | null)?.closest?.('.tag-palette, .speak-go')) return;
+              const typed = (e.currentTarget as HTMLTextAreaElement).value;
+              if (typed !== phrase.value) setPhrase(typed);
+              setDraft(null);
+            }}
+          />
+        </TagField>
+        <div class="speak-tools">
+          <PronounceButton input={() => area.current} />
+          <TagButton input={() => area.current} />
+        </div>
       </div>
       <PronMarks
-        text={draft ?? phrase.value}
+        text={text}
         replace={(s, e, t) => {
-          const cur = draft ?? phrase.value;
-          const next = cur.slice(0, s) + t + cur.slice(e);
           setDraft(null);
-          previewText.value = next.trim() === spec.value.ui.preview_text ? '' : next;
+          setPhrase(text.slice(0, s) + t + text.slice(e));
         }}
       />
       <TagMarks
-        text={draft ?? phrase.value}
+        text={text}
         replace={(next) => {
           setDraft(null);
-          previewText.value = next.trim() === spec.value.ui.preview_text ? '' : next;
+          setPhrase(next);
         }}
       />
-      <Waveform
-        pcm={v.pcm}
-        color={v.isA ? 'var(--o)' : 'var(--text-2)'}
-        playId={v.isA ? ID_A : ID_B}
-        busy={v.busy}
-        height={72}
-        label={v.isA ? 'Designed voice waveform' : 'Original voice waveform'}
-        onSeek={(f) => v.take && player.play(v.isA ? ID_A : ID_B, v.take.pcm, v.take.sr, f * (v.take.pcm.length / v.take.sr))}
-      />
-      <div class="transport">
+      <div class="speak-bar">
+        <button
+          class={`btn primary speak-go${pending ? ' is-busy' : ''}`}
+          disabled={!design.value.baseId || !text.trim()}
+          onClick={() => (playingA ? player.stop() : go())}
+          title="Speak this text (Enter in the text box)"
+        >
+          <Icon name={playingA ? 'stop' : 'play'} size={14} /> {playingA ? 'Stop' : pending ? 'Rendering…' : 'Speak'}
+        </button>
+        <Waveform
+          pcm={v.pcm}
+          color={v.isA ? 'var(--o)' : 'var(--text-2)'}
+          playId={v.isA ? ID_A : ID_B}
+          busy={v.busy}
+          height={40}
+          label={v.isA ? 'Designed voice waveform' : 'Original voice waveform'}
+          onSeek={(f) => v.take && player.play(v.isA ? ID_A : ID_B, v.take.pcm, v.take.sr, f * (v.take.pcm.length / v.take.sr))}
+        />
         <ABButtons />
         <span class="metrics" title="clip length · time to first audio">
           {statusText()}
         </span>
-        <button class="icon-btn" disabled={!a} onClick={() => a && exportWav(a.pcm, a.sr, `${baseSpeaker.value?.label ?? 'voice'}-preview`)} title="Export this preview as WAV" aria-label="Export preview WAV">
+        <button class="icon-btn" disabled={!a} onClick={() => a && exportWav(a.pcm, a.sr, `${baseSpeaker.value?.label ?? 'voice'}-preview`)} title="Export this take as WAV" aria-label="Export WAV">
           <Icon name="download" />
         </button>
       </div>
@@ -163,6 +189,25 @@ export function PreviewPanel() {
         </div>
       )}
       {noSteer && <p class="note">This server can’t apply controls yet: A and B both play the base voice.</p>}
+    </section>
+  );
+}
+
+/** Right column: when the Speak take renders and plays. */
+export function PreviewSettings() {
+  return (
+    <section class="monitor-card preview-settings" aria-label="Preview settings">
+      <header class="monitor-head">
+        <h3>Preview</h3>
+      </header>
+      <label class="toggle" title="Generate again after every change to the text or the voice (off: only when you press Speak)">
+        <input type="checkbox" checked={autoRender.value} onChange={(e) => (autoRender.value = (e.currentTarget as HTMLInputElement).checked)} />
+        <span>Auto-generate on every change</span>
+      </label>
+      <label class="toggle" title="Play every new render automatically">
+        <input type="checkbox" checked={autoplay.value} onChange={(e) => (autoplay.value = (e.currentTarget as HTMLInputElement).checked)} />
+        <span>Auto-play new takes</span>
+      </label>
     </section>
   );
 }

@@ -8,6 +8,7 @@ import type { DubSegmentOut } from '../../api';
 import { exportWav } from '../../audio/mix';
 import * as player from '../../audio/player';
 import { nowPlaying, playhead } from '../../audio/player';
+import { FileDrop } from '../../components/FileDrop';
 import { Icon } from '../../components/Icon';
 import { PronMarks, PronounceButton } from '../../components/Pron';
 import { TagButton, TagField, TagMarks } from '../../components/Tags';
@@ -965,7 +966,6 @@ function generateHint(): string {
 
 export function DubScreen() {
   const c = backend.value!.dub;
-  const [drag, setDrag] = useState(false);
   useEffect(() => {
     activeHistory.value = D.docs as History<unknown>;
     primaryAction.value = () => D.togglePlay();
@@ -980,17 +980,7 @@ export function DubScreen() {
   if (!c) return <Unavailable />;
   const d = D.doc.value;
   return (
-    <div
-      class={`dub${drag ? ' is-dragging' : ''}`}
-      onDragOver={(e) => (e.preventDefault(), setDrag(true))}
-      onDragLeave={(e) => e.currentTarget === e.target && setDrag(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDrag(false);
-        const f = e.dataTransfer?.files?.[0];
-        if (f) void D.openFile(f);
-      }}
-    >
+    <div class="dub">
       <aside class="rail dub-rail" aria-label="Source, languages and voice">
         <SourceCard />
         <StudioSources />
@@ -1022,7 +1012,7 @@ export function DubScreen() {
           </>
         )}
       </section>
-      {drag && <div class="dub-dropping">Drop to dub this file</div>}
+      <FileDrop label="Drop to dub this file" hint="A video or an audio file" icon="film" busy={D.busy.value ? 'Wait for the current step to finish…' : null} onFile={(f) => void D.openFile(f)} />
     </div>
   );
 }

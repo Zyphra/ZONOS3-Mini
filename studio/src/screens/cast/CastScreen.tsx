@@ -8,7 +8,7 @@ import { baseSpeaker, canClone, design, designs, identity, resetDesign, rollDesi
 import type { History } from '../../state/history';
 import { AccentAtlas } from './AccentAtlas';
 import { LibraryRail } from './LibraryRail';
-import { Personas, PreviewPanel, PreviewStrip, SavePanel, Variations } from './Monitor';
+import { Personas, PreviewSettings, PreviewStrip, SavePanel, SpeakPanel, Variations } from './Monitor';
 import { MoodControls, RoomAxis, SliderGroup, type Binding } from './QuickControls';
 import { TextureRadar } from './TextureRadar';
 import { WhoMap } from './WhoMap';
@@ -41,7 +41,7 @@ function BenchHeader() {
   return (
     <div class="bench-head">
       <div class="bench-title">
-        <span class="eyebrow">On the bench</span>
+        <span class="eyebrow">Shape the voice</span>
         <h2 title={baseSpeaker.value?.label}>{baseSpeaker.value?.label ?? 'Pick a voice'}</h2>
       </div>
       <div class="mode" role="radiogroup" aria-label="Voice mode">
@@ -96,8 +96,8 @@ export function CastScreen() {
   }, []);
   const b = designBinding();
   const locked = design.value.mode === 'reference' ? CLONE_LOCK : undefined;
-  const [open, setOpen] = useState<{ id: CardId; card: HTMLElement; head: HTMLElement } | null>(null);
-  const expand = (id: CardId) => (card: HTMLElement, head: HTMLElement) => setOpen({ id, card, head });
+  const [open, setOpen] = useState<{ id: CardId; card: HTMLElement; returnTo: HTMLElement } | null>(null);
+  const expand = (id: CardId) => (card: HTMLElement, returnTo: HTMLElement) => setOpen({ id, card, returnTo });
   // A card that locks (Exact clone) closes its dialog.
   useEffect(() => {
     if (open && locked && (open.id === 'texture' || open.id === 'room')) setOpen(null);
@@ -106,6 +106,7 @@ export function CastScreen() {
     <div class="cast">
       <LibraryRail />
       <section class="bench" aria-label="Voice bench">
+        <SpeakPanel />
         <BenchHeader />
         <div class="hero">
           <Panel family="who" title="Who" locked={locked} aside={<span class="hint" title="Drag the dot to move gender / age, scroll for pitch, click a voice to start from it">drag · scroll = pitch</span>}>
@@ -116,7 +117,7 @@ export function CastScreen() {
           </Panel>
         </div>
         <div class="strip">
-          <Panel family="texture" title="Texture" locked={locked} onExpand={locked ? undefined : expand('texture')}>
+          <Panel family="texture" title="Texture" locked={locked} onExpand={locked ? undefined : expand('texture')} whole>
             <TextureRadar />
           </Panel>
           <Panel family="room" title="Room" locked={locked} onExpand={locked ? undefined : expand('room')}>
@@ -126,13 +127,13 @@ export function CastScreen() {
             <SliderGroup group="delivery" b={b} compact />
           </Panel>
           <Panel family="mood" title="Mood" onExpand={expand('mood')}>
-            <MoodControls b={b} compact />
+            <MoodControls b={b} compact padOpens />
           </Panel>
         </div>
       </section>
       <aside class="monitor" aria-label="Monitor">
-        <PreviewPanel />
         <div class="monitor-scroll">
+          <PreviewSettings />
           <Personas />
           <Variations />
           <SavePanel />
@@ -144,7 +145,7 @@ export function CastScreen() {
           family={open.id}
           title={CARD_TITLE[open.id]}
           origin={open.card}
-          returnFocus={open.head}
+          returnFocus={open.returnTo}
           onClose={() => setOpen(null)}
           aside={<IdentityMeter />}
           strip={<PreviewStrip />}

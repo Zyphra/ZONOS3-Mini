@@ -7,7 +7,7 @@
 import { batch } from '@preact/signals';
 import type { Rendered } from '../api';
 import * as player from '../audio/player';
-import { previewText } from '../audio/preview';
+import { holdPreview, previewText } from '../audio/preview';
 import { base64ToBytes, bytesToBase64, parseWav } from '../lib/files';
 import { projectSettings } from './app';
 import { designs, design, newDesign } from './design';
@@ -178,6 +178,8 @@ export async function restore(doc: ProjectDoc, read: (hash: string) => Promise<B
   return () =>
     batch(() => {
       player.stop();
+      // Opening a project shows its Cast line without rendering it (pickBase, right after, is part of the load too).
+      holdPreview();
       projectSettings.value = { ...DEFAULT_SETTINGS, ...doc.settings };
       ownVoices.value = voices;
       designs.reset(doc.cast.design);

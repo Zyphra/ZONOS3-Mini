@@ -6,6 +6,13 @@ words of recorded speech; only the changed stretch is regenerated), **Dub** (re-
 another language). Vite + Preact + TypeScript + @preact/signals, plus world-atlas + topojson-client for the
 accent map and fflate for project files; hand-written CSS, SVG and canvas.
 
+Cast opens on **Speak**: type a line, pick a voice in the left rail, press Speak (or Enter; Shift+Enter is a newline). The line is
+also what every bench move re-renders, so the same bar is the A/B monitor while shaping the voice below. Nothing
+renders on load (boot or opening a project); **auto-generate** (on by default, kept in the browser) re-renders
+after each change, off leaves the take marked out of date until Speak / A / Space. The small cards open large from
+their header; the Texture card opens from anywhere on it and the Mood card from its pad too (its mood chips and the
+Room / Delivery sliders work in place). Drop an audio file anywhere on Cast to clone it (anywhere on Dub to dub it).
+
 ## Design system
 
 Zyphra's design language, all through the tokens in `src/styles/base.css` `:root` (dark, the default) and
@@ -336,7 +343,8 @@ Transcript-first editing:
   project; `src/components/Projects.tsx` is the switcher and launcher.
 - `src/audio/` — `player.ts` (one AudioContext, clip and streaming playback, playhead signal), `render.ts`
   (request-keyed cache, de-dup, 4 parallel), `preview.ts` (always-on preview: 250 ms debounce, stale-request
-  abort, A/B against the unsteered voice), `mix.ts` (sequences, WAV export).
+  abort, A/B against the unsteered voice, auto-generate toggle, nothing rendered for what a load sets; `speak()`
+  plays the current take or renders it now), `mix.ts` (sequences, WAV export).
 - `src/state/dub.ts` (dub projects, hand-offs, generate / regenerate) and `src/screens/dub/DubScreen.tsx`.
 - `src/state/moods.ts` (named moods and their landmarks) and `src/components/Moods.tsx` (mood chips, pad
   landmarks).
