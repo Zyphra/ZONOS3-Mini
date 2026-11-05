@@ -53,11 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--worker-python", default=None, metavar="PY",
                    help="interpreter of the helper workers of model/src/zonos3/workers, each one persistent process: "
                         "text normalization (textnorm.py under <python-src>: NeMo grammars, needs pynini; off without "
-                        "this flag) and the FuseAlign forced aligner of speech editing and dubbing (fusealign.py: needs "
-                        "fusealign-hub; default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) and "
-                        "the dubbing worker run in .venv-asr (tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)")
+                        "this flag) and the FuseAlign forced aligner of speech editing and plugins (fusealign.py: needs "
+                        "fusealign-hub; default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) "
+                        "runs in .venv-asr (tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)")
     p.add_argument("--laci-heads", nargs="+", default=None, metavar="LANG=PATH",
                    help="LACI alignment heads of a language (repeatable)")
+    p.add_argument("--plugins", nargs="+", default=[], metavar="NAME",
+                   help="server plugins: import zonos3_<NAME> and mount its routes (e.g. dub, from Zyphra/ZONOS3-dub)")
     p.add_argument("--tts-phoneme-lexicon", default=None, help="gold pronunciation lexicon (LMDB) for /v2/phonemize")
     p.add_argument("--studio-projects-dir", default=None,
                    help="server-side studio projects and media (/v2/projects, /v2/media)")
@@ -103,6 +105,7 @@ def main(argv=None) -> int:
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     import uvicorn
+    from zonos3.server import plugins
     from zonos3.tts.edit_align import FuseAlignWorker
 
     from zonos3_mlx.engine import Engine, TextNormalizer
@@ -129,7 +132,7 @@ def main(argv=None) -> int:
                             stream_decode_default=args.stream_decode_default, default_voices_dir=voices,
                             studio_dir=Path(args.studio_dir) if args.studio_dir else None,
                             phoneme_lexicon=args.tts_phoneme_lexicon, text_normalization=normalizer is not None,
-                            prefix=prefix, fusealign=fusealign_available(worker_python))
+                            prefix=prefix, fusealign=fusealign_available(worker_python), plugins=tuple(args.plugins))
     scheduler = Scheduler(engine, batch=args.batch)
     state = ServerState(engine, scheduler, options, aligner=FuseAlignWorker(python=worker_python))
     if args.studio_projects_dir:
@@ -144,6 +147,10 @@ def main(argv=None) -> int:
     found = {k: Path(v).name for k, v in engine.paths.items() if v}
     logging.getLogger("zonos3_mlx").info("model %s; companions %s; batch %d; LACI %s", Path(args.model).name, found,
                                          args.batch, sorted(laci) or "off")
+    try:
+        state.plugins = plugins.load(options.plugins)
+    except ValueError as exc:
+        parser.error(str(exc))
     scheduler.start()
     app = create_app(state)
     # Request logs would record the access_token query of a private server.

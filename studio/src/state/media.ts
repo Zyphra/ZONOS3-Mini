@@ -1,10 +1,10 @@
 /**
  * Project media by content hash (SHA-256 hex): audio as WAV (16-bit unless exact bytes exist, e.g. what an Edit version sent to
- * the server), voice embeddings as raw float32, videos as the file. One stored copy however many projects, takes
+ * the server) and voice embeddings as raw float32. One stored copy however many projects, takes
  * or versions refer to it.
  */
 import { encodeWav } from '../lib/files';
-import { sha256, sha256Async } from '../lib/hash';
+import { sha256 } from '../lib/hash';
 
 export interface MediaInfo {
   type: string;
@@ -17,7 +17,7 @@ export const EMBEDDING_TYPE = 'application/x-float32';
 export const stored = new Map<string, number>();
 
 /**
- * Hash of every media object seen (PCM arrays, clips, embeddings and files are never mutated in place): saving
+ * Hash of every media object seen (PCM arrays, clips and embeddings are never mutated in place): saving
  * again neither re-encodes nor re-hashes. Restored objects are primed with the hash they came from, since
  * re-encoding decoded 16-bit audio would not give the same bytes.
  */
@@ -41,10 +41,11 @@ export class MediaSink {
     return h;
   }
 
-  private add(key: object, type: string, bytes: Uint8Array<ArrayBuffer>, blob?: Blob, h = sha256(bytes)): string {
+  private add(key: object, type: string, bytes: Uint8Array<ArrayBuffer>): string {
+    const h = sha256(bytes);
     known.set(key, h);
     this.info[h] = { type, size: bytes.byteLength };
-    if (!stored.has(h) && !this.pending.has(h)) this.pending.set(h, blob ?? new Blob([bytes], { type }));
+    if (!stored.has(h) && !this.pending.has(h)) this.pending.set(h, new Blob([bytes], { type }));
     return h;
   }
 
@@ -60,14 +61,5 @@ export class MediaSink {
 
   embedding(e: Float32Array): string {
     return this.hit(e, EMBEDDING_TYPE) ?? this.add(e, EMBEDDING_TYPE, new Uint8Array(e.slice().buffer));
-  }
-
-  /** A file (a video) is stored as itself. */
-  async file(f: Blob): Promise<string> {
-    const type = f.type || 'application/octet-stream';
-    const hit = this.hit(f, type);
-    if (hit) return hit;
-    const bytes = new Uint8Array(await f.arrayBuffer());
-    return this.add(f, type, bytes, f, await sha256Async(bytes));
   }
 }

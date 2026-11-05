@@ -26,8 +26,6 @@ dist/
 # virtual environment
 .venv*/
 venv/
-# AV-sync checkout of the dubbing lip-sync step (tools/setup_dub_align_env.sh)
-/.avsync/
 env/
 
 # clangd config

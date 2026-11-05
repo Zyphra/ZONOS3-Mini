@@ -8,11 +8,11 @@
 #   PHONEME_LEXICON             gold pronunciation lexicon (--tts-phoneme-lexicon: POST /v2/phonemize)
 #   ZONOS3_STUDIO_PROJECTS      shared studio project store (--studio-projects-dir); empty keeps projects in the browser
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
-#   DUB=1                       serve the studio's Dub screen (/v2/dub/*): LACI heads for every dub language from
-#                               LACI_HEADS_DIR (default laci_heads/: the zh file for Chinese, the English file for the
-#                               rest) and the word aligner / AV-sync of tools/setup_asr_env.sh
-# Speech recognition (speech editing and dubbing) is Qwen3-ASR in .venv-asr (tools/setup_asr_env.sh); ZONOS3_ASR_PYTHON,
-# ZONOS3_ASR_DEVICE and ZONOS3_DUB_AVSYNC_HOME override its interpreter, its device and the AV-sync checkout.
+#   LACI_ALL=1                  LACI heads for every LACI language from LACI_HEADS_DIR (default laci_heads/: the zh
+#                               file for Chinese, the English file for the rest)
+#   PLUGINS                     "name ..." server plugins (--plugins), e.g. dub (Zyphra/ZONOS3-dub)
+# Speech recognition (speech editing and plugins) is Qwen3-ASR in .venv-asr (tools/setup_asr_env.sh); ZONOS3_ASR_PYTHON
+# and ZONOS3_ASR_DEVICE override its interpreter and its device.
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -28,11 +28,16 @@ laci_args=()
 if [[ -n "${LACI_HEADS:-}" ]]; then
     read -r -a laci_specs <<<"$LACI_HEADS"
     laci_args=(--laci-heads "${laci_specs[@]}")
-elif [[ "${DUB:-0}" == 1 ]]; then
+elif [[ "${LACI_ALL:-0}" == 1 ]]; then
     laci_dir="${LACI_HEADS_DIR:-$repo_root/laci_heads}"
     laci_en="$laci_dir/zonos3_mini_mect60k_heads.json"
     laci_args=(--laci-heads "cmn=$laci_dir/zonos3_mini_mect60k_heads_zh.json")
     for lang in en_us fr_fr de es it pt_br ja ko; do laci_args+=("$lang=$laci_en"); done
+fi
+plugin_args=()
+if [[ -n "${PLUGINS:-}" ]]; then
+    read -r -a plugin_names <<<"$PLUGINS"
+    plugin_args=(--plugins "${plugin_names[@]}")
 fi
 studio_projects="${ZONOS3_STUDIO_PROJECTS:-}"
 exec uv run --locked --package zonos3-sgl --group phonemize python -m zonos3_sgl \
@@ -46,4 +51,5 @@ exec uv run --locked --package zonos3-sgl --group phonemize python -m zonos3_sgl
     ${PHONEME_LEXICON:+--tts-phoneme-lexicon "$PHONEME_LEXICON"} \
     ${studio_projects:+--studio-projects-dir "$studio_projects"} \
     ${laci_args[@]+"${laci_args[@]}"} \
+    ${plugin_args[@]+"${plugin_args[@]}"} \
     "$@"

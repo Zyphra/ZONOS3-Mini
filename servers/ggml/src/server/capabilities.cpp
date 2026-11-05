@@ -1,6 +1,5 @@
 #include "server/capabilities.h"
 
-#include "server/dub.h"
 #include "server/edit.h"
 #include "server/http.h"
 #include "server/generate.h"
@@ -109,7 +108,7 @@ json capabilities(const ServerState & s) {
         {"speaker_cfg_unconditional", "remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_generated_history"},
         {"speaker_cfg_formula", "uncond + scale * (cond - uncond)"},
         {"laci_languages", laci_languages(s)},
-        {"dub", dub_available(s)},
+        {"plugins", s.plugins},
         {"speaker_embedding_upload", embedding},
         {"speaker_embedding_cache", !modes.empty()},
         {"speaker_embedding_blend", embedding},

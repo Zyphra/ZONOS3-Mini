@@ -40,9 +40,10 @@ export function hue(group: string): string {
   return `var(--${groupHue.value.get(group) ?? 'c1'})`;
 }
 
-export type Act = 'cast' | 'direct' | 'scene' | 'edit' | 'dub';
-export const ACT_IDS: Act[] = ['cast', 'direct', 'scene', 'edit', 'dub'];
-const initialAct = location.hash.slice(1) as Act;
+export type Act = 'cast' | 'direct' | 'edit';
+export const ACT_IDS: Act[] = ['cast', 'direct', 'edit'];
+/** The retired Scene act's hash opens Direct, where its lines now live. */
+const initialAct = (location.hash.slice(1) === 'scene' ? 'direct' : location.hash.slice(1)) as Act;
 export const act = signal<Act>(ACT_IDS.includes(initialAct) ? initialAct : 'cast');
 
 /** The history ⌘Z acts on (each act registers its own). */

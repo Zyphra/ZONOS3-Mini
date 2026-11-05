@@ -30,7 +30,7 @@
       <header class="lite-head">
         <span class="eyebrow">Speaker embedding</span>
         <h1>Voice cloning</h1>
-        <p class="muted">Pick or clone a voice, then speak with its speaker embedding.</p>
+        <p class="muted">Type what to say, then pick or clone a voice to speak it with its speaker embedding.</p>
       </header>
 
       <p id="notice" class="notice" role="status" hidden></p>
@@ -42,9 +42,46 @@
         </div>
       </div>
 
+      <section class="panel" aria-labelledby="speak-heading">
+        <div class="panel-head">
+          <h3 id="speak-heading"><span class="step">1</span>Speak</h3>
+        </div>
+        <form id="generate-form">
+          <label class="field" for="text">Text</label>
+          <textarea id="text" class="input" rows="4" required>Hello! This is a cloned voice, speaking from its speaker embedding.</textarea>
+          <div class="grid">
+            <div>
+              <label class="field" for="language">Language</label>
+              <select id="language" class="input"></select>
+            </div>
+            <div>
+              <label class="field" for="seed">Seed <span class="hint-inline">optional</span></label>
+              <input type="number" id="seed" class="input" min="0" max="4294967295" step="1" inputmode="numeric" placeholder="random" />
+            </div>
+          </div>
+          <div class="row gap-s actions">
+            <button type="submit" id="generate" class="btn primary">Generate</button>
+            <button type="button" id="stop" class="btn" data-icon="stop" hidden>Stop</button>
+            <span id="generate-status" class="hint-inline" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+        <p id="generate-error" class="error-box" role="alert" hidden></p>
+        <div id="result" class="result" hidden>
+          <div id="wave" class="wave is-seekable" role="img" aria-label="Generated speech waveform" title="Click to play from here">
+            <canvas></canvas>
+            <div class="wave-head" hidden></div>
+          </div>
+          <div id="transport" class="row gap-s">
+            <button type="button" id="play" class="icon-btn" aria-label="Play" title="Play"></button>
+            <span id="result-meta" class="meta"></span>
+            <a id="result-download" class="btn sm" download data-icon="download">Download WAV</a>
+          </div>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="voice-heading">
         <div class="panel-head">
-          <h3 id="voice-heading"><span class="step">1</span>Voice</h3>
+          <h3 id="voice-heading"><span class="step">2</span>Voice</h3>
           <fieldset class="mode">
             <legend class="sr-only">Voice source</legend>
             <input type="radio" name="source" id="source-default" value="default" checked />
@@ -101,43 +138,6 @@
           <div class="row gap-s">
             <button type="button" id="preview" class="btn sm" data-icon="play">Play preview</button>
             <button type="button" id="download-embedding" class="btn ghost sm" data-icon="download">Embedding (.npy)</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel" aria-labelledby="speak-heading">
-        <div class="panel-head">
-          <h3 id="speak-heading"><span class="step">2</span>Speak</h3>
-        </div>
-        <form id="generate-form">
-          <label class="field" for="text">Text</label>
-          <textarea id="text" class="input" rows="4" required>Hello! This is a cloned voice, speaking from its speaker embedding.</textarea>
-          <div class="grid">
-            <div>
-              <label class="field" for="language">Language</label>
-              <select id="language" class="input"></select>
-            </div>
-            <div>
-              <label class="field" for="seed">Seed <span class="hint-inline">optional</span></label>
-              <input type="number" id="seed" class="input" min="0" max="4294967295" step="1" inputmode="numeric" placeholder="random" />
-            </div>
-          </div>
-          <div class="row gap-s actions">
-            <button type="submit" id="generate" class="btn primary">Generate</button>
-            <button type="button" id="stop" class="btn" data-icon="stop" hidden>Stop</button>
-            <span id="generate-status" class="hint-inline" role="status" aria-live="polite"></span>
-          </div>
-        </form>
-        <p id="generate-error" class="error-box" role="alert" hidden></p>
-        <div id="result" class="result" hidden>
-          <div id="wave" class="wave is-seekable" role="img" aria-label="Generated speech waveform" title="Click to play from here">
-            <canvas></canvas>
-            <div class="wave-head" hidden></div>
-          </div>
-          <div id="transport" class="row gap-s">
-            <button type="button" id="play" class="icon-btn" aria-label="Play" title="Play"></button>
-            <span id="result-meta" class="meta"></span>
-            <a id="result-download" class="btn sm" download data-icon="download">Download WAV</a>
           </div>
         </div>
       </section>

@@ -1,6 +1,6 @@
 # ZONOS3 feature guide
 
-Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plain TTS. The HTTP endpoints of plain TTS are in [api.md](api.md); dubbing details in [laci_dub.md](laci_dub.md).
+Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plain TTS. The HTTP endpoints of plain TTS are in [api.md](api.md).
 
 ## Contents
 
@@ -17,7 +17,8 @@ Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plai
 - [Zonos Voice Studio](#zonos-voice-studio)
   - [Span steering by reading position](#span-steering-by-reading-position)
   - [Projects on the server](#projects-on-the-server)
-  - [Dubbing (Dub screen, `/v2/dub/*`)](#dubbing-dub-screen-v2dub)
+- [Plugins](#plugins)
+  - [Extended speaking-rate buckets (`rate_extension`)](#extended-speaking-rate-buckets-rate_extension)
 
 ## Raw-audio voice cloning
 
@@ -140,7 +141,7 @@ the audio (`TTSEncodeAudioMsg`) and builds each fill prompt
 the detokenizer returns its rows as codes (`TTSCodesReply`), and the tokenizer
 decodes the spliced frames (`TTSDecodeCodesMsg`). Qwen3-ASR runs in one persistent
 worker per server (`model/src/zonos3/workers/asr.py`: `ping`, `transcribe`; shared with
-dubbing) under the `.venv-asr` interpreter (`ZONOS3_ASR_PYTHON`, default
+plugins) under the `.venv-asr` interpreter (`ZONOS3_ASR_PYTHON`, default
 `.venv-asr/bin/python`; `HF_HUB_OFFLINE=1`, so the model must be cached; `ZONOS3_ASR_DEVICE`
 picks the device, default `cuda:0` when available). `language` of `/v2/edit`,
 `/v2/edit/transcribe` and `/v2/edit/align` (server codes) picks the Qwen3-ASR language
@@ -148,7 +149,7 @@ of every recognition of the request (transcription, verify) and FuseAlign's toke
 (`zonos3.tts.edit_align.EDIT_LANGUAGES`: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn
 and ko, each served when the ASR worker supports its language; others are a 400).
 FuseAlign runs in one persistent worker per server (`model/src/zonos3/workers/fusealign.py`
-under the server's interpreter, shared with dubbing); `ZONOS3_FUSEALIGN_DEVICE` picks its
+under the server's interpreter, shared with plugins); `ZONOS3_FUSEALIGN_DEVICE` picks its
 device (default `cuda:0` when available). Both workers start on their first call and
 restart once when they exit; an unavailable worker is a 503, input it refuses a 400.
 Clips over 30 s (or texts over 1022 UTF-8 bytes) are aligned long-form: the FuseAlign
@@ -409,7 +410,7 @@ the edit marker rows, exactly as for the edit checkpoint:
 ```bash
 uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <NV checkpoint> \
     --rows <phoneme_tokens.pt> --out <NV + phoneme checkpoint>
-SERVE_MODEL=<NV + phoneme checkpoint> STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 \
+SERVE_MODEL=<NV + phoneme checkpoint> STEER_BUNDLE=steering/studio_bundle_mect60k.json LACI_ALL=1 \
 PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh
 ```
 
@@ -458,8 +459,6 @@ twin N rows` from the scheduler).
   marker is a target piece with no edit tokens, `<laugh />` is canonicalized to `<laugh/>`, and `original_text` in the response
   is the markup-free text the workers read. A marker alone between unchanged words is therefore no edit (400 "target text
   equals the original transcript") unless `spans` place it; a marker inside an edited region rides with the fill.
-- *Dubbing*: target texts may carry markup (LACI runs at tag CFG 1); markers count no bytes for the segment's
-  speaking rate and the forced aligner reads the plain text.
 - *Sampling*: the sampler draws each row over the narrowest vocabulary prefix (no span-end column for utterances), so
   an edit checkpoint consumes the random numbers of the same checkpoint without that row.
 
@@ -822,44 +821,41 @@ ZONOS3_STUDIO_PROJECTS=<projects dir> STEER_BUNDLE=steering/studio_bundle_mect60
   there (body not read).
 - `GET /v2/capabilities` → `projects: {enabled, max_media_bytes, max_project_bytes}`.
 
-### Dubbing (Dub screen, `/v2/dub/*`)
+## Plugins
 
-The studio server also dubs (details in [laci_dub.md](laci_dub.md)): a video or audio reference → Qwen3-ASR transcript
-and FuseAlign words (or `ref_words` the studio already has) → segments at pauses with the SimAlign-projected
-target text → per segment 10 LACI takes in neighbouring speaking-rate buckets, each held to the segment's length (LACI
-duration target) → best fit placed on the timeline → optional AV-sync lip warp → MP4 mux. Every take is a
-`/v2/generate` request on this server's scheduler (`laci=true` + duration target), so a dub uses the reference clone
-(`voice: {mode: "source"}`) or any studio voice (`{mode: "studio", speaker_embedding_id, controls}`), per dub or per
-segment, with per-segment direction (`segments[k].controls`) and pronunciation groups in target texts.
+A server plugin adds routes to a server without core changes: `--plugins NAME...` (sgl, mlx; ggml also takes
+`NAME,NAME`; `PLUGINS="NAME ..."` in the serve scripts) imports the package `zonos3_<NAME>` and mounts the routes of
+its `plugin()`. Without `--plugins` nothing is imported. `GET /v2/capabilities` lists the mounted ones in `plugins`.
+The dubbing tool is such a plugin: [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) (`--plugins dub`).
 
-```bash
-bash tools/setup_asr_env.sh   # once: .venv-asr (Qwen3-ASR, SimAlign) + .avsync (AV-sync); FuseAlign comes with `uv sync`
-STEER_BUNDLE=steering/studio_bundle_mect60k.json DUB=1 servers/sgl/scripts/serve.sh
-```
+- **URL rule.** Plugin `N` serves only `/v2/N/*` and `/N`, `/N/*` (a page of its own); its routes are mounted ahead of
+  the studio's, and its API is specified in its own repository. `X-Keepalive` works on the POST paths it lists.
+- **Host protocol** (`zonos3.server.plugins`, `HOST_API`): the plugin sees the server through a `Host`: `facts()`
+  (checkpoint name, speaking-rate edges and buckets, LACI languages, speaker modes, raw-space controls, phoneme
+  tokens, the bundle's `rate_extension`, the helper-worker device), the shared Qwen3-ASR and FuseAlign workers,
+  `synthesize_laci(takes)` and `encode_reference(audio)`. sgl and mlx mount plugins in-process; the ggml server
+  forwards their paths to its Python host (`model/src/zonos3/workers/pyhost.py`, `--worker-python`, in which the
+  plugin must be installed), which calls back into the engine for takes and encodes.
+- **LACI duration targets.** `synthesize_laci` runs `LaciTakeRequest`s: a `/v2/generate` request with `laci=true`
+  planned and scheduled as usual, plus a target length in frames (`zonos3.tts.laci.DurationTarget`): a take that ends
+  too early or too late is retaken in the speaking-rate bucket its duration ratio asks for (with `adjust_rate`; see
+  [features.md](features.md)). A take may also run on an extended speaking-rate scale (`RateBuckets`: edges, first
+  bucket, its bucket and the tempo doses of steered buckets). LACI needs `--laci-heads` (`LACI_ALL=1` in the serve
+  scripts passes the `laci_heads/` heads of every language: `zonos3_mini_mect60k_heads_zh.json` for `cmn`,
+  `zonos3_mini_mect60k_heads.json` for the rest; `LACI_HEADS_DIR` / `LACI_HEADS` override).
 
-`DUB=1` passes `--laci-heads` for the 9 target languages (the mect_60k heads in `laci_heads/`:
-`zonos3_mini_mect60k_heads_zh.json` for `cmn`, `zonos3_mini_mect60k_heads.json` for the rest; `LACI_HEADS_DIR` /
-`LACI_HEADS` override). The heads selected on the release LM also drive LACI on the edit checkpoint. With LACI off,
-outputs do not depend on whether `--laci-heads` is passed.
+### Extended speaking-rate buckets (`rate_extension`)
 
-#### Pace steering as a continuous speaking-rate bucket
+The pace control (`delivery.tempo`, hidden L9.attn) can stand in for the speaking-rate condition row: every bucket of
+the row has a tempo dose that reproduces it (agreeing across English and French at the same WER and identity), the
+dose is continuous and reaches further than the row in both directions, and the rate row is left unknown while
+steering (a set bucket damps the steering).
 
-The pace control (`delivery.tempo`, hidden L9.attn) can stand in for the speaking-rate condition row:
-
-- **Every bucket has a tempo dose.** The doses that reproduce each of the row's ten buckets agree across English and
-  French, at the same WER and identity as the buckets.
-- **The dose is continuous and reaches further** than the ten buckets, in both directions; rate is monotone in the
-  dose.
-- **Leave the rate row unknown when steering.** With a bucket set, the row damps the steering.
-
-#### Extended speaking-rate buckets
-
-Dubs plan and retake over the `lm/mect_60k` row's ten buckets plus **tempo-steered buckets** that continue them: −1, −2, … below
-bucket 0 and 10, 11, … above bucket 9, each the rate row unknown plus a `delivery.tempo` dose, only as far as measured
-safe per target language. The kept scale is the bundle's `rate_extension` block (also
-`steering/ears_styles_mect60k/eval/rate_extension.json`). It holds only for the row edges it was measured on: on a
-checkpoint with other speaking-rate edges (the default `lm/rate30_20k_r2grpo`, 30 buckets) the server drops it with a
-warning and dubs take the row-only path.
+The bundle's `rate_extension` block (also `steering/ears_styles_mect60k/eval/rate_extension.json`) continues the
+`lm/mect_60k` row's ten buckets with **tempo-steered buckets**: −1, −2, … below bucket 0 and 10, 11, … above bucket 9,
+each the rate row unknown plus a `delivery.tempo` dose, only as far as measured safe per language. It holds only for
+the row edges it was measured on: on a checkpoint with other speaking-rate edges (the default
+`lm/rate30_20k_r2grpo`, 30 buckets) the server drops it with a warning and `facts().rate_extension` is null.
 
 - **Nominal edges** continue the row's at its mean geometric step (×1.097): bucket 0 becomes [9.22, 10.12) B/s,
   −1 [8.41, 9.22), … and 9 becomes [21.21, 23.26), 10 [23.26, 25.52), …; a language's lowest / highest bucket stays
@@ -881,8 +877,5 @@ warning and dubs take the row-only path.
 | zh | −6…−1 |
 | ko | −2…−1 |
 
-- **Source voices use only the faster steered buckets** (`reference_sides: ["faster"]` in the bundle;
-  `/v2/dub/capabilities` `buckets[].voice_modes`): on the slower side the source voice (reference mode, where the buckets
-  were not validated) lost words or garbled. Studio voices use both sides.
-- Languages without a steered bucket on a side, and servers whose bundle has no `rate_extension`, take exactly the
-  row-only path.
+- **Reference voices use only the faster steered buckets** (`reference_sides: ["faster"]`): on the slower side a
+  reference-mode voice (where the buckets were not validated) lost words or garbled. Embedding voices use both sides.

@@ -1,5 +1,5 @@
 /**
- * Browser-wide preferences in localStorage (theme, autoplay, edit / dub options). Everything a project holds lives
+ * Browser-wide preferences in localStorage (theme, autoplay, edit options). Everything a project holds lives
  * in the project store (`projects.ts`, IndexedDB).
  */
 import { effect, type Signal } from '@preact/signals';

@@ -623,7 +623,7 @@ std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, c
     gr.stream = false;
     gr.prefix = false;
     gr.laci_duration = take.duration;
-    if (take.scale) {   // _dub_take_rate_steering
+    if (take.scale) {   // _laci_take_rate_scale
         const LaciTake::Scale & sc = *take.scale;
         const auto & hp = s.model.hp;
         int index = -1;

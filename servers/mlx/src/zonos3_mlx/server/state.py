@@ -18,8 +18,8 @@ from zonos3_mlx.scheduler import Scheduler
 
 
 def asr_device() -> str | None:
-    """The device of the Qwen3-ASR and dubbing workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on macOS (else the
-    workers' default)."""
+    """The device of the Qwen3-ASR worker and of the plugins' helper workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on
+    macOS (else the workers' default)."""
     return os.environ.get("ZONOS3_ASR_DEVICE") or ("mps" if sys.platform == "darwin" else None)
 
 
@@ -34,8 +34,9 @@ class ServerOptions:
     phoneme_lexicon: str | None = None
     text_normalization: bool = False
     prefix: tuple[int, int, int, int] = (15, 4, 3, 450)  # chunk, first-chunk, hold-back, context frames
-    # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and dubbing need it)
+    # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and plugins need it)
     fusealign: bool = field(default_factory=fusealign_installed)
+    plugins: tuple[str, ...] = ()  # --plugins: zonos3_<name> packages to mount
 
 
 @dataclass
@@ -52,14 +53,14 @@ class ServerState:
     default_lock: threading.Lock = field(default_factory=threading.Lock)
     # reference codes of encoded clips, by sha1 of the audio bytes (LRU of 64)
     reference_codes: OrderedDict = field(default_factory=OrderedDict)
-    # speech editing and dubbing: the server's ASR worker (zonos3/workers/asr.py, Qwen3-ASR in .venv-asr; every speech
-    # recognition of both) and FuseAlign worker (zonos3/workers/fusealign.py; every forced alignment of both); each
-    # starts on its first call
+    # speech editing and plugins: the server's ASR worker (zonos3/workers/asr.py, Qwen3-ASR in .venv-asr; every speech
+    # recognition) and FuseAlign worker (zonos3/workers/fusealign.py; every forced alignment); each starts on its
+    # first call
     asr: AsrWorker = field(default_factory=lambda: AsrWorker(device=asr_device()))
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     edit_runtime: object | None = None  # zonos3.tts.edit_runtime.EditRuntime (zonos3_mlx.server.edit.runtime)
-    dub_runtime: object | None = None  # zonos3.dub.runtime.DubRuntime (zonos3_mlx.server.dub.runtime)
-    dub_slots: asyncio.Semaphore | None = None
+    laci_slots: asyncio.Semaphore | None = None  # LACI takes in flight (zonos3_mlx.server.host)
+    plugins: list = field(default_factory=list)  # loaded zonos3.server.plugins.Plugin
 
     @property
     def config(self):
@@ -72,8 +73,8 @@ class ServerState:
     def close(self) -> None:
         self.scheduler.stop()
         self.asr.close()
-        if self.dub_runtime is not None:
-            self.dub_runtime.close()
+        for plugin in self.plugins:
+            plugin.close()
         self.aligner.close()
         if self.engine.normalizer is not None:
             self.engine.normalizer.close()

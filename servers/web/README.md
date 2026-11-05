@@ -6,7 +6,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 
 | Served | Off (capabilities say so; the browser cannot run their Python workers) |
 | --- | --- |
-| `/v2/generate` (streamed / buffered, pcm / wav), `/v1/audio/speech` | speech editing, dubbing (`/v2/dub/capabilities` answers `enabled: false`) |
+| `/v2/generate` (streamed / buffered, pcm / wav), `/v1/audio/speech` | speech editing, plugins (`plugins` is empty) |
 | voices: default voices (shipped codes), session uploads (reference encoder + MECT speaker encoder), embedding files, slerp blends | phonemize, text normalization |
 | `/v2/controls` steering-bundle controls (with set calibrations), condition rows | server projects (the studio keeps projects in the browser) |
 | speaker, tag and controls CFG; LACI and span-follow reading | accent adapters (`accents` is empty) |

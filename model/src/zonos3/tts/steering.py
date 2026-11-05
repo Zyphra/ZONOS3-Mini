@@ -53,7 +53,7 @@ class RateExtension:
     docs/guide.md "Extended speaking-rate buckets"): the pace direction, the row edges they continue, the nominal edges past
     the row (``below[k]`` the lower edge of bucket -k, ``above[k]`` the upper edge of bucket n-1+k for the row's n
     buckets) and per TTS language the buckets measured safe with their dose (bucket -> dose, contiguous from the row).
-    ``reference_sides`` ("slower" / "faster"): the sides that also serve reference-mode voices (a dub's source voice);
+    ``reference_sides`` ("slower" / "faster"): the sides that also serve reference-mode voices (a cloned source voice);
     the buckets were validated in embedding mode."""
 
     direction: str

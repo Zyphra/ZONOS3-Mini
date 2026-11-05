@@ -56,7 +56,7 @@ from zonos3.tts.steering import (
     resolve_controls,
 )
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
-from zonos3.server.dub import make_router as _dub_router
+from zonos3.server import plugins
 from zonos3.server.edit import make_router as _edit_router
 from zonos3.server.keepalive import KeepaliveMiddleware
 from zonos3.server.projects import ProjectStore, make_router as _projects_router
@@ -83,10 +83,10 @@ _SESSION_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, "DefaultSpeakerReference"]] = {}
 _DEFAULT_SPEAKER_CACHE_LOCK = asyncio.Lock()
 # The server's ASR worker (zonos3/workers/asr.py: Qwen3-ASR in .venv-asr; ZONOS3_ASR_PYTHON / ZONOS3_ASR_DEVICE):
-# every speech recognition of speech editing and dubbing. It starts on the first call.
+# every speech recognition of speech editing and plugins. It starts on the first call.
 _ASR = AsrWorker()
 # The server's FuseAlign worker (zonos3/workers/fusealign.py in this interpreter; ZONOS3_FUSEALIGN_DEVICE picks its
-# device): every forced alignment of speech editing and dubbing. It starts on the first call.
+# device): every forced alignment of speech editing and plugins. It starts on the first call.
 _FUSEALIGN = FuseAlignWorker()
 # Gold pronunciation lexicons, keyed by LMDB directory.
 _PHONEME_LEXICON_CACHE: Dict[str, "PhonemeLexicon"] = {}
@@ -1235,8 +1235,8 @@ async def lifespan(_: FastAPI):
     if _GLOBAL_STATE is not None:
         _GLOBAL_STATE.shutdown()
     _ASR.close()
-    if _DUB_RUNTIME is not None:
-        _DUB_RUNTIME.close()
+    for p in _PLUGINS:
+        p.close()
     _FUSEALIGN.close()
 
 
@@ -1245,12 +1245,9 @@ app = FastAPI(title="Zonos3 API Server", version="2.0.0", lifespan=lifespan,
               openapi_url=None, docs_url=None, redoc_url=None)
 
 # Innermost, so CORS and the access check wrap its early status line (zonos3.server.keepalive). The /v2/edit
-# prefix covers /v2/edit/transcribe and /v2/edit/align.
-app.add_middleware(
-    KeepaliveMiddleware,
-    paths=("/v2/edit", "/v2/dub/ref", "/v2/dub/lips", "/v2/dub/transcribe", "/v2/dub/analyze", "/v2/dub/generate",
-           "/v2/dub/regenerate"),
-)
+# prefix covers /v2/edit/transcribe and /v2/edit/align; plugins.mount adds each plugin's paths before serving.
+_KEEPALIVE_PATHS = ["/v2/edit"]
+app.add_middleware(KeepaliveMiddleware, paths=_KEEPALIVE_PATHS)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1402,7 +1399,8 @@ async def _tts_generate_msg(
     """The tokenizer message of a /v2/generate request (HTTP 400/500 on an invalid one), with a new uid and the seed
     it samples with: the request rules of zonos3.tts.plan (``request_head``, the request's speaker inputs resolved
     for its speaker mode, ``request_rules``); the tokenizer worker builds the prompt rows.
-    ``laci_target_frames`` / ``laci_adjust_rate``: the LACI duration target of a dub take (needs req.laci)."""
+    ``laci_target_frames`` / ``laci_adjust_rate``: a LACI take's duration target (zonos3.server.plugins.LaciTakeRequest;
+    needs req.laci)."""
     ctx = _RulesContext(state.config)
     try:
         request = plan.parse_request(req.model_dump())
@@ -1762,8 +1760,8 @@ async def tts_capabilities():
         "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
         # LACI (laci=true): languages with alignment heads (--laci-heads); needs speaker / controls CFG 1
         "laci_languages": sorted(getattr(state.config, "laci_heads", None) or {}),
-        # the studio's Dub screen (/v2/dub/*, /v2/dub/capabilities): LACI heads and a speaking-rate condition row
-        "dub": _dub_available(state.config),
+        # server plugins (--plugins): plugin N serves /v2/N/* and /N
+        "plugins": [p.name for p in _PLUGINS],
         "speaker_embedding_upload": _model_supports_speaker_embedding(state.config),
         "speaker_embedding_cache": _model_supports_speaker(state.config),   # cached clips for raw-reference models too
         "speaker_embedding_blend": _model_supports_speaker_embedding(state.config),
@@ -1967,162 +1965,124 @@ class _SglEditEngine:
         return np.frombuffer(reply.audio_data, dtype=np.float32)
 
 
-# The server's speech editing, over the ASR and FuseAlign workers it shares with dubbing.
+# The server's speech editing, over the ASR and FuseAlign workers it shares with plugins.
 _EDIT_RUNTIME = EditRuntime(_SglEditEngine(), _ASR, _FUSEALIGN)
 app.include_router(_edit_router(lambda: _EDIT_RUNTIME))
 
 
-# ----------------------------------------------------------------------------- dubbing (zonos3.dub, docs/laci_dub.md)
-# The studio's Dub screen: references, the dubbing worker (.venv-asr; ZONOS3_ASR_PYTHON) and the dub plan live in
-# zonos3.dub.runtime, which shares the server's ASR and FuseAlign workers with speech editing; every take is a /v2/generate request on this server's scheduler with laci=true and the take's
-# LACI duration target, so dub takes use studio voices, steering controls and pronunciation groups.
-_DUB_RUNTIME = None
-_DUB_TAKE_SLOTS: asyncio.Semaphore | None = None
+# ----------------------------------------------------------------------------- plugins (zonos3.server.plugins)
+# --plugins: each plugin's routes over _SglHost (mounted by run_api_server). A LACI take is a /v2/generate request on
+# this server's scheduler with laci=true and its duration target.
+_PLUGINS: list = []
+_LACI_TAKE_SLOTS: asyncio.Semaphore | None = None
 
 
-def _dub_rate_edges(config: ServerArgs) -> list[float]:
+def _speaking_rate_edges(config: ServerArgs) -> list[float]:
     spec = _condition_spec(config)
     return [] if spec is None else list(spec["edges"].get("speaking_rate") or [])
 
 
-def _dub_available(config: ServerArgs) -> bool:
-    """A dub needs LACI alignment heads (--laci-heads) and the speaking-rate condition row its takes are planned in."""
-    return bool(getattr(config, "laci_heads", None)) and bool(_dub_rate_edges(config))
-
-
-def _dub_runtime():
-    """The server's DubRuntime (created on first use; its alignment worker starts with the first call that needs it)."""
-    global _DUB_RUNTIME
-    if _DUB_RUNTIME is None:
-        from zonos3.dub.runtime import DubModel, DubRuntime, rate_scales
-
-        config = get_global_state().config
-        spec = _condition_spec(config)
-        bundle = _steer_bundle(config)
-        _DUB_RUNTIME = DubRuntime(
-            DubModel(
-                name=Path(str(config.model_path)).name,
-                rate_edges=tuple(_dub_rate_edges(config)),
-                n_buckets=int(spec["bucket_counts"].get("speaking_rate", 0)) if spec else 0,
-                laci_languages=frozenset(getattr(config, "laci_heads", None) or {}),
-                studio_voices=_model_supports_speaker_embedding(config),
-                source_voice=_model_uses_speaker_reference_prefix(config),
-                raw_controls=frozenset(
-                    did for did, d in (bundle.directions.items() if bundle is not None else ()) if d.space == RAW_SPACE
-                ),
-                phoneme_groups=_phoneme_capabilities(config)["phoneme_tokens"] is not None,
-                rate_scales=rate_scales(bundle.rate_extension if bundle is not None else None, _dub_rate_edges(config)),
-            ),
-            _dub_synthesize,
-            _dub_encode_voice,
-            _ASR,
-            _FUSEALIGN,
-        )
-    return _DUB_RUNTIME
-
-
-def _dub_take_request(job: dict) -> GenerateRequest:
-    """The /v2/generate request of one dub take: the release sampling defaults, the take's speaking-rate bucket in the
-    condition rows (the others unknown; a tempo-steered bucket leaves the rate row unknown too, see
-    _dub_take_rate_steering), LACI, and its voice: the reference clone (raw reference prefix codes) or a studio voice
-    (speaker embedding) with the take's steering controls."""
-    voice, bucket = job["voice"], int(job["bucket"])
-    scale = job.get("rate_scale")
-    row = None if scale is not None and bucket in scale.doses else bucket
-    fields = dict(
-        text=job["text"], language=job["language"], seed=int(job["seed"]), max_tokens=int(job["max_tokens"]),
-        stream=False, laci=True, speaker_cfg_scale=1.0, condition_buckets={"speaking_rate": row},
-        controls=job["controls"],
-    )
-    if voice["mode"] == "source":
-        fields.update(speaker_mode="reference", speaker_reference_codes=job["ref_codes"])
-    else:
-        fields.update(speaker_mode="embedding", speaker_embedding_id=voice["speaker_embedding_id"])
-    return GenerateRequest(**fields)
-
-
-def _dub_take_rate_steering(config: ServerArgs, msg: TTSTokenizeMsg, job: dict) -> None:
-    """Put a dub take on its language's extended speaking-rate scale (job["rate_scale"], README "Extended
-    speaking-rate buckets"): in a steered bucket the take's steering delta gains the bucket's tempo dose (on top of the
-    take's own controls). The take carries the scale, its bucket on it and its delta in every bucket: LACI reports the
-    bucket on the scale (a steered one's row id is only "unknown"), and a rate-adjustable take's retakes switch to
-    another bucket's delta (row bucket <-> rate row unknown + tempo)."""
-    scale = job.get("rate_scale")
-    if scale is None:
+def _laci_take_rate_scale(config: ServerArgs, msg: TTSTokenizeMsg, take: plugins.LaciTakeRequest) -> None:
+    """Put a LACI take on an extended speaking-rate scale (take.rate_edges, README "Extended speaking-rate buckets"): in
+    a steered bucket the take's steering delta gains the bucket's tempo dose (on top of the take's own controls). The
+    take carries the scale, its bucket on it and its delta in every bucket: LACI reports the bucket on the scale (a
+    steered one's row id is only "unknown"), and a rate-adjustable take's retakes switch to another bucket's delta
+    (row bucket <-> rate row unknown + tempo)."""
+    if take.rate_edges is None:
         return
     bundle = _steer_bundle(config)
+    if take.rate_doses and (bundle is None or bundle.rate_extension is None):
+        raise ValueError("rate_doses need a steering bundle with a rate_extension")
     sources, hidden = _steering_sources(config), int(config.model_config.hidden_size)
     base = msg.steering_delta
 
     def delta(b: int) -> torch.Tensor | None:
-        if b not in scale.doses:
+        if b not in take.rate_doses:
             return base
-        tempo = resolve_controls(bundle, {bundle.rate_extension.direction: scale.doses[b]}, None, text=msg.text,
+        tempo = resolve_controls(bundle, {bundle.rate_extension.direction: take.rate_doses[b]}, None, text=msg.text,
                                  speaker_embedding=None, sources=sources, hidden_size=hidden).hidden_delta
         return tempo if base is None else base + tempo
 
-    bucket = int(job["bucket"])
-    deltas = [delta(b) for b in range(scale.first, scale.last + 1)]
-    msg.steering_delta = deltas[bucket - scale.first]
-    msg.laci_rate_edges, msg.laci_rate_first, msg.laci_rate_bucket = list(scale.edges), scale.first, bucket
+    if take.rate_bucket is None:
+        raise ValueError("a LACI take on an extended speaking-rate scale needs its rate_bucket")
+    first, bucket = int(take.rate_first), int(take.rate_bucket)
+    deltas = [delta(b) for b in range(first, first + len(take.rate_edges) + 1)]
+    msg.steering_delta = deltas[bucket - first]
+    msg.laci_rate_edges, msg.laci_rate_first, msg.laci_rate_bucket = list(take.rate_edges), first, bucket
     msg.laci_rate_deltas = deltas
 
 
-async def _dub_synthesize(jobs: list[dict], session_id: str | None) -> list[tuple[np.ndarray | None, dict]]:
-    """Every dub take through the scheduler, at most twice the running-request cap in flight so studio requests
-    interleave. All requests are validated before the first is queued (HTTP 400 for a bad voice / control / text)."""
-    global _DUB_TAKE_SLOTS
-    state = get_global_state()
-    if _DUB_TAKE_SLOTS is None:
-        _DUB_TAKE_SLOTS = asyncio.Semaphore(max(1, 2 * int(getattr(state.config, "max_running_req", 1) or 1)))
-    gain = _output_gain(state.config, None)
-    msgs = []
-    try:
-        for job in jobs:
-            msg = await _tts_generate_msg(
-                state, _dub_take_request(job), session_id,
-                laci_target_frames=float(job["target_frames"]), laci_adjust_rate=bool(job["adjust_rate"]),
-            )
-            msgs.append(msg)
-            _dub_take_rate_steering(state.config, msg, job)
-    except BaseException:
-        for msg in msgs:
-            state.ack_map.pop(msg.uid, None)
-            state.event_map.pop(msg.uid, None)
-            state.start_time_map.pop(msg.uid, None)
-        raise
+class _SglHost:
+    """zonos3.server.plugins.Host over this server."""
 
-    async def run(msg: TTSTokenizeMsg):
-        async with _DUB_TAKE_SLOTS:
-            await state.send_one(msg)
-            data, record = await state.wait_for_tts_reply(msg.uid, gain=gain)
-        if record is None:
-            raise RuntimeError(f"dub take uid={msg.uid}: the scheduler sent no LACI record")
-        audio = np.frombuffer(data, dtype=np.float32).copy() if data else None
-        return audio, record
+    asr = _ASR
+    aligner = _FUSEALIGN
 
-    return list(await asyncio.gather(*(run(msg) for msg in msgs)))
+    def facts(self) -> plugins.HostFacts:
+        config = get_global_state().config
+        spec = _condition_spec(config)
+        bundle = _steer_bundle(config)
+        return plugins.HostFacts(
+            model_name=Path(str(config.model_path)).name,
+            rate_edges=tuple(_speaking_rate_edges(config)),
+            rate_buckets=int(spec["bucket_counts"].get("speaking_rate", 0)) if spec else 0,
+            laci_languages=frozenset(getattr(config, "laci_heads", None) or {}),
+            speaker_modes=tuple(_speaker_modes(config)),
+            raw_controls=frozenset(
+                did for did, d in (bundle.directions.items() if bundle is not None else ()) if d.space == RAW_SPACE
+            ),
+            phoneme_tokens=_phoneme_capabilities(config)["phoneme_tokens"] is not None,
+            rate_extension=bundle.rate_extension if bundle is not None else None,
+        )
 
+    async def synthesize_laci(
+        self, takes: list[plugins.LaciTakeRequest], session_id: str | None
+    ) -> list[plugins.TakeResult]:
+        """Every take through the scheduler, at most twice the running-request cap in flight so other requests
+        interleave. All takes are planned before the first is queued (HTTP 400 for a bad voice / control / text)."""
+        global _LACI_TAKE_SLOTS
+        state = get_global_state()
+        if _LACI_TAKE_SLOTS is None:
+            _LACI_TAKE_SLOTS = asyncio.Semaphore(max(1, 2 * int(getattr(state.config, "max_running_req", 1) or 1)))
+        gain = _output_gain(state.config, None)
+        msgs = []
+        try:
+            for take in takes:
+                msg = await _tts_generate_msg(
+                    state, take.request, session_id,
+                    laci_target_frames=float(take.target_frames), laci_adjust_rate=bool(take.adjust_rate),
+                )
+                msgs.append(msg)
+                _laci_take_rate_scale(state.config, msg, take)
+        except BaseException:
+            for msg in msgs:
+                state.ack_map.pop(msg.uid, None)
+                state.event_map.pop(msg.uid, None)
+                state.start_time_map.pop(msg.uid, None)
+            raise
 
-async def _dub_encode_voice(audio: np.ndarray, sample_rate: int) -> list[list[int]]:
-    """Raw reference prefix codes of the source voice's prompt clip (the tokenizer's codec encode)."""
-    from zonos3.dub.plan import VOICE_PROMPT_MAX_S
+        async def run(msg: TTSTokenizeMsg):
+            async with _LACI_TAKE_SLOTS:
+                await state.send_one(msg)
+                data, record = await state.wait_for_tts_reply(msg.uid, gain=gain)
+            if record is None:
+                raise RuntimeError(f"LACI take uid={msg.uid}: the scheduler sent no LACI record")
+            audio = np.frombuffer(data, dtype=np.float32).copy() if data else None
+            return audio, record
 
-    buf = io.BytesIO()
-    sf.write(buf, audio, int(sample_rate), format="WAV", subtype="FLOAT")
-    reply = await _backend_reply(
-        get_global_state(), lambda uid: TTSEncodeAudioMsg(uid=uid, audio=buf.getvalue(), max_seconds=VOICE_PROMPT_MAX_S)
-    )
-    if reply.error is not None:
-        raise ValueError(reply.error)
-    return reply.codes.to(torch.int64).tolist()
+        return list(await asyncio.gather(*(run(msg) for msg in msgs)))
 
-
-app.include_router(_dub_router(
-    _dub_runtime, lambda: _dub_available(get_global_state().config),
-    "Dubbing is not enabled on this server: it needs --laci-heads (DUB=1 in servers/sgl/scripts/serve.sh) and a "
-    "checkpoint with a speaking-rate condition row",
-))
+    async def encode_reference(self, audio: np.ndarray, sample_rate: int, max_seconds: float) -> list[list[int]]:
+        """Raw reference prefix codes of a mono clip (the tokenizer's codec encode)."""
+        buf = io.BytesIO()
+        sf.write(buf, audio, int(sample_rate), format="WAV", subtype="FLOAT")
+        reply = await _backend_reply(
+            get_global_state(),
+            lambda uid: TTSEncodeAudioMsg(uid=uid, audio=buf.getvalue(), max_seconds=float(max_seconds)),
+        )
+        if reply.error is not None:
+            raise ValueError(reply.error)
+        return reply.codes.to(torch.int64).tolist()
 
 
 def _studio_dir() -> Path:
@@ -2368,6 +2328,10 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
             encoder=BaseTokenizerMsg.encoder,
         ),
     )
+
+    # Plugin routes go ahead of the studio catch-all; their keepalive paths join _KEEPALIVE_PATHS before serving.
+    _PLUGINS[:] = plugins.load(config.plugins)
+    plugins.mount(app, _PLUGINS, _SglHost(), _KEEPALIVE_PATHS)
 
     # start the backend here
     start_backend()

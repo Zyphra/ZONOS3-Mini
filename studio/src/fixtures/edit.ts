@@ -37,11 +37,6 @@ function lookup<T>(m: Map<number, T>, seconds: number): T | undefined {
   return m.get(k) ?? m.get(k - 1) ?? m.get(k + 1);
 }
 
-/** A clip the offline synthesizer made (text, exact word timings, voice), by its duration. */
-export function knownClip(seconds: number): Known | undefined {
-  return lookup(known, seconds);
-}
-
 // A pronunciation group as sent; the recognizer writes some spelling of it ("shivon").
 const SENT_GROUP = /\ue000([^\ue000\ue001]*)\ue001/g;
 const spoken = (t: string) => t.replace(SENT_GROUP, (_, ipa: string) => ipaGloss(ipa));
@@ -79,7 +74,7 @@ const asWords = (ws: SynthWord[], conf: (i: number) => number): EditWord[] =>
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
 
 /** Spread the words of `text` over the speech in `pcm`, snapping boundaries to energy dips. */
-export function energyAlign(pcm: Float32Array, sr: number, text: string): EditWord[] {
+function energyAlign(pcm: Float32Array, sr: number, text: string): EditWord[] {
   const hop = Math.round(sr * 0.01);
   const n = Math.floor(pcm.length / hop);
   const rms = new Float32Array(n);

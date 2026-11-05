@@ -1,5 +1,5 @@
 /**
- * Pronunciation input UI shared by every text that is synthesized (Direct lines, Scene lines, the Cast preview
+ * Pronunciation input UI shared by every text that is synthesized (Direct lines, the Cast preview
  * line): IPA chips for "(X-SAMPA)" groups, flagged problems, "Pronounce…" (lexicon lookup of a selection via
  * /v2/phonemize) and a small editor for one group.
  */

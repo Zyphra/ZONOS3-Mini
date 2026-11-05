@@ -155,7 +155,7 @@ export function LibraryRail() {
         {cast.value.length ? (
           <ul class="voices">{cast.value.map((p) => <PersonaRow key={p.id} p={p} />)}</ul>
         ) : (
-          <p class="muted small">Design a voice, then “Save to cast” to keep it for Direct and Scene.</p>
+          <p class="muted small">Design a voice, then “Save to cast” to keep it for Direct (each line can use its own voice).</p>
         )}
       </div>
       <FileDrop label="Drop to clone this voice" hint="An audio clip of 5–30 s of clean speech" busy={uploading.value ? 'Wait for the current upload…' : null} onFile={(f) => void cloneFile(f)} />

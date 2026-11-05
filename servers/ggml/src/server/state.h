@@ -1,7 +1,7 @@
 // The server's shared state: loaded models and companions, the speaker store, the scheduler and feature settings.
 #pragma once
 
-#include "server/edit_dub.h"
+#include "server/pyhost.h"
 #include "server/scheduler.h"
 #include "server/textnorm.h"
 
@@ -85,7 +85,8 @@ struct ServerState {
     std::string python_src;                 // directory holding the zonos3 package (model/src or <exe>/python)
     std::string worker_python;              // --worker-python: interpreter of <python_src>/zonos3/workers
     std::unique_ptr<TextNormalizer> text_normalizer;   // set when --worker-python is given
-    std::unique_ptr<EditDubWorker> edit_dub;           // speech editing and dubbing; set when --worker-python is given
+    std::unique_ptr<PyHost> pyhost;                    // speech editing and plugins; set when --worker-python is given
+    std::vector<std::string> plugins;                  // --plugins: served by the Python host (server/plugins.h)
     bool fusealign_installed = false;                  // the --worker-python interpreter has fusealign_hub
     // Companions of later features (accents.gguf, --laci-heads LANG=PATH, --tts-phoneme-lexicon DIR); recorded here
     // so every module sees the configuration.

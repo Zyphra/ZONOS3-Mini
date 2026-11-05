@@ -1,6 +1,6 @@
 // The engine API's request dispatch: the v2 routes this server serves, 404 {"detail":"Not Found"} for every other path,
 // and HttpError / error rendering (servers/ggml/src/server/http.cpp guarded + the 404 filler).
-import { capabilities, dubCapabilities } from './capabilities';
+import { capabilities } from './capabilities';
 import type { Engine } from './engine';
 import { generateRoute, speechRoute } from './generate';
 import { fail, HttpError, parseBody, sendJson, type EngineRequest, type Sink } from './http';
@@ -47,7 +47,6 @@ export class Api {
       if (!e.steer) fail(404, 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer).');
       return sendJson(sink, e.controlsDoc);
     }
-    if (get && path === '/v2/dub/capabilities') return sendJson(sink, dubCapabilities(e));
     if (path === '/v2/speakers') {
       if (get) return spk.list(req, sink);
       if (m === 'POST') return spk.create(req, sink, Date.now() / 1000);

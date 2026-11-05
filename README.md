@@ -14,7 +14,7 @@ embedding.
 
 | Path | Contents |
 | --- | --- |
-| `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, the speech-editing and dubbing runtimes every server serves, registries and the Python workers (text normalization, speech recognition, forced alignment, dub alignment, the ggml server's edit/dub worker) |
+| `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, the speech-editing runtime every server serves, the server plugin seam, registries and the Python workers (text normalization, speech recognition, forced alignment, the ggml server's Python host) |
 | `servers/sgl/` | The `zonos3-sgl` package (`zonos3_sgl`): the CUDA server built on [Mini-SGLang](https://github.com/sgl-project/mini-sglang), its launch scripts and benchmark |
 | `servers/ggml/` | The C++/ggml server and CLI (CPU, CUDA, Metal, Vulkan); ggml is the submodule `servers/ggml/ggml` |
 | `servers/mlx/` | The `zonos3-mlx` package (`zonos3_mlx`): the Apple Silicon server running the ggml server's GGUF files in MLX |
@@ -32,7 +32,7 @@ embedding.
 - Access to the Hugging Face repo [`Zyphra/ZONOS3_Mini_release_ckpts`](https://huggingface.co/Zyphra/ZONOS3_Mini_release_ckpts)
   (LM, codec and speaker encoder weights). While it is private, set `HF_TOKEN` or run `huggingface-cli login`.
   Weights are downloaded into the Hugging Face cache on first use (about 15 GB).
-- The FuseAlign forced aligner of speech editing and dubbing: the submodule `third_party/fusealign-multilingual`
+- The FuseAlign forced aligner of speech editing: the submodule `third_party/fusealign-multilingual`
   ([Zyphra/fusealign-multilingual](https://github.com/Zyphra/fusealign-multilingual), package `fusealign-hub`,
   Apache-2.0) and its checkpoint from the Hugging Face repo [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign)
   (one 1.34 GB file, downloaded on the first alignment).
@@ -78,7 +78,8 @@ voice-cloning page at `/lite` (pick, upload, record or load a voice embedding, t
 | `PHONEME_LEXICON` | Gold pronunciation lexicon directory (`--tts-phoneme-lexicon`) for `POST /v2/phonemize` |
 | `ZONOS3_STUDIO_PROJECTS` | Shared studio project store (`--studio-projects-dir`); empty (default) keeps projects in the browser |
 | `LACI_HEADS` | `"lang=path ..."` LACI alignment heads (`--laci-heads`) |
-| `DUB` | `1` serves the studio's Dub screen: LACI heads for every dub language from `LACI_HEADS_DIR` (default `laci_heads/`) and the word aligner / AV-sync of `tools/setup_asr_env.sh` |
+| `LACI_ALL` | `1` passes LACI heads for every language that has them, from `LACI_HEADS_DIR` (default `laci_heads/`) |
+| `PLUGINS` | `"name ..."` server plugins (`--plugins`), e.g. `dub` from [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) |
 
 ## Generate
 
@@ -158,26 +159,23 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
 | Steering controls (emotion axes, moods, styles, voice quality, accent directions) and accent adapters | [docs/guide.md](docs/guide.md) |
 | Speech editing | [docs/guide.md](docs/guide.md) |
 | Pronunciation input (phoneme tokens) and nonverbal tags with tag CFG | [docs/guide.md](docs/guide.md) |
-| Zonos Voice Studio, server projects, dubbing | [docs/guide.md](docs/guide.md), [studio/README.md](studio/README.md) |
-| LACI duration control and the Dub pipeline | [docs/laci_dub.md](docs/laci_dub.md) |
+| Zonos Voice Studio, server projects | [docs/guide.md](docs/guide.md), [studio/README.md](studio/README.md) |
+| LACI, duration targets and server plugins (Dub: [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub)) | [docs/guide.md](docs/guide.md#plugins) |
 | Feature overview | [docs/features.md](docs/features.md) |
 | Runtime architecture and vocoder | [docs/tts_architecture.md](docs/tts_architecture.md), [docs/structures.md](docs/structures.md) |
 | Release checkpoints and registries | [docs/release_checkpoints.md](docs/release_checkpoints.md) |
 
 ### Feature prerequisites
 
-- **Speech recognition** (speech editing and dubbing) is Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`) in its own venv:
-  `bash tools/setup_asr_env.sh` once creates `.venv-asr` (qwen-asr pins its own transformers; also SimAlign, the
-  weights and the AV-sync checkout `.avsync` for dubbing). One worker process per server
-  (`model/src/zonos3/workers/asr.py`) starts on first use; `ZONOS3_ASR_PYTHON` overrides its interpreter (default
-  `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU).
+- **Speech recognition** (speech editing) is Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`) in its own venv:
+  `bash tools/setup_asr_env.sh` once creates `.venv-asr` (qwen-asr pins its own transformers). One worker process per
+  server (`model/src/zonos3/workers/asr.py`) starts on first use; `ZONOS3_ASR_PYTHON` overrides its interpreter
+  (default `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU).
 - **Speech editing** needs an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `.venv-asr` and FuseAlign
   (`fusealign-hub` in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
 - **Phoneme input** and **nonverbal tags** need checkpoints merged with the phoneme / NV rows
   (`tools/add_text_extra_rows.py`) and `PHONEME_LEXICON=<lexicon dir>`.
-- **Dubbing** needs `.venv-asr` (as for speech editing; its SimAlign word aligner and AV-sync lip-sync run in a
-  second worker, `model/src/zonos3/workers/dub_align.py`) and FuseAlign, then `DUB=1 servers/sgl/scripts/serve.sh`.
-- **Forced alignment** (FuseAlign, speech editing and dubbing) runs in one worker process per server
+- **Forced alignment** (FuseAlign, speech editing) runs in one worker process per server
   (`model/src/zonos3/workers/fusealign.py`, the workspace interpreter), started on first use;
   `ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0`, else CPU). Recordings over 30 s (or transcripts over
   1022 UTF-8 bytes) are aligned long-form, anchored by Qwen3-ASR transcripts of their voice-activity chunks (at most

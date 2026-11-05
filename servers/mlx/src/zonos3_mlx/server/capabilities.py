@@ -85,13 +85,8 @@ def edit(state: ServerState) -> dict:
                              and state.engine.has_reference_encoder)
 
 
-def dub_rate_edges(state: ServerState) -> list[float]:
+def speaking_rate_edges(state: ServerState) -> list[float]:
     return [float(v) for v in state.config.condition_edges.get("speaking_rate", ())]
-
-
-def dub_available(state: ServerState) -> bool:
-    """A dub needs LACI alignment heads (--laci-heads) and the speaking-rate condition row its takes are planned in."""
-    return bool(state.engine.laci_heads) and bool(dub_rate_edges(state))
 
 
 def capabilities(state: ServerState) -> dict:
@@ -133,7 +128,7 @@ def capabilities(state: ServerState) -> dict:
                                      "generated_history",
         "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
         "laci_languages": sorted(engine.laci_heads),
-        "dub": dub_available(state),
+        "plugins": [p.name for p in state.plugins],
         "speaker_embedding_upload": embedding,
         "speaker_embedding_cache": bool(modes),
         "speaker_embedding_blend": embedding,

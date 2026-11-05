@@ -24,8 +24,8 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
 ```
 
 `serve.sh` takes the same variables as the sgl launcher (`SERVE_MODEL`, `SERVE_VOICES`, `PHONEME_LEXICON`,
-`ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `DUB=1`) plus `MODELS_DIR` and `WORKER_PYTHON` (`--worker-python`); extra
-flags are appended. `python -m zonos3_mlx --help` lists the flags.
+`ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `LACI_ALL=1`, `PLUGINS`) plus `MODELS_DIR` and `WORKER_PYTHON`
+(`--worker-python`); extra flags are appended. `python -m zonos3_mlx --help` lists the flags.
 
 - **Helper workers** (`--worker-python PY`, as on the ggml server): text normalization
   (`model/src/zonos3/workers/textnorm.py`) and the FuseAlign forced aligner (`model/src/zonos3/workers/fusealign.py`)
@@ -34,16 +34,19 @@ flags are appended. `python -m zonos3_mlx --help` lists the flags.
 - **Text normalization** (NeMo grammars) needs pynini, which has no macOS wheel on PyPI: point `--worker-python` at
   an interpreter that has it (e.g. a conda env with `pynini==2.1.6`; FuseAlign then runs there too, so it also needs
   the workspace's `fusealign-hub`). Without it requests are served unnormalized.
-- **Forced alignment** (every word timing of speech editing and dubbing) is FuseAlign (`fusealign-hub`, the
+- **Forced alignment** (every word timing of speech editing and plugins) is FuseAlign (`fusealign-hub`, the
   `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`
   before `uv sync`; the checkpoint downloads from [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) on
   first use): one worker per server, started on the first alignment. `ZONOS3_FUSEALIGN_DEVICE` picks its torch
   device; without it the worker takes `cuda:0` when available, else the CPU, so it runs on the CPU on macOS.
   Recordings over 30 s are aligned long-form on Qwen3-ASR transcripts of their speech chunks (never Whisper).
-- **Speech recognition** (speech editing and dubbing) is Qwen3-ASR in `.venv-asr` (`bash tools/setup_asr_env.sh`
+- **Speech recognition** (speech editing and plugins) is Qwen3-ASR in `.venv-asr` (`bash tools/setup_asr_env.sh`
   once): one worker per server (`ZONOS3_ASR_PYTHON` overrides the interpreter; `ZONOS3_ASR_DEVICE`, default `mps` on
-  macOS). **Speech editing** needs an edit checkpoint, FuseAlign and `.venv-asr`; **dubbing** FuseAlign and `.venv-asr`
-  (its SimAlign word aligner and AV-sync lip-sync run in a second worker on the same device).
+  macOS). **Speech editing** needs an edit checkpoint, FuseAlign and `.venv-asr`.
+- **Plugins** (`--plugins NAME...`, `PLUGINS="..."` in `serve.sh`) import `zonos3_<NAME>` from the server's
+  interpreter and mount its routes under `/v2/<NAME>/` and `/<NAME>`; they share the server's ASR and FuseAlign
+  workers. Dubbing is the `dub` plugin of [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) (its README
+  covers install, `LACI_ALL=1` and its workers).
 
 ## Tools
 

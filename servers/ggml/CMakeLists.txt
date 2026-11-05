@@ -133,7 +133,7 @@ target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp)
 target_sources(zonos3 PRIVATE src/zonos3-accent.cpp)
 # --- end graph features ---
 
-# --- Speech editing (plan 7.11): the edit prompt layout of model/src/zonos3/tts/edit.py (the edit/dub worker's fills) ---
+# --- Speech editing (plan 7.11): the edit prompt layout of model/src/zonos3/tts/edit.py (the Python host's fills) ---
 target_sources(zonos3 PRIVATE src/zonos3-edit.cpp)
 # --- end speech editing ---
 
@@ -188,7 +188,7 @@ endif()
 add_library(zonos3-server-core STATIC
     src/server/http.cpp src/server/schema.cpp src/server/util.cpp src/server/workers.cpp src/server/textnorm.cpp
     src/server/scheduler.cpp src/server/speakers.cpp src/server/generate.cpp src/server/capabilities.cpp
-    src/server/projects.cpp src/server/phonemize.cpp src/server/edit_dub.cpp src/server/edit.cpp src/server/dub.cpp)
+    src/server/projects.cpp src/server/phonemize.cpp src/server/pyhost.cpp src/server/edit.cpp src/server/plugins.cpp)
 target_include_directories(zonos3-server-core PUBLIC src vendor ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(zonos3-server-core PUBLIC zonos3 zonos3-audio zonos3-json-schema Threads::Threads)
 if (WIN32)

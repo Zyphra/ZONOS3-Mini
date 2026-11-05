@@ -8,17 +8,18 @@
 //   generate.*        /v2/generate, /v1/audio/speech
 //   capabilities.*    /v2/capabilities, /v2/controls, /v2/health, /v1/models
 //   projects.*        /v2/projects*, /v2/media/* (port of model/src/zonos3/server/projects.py)
-//   phonemize.*, edit.*, dub.*   their routes and capabilities
-//   edit_dub.*                   the edit/dub worker (model/src/zonos3/workers/edit_dub.py) and its engine calls
+//   phonemize.*, edit.*          their routes and capabilities
+//   pyhost.*                     the Python host (model/src/zonos3/workers/pyhost.py) and its engine calls
+//   plugins.*                    --plugins routes, forwarded to the Python host
 //   workers.*, textnorm.*        helper processes (model/src/zonos3/workers/*.py), text normalization
 #include "compat.h"
 
 #include "server/capabilities.h"
-#include "server/dub.h"
 #include "server/edit.h"
 #include "server/generate.h"
 #include "server/http.h"
 #include "server/phonemize.h"
+#include "server/plugins.h"
 #include "server/projects.h"
 #include "server/scheduler.h"
 #include "server/speakers.h"
@@ -77,12 +78,15 @@ void usage(const char * a0) {
         "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
         "                      model/src of the checkout holding the executable, else python/ beside it)\n"
         "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
-        "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and speech editing + dubbing\n"
-        "                      (edit_dub.py: zonos3.tts.edit_runtime and zonos3.dub.runtime; their word timings\n"
+        "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and speech editing and plugins\n"
+        "                      (pyhost.py: zonos3.tts.edit_runtime and the --plugins routers; word timings\n"
         "                      need fusealign-hub installed), each one persistent worker. Speech recognition\n"
         "                      (Qwen3-ASR) runs in its own interpreter: ZONOS3_ASR_PYTHON (default\n"
         "                      <repo>/.venv-asr/bin/python, set up by tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE\n"
         "                      picks its device)\n"
+        "  --plugins NAME[,NAME...]\n"
+        "                      server plugins (repeatable): the zonos3_<NAME> package installed in --worker-python\n"
+        "                      serves /v2/<NAME>/* and /<NAME> through the Python host\n"
         "  --steer PATH        steering bundle (steer.gguf) for request controls and /v2/controls\n"
         "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
         "  --laci-heads LANG=PATH      LACI alignment heads of a language (repeatable)\n"
@@ -153,6 +157,26 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         else if (a == "--tts-default-voices-dir" && has_value) s.default_voice_dir = value(i);
         else if (a == "--python-src" && has_value) s.python_src = value(i);
         else if (a == "--worker-python" && has_value) s.worker_python = value(i);
+        else if (a == "--plugins" && has_value) {
+            const std::string list = value(i);
+            size_t start = 0;
+            for (;;) {
+                const size_t comma = list.find(',', start);
+                const std::string name = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                // zonos3.server.plugins: [a-z][a-z0-9_]*
+                const bool valid = !name.empty() && name[0] >= 'a' && name[0] <= 'z' &&
+                                   std::all_of(name.begin(), name.end(), [](char c) {
+                                       return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+                                   });
+                if (!valid) {
+                    fprintf(stderr, "error: --plugins: bad plugin name '%s' (expected [a-z][a-z0-9_]*)\n", name.c_str());
+                    return 1;
+                }
+                if (std::find(s.plugins.begin(), s.plugins.end(), name) == s.plugins.end()) s.plugins.push_back(name);
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+        }
         else if (a == "--studio-projects-dir" && has_value) projects_dir = value(i);
         else if (a == "--studio-dir" && has_value) s.studio_dir = value(i);
         else { usage(argv[0]); return 1; }
@@ -208,24 +232,38 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         return 1;
     }
     if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
+    if (!s.plugins.empty() && s.worker_python.empty()) {
+        fprintf(stderr, "error: --plugins needs --worker-python (plugins run in the Python host)\n");
+        return 1;
+    }
     if (!s.worker_python.empty()) {
         if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py") ||
-            !mp_file_exists(s.python_src + "/zonos3/workers/edit_dub.py")) {
+            !mp_file_exists(s.python_src + "/zonos3/workers/pyhost.py")) {
             fprintf(stderr, "error: --worker-python needs the zonos3 package: pass --python-src DIR "
-                            "(DIR/zonos3/workers/textnorm.py, DIR/zonos3/workers/edit_dub.py)\n");
+                            "(DIR/zonos3/workers/textnorm.py, DIR/zonos3/workers/pyhost.py)\n");
             return 1;
         }
+        const auto host_env = pyhost_environment(s);
+        for (const std::string & name : s.plugins) {
+            std::string err;
+            if (run_process({s.worker_python, "-c",
+                             "import importlib.util, sys; sys.exit(importlib.util.find_spec('zonos3_" + name + "') is None)"},
+                            host_env, err) != 0) {
+                fprintf(stderr, "error: plugin %s: zonos3_%s is not installed in %s\n", name.c_str(), name.c_str(),
+                        s.worker_python.c_str());
+                return 1;
+            }
+        }
         s.text_normalizer = std::make_unique<TextNormalizer>(s.worker_python, s.python_src);
-        s.edit_dub = std::make_unique<EditDubWorker>(s);
-        // zonos3.tts.edit_align.fusealign_installed, asked of the worker's interpreter once (the speech_editing
+        s.pyhost = std::make_unique<PyHost>(s);
+        // zonos3.tts.edit_align.fusealign_installed, asked of the host's interpreter once (the speech_editing
         // capability)
         std::string err;
         s.fusealign_installed = run_process({s.worker_python, "-c",
                                              "import importlib.util, sys; "
                                              "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"}, err) == 0;
         if (!s.fusealign_installed)
-            fprintf(stderr, "zonos3-server: warning: %s has no fusealign_hub; speech editing is off and dubs cannot be "
-                            "aligned\n",
+            fprintf(stderr, "zonos3-server: warning: %s has no fusealign_hub; speech editing is off\n",
                     s.worker_python.c_str());
     }
     if (!projects_dir.empty()) {
@@ -310,7 +348,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     register_speaker_routes(svr, s);
     register_phonemize_routes(svr, s);
     register_edit_routes(svr, s);
-    register_dub_routes(svr, s);
+    register_plugin_routes(svr, s);
     register_project_routes(svr, s.projects.get());
     install_studio(svr, s.studio_dir);   // last: every API route matches first
 
@@ -334,7 +372,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         ok = svr.listen_after_bind();
     }
 
-    if (s.edit_dub) s.edit_dub->close();   // before the scheduler: its engine calls finish first
+    if (s.pyhost) s.pyhost->close();   // before the scheduler: its engine calls finish first
     stop_scheduler(s);   // stop the worker, reaper + ZAC pool before returning
     stop_reference_reaper(s);
     if (s.text_normalizer) s.text_normalizer->close();

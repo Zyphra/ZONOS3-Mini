@@ -1,5 +1,5 @@
 import { Fragment } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import * as api from './api';
 import { startPreview, playSide } from './audio/preview';
@@ -11,14 +11,13 @@ import { embeddingsSynthetic, loadAllEmbeddings, refreshSpeakers } from './state
 import { openLastProject } from './state/projects';
 import { CastScreen } from './screens/cast/CastScreen';
 import { DirectScreen } from './screens/direct/DirectScreen';
-import { SceneScreen } from './screens/scene/SceneScreen';
 import { EditScreen } from './screens/edit/EditScreen';
-import { DubScreen } from './screens/dub/DubScreen';
 import { PronEditor } from './components/Pron';
 import { TagPalette } from './components/Tags';
 import { ZyphraMark, ZyphraWord } from './components/Brand';
 import { ProjectLauncher, ProjectSwitcher } from './components/Projects';
 import { theme, toggleTheme } from './state/theme';
+import { phone } from './lib/media';
 
 const showKeys = signal(false);
 
@@ -39,10 +38,8 @@ async function boot() {
 
 const ACTS: { id: Act; label: string; hint: string }[] = [
   { id: 'cast', label: 'Cast', hint: 'find or design a voice' },
-  { id: 'direct', label: 'Direct', hint: 'perform a script' },
-  { id: 'scene', label: 'Scene', hint: 'voices in dialogue' },
+  { id: 'direct', label: 'Direct', hint: 'perform a script with one or more voices' },
   { id: 'edit', label: 'Edit', hint: 'change words in recorded speech' },
-  { id: 'dub', label: 'Dub', hint: 'dub a video or a scene into another language' },
 ];
 
 function isTyping(t: EventTarget | null) {
@@ -76,7 +73,7 @@ function onKey(e: KeyboardEvent) {
     showKeys.value = !showKeys.value;
   } else if (e.key === 'Escape') {
     showKeys.value = false;
-  } else if (/^[1-5]$/.test(e.key) && !modalOpen.value) {
+  } else if (/^[1-3]$/.test(e.key) && !modalOpen.value) {
     act.value = ACTS[Number(e.key) - 1].id;
   }
 }
@@ -109,6 +106,46 @@ function BackendPill() {
   );
 }
 
+/** Phone: the top bar's secondary buttons (backend, theme, shortcuts) in one menu. */
+function TopMenu() {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', close);
+    };
+  }, [open]);
+  const run = (f: () => void) => () => {
+    setOpen(false);
+    f();
+  };
+  return (
+    <div ref={root} class="top-menu">
+      <button class="icon-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} aria-label="More" title="More">
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div class="top-menu-list" role="menu" aria-label="More">
+          <BackendPill />
+          <button role="menuitem" class="proj-item" onClick={run(toggleTheme)}>
+            <Icon name={theme.value === 'dark' ? 'sun' : 'moon'} size={14} /> {theme.value === 'dark' ? 'Light theme' : 'Dark theme'}
+          </button>
+          <button role="menuitem" class="proj-item" onClick={run(() => (showKeys.value = true))}>
+            <span class="top-menu-key">?</span> Keyboard shortcuts
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Keys() {
   if (!showKeys.value) return null;
   const rows: [string, string][] = [
@@ -116,7 +153,7 @@ function Keys() {
     ['A / B', 'hear the design / the original voice (Cast)'],
     ['⌘Z / Ctrl+Z', 'undo'],
     ['⇧⌘Z / Ctrl+Y', 'redo'],
-    ['1 2 3 4 5', 'Cast, Direct, Scene, Edit, Dub'],
+    ['1 2 3', 'Cast, Direct, Edit'],
     ['Arrows', 'nudge the focused control (⇧ for more)'],
     ['0 / Delete', 'reset the focused control'],
     ['(S@vQn)', 'X-SAMPA pronunciation in a line (phoneme-token checkpoints); click its IPA chip to edit'],
@@ -139,16 +176,6 @@ function Keys() {
     ['Tab / ⇧Tab', 'next / previous word'],
     ['↵ · Esc', 'play the word · done'],
     ['Alt-drag an edge', 'open a gap at a shared boundary'],
-  ];
-  const dub: [string, string][] = [
-    ['Space', 'play / pause the dub (from the cursor)'],
-    ['S / D / M', 'listen to the source, the dub, or the mix (source ducked)'],
-    ['L', 'lip-sync on / off (video sources)'],
-    ['⌘↵ / Ctrl+Enter', 'generate the dub (also while typing)'],
-    ['← / →', 'move the cursor 1 s'],
-    ['J / K', 'previous / next segment (plays it)'],
-    ['R', 'regenerate the selected segment'],
-    ['⌘Z / ⇧⌘Z', 'step through dub versions and edits'],
   ];
   return (
     <div class="sheet-backdrop" onClick={() => (showKeys.value = false)}>
@@ -175,17 +202,6 @@ function Keys() {
             </Fragment>
           ))}
         </dl>
-        <h3 class="sheet-sub">Dub</h3>
-        <dl>
-          {dub.map(([k, v]) => (
-            <Fragment key={k}>
-              <dt>
-                <kbd>{k}</kbd>
-              </dt>
-              <dd>{v}</dd>
-            </Fragment>
-          ))}
-        </dl>
       </div>
     </div>
   );
@@ -199,8 +215,13 @@ export function App() {
   }, []);
   useEffect(() => {
     const sync = () => {
-      const a = location.hash.slice(1) as Act;
-      if (ACTS.some((x) => x.id === a)) act.value = a;
+      const hash = location.hash.slice(1);
+      // The Scene act merged into Direct: old links open Direct.
+      const a = (hash === 'scene' ? 'direct' : hash) as Act;
+      if (ACTS.some((x) => x.id === a)) {
+        act.value = a;
+        if (hash !== a) history.replaceState(null, '', `#${a}`);
+      } else history.replaceState(null, '', `#${act.value}`);
     };
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
@@ -229,19 +250,25 @@ export function App() {
           ))}
         </nav>
         <div class="topbar-right">
-          <BackendPill />
+          {!phone.value && <BackendPill />}
           <button class="icon-btn" disabled={!h?.canUndo.value} onClick={() => h?.undo()} title="Undo (⌘Z)" aria-label="Undo">
             <Icon name="undo" />
           </button>
           <button class="icon-btn" disabled={!h?.canRedo.value} onClick={() => h?.redo()} title="Redo (⇧⌘Z)" aria-label="Redo">
             <Icon name="redo" />
           </button>
-          <button class="icon-btn" onClick={toggleTheme} title={theme.value === 'dark' ? 'Light theme' : 'Dark theme'} aria-label={theme.value === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}>
-            <Icon name={theme.value === 'dark' ? 'sun' : 'moon'} />
-          </button>
-          <button class="icon-btn" onClick={() => (showKeys.value = !showKeys.value)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
-            ?
-          </button>
+          {phone.value ? (
+            <TopMenu />
+          ) : (
+            <>
+              <button class="icon-btn" onClick={toggleTheme} title={theme.value === 'dark' ? 'Light theme' : 'Dark theme'} aria-label={theme.value === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}>
+                <Icon name={theme.value === 'dark' ? 'sun' : 'moon'} />
+              </button>
+              <button class="icon-btn" onClick={() => (showKeys.value = !showKeys.value)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+                ?
+              </button>
+            </>
+          )}
         </div>
       </header>
       <main class="stage">
@@ -262,12 +289,8 @@ export function App() {
           <CastScreen />
         ) : act.value === 'direct' ? (
           <DirectScreen />
-        ) : act.value === 'scene' ? (
-          <SceneScreen />
-        ) : act.value === 'edit' ? (
-          <EditScreen />
         ) : (
-          <DubScreen />
+          <EditScreen />
         )}
       </main>
       <div class="toasts" aria-live="polite">

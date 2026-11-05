@@ -1,7 +1,7 @@
 """The language registry (``registries/languages.json``): every server's and the studio's language tables.
 
 ``SERVER`` are the TTS language codes requests use, ``SPOKEN`` the languages speech recognition, forced alignment and
-dub references understand (by Whisper-style code), ``ESPEAK`` the espeak-ng voices that guess unknown words of a
+other references understand (by Whisper-style code), ``ESPEAK`` the espeak-ng voices that guess unknown words of a
 pronunciation lexicon language. The ggml server embeds the same file at build time; the studio and the in-browser
 server import it.
 """
@@ -27,8 +27,8 @@ class ServerLanguage:
 @dataclass(frozen=True)
 class SpokenLanguage:
     code: str  # Whisper-style code (en, zh, yue, ...)
-    name: str  # Qwen3-ASR language name; the dub's label
-    tts: str | None = None  # the server language a dub into it speaks
+    name: str  # Qwen3-ASR language name
+    tts: str | None = None  # the server language that speaks it
     unspaced: bool = False  # written without spaces between words
 
 

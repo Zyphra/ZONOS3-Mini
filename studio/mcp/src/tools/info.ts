@@ -35,7 +35,8 @@ function overview(doc: ProjectDoc, speakerLabel: (id: string) => string): string
   doc.direct.script.lines.forEach((l, i) => {
     const takes = doc.direct.takes[l.id] ?? [];
     const ts = takes.map((t) => `${t.id} seed ${t.seed}${t.starred ? ' ★' : ''}${t.edited ? ' edited' : ''}`).join(', ');
-    out.push(`${i + 1}. [${l.id}] ${l.text}${l.spans.length ? ` (${l.spans.length} painted span${l.spans.length === 1 ? '' : 's'})` : ''}${ts ? ` — takes: ${ts}` : ''}`);
+    const lv = l.voice ? doc.cast.personas.find((p) => p.id === l.voice) : null;
+    out.push(`${i + 1}. [${l.id}]${lv ? ` (${lv.name})` : ''} ${l.text}${l.spans.length ? ` (${l.spans.length} painted span${l.spans.length === 1 ? '' : 's'})` : ''}${ts ? ` — takes: ${ts}` : ''}`);
   });
   const e = doc.edit.doc;
   if (e) out.push(`Edit clip “${e.name}” (${e.source.kind}) · ${langLabel(e.language)} · versions: ${e.versions.map((v, i) => `v${i + 1} ${v.label}${i === e.current ? ' (current)' : ''}`).join(', ')}`);

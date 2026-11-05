@@ -56,7 +56,7 @@ function ago(t: number): string {
 function summaryText(s: ProjectSummary | null): string {
   if (!s) return 'project';
   const n = (k: number, one: string, many = `${one}s`) => (k ? [`${k} ${k === 1 ? one : many}`] : []);
-  const parts = [...n(s.cast, 'cast member'), ...n(s.takes, 'take'), ...n(s.sceneLines, 'scene line'), ...n(s.versions, 'edit version'), ...n(s.dubTracks, 'dub track'), ...(s.video ? ['video'] : [])];
+  const parts = [...n(s.cast, 'cast member'), ...n(s.takes, 'take'), ...n(s.versions, 'edit version')];
   return parts.join(' · ') || 'empty';
 }
 
@@ -476,7 +476,7 @@ function CurrentProject() {
       <div class="proj-settings">
         <label>
           <span>Language</span>
-          <select class="input" value={st.language} onChange={(e) => setSettings({ language: e.currentTarget.value })} title="Direct and Scene lines render in this language; new Edit clips and pronunciation lookups start in it">
+          <select class="input" value={st.language} onChange={(e) => setSettings({ language: e.currentTarget.value })} title="Direct lines render in this language; new Edit clips and pronunciation lookups start in it">
             {Object.entries(LANG_LABEL).map(([code, label]) => (
               <option key={code} value={code}>
                 {label}

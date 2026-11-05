@@ -5,6 +5,7 @@ import { exportWav } from '../../audio/mix';
 import * as player from '../../audio/player';
 import { nowPlaying } from '../../audio/player';
 import { Icon } from '../../components/Icon';
+import { Rail, RailBar, RailToggle } from '../../components/Rail';
 import { Waveform } from '../../components/Waveform';
 import { isTagToken, normalizeTokens, planRegions, wordDiff } from '../../edit/regions';
 import { slug } from '../../lib/files';
@@ -17,7 +18,6 @@ import { activeHistory, backend, notify, primaryAction, screenKeys } from '../..
 import * as E from '../../state/edit';
 import type { History } from '../../state/history';
 import { speakers } from '../../state/library';
-import { lineState, scene } from '../../state/scene';
 import { script, takes as scriptTakes } from '../../state/script';
 import { Direction } from './Direction';
 import { EditWave, fmtTime } from './EditWave';
@@ -140,7 +140,6 @@ function Sources() {
     return () => clearInterval(t);
   }, [rec]);
   const lineTakes = script.value.lines.flatMap((l, i) => (scriptTakes.value[l.id] ?? []).map((t, k) => ({ l, i, t, k })));
-  const sceneClips = scene.value.lines.map((l, i) => ({ l, i, st: lineState(l) })).filter((x) => x.st?.audio);
   const busy = !!E.busy.value;
   return (
     <div class="rail-section edit-sources">
@@ -190,23 +189,6 @@ function Sources() {
           </ul>
         ) : (
           <p class="muted small">Render takes in Direct; each one can be opened here.</p>
-        )}
-      </details>
-      <details class="src-group" open={!!sceneClips.length}>
-        <summary>Scene clips {sceneClips.length ? <b>{sceneClips.length}</b> : null}</summary>
-        {sceneClips.length ? (
-          <ul class="src-list">
-            {sceneClips.map(({ l, i, st }) => (
-              <li>
-                <button class="src-item" disabled={busy} title={l.text} onClick={() => void E.openClip({ kind: 'scene', label: `Scene line ${i + 1}`, lineId: l.id }, st!.audio!.pcm, st!.audio!.sr, l.text)}>
-                  <span class="src-n">{i + 1}</span>
-                  <span class="src-text">{l.text}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p class="muted small">Rendered Scene lines show up here.</p>
         )}
       </details>
       <details class="src-group">
@@ -702,7 +684,7 @@ function Workspace() {
           <>
             <Icon name="edit" size={26} />
             <h3>Open a clip to edit</h3>
-            <p>Pick a Direct take, a Scene line or a voice clip on the left, upload a file or record yourself. Then change the words; only the changed stretch is regenerated.</p>
+            <p>Pick a Direct take or a voice clip on the left, upload a file or record yourself. Then change the words; only the changed stretch is regenerated.</p>
           </>
         )}
       </div>
@@ -737,7 +719,7 @@ function Workspace() {
     <div class="ed-work">
       <header class="ed-head">
         <div class="ed-title">
-          <span class="eyebrow">{({ take: 'Direct take', scene: 'Scene line', voice: 'Voice clip', upload: 'Upload', recording: 'Recording', dub: 'Dub track' } as const)[d.source.kind]}</span>
+          <span class="eyebrow">{({ take: 'Direct take', voice: 'Voice clip', upload: 'Upload', recording: 'Recording' } as const)[d.source.kind]}</span>
           <h2 title={d.name}>{d.name}</h2>
         </div>
         <select
@@ -784,8 +766,8 @@ function Workspace() {
         </div>
         <span class="grow" />
         {E.canSendBack.value && (
-          <button class="btn sm" onClick={E.sendBack} title={{ take: 'Replace the take in Direct with this version', scene: 'Replace the Scene line with this version', dub: 'Make this version the dub track in Dub' }[d.source.kind as 'take' | 'scene' | 'dub']}>
-            <Icon name="undo" size={13} /> Send back to {{ take: 'Direct', scene: 'Scene', dub: 'Dub' }[d.source.kind as 'take' | 'scene' | 'dub']}
+          <button class="btn sm" onClick={E.sendBack} title="Replace the take in Direct with this version">
+            <Icon name="undo" size={13} /> Send back to Direct
           </button>
         )}
         <button class="icon-btn" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label="Export what is shown as WAV" title="Export WAV">
@@ -918,10 +900,15 @@ export function EditScreen() {
   if (!enabled) return <Unavailable />;
   return (
     <div class="edit">
-      <aside class="rail edit-rail" aria-label="Sources and versions">
-        <Sources />
-        <Versions />
-      </aside>
+      <Rail id="edit-sources" side="left" title="Sources">
+        <aside class="rail edit-rail" aria-label="Sources and versions">
+          <Sources />
+          <Versions />
+        </aside>
+      </Rail>
+      <RailBar>
+        <RailToggle id="edit-sources" title="Sources" icon="film" />
+      </RailBar>
       <Workspace />
     </div>
   );

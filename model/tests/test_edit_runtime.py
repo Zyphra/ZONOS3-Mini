@@ -6,11 +6,11 @@ import base64
 
 import numpy as np
 import pytest
-from zonos3.dub.runtime import AlignWorkerError, UnknownId
 from zonos3.generation import SAMPLE_RATE
+from zonos3.server.errors import NotFound, status_of
 from zonos3.server.schemas import EditRequest
-from zonos3.tts.edit_align import AsrError, FuseAlignError
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, status_of
+from zonos3.tts.edit_align import AsrError, FuseAlignError, WorkerError
+from zonos3.tts.edit_runtime import EditModel, EditRuntime
 
 K = 4
 FRAME_RATE = 10.0
@@ -149,8 +149,8 @@ def test_verify_reports_the_take_transcript_and_words():
 
 
 def test_status_of():
-    assert status_of(UnknownId("x")) == 404
-    assert status_of(AlignWorkerError("down")) == 503
+    assert status_of(NotFound("x")) == 404
+    assert status_of(WorkerError("down")) == 503
     assert status_of(AsrError("down")) == 503 and status_of(FuseAlignError("down")) == 503
     assert status_of(ValueError("bad")) == 400
     assert status_of(RuntimeError("failed")) == 500

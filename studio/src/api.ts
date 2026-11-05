@@ -21,12 +21,11 @@ import { fixtureSpeakers, syntheticEmbedding } from './fixtures/embeddings';
 import { synthesizeWords } from './fixtures/synth';
 import * as fixtureEdit from './fixtures/edit';
 import * as fixturePron from './fixtures/phonemize';
-import * as fixtureDub from './fixtures/dub';
 import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
 import { encodeNpy, encodeWav, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
-import { onEncoderProgress, selectWebEngine, startWebEngine, transport, usingWebEngine, webEngineAvailable } from './lib/web-engine';
+import { onEncoderProgress, selectWebEngine, startWebEngine, transport, webEngineAvailable } from './lib/web-engine';
 import { bootProgress, encoderDownload } from './state/app';
 
 // ── Contract types ────────────────────────────────────────────────────────────────────────────────
@@ -143,8 +142,6 @@ export interface Backend {
   steering: boolean;
   edit: EditCaps;
   pron: PronCaps;
-  /** Dubbing (`/v2/dub/capabilities`); null when the server has no dub setup. */
-  dub: DubCaps | null;
   /** Shared projects on the server (`/v2/capabilities.projects`); null: projects stay in this browser. */
   projects: ProjectCaps | null;
   /** Nonverbal markup + tag guidance (`/v2/capabilities.tag_cfg`); null: tags are plain text to this server. */
@@ -186,31 +183,6 @@ export type Alignment = Schemas['EditTranscript'];
 export type EditRequest = Schemas['EditRequest'];
 export type EditTake = Schemas['EditTake'];
 export type EditResponse = Schemas['EditResponse'];
-
-// ── Dubbing (/v2/dub/*) ───────────────────────────────────────────────────────────────────────────
-
-/** `GET /v2/dub/capabilities`; `fixture`: every dub call runs on the client-side fixture engine. */
-export type DubCaps = Schemas['DubCapabilities'] & { fixture: boolean };
-export type DubBucket = Schemas['DubBucket'];
-/** A word with its timing; `segment` on the words of a dub result. */
-export type DubWord = Schemas['DubWord'] & { segment?: number };
-export type DubRef = Schemas['DubRef'];
-/** The video's first face track (`POST /v2/dub/lips`), seconds. */
-export type DubLips = Schemas['DubLips'];
-export type DubTranscript = Schemas['DubTranscript'];
-export type DubAnalyzeRequest = Schemas['DubAnalyzeRequest'];
-export type DubPlanSegment = Schemas['DubAnalysisSegment'];
-export type DubAnalysis = Schemas['DubAnalysis'];
-/** Who speaks the dub: the reference speaker cloned from its own audio, or a studio voice with Cast steering. */
-export type DubVoice = Schemas['DubVoice'];
-export type DubSegmentIn = Schemas['DubSegmentIn'];
-export type DubGenerateRequest = Schemas['DubGenerateRequest'];
-export type DubRegenerateRequest = Schemas['DubRegenerateRequest'];
-export type DubCandidate = Schemas['DubCandidate'];
-export type DubSegmentOut = Schemas['DubSegment'];
-export type DubMetrics = Schemas['DubResult']['metrics'];
-export type DubLipsync = NonNullable<Schemas['DubLipSync']>;
-export type DubResult = Schemas['DubResult'];
 
 export class ApiError extends Error {
   constructor(
@@ -262,12 +234,11 @@ function sessionId(): string {
  * JSON — an error as `{detail, status_code}`. A proxy in front (a Cloudflare quick tunnel drops requests silent for
  * 100 s) then never times them out.
  */
-const KEEPALIVE = /^\/v2\/(edit(\/|$)|dub\/(ref|lips\/|transcribe|analyze|generate|regenerate))/;
+const KEEPALIVE = /^\/v2\/edit(\/|$)/;
 
-const headers = (json = false, path = ''): HeadersInit => ({
+const headers = (json = false): HeadersInit => ({
   'X-TTS-Session-ID': sessionId(),
   ...(json ? { 'Content-Type': 'application/json' } : {}),
-  ...(KEEPALIVE.test(path) ? { 'X-Keepalive': '1' } : {}),
 });
 
 /** An error response as a short message: the server's `detail`, never a proxy's HTML page. */
@@ -398,22 +369,6 @@ function pronCaps(kind: BackendKind, c: Capabilities | null): PronCaps {
   };
 }
 
-/**
- * Dubbing: the server's `/v2/dub/capabilities` when it serves the dub routes and has the alignment worker, the
- * fixture engine offline. `?dub=fixture` forces the fixture engine, `?dub=0` a server without dubbing.
- */
-async function dubCaps(kind: BackendKind): Promise<DubCaps | null> {
-  const want = params.get('dub');
-  if (want === '0' || want === 'off') return null;
-  if (want === 'fixture' || kind === 'offline') return { ...fixtureDub.CAPS, fixture: true };
-  try {
-    const caps = await ok<Schemas['DubCapabilities']>(client.GET('/v2/dub/capabilities'));
-    return caps.enabled && caps.available ? { ...caps, fixture: false } : null;
-  } catch {
-    return null;
-  }
-}
-
 const FIXTURE_TAGS: TagCaps = { tags: ['laugh', 'breath', 'sigh', 'cough', 'panting', 'shouting', 'crying'], min_scale: 1, max_scale: 4, default_scale: 1, fixture: true };
 
 /**
@@ -462,7 +417,7 @@ export async function connect(): Promise<Backend> {
     const caps = kind === 'offline' ? null : await ok<Capabilities>(client.GET('/v2/capabilities')).catch(() => null);
     // The in-browser server answers like a live one; its capabilities say which features are off.
     const as = kind === 'web' ? 'live' : kind;
-    return (backend = { kind, server, spec, steering: kind !== 'fixture', edit: editCaps(as, caps), pron: pronCaps(as, caps), dub: await dubCaps(as), projects: projectCaps(caps?.projects), tags: tagCaps(as, caps?.tag_cfg) });
+    return (backend = { kind, server, spec, steering: kind !== 'fixture', edit: editCaps(as, caps), pron: pronCaps(as, caps), projects: projectCaps(caps?.projects), tags: tagCaps(as, caps?.tag_cfg) });
   };
   if (forced === 'offline') return make('offline', fixture);
   if (forced === 'web') return startWeb(make);
@@ -721,85 +676,6 @@ export function phonemize(text: string, language: string, guess = true): Promise
   const b = current();
   if (b.pron.fixture) return fixturePron.phonemize(b.pron, text, language, guess);
   return ok<PhonemizeResponse>(client.POST('/v2/phonemize', { body: { text, language, guess } }));
-}
-
-// ── Dubbing ───────────────────────────────────────────────────────────────────────────────────────
-
-const dubFixture = () => !!current().dub?.fixture;
-
-/** POST raw bytes with upload progress (fetch has none); JSON back, errors as ApiError. */
-function postBytes<T>(path: string, body: Blob | ArrayBuffer, onProgress?: (f: number) => void, signal?: AbortSignal): Promise<T> {
-  if (usingWebEngine()) throw new ApiError(404, 'Not Found');   // the in-browser server has no byte-upload routes (dub is off)
-  const { promise, resolve, reject } = Promise.withResolvers<T>();
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', server + path);
-  for (const [k, v] of Object.entries(headers(false, path))) xhr.setRequestHeader(k, v as string);
-  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-  xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
-  xhr.onload = () => {
-    try {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(bodyOf<T>(xhr.status, xhr.responseText));
-      else reject(errorOf(xhr.status, xhr.statusText, xhr.responseText));
-    } catch (e) {
-      reject(e);
-    }
-  };
-  xhr.onerror = () => reject(new ApiError(0, 'network error'));
-  xhr.onabort = () => reject(new DOMException('aborted', 'AbortError'));
-  signal?.addEventListener('abort', () => xhr.abort());
-  xhr.send(body);
-  return promise;
-}
-
-/** The reference audio (a WAV) → ref_id. */
-export function dubRef(wav: ArrayBuffer, onProgress?: (f: number) => void): Promise<DubRef> {
-  if (dubFixture()) return fixtureDub.addRef(wav, onProgress);
-  return postBytes<DubRef>('/v2/dub/ref', wav, onProgress);
-}
-
-/** Face track + lip embeddings of the reference's video, for lip-sync. */
-export function dubLips(refId: string, video: Blob, name: string, onProgress?: (f: number) => void): Promise<DubLips> {
-  if (dubFixture()) return fixtureDub.lips(refId, video, onProgress);
-  return postBytes<DubLips>(`/v2/dub/lips/${encodeURIComponent(refId)}?name=${encodeURIComponent(name)}`, video, onProgress);
-}
-
-export function dubTranscribe(refId: string, refLang?: string | null): Promise<DubTranscript> {
-  if (dubFixture()) return fixtureDub.transcribe(refId, refLang ?? null);
-  return ok<DubTranscript>(client.POST('/v2/dub/transcribe', { body: { ref_id: refId, ...(refLang ? { ref_lang: refLang } : {}) } }));
-}
-
-export function dubAnalyze(req: DubAnalyzeRequest): Promise<DubAnalysis> {
-  if (dubFixture()) return fixtureDub.analyze(req);
-  return ok<DubAnalysis>(client.POST('/v2/dub/analyze', { body: req }));
-}
-
-
-/** The fixture engine's voice for a dub: a studio speaker's embedding, or the reference speaker's own. */
-const dubContext = (): fixtureDub.Context => ({
-  spec: current().spec,
-  embeddingOf: async (id: string) => {
-    const s = (await getSpeakers()).find((x) => x.id === id);
-    return s ? (await getEmbedding(s)).embedding : syntheticEmbedding(current().spec, id, id);
-  },
-  validateText: (text: string) => fixturePron.validateGroups(text, current().pron.phoneme_tokens),
-});
-
-export function dubGenerate(req: DubGenerateRequest, signal?: AbortSignal): Promise<DubResult> {
-  if (dubFixture()) return fixtureDub.generate(dubContext(), req, signal);
-  return ok<DubResult>(client.POST('/v2/dub/generate', { body: req, signal }));
-}
-
-export function dubRegenerate(req: DubRegenerateRequest, signal?: AbortSignal): Promise<DubResult> {
-  if (dubFixture()) return fixtureDub.regenerate(dubContext(), req, signal);
-  return ok<DubResult>(client.POST('/v2/dub/regenerate', { body: req, signal }));
-}
-
-/** The video with the dub as its audio track (MP4). */
-export async function dubMux(dubId: string, video: Blob, name: string): Promise<Blob> {
-  if (dubFixture()) return fixtureDub.mux(dubId, video);
-  const res = await transport(`${server}/v2/dub/mux/${encodeURIComponent(dubId)}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/octet-stream' }, body: video });
-  if (!res.ok) await fail(res);
-  return res.blob();
 }
 
 // ── Projects (shared on the server) ───────────────────────────────────────────────────────────────

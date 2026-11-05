@@ -1,4 +1,4 @@
-/** The project's language, where lines are rendered (Direct, Scene): text normalization and reading-position spans follow it. */
+/** The project's language, where Direct lines are rendered: text normalization and reading-position spans follow it. */
 import { LANG_LABEL } from '../lib/languages';
 import { projectSettings } from '../state/app';
 import { setSettings } from '../state/projects';

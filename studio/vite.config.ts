@@ -1,5 +1,6 @@
-import { readdirSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { defineConfig, loadEnv, searchForWorkspaceRoot, type Connect, type Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import sirv from 'sirv';
@@ -48,6 +49,44 @@ function cleanOutDir(keep: string[]): Plugin {
   };
 }
 
+/**
+ * /sw.js, at build time only (the dev server has no service worker): src/sw.js with its precache list (studio.html and
+ * every assets/ file it reaches: its chunks, their imports, CSS and fonts) and a version hashing studio.html and that
+ * list (asset names carry content hashes).
+ */
+function serviceWorker(page: string): Plugin {
+  let root = '';
+  return {
+    name: 'zonos3-service-worker',
+    apply: 'build',
+    configResolved(config) {
+      root = config.root;
+    },
+    // writeBundle, not generateBundle: the HTML pages are only in the bundle once vite:build-html has emitted them.
+    writeBundle(options, bundle) {
+      const text = (fileName: string) => {
+        const file = bundle[fileName];
+        if (!file) return '';
+        if (file.type === 'chunk') return file.code;
+        return typeof file.source === 'string' ? file.source : new TextDecoder().decode(file.source);
+      };
+      const assets = Object.keys(bundle).filter((fileName) => fileName.startsWith('assets/'));
+      // Breadth-first over files that mention an asset's (content-hashed, so unique) name.
+      const reached = new Set([`${page}.html`]);
+      for (const fileName of reached) {
+        const source = text(fileName);
+        for (const asset of assets) if (!reached.has(asset) && source.includes(basename(asset))) reached.add(asset);
+      }
+      const precache = [...reached].map((fileName) => `/${fileName}`).sort();
+      const version = createHash('sha256').update(text(`${page}.html`)).update(precache.join('\n')).digest('hex').slice(0, 12);
+      const sw = readFileSync(resolve(root, 'src/sw.js'), 'utf8')
+        .replace('__ZVS_VERSION__', JSON.stringify(version))
+        .replace('__ZVS_PRECACHE__', JSON.stringify(precache, null, 2));
+      writeFileSync(join(options.dir ?? resolve(root, 'dist'), 'sw.js'), sw);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const target = process.env.ZONOS_SERVER || env.ZONOS_SERVER;
@@ -56,7 +95,7 @@ export default defineConfig(({ mode }) => {
     : undefined;
   return {
     base: '/',
-    plugins: [preact(), webEngine(), cleanOutDir(['web-engine'])],
+    plugins: [preact(), webEngine(), cleanOutDir(['web-engine']), serviceWorker('studio')],
     build: {
       outDir: 'dist',
       emptyOutDir: false,

@@ -1,15 +1,16 @@
 """Speech editing in every server (``/v2/edit/transcribe``, ``/v2/edit/align``, ``/v2/edit``): ``EditRuntime``.
 
 The runtime holds everything of an edit that is not the model: request checks, the ASR transcript and FuseAlign word
-timings (``zonos3.tts.edit_align``: the server's ``AsrWorker`` / ``FuseAlignWorker``, shared with dubbing), the word
+timings (``zonos3.tts.edit_align``: the server's ``AsrWorker`` / ``FuseAlignWorker``, shared with plugins), the word
 diff, the context windows of a long clip, the fill lengths, the splice and ``verify``. What needs the served model goes
 through the server's ``EditEngine``: decoding an upload, the speaker row and reference codes of the clip, the
 engine-level request checks, one region's span-end-terminated generation and the decode of the spliced codes. The
 CUDA and MLX servers implement the engine in-process; the ggml server runs this runtime in
-zonos3/workers/edit_dub.py and answers the engine's calls over its pipe.
+zonos3/workers/pyhost.py and answers the engine's calls over its pipe.
 
 Errors: ``ValueError`` is the request's fault (HTTP 400), ``zonos3.tts.edit_align.WorkerError`` an unavailable ASR /
-FuseAlign worker (503), ``RuntimeError`` a failed generation or decode (500); ``status_of`` maps them.
+FuseAlign worker (503), ``RuntimeError`` a failed generation or decode (500); ``zonos3.server.errors.status_of`` maps
+them.
 """
 
 from __future__ import annotations
@@ -31,7 +32,6 @@ from zonos3.tts import edit_align, textmatch
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
     GROUP_OPEN,
-    WorkerError,
     canonical_markup,
     diff_spans,
     edit_words,
@@ -109,21 +109,6 @@ class EditEngine(Protocol):
         """Float32 44.1 kHz audio (with the server's output gain) of ordinary codes ``[frames, n_codebooks]``."""
 
 
-def status_of(exc: BaseException) -> int | None:
-    """The HTTP status of an edit / dub error (None: not one of theirs)."""
-    from zonos3.dub.runtime import AlignWorkerError, UnknownId
-
-    if isinstance(exc, UnknownId):
-        return 404
-    if isinstance(exc, (AlignWorkerError, WorkerError)):
-        return 503
-    if isinstance(exc, ValueError):
-        return 400
-    if isinstance(exc, RuntimeError):
-        return 500
-    return None
-
-
 def edit_capabilities(model: EditModel, available: bool) -> dict:
     """The speech-editing keys of /v2/capabilities; ``available``: the server can run the ASR and FuseAlign workers and
     encode reference audio."""
@@ -169,7 +154,7 @@ def _wav16(audio: np.ndarray) -> bytes:
 class EditRuntime:
     def __init__(self, engine: EditEngine, asr: edit_align.AsrWorker, aligner: edit_align.FuseAlignWorker):
         self.engine = engine
-        # the server's ASR and FuseAlign workers (shared with dubbing; the server closes them)
+        # the server's ASR and FuseAlign workers (shared with plugins; the server closes them)
         self.asr = asr
         self.aligner = aligner
 

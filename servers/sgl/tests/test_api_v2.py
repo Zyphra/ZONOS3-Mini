@@ -30,13 +30,6 @@ CODEC = "opus_dual_3n_600k_sched600k_r4096_step600000"
     ("EditAlignRequest", schemas.EditAlignRequest),
     ("EditWordIn", schemas.EditWordIn),
     ("EditRequest", schemas.EditRequest),
-    ("DubTranscribeRequest", schemas.DubTranscribeRequest),
-    ("DubWord", schemas.DubWord),
-    ("DubAnalyzeRequest", schemas.DubAnalyzeRequest),
-    ("DubVoice", schemas.DubVoice),
-    ("DubSegmentIn", schemas.DubSegmentIn),
-    ("DubGenerateRequest", schemas.DubGenerateRequest),
-    ("DubRegenerateRequest", schemas.DubRegenerateRequest),
     ("ProjectPutRequest", schemas.ProjectPutRequest),
 ])
 def test_request_models_transcribe_the_spec(name, model):
@@ -112,7 +105,7 @@ def test_meta_routes(client, frontend):
 
 
 @pytest.mark.parametrize("method, path", [
-    ("GET", "/v1"), ("POST", "/v1"), ("POST", "/tts/generate"), ("GET", "/tts/capabilities"), ("GET", "/dub/capabilities"),
+    ("GET", "/v1"), ("POST", "/v1"), ("POST", "/tts/generate"), ("GET", "/tts/capabilities"),
     ("GET", "/projects"), ("GET", "/studio/"), ("GET", "/docs"), ("GET", "/redoc"), ("GET", "/openapi.json"),
     ("GET", "/v2/nope"),
 ])

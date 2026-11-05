@@ -199,68 +199,6 @@ class EditRequest(_Strict):
     tag_cfg_scale: float = 1.0
 
 
-# ------------------------------------------------------------------------------------------------------------ dub
-class DubTranscribeRequest(_Strict):
-    ref_id: str
-    ref_lang: str | None = None
-
-
-class DubWord(_Strict):
-    word: str
-    start: float
-    end: float
-
-
-class DubAnalyzeRequest(_Strict):
-    ref_id: str
-    ref_text: str | None = None
-    # Word timings the caller already has (a Scene mixdown, a Direct take): no forced alignment of ref_text.
-    ref_words: List[DubWord] | None = None
-    ref_lang: str = "en"
-    target_text: str
-    target_lang: str = "fr"
-    min_pause_s: float = 0.30
-
-
-class DubVoice(_Strict):
-    # "source": clone the reference speaker from its own audio; "studio": a studio voice (speaker_embedding_id, in
-    # speaker_mode=embedding) with Cast-bench steering controls (raw + hidden doses).
-    mode: Literal["source", "studio"] = "source"
-    speaker_embedding_id: str | None = None
-    controls: Controls = None
-
-
-class DubSegmentIn(_Strict):
-    ref_start: float
-    ref_end: float
-    target_text: str
-    # speaking-rate bucket on the target language's scale (/v2/dub/capabilities.buckets: row buckets 0..n-1 and the
-    # tempo-steered ones below / above); None = from the text's rate
-    bucket: int | None = None
-    voice: DubVoice | None = None  # None = the request's voice
-    controls: Controls = None  # the segment's direction, added to its voice's controls
-
-
-class DubGenerateRequest(_Strict):
-    ref_id: str
-    target_lang: str
-    seed: int = 0
-    segments: List[DubSegmentIn]
-    lipsync: bool = False  # warp the dub onto the lips of the reference's video (POST /v2/dub/lips first)
-    voice: DubVoice | None = None  # None = {"mode": "source"}
-
-
-class DubRegenerateRequest(_Strict):
-    dub_id: str
-    segment: int
-    target_text: str
-    seed: int = 0
-    bucket: int | None = None  # as DubSegmentIn.bucket; None = from the text's rate
-    lipsync: bool = False
-    voice: DubVoice | None = None  # None = the segment's voice
-    controls: Controls = None  # None = the segment's controls; {} clears them
-
-
 # ------------------------------------------------------------------------------------------------------- projects
 class ProjectPutRequest(_Strict):
     """PUT /v2/projects/{id}: the store (zonos3.server.projects) checks media references, revisions and sizes."""

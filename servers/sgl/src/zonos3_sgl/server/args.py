@@ -47,6 +47,8 @@ class ServerArgs(SchedulerConfig):
     studio_max_media_bytes: int = 2 * 1024**3
     # Production build of Zonos Voice Studio (studio/dist): / chooser, /studio, /lite (the studio serving rule of api/openapi.yaml).
     studio_dir: str = str(Path(__file__).resolve().parents[5] / "studio" / "dist")
+    # --plugins: server plugins (zonos3.server.plugins), each imported as zonos3_<name>.
+    plugins: tuple[str, ...] = ()
 
     @property
     def share_tokenizer(self) -> bool:
@@ -342,6 +344,13 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "pnpm --dir studio build).",
     )
     parser.add_argument(
+        "--plugins",
+        nargs="+",
+        default=[],
+        metavar="NAME",
+        help="server plugins: import zonos3_<NAME> and mount its routes (e.g. dub, from Zyphra/ZONOS3-dub)",
+    )
+    parser.add_argument(
         "--studio-projects-dir",
         type=str,
         default=ServerArgs.studio_projects_dir,
@@ -532,6 +541,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         f"accurate_mode_token={kwargs.get('tts_accurate_mode_token_enabled', False)}"
     )
 
+    kwargs["plugins"] = tuple(kwargs["plugins"])
     result = ServerArgs(**kwargs)
     logger = init_logger(__name__)
     logger.info(f"Parsed arguments:\n{result}")

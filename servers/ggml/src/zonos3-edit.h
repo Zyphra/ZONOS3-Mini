@@ -1,4 +1,4 @@
-// Speech editing: the edit prompt layout of model/src/zonos3/tts/edit.py, which the edit/dub worker's fill calls build
+// Speech editing: the edit prompt layout of model/src/zonos3/tts/edit.py, which the Python host's fill calls build
 // over the served model (the planning, fill extraction and splice run in Python: zonos3.tts.edit_runtime).
 //
 // Codes are row-major int32 matrices: ordinary codec frames [frames, n_codebooks], prompt rows

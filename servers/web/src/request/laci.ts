@@ -1,5 +1,5 @@
 // LACI (Localized Attention-Constrained Inference): port of servers/ggml/src/zonos3-laci.cpp (model/src/zonos3/tts/
-// laci.py). Duration targets (PaceMonitor / DurationTarget) serve dub takes only and are not ported: a session here
+// laci.py). Duration targets (PaceMonitor / DurationTarget) serve plugin duration-target takes only and are not ported: a session here
 // never carries a duration, so every pace path of the C++ session is absent.
 //
 // Types: LaciConfig, Failure, Head {layer, head}, HeadWindow {head, lo, hi}, Windows, ProbeControl {textLen, mask,
