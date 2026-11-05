@@ -5,6 +5,8 @@
  * `?models=URL`. Shared by the studio (`../api.ts`) and the lite page (`../lite/api.ts`).
  */
 
+import { withZeroGpu } from './zerogpu';
+
 /** The engine's model download readout (`servers/web/src/gpu/weights.ts` LoadProgress). */
 export interface EngineProgress {
   models: string[];
@@ -41,9 +43,12 @@ export function selectWebEngine(): void {
   useWeb = true;
 }
 
-/** Every request goes through here: the in-browser server once it is picked, else the network. */
+/**
+ * Every request goes through here: the in-browser server once it is picked, else the network (GPU routes with the
+ * visitor's ZeroGPU headers when a huggingface.co page frames a Space: `./zerogpu.ts`).
+ */
 export const transport: typeof fetch = (input, init) =>
-  useWeb ? loadWebEngine().then((m) => m.localFetch(input, init)) : fetch(input, init);
+  useWeb ? loadWebEngine().then((m) => m.localFetch(input, init)) : withZeroGpu(input, init).then((i) => fetch(input, i));
 
 /** A model download as a bar and a line: what loads, how far, and (once the network rate is known) how long is left. */
 export interface Download {

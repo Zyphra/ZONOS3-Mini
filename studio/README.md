@@ -63,7 +63,10 @@ browser has WebGPU and the site serves the in-browser engine at `/web-engine/eng
 applies every control). Force one with `?api=live|fixture|offline|web` (`?engine=URL` points at another engine
 build); point a build at another server with `?server=https://…` (CORS is open). Every request goes through one
 transport (`fetch`, or the engine's `localFetch` on the web backend; `src/lib/web-engine.ts`, shared with the lite
-page). `pnpm dev` / `pnpm preview` serve the engine
+page). On a Hugging Face Space framed by huggingface.co (the ZeroGPU Space of `../space/`), that transport adds the
+visitor's ZeroGPU headers to `/v2/generate` (`src/lib/zerogpu.ts`: the `supports-zerogpu-headers` /
+`zerogpu-headers` handshake Gradio's client does), so renders count against the visitor's GPU quota.
+`pnpm dev` / `pnpm preview` serve the engine
 (`../servers/web/dist`, `pnpm --dir ../servers/web build`) at `/web-engine` and its models
 (`../servers/web/public/models`, `pnpm --dir ../servers/web export`) at `/models`; `pnpm build:web` (after `build`)
 copies the engine into `dist/web-engine/` for a deployment (`pnpm build` empties `dist/` except `web-engine/`).
