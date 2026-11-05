@@ -139,7 +139,7 @@ export const checks: Record<string, Check> = {
   async backbone_twin_and_steer(ctx) {
     const f = await load(ctx);
     const ref = await decode(f);
-    // (a) slot 1 holds the CFG twin (speaker row dropped, unknown buckets) and steps interleaved with slot 0.
+    // (a) slot 1 holds the CFG twin (speaker row dropped, unknown buckets) and steps with slot 0 in one submission.
     const twinIds = f.ids.slice(W);
     const twinCond: Conditioning = { speakerRow: -1, speaker: null, conditionRow: 0, buckets: f.unknown.slice() };
     await f.bb.prefill(0, f.ids, f.cond);
@@ -147,8 +147,7 @@ export const checks: Record<string, Check> = {
     const n = 8;
     let isoMax = 0;
     for (let k = 1; k <= n; k++) {
-      const r0 = await f.bb.step(0, row(f, f.n0 + k - 1), null, f.probeIn);
-      await f.bb.step(1, row(f, f.n0 + k - 1), null, null);
+      const r0 = await f.bb.stepPair(row(f, f.n0 + k - 1), null, null, f.probeIn);
       isoMax = Math.max(isoMax, maxAbs(r0.logits, ref.logits[k - 1]));
     }
     const twinDiffers = 1 - cosine(tw.logits, want(f, 0)) > 1e-4;

@@ -1,15 +1,15 @@
 // mossdual_istft (15 Hz) streaming codec decoder on WebGPU over a fixed 16-frame graph: RVQ lookup, causal
 // ConvNeXt semantic head, 5 MOSS transformer stages with patch-up (layers per stage from the meta: 32/12/12/12/12 for
 // the full decoder, 2 each for the KEEP-2 pruned one), the causal ConvNeXt iSTFT head projecting two
-// spectrogram resolutions at 240 rows/s, then the host iSTFT + FIR mixer (44160 Hz) and sinc resampler (44100 Hz).
-// Mirrors decode_chunk + zac_stream_decode/flush (zac.cpp).
+// spectrogram resolutions at 240 rows/s, then the host iSTFT + FIR mixer (44160 Hz) and sinc resampler (44100 Hz)
+// behind a SpecSink (this thread, or the codec worker). Mirrors decode_chunk + zac_stream_decode/flush (zac.cpp).
 import type { Gpu } from './gpu/device';
+import { repackH8, tuneZacGemms, type GemmPlan } from './gpu/h8';
 import { ACT, attentionWin, dwconv, gemm, layernorm, patchUp, ropeKv, type GemmOpts, type Weight } from './gpu/ops';
 import { Builder, type Program, type Step } from './gpu/program';
 import { ropeTable } from './gpu/rope';
 import type { Model } from './gpu/weights';
-import { IstftHead } from './istft';
-import { Resampler } from './resample';
+import { LocalSpecSink, type HostParams, type SpecSink } from './spec-sink';
 
 export const HOP = 2940;
 export const BLOCK_FRAMES = 16;
@@ -73,9 +73,24 @@ function checkMeta(meta: Record<string, unknown>): number[] {
   return nl as number[];
 }
 
+/** Rows (per 16-frame chunk) of the stage a codec matrix runs at. */
+export function zacRows(name: string): number {
+  if (name.startsWith('sem_head.') || name.startsWith('stage.0.')) return 16;
+  if (name.startsWith('stage.1.')) return 32;
+  if (name.startsWith('stage.2.')) return 64;
+  if (name.startsWith('stage.3.')) return 128;
+  if (name.startsWith('stage.4.') || name.startsWith('head.')) return 256;
+  throw new Error(`zac: ${name} is not a codec matrix`);
+}
+
+/** Repack order: one stage's matrices at a time, so at most one group is resident twice. */
+const GROUPS = ['sem_head.', 'stage.0.', 'stage.1.', 'stage.2.', 'stage.3.', 'stage.4.', 'head.'];
+
 export class ZacStream {
   /** Output gain 10^(-headroom_db/20); applied by the caller (finish_block). */
   readonly gain: number;
+  /** The gemm kernel per row class chosen at load ('q8' or a gemm_h8 variant). */
+  readonly gemmPlan: GemmPlan;
   private prog: Program;
   private idx: GPUBuffer;
   private dyn: GPUBuffer;
@@ -84,11 +99,33 @@ export class ZacStream {
   private rope: GPUBuffer;
   private hists: HistOp[] = [];
   private needReset = true;
-  private istft: IstftHead;
-  private rs: Resampler;
+  private sink: SpecSink;
+  /** Settles after the last chunk's samples: sink pushes run strictly in chunk order. */
+  private tail: Promise<void> = Promise.resolve();
   private readonly nLayer: number[];
 
-  constructor(private gpu: Gpu, private w: Model) {
+  /** Times the codec gemm kernels on this device (or takes `plan`), repacks the matrices of every row class an h8
+   *  kernel won to h8 (dropping their q8 originals), and builds the stream. `w` must be freshly loaded (all q8). */
+  static async create(gpu: Gpu, w: Model, makeSink: (p: HostParams) => SpecSink = p => new LocalSpecSink(p),
+                      plan?: GemmPlan): Promise<ZacStream> {
+    plan ??= await tuneZacGemms(gpu, w);
+    for (const prefix of GROUPS) {
+      const old: GPUBuffer[] = [];
+      for (const [name, t] of w.t) {
+        if (!name.startsWith(prefix) || t.dtype !== 'q8') continue;
+        if (plan[zacRows(name) <= 32 ? 'skinny' : 'large'] === 'q8') continue;
+        w.t.set(name, { buf: repackH8(gpu, t, t.shape[1], t.shape[0]), dtype: 'h8', shape: t.shape });
+        old.push(t.buf, t.scales!);
+      }
+      if (!old.length) continue;
+      await gpu.device.queue.onSubmittedWorkDone();
+      for (const b of old) b.destroy();
+    }
+    return new ZacStream(gpu, w, plan, makeSink);
+  }
+
+  private constructor(private gpu: Gpu, private w: Model, plan: GemmPlan, makeSink: (p: HostParams) => SpecSink) {
+    this.gemmPlan = plan;
     this.nLayer = checkMeta(w.meta);
     const host = (n: string): Float32Array => {
       const v = w.host.get(n);
@@ -96,10 +133,10 @@ export class ZacStream {
       return v;
     };
     this.gain = Math.fround(Math.pow(10, -Number(w.meta['headroom_db']) / 20));
-    this.rs = new Resampler(host('resample.kernel'));
-    this.istft = new IstftHead({
+    this.sink = makeSink({
       nFft: N_FFT, hop: HEAD_HOP, windows: [host('head.window.0'), host('head.window.1')],
       mixer: host('head.mixer.weight'), maxLogMag: Number(w.meta['head.max_log_magnitude']),
+      resampleKernel: host('resample.kernel'),
     });
     this.idx = gpu.buffer(10 * BLOCK_FRAMES * 4, 'zac.idx');
     this.dyn = gpu.uniform(16, 'zac.dyn');
@@ -111,13 +148,16 @@ export class ZacStream {
 
   private record(b: Builder): [GPUBuffer, GPUBuffer] {
     const T = (n: string) => this.w.get(n).buf;
-    const M = (n: string): Weight => this.w.get(n);   // matrix operand (f16 or q8)
+    const M = (n: string): Weight => this.w.get(n);   // matrix operand (q8 or h8)
     const dyn = this.dyn;
     const F = BLOCK_FRAMES;
     let cpf = 1;
-    // Codec gemms skip row tiles past the dyn.b valid frames (cpf rows each, read at call time).
+    // Codec gemms skip row tiles past the dyn.b valid frames (cpf rows each, read at call time); h8 matrices run the
+    // planned kernel of their row class (F * cpf rows, as zacRows).
     const g = (X: GPUBuffer, W: Weight, Y: GPUBuffer, o: GemmOpts, ex: { bias?: GPUBuffer; scale?: GPUBuffer; res?: GPUBuffer } = {}) =>
-      gemm(b, X, W, Y, { ...o, rowsDyn: cpf }, { ...ex, dyn });
+      gemm(b, X, W, Y,
+        { ...o, rowsDyn: cpf, kernel: W.dtype === 'h8' ? (F * cpf <= 32 ? this.gemmPlan.skinny : this.gemmPlan.large) : undefined },
+        { ...ex, dyn });
 
     // History-prefixed input buffer: rows [0,R) come from the previous chunk, [R, R+rows) are filled by
     // the producer at float offset R*ch. After the consumer, rows [Tv, Tv+R) export to the history.
@@ -245,18 +285,19 @@ export class ZacStream {
     return [spec[0], spec[1]];
   }
 
-  /** Starts a new utterance: clears conv histories (on the next chunk), the iSTFT head and the resampler. */
+  /** Starts a new utterance: clears conv histories (on the next chunk), then the host iSTFT head and resampler once
+   *  every earlier chunk has reached them. */
   reset(): void {
     this.needReset = true;
-    this.istft.reset();
-    this.rs.reset();
+    this.tail = this.tail.then(() => this.sink.reset());
   }
 
   /**
-   * Decode frames [p0, p0+n) (1 ≤ n ≤ 16) from un-sheared indices idx[10][16]. Returns the newly final
-   * 44.1 kHz samples (variable length: the FIR mixer and resampler hold lookahead until flush()). No gain applied.
+   * Decode frames [p0, p0+n) (1 ≤ n ≤ 16) from un-sheared indices idx[10][16]. Submits the GPU work before
+   * returning; the newly final 44.1 kHz samples resolve in call order (variable length: the FIR mixer and resampler
+   * hold lookahead until flush()). No gain applied.
    */
-  async chunk(idx: Int32Array, p0: number, n: number): Promise<Float32Array> {
+  chunk(idx: Int32Array, p0: number, n: number): Promise<Float32Array> {
     if (n < 1 || n > BLOCK_FRAMES) throw new Error(`zac chunk size ${n} out of range`);
     if (p0 + n > MAX_FRAMES) throw new Error(`zac: utterance exceeds ${MAX_FRAMES} frames`);
     this.gpu.write(this.idx, 0, idx);
@@ -267,23 +308,22 @@ export class ZacStream {
     const reset = this.needReset;
     this.needReset = false;
     const cols = n * CPF;
-    const [s0, s1] = await this.gpu.submitRead(enc => {
+    const spec = this.gpu.submitRead(enc => {
       if (reset) for (const h of this.hists) enc.clearBuffer(h.hist, 0, h.hist.size);
       this.prog.encode(enc);
     }, [
       { buf: this.spec[0], offset: 0, bytes: cols * (N_FFT[0] + 2) * 4 },
       { buf: this.spec[1], offset: 0, bytes: cols * (N_FFT[1] + 2) * 4 },
     ]);
-    return this.rs.push(this.istft.push(s0, s1, cols));
+    spec.catch(() => {});   // handled through the chain below, which may attach after it settles
+    const pcm = this.tail.then(() => spec).then(([s0, s1]) => this.sink.push(s0, s1, cols));
+    this.tail = pcm.then(() => {}, () => {});
+    return pcm;
   }
 
   /** Ends the utterance: the iSTFT/mixer tail, then the resampler tail; total output is frames * HOP samples. */
-  flush(): Float32Array {
-    const a = this.rs.push(this.istft.flush());
-    const z = this.rs.flush();
-    const out = new Float32Array(a.length + z.length);
-    out.set(a);
-    out.set(z, a.length);
-    return out;
+  async flush(): Promise<Float32Array> {
+    await this.tail;
+    return this.sink.flush();
   }
 }

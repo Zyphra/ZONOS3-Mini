@@ -32,6 +32,31 @@ export interface Kernel {
   fields: FieldInfo[];
 }
 
+const H8_ROWS = /^gemm_h8_r(\d+)_(\d+)x(\d+)$/;
+const H8_KS = /^gemm_h8_ks(\d+)$/;
+
+/** A templated kernel name: its source file and the module constants prepended to it. */
+function kernelTemplate(name: string): { base: string; header: string } {
+  let m = H8_ROWS.exec(name);
+  if (m) return { base: 'gemm_h8', header: `const R = ${m[1]}u;\nconst LX = ${m[2]}u;\nconst LY = ${m[3]}u;\n` };
+  m = H8_KS.exec(name);
+  if (m) return { base: 'gemm_h8_ks', header: `const S = ${m[1]}u;\n` };
+  return { base: name, header: '' };
+}
+
+/** Dispatch grid of a gemm_h8 variant over T rows x O outputs (8 outputs per thread). */
+export function h8Grid(name: string, T: number, O: number): [number, number, number] {
+  const OG = Math.ceil(O / 8);
+  let m = H8_ROWS.exec(name);
+  if (m) {
+    const [r, lx, ly] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    return [Math.ceil(OG / lx), Math.ceil(Math.ceil(T / r) / ly), 1];
+  }
+  m = H8_KS.exec(name);
+  if (m) return [Math.ceil(OG / 8), 1, Math.ceil(T / 4)];
+  throw new Error(`h8Grid: ${name} is not a gemm_h8 kernel`);
+}
+
 export class Gpu {
   private kernels = new Map<string, Kernel>();
   private dummies = new Map<number, GPUBuffer>();
@@ -42,9 +67,10 @@ export class Gpu {
   kernel(name: string): Kernel {
     let k = this.kernels.get(name);
     if (k) return k;
-    const src = kernelSources[`./kernels/${name}.wgsl`];
+    const { base, header } = kernelTemplate(name);
+    const src = kernelSources[`./kernels/${base}.wgsl`];
     if (src === undefined) throw new Error(`unknown kernel ${name}`);
-    const code = commonSrc + '\n' + src;
+    const code = commonSrc + '\n' + header + src;
     const module = this.device.createShaderModule({ code, label: name });
     const pipeline = this.device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' }, label: name });
     const bindings: BindingInfo[] = [];
@@ -103,7 +129,8 @@ export class Gpu {
   }
 
   /**
-   * Submit `encodeFn`'s commands, then copy `reads` into staging buffers and return them as Float32Arrays.
+   * Submit `encodeFn`'s commands, then copy `reads` into staging buffers and return them as Float32Arrays. Every
+   * staging buffer maps concurrently; the queue submission happens before the first await.
    */
   async submitRead(encodeFn: (enc: GPUCommandEncoder) => void,
                    reads: { buf: GPUBuffer; offset: number; bytes: number }[] = []): Promise<Float32Array[]> {
@@ -116,16 +143,19 @@ export class Gpu {
       return s;
     });
     this.device.queue.submit([enc.finish()]);
+    if (!st.length) {
+      await this.device.queue.onSubmittedWorkDone();
+      return [];
+    }
+    await Promise.all(st.map(s => s.mapAsync(GPUMapMode.READ)));
     const out: Float32Array[] = [];
     for (let i = 0; i < st.length; i++) {
-      await st[i].mapAsync(GPUMapMode.READ);
       out.push(new Float32Array(st[i].getMappedRange(0, Math.ceil(reads[i].bytes / 4) * 4).slice(0)));
       st[i].unmap();
       const list = this.staging.get(st[i].size) ?? [];
       list.push(st[i]);
       this.staging.set(st[i].size, list);
     }
-    if (!st.length) await this.device.queue.onSubmittedWorkDone();
     return out;
   }
 

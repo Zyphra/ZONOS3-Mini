@@ -326,8 +326,13 @@ def export_backbone(path, out):
             raise SystemExit(f"blk.{L}: mixed attention projection types")
         skip.update(names)
     for name in g.order:
-        if name not in skip:
-            copy_plain(w, g, name)
+        if name in skip:
+            continue
+        if name == "output.weight":
+            # web only: the 84 MB F16 logits head as q8_0 (half the bytes of every decode step)
+            w.add_q8_from(name, g.arr(name), g.tensors[name].ne)
+            continue
+        copy_plain(w, g, name)
     w.finish()
 
 

@@ -1,4 +1,5 @@
 // Engine worker: owns the WebGPU device and the models, serves the v2 API (src/api/router.ts) one request at a time.
+// The codec's host half (iSTFT, mixer, resampler) runs in the codec worker behind `codecPort`.
 /// <reference lib="webworker" />
 import type { Engine, DefaultVoice } from './api/engine';
 import { Api } from './api/router';
@@ -13,12 +14,13 @@ import { buildPrompt, modelHp, NCB, W, type ModelHp } from './prompt';
 import { LaciHeads } from './request/laci';
 import { controlsDocument, loadSteer, type SteerBundle } from './request/steer';
 import { SpeakerEncoder } from './speaker';
+import { RemoteSpecSink } from './spec-sink';
 import { createTokenizer } from './tokenizer';
 
 declare const self: DedicatedWorkerGlobalScope;
 
 export type InMsg =
-  | { type: 'init'; base: string; cache: boolean; voicesPcm: Record<string, Float32Array> }
+  | { type: 'init'; base: string; cache: boolean; voicesPcm: Record<string, Float32Array>; codecPort: MessagePort }
   | { type: 'req'; id: number; method: string; path: string; headers: Record<string, string>; body: ArrayBuffer | null; pcm?: Float32Array }
   | { type: 'abort'; id: number };
 
@@ -60,7 +62,7 @@ async function loadLaci(base: string): Promise<Map<string, LaciHeads>> {
   return out;
 }
 
-async function init(base: string, cache: boolean, voicesPcm: Record<string, Float32Array>): Promise<void> {
+async function init(base: string, cache: boolean, voicesPcm: Record<string, Float32Array>, codecPort: MessagePort): Promise<void> {
   const device = await initGpu(message => post({ type: 'fatal', message }));
   const gpu = new Gpu(device);
   const progress = (p: LoadProgress) => post({ type: 'progress', ...p });
@@ -84,7 +86,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   const laci = await loadLaci(base);
 
   const backbone = new Backbone(gpu, bbw, steer ? steer.sources : []);
-  const zac = new ZacStream(gpu, zacw);
+  const zac = await ZacStream.create(gpu, zacw, p => new RemoteSpecSink(codecPort, p));
   const tokenizer = createTokenizer();
   await warmup(backbone, zac, hp);
 
@@ -148,7 +150,7 @@ async function serve(m: Extract<InMsg, { type: 'req' }>): Promise<void> {
 self.onmessage = (ev: MessageEvent<InMsg>) => {
   const m = ev.data;
   if (m.type === 'init') {
-    init(m.base, m.cache, m.voicesPcm).then(() => post({ type: 'ready' }),
+    init(m.base, m.cache, m.voicesPcm, m.codecPort).then(() => post({ type: 'ready' }),
       e => post({ type: 'fatal', message: e instanceof Error ? e.message : String(e) }));
   } else if (m.type === 'req') {
     queue = queue.then(() => serve(m));

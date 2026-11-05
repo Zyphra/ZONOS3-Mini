@@ -1,4 +1,5 @@
-// Main-thread facade of the in-browser server: spawns the engine worker and exposes a fetch-compatible localFetch()
+// Main-thread facade of the in-browser server: spawns the engine worker (and the codec worker holding the host half
+// of the codec, connected to the engine worker over a MessageChannel) and exposes a fetch-compatible localFetch()
 // that serves the v2 API in-process. Audio the worker cannot decode (it has no AudioContext) is decoded here: default
 // voices at init, speaker_audio_base64 per request (sent next to the JSON as 44.1 kHz mono PCM).
 import { b64DecodeStrict } from './b64';
@@ -18,6 +19,7 @@ interface Pending {
 
 const AUDIO_ROUTES: Record<string, true> = { '/v2/speakers': true, '/v2/generate': true, '/v1/audio/speech': true };
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+const codecWorker = new Worker(new URL('./codec-worker.ts', import.meta.url), { type: 'module' });
 const pending = new Map<number, Pending>();
 let nextId = 1;
 let ready = false;
@@ -65,6 +67,11 @@ worker.onmessage = (ev: MessageEvent<OutMsg>) => {
 };
 worker.onerror = ev => {
   const msg = ev.message || 'engine worker failed to start';
+  if (!ready) initReject?.(new Error(msg));
+  else for (const cb of fatalCbs) cb(msg);
+};
+codecWorker.onerror = ev => {
+  const msg = 'codec worker failed: ' + (ev.message || 'did not start');
   if (!ready) initReject?.(new Error(msg));
   else for (const cb of fatalCbs) cb(msg);
 };
@@ -118,7 +125,10 @@ export const engine = {
       const started = Promise.withResolvers<void>();
       initResolve = started.resolve;
       initReject = started.reject;
-      send({ type: 'init', base, cache: opts.cache ?? true, voicesPcm }, Object.values(voicesPcm).map(p => p.buffer));
+      const ch = new MessageChannel();
+      codecWorker.postMessage({ type: 'port' }, [ch.port2]);
+      send({ type: 'init', base, cache: opts.cache ?? true, voicesPcm, codecPort: ch.port1 },
+        [...Object.values(voicesPcm).map(p => p.buffer), ch.port1]);
       await started.promise;
     })().catch(e => {
       initPromise = null;   // allow a retry

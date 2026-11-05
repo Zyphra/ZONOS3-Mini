@@ -44,10 +44,21 @@ class StubBackbone {
     this.prefills.push({ slot, rows: ids.length / 11, cond });
     return { logits: this.logits(slot) };
   }
+  private probeOut(probe: ProbeInput | null) {
+    return probe ? new Float32Array(2048).fill(0).map((_, j) => (j === 1 ? 1 : 0)) : null;
+  }
   async step(slot: 0 | 1, _next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null) {
     this.steps[slot]++;
     if (slot === 0) { this.steered.push(steer); this.probes.push(probe); } else this.twinSteered.push(steer);
-    return { logits: this.logits(slot), probe: probe ? new Float32Array(2048).fill(0).map((_, j) => (j === 1 ? 1 : 0)) : null };
+    return { logits: this.logits(slot), probe: this.probeOut(probe) };
+  }
+  async stepPair(_next: Int32Array, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null) {
+    this.steps[0]++;
+    this.steps[1]++;
+    this.steered.push(steer);
+    this.twinSteered.push(twinSteer);
+    this.probes.push(probe);
+    return { logits: this.logits(0), twinLogits: this.logits(1), probe: this.probeOut(probe) };
   }
 }
 
@@ -59,7 +70,7 @@ class StubCodec {
     this.frames += n;
     return new Float32Array(n * HOP).fill(0.5);
   }
-  flush() { return new Float32Array(0); }
+  async flush() { return new Float32Array(0); }
 }
 
 export interface StubSet { api: Api; engine: Engine; backbone: StubBackbone }

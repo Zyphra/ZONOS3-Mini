@@ -1,4 +1,5 @@
 // Typed wrappers that record kernel dispatches into a Builder.
+import { h8Grid } from './device';
 import { linearWg, type Builder } from './program';
 import type { GpuTensor } from './weights';
 
@@ -6,8 +7,8 @@ export const ACT = { none: 0, silu: 1, gelu: 2, relu: 3, tanh: 4, softcap: 5, ne
 /** gemmF32 flags bit: apply `act` after the scale/shift epilogue (relu(BN(W.x + b))). */
 export const ACT_AFTER_SHIFT = 16;
 type Buf = GPUBuffer;
-/** Matrix operand: f16 packed in u32, bf16 packed in u32, q8_0 (int8 quants + f32 per-32 block scales) or q4_0
- *  (nibbles + f32 scales). */
+/** Matrix operand: f16 packed in u32, bf16 packed in u32, q8_0 (int8 quants + f32 per-32 block scales), q4_0
+ *  (nibbles + f32 scales) or h8 (k-major f16 [K][IC][ceil32(O)], src/gpu/h8.ts). */
 export type Weight = Pick<GpuTensor, 'buf' | 'scales' | 'dtype'>;
 /** gemm `rnd` bits (bf16 weights only): round the epilogue to bf16 after the accumulation, +bias, act, *alpha, +res. */
 export const RND = { acc: 1, bias: 2, act: 4, alpha: 8, out: 16 } as const;
@@ -18,19 +19,31 @@ export interface GemmOpts {
   nb_bias?: number; act?: number; alpha?: number; cap?: number;
   rowsDyn?: number;   // rows per valid frame: row tiles at or past dyn.b * rowsDyn are skipped
   rnd?: number;       // RND bits; bf16 weights only (their X operand is always rounded to bf16 as it is loaded)
+  kernel?: string;    // h8 weights only: the gemm_h8 variant (gemm_h8_r<R>_<LX>x<LY> or gemm_h8_ks<S>)
 }
 
-/** Y = (act(conv(X, W) + bias) * scale + shift) * alpha + res; W f16, bf16 or q8 [K][O][IC]. Offsets in floats.
+/** Y = (act(conv(X, W) + bias) * scale + shift) * alpha + res; W f16, bf16, q8 [K][O][IC] or h8. Offsets in floats.
  *  T ≤ 32 with IC % 32 == 0 uses the skinny 16×64 tile (f16/q8); q8 weights need IC % 32 == 0. bf16 weights run the
- *  native BF16 autocast arithmetic: bf16 operands, f32 accumulation, bf16 rounding at the `rnd` points. */
+ *  native BF16 autocast arithmetic: bf16 operands, f32 accumulation, bf16 rounding at the `rnd` points. h8 weights run
+ *  `o.kernel` (IC % 16 == 0, x_stride and x_off multiples of 4; the split-K `ks` variants need T ≤ 32). */
 export function gemm(b: Builder, X: Buf, W: Weight, Y: Buf, o: GemmOpts,
                      ex: { bias?: Buf; scale?: Buf; shift?: Buf; res?: Buf; dyn?: Buf } = {}): void {
   if (o.IC % 16) throw new Error(`gemm: IC=${o.IC} must be a multiple of 16`);
   if (o.rowsDyn && !ex.dyn) throw new Error('gemm: rowsDyn requires ex.dyn');
   const q8 = W.dtype === 'q8';
   const bf16 = W.dtype === 'bf16';
+  if (W.dtype === 'h8') {
+    const xs = o.x_stride ?? o.IC, xo = o.x_off ?? 0;
+    if (!o.kernel || xs % 4 || xo % 4)
+      throw new Error(`gemm: h8 needs a kernel and x_stride, x_off multiples of 4 (x_stride=${xs}, x_off=${xo})`);
+    const ks = /^gemm_h8_ks(\d+)$/.exec(o.kernel);
+    if (ks && (o.T > 32 || o.IC % (4 * Number(ks[1]))))
+      throw new Error(`gemm: h8 needs T <= 32 and IC % ${4 * Number(ks[1])} == 0 for ${o.kernel} (T=${o.T}, IC=${o.IC})`);
+  } else if (o.kernel) {
+    throw new Error('gemm: kernel needs h8 weights');
+  }
   if (q8 && (o.IC % 32 || !W.scales)) throw new Error(`gemm: q8 weights need IC % 32 == 0 (IC=${o.IC}) and scales`);
-  if (!q8 && !bf16 && W.dtype !== 'f16') throw new Error(`gemm: unsupported weight dtype ${W.dtype}`);
+  if (!q8 && !bf16 && W.dtype !== 'f16' && W.dtype !== 'h8') throw new Error(`gemm: unsupported weight dtype ${W.dtype}`);
   if (o.rnd && !bf16) throw new Error('gemm: rnd needs bf16 weights');
   const flags = (ex.bias ? 1 : 0) | (ex.scale ? 2 : 0) | (ex.shift ? 4 : 0) | (ex.res ? 8 : 0);
   const skinny = !bf16 && o.T <= 32 && o.IC % 32 === 0;
@@ -45,11 +58,16 @@ export function gemm(b: Builder, X: Buf, W: Weight, Y: Buf, o: GemmOpts,
     b.dispatch('gemm_bf16', { ...io, Wt: W.buf }, { ...params, rnd: o.rnd ?? 0 }, [Math.ceil(o.O / 64), Math.ceil(o.T / 64), 1]);
     return;
   }
+  if (W.dtype === 'h8') {
+    b.dispatch(o.kernel!, { ...io, W: W.buf }, params, h8Grid(o.kernel!, o.T, o.O));
+    return;
+  }
   b.dispatch((skinny ? 'gemm_skinny' : 'gemm') + (q8 ? '_q8' : ''), q8 ? { ...io, Wq: W.buf, Wsc: W.scales } : { ...io, Wt: W.buf },
     params, skinny ? [Math.ceil(o.O / 64), Math.ceil(o.T / 16), 1] : [Math.ceil(o.O / 64), Math.ceil(o.T / 64), 1]);
 }
 
-/** y[y_off + o] = act(W[o] . x[x_off:] + bias) + res[o]; W f16 [O][I] (I % 8 == 0) or q8 (I % 32 == 0). */
+/** y[y_off + o] = act(W[o] . x[x_off:] + bias) + res[o]; W f16 [O][I] (I % 8 == 0) or q8 (I % 32 == 0); x_off % 4 == 0
+ *  (x is read as vec4). 16 rows per workgroup. */
 export function matvec(b: Builder, x: Buf, W: Weight, y: Buf,
                        o: { O: number; I: number; x_off?: number; y_off?: number; nb_bias?: number; act?: number; cap?: number },
                        ex: { bias?: Buf; res?: Buf } = {}): void {
@@ -61,13 +79,14 @@ export function matvec(b: Builder, x: Buf, W: Weight, y: Buf,
   } else if (o.I % 8) {
     throw new Error(`matvec: I=${o.I} must be a multiple of 8`);
   }
+  if ((o.x_off ?? 0) % 4) throw new Error('matvec: x_off must be a multiple of 4');
   const bufs = q8
     ? { x, Wq: W.buf, Wsc: W.scales, bias: ex.bias, res: ex.res, y }
     : { x, Wt: W.buf, bias: ex.bias, res: ex.res, y };
   b.dispatch(q8 ? 'matvec_q8' : 'matvec', bufs, {
     O: o.O, I: o.I, x_off: o.x_off ?? 0, y_off: o.y_off ?? 0, nb_bias: o.nb_bias ?? o.O,
     flags: (ex.bias ? 1 : 0) | (ex.res ? 8 : 0), act: o.act ?? 0, cap: o.cap ?? 0,
-  }, linearWg(Math.ceil(o.O / 8)));
+  }, linearWg(Math.ceil(o.O / 16)));
 }
 
 export function matvecGlu(b: Builder, x: Buf, Wu: Buf, Wg: Buf, y: Buf, O: number, I: number): void {
@@ -153,9 +172,10 @@ export interface AttnOpts {
   pos0?: number; posDyn?: boolean; gate_stride?: number; gate_off?: number;
 }
 
+/** Head dim 32 (the backbone's) runs the register-resident attention_hd32 kernel; others (≤ 64) the generic one. */
 export function attention(b: Builder, q: Buf, kc: Buf, vc: Buf, out: Buf, o: AttnOpts, ex: { gate?: Buf; dyn?: Buf } = {}): void {
   if (o.hd > 64) throw new Error(`attention: hd=${o.hd} > 64`);
-  b.dispatch('attention', { q, kc, vc, gate: ex.gate, outp: out, dyn: ex.dyn ?? b.gpu.dummyUniform() }, {
+  b.dispatch(o.hd === 32 ? 'attention_hd32' : 'attention', { q, kc, vc, gate: ex.gate, outp: out, dyn: ex.dyn ?? b.gpu.dummyUniform() }, {
     n: o.n, nh: o.nh, nkv: o.nkv, pos_dyn: o.posDyn ? 1 : 0, pos0: o.pos0 ?? 0, window: o.window, ring: o.ring,
     scale: o.scale, has_gate: ex.gate ? 1 : 0, gate_stride: o.gate_stride ?? 0, gate_off: o.gate_off ?? 0,
     hd: o.hd,

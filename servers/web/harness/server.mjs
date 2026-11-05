@@ -205,7 +205,7 @@ const server = http.createServer((req, res) => {
 let engineReady = null;
 // A reload of the page (e.g. the engine rebuilt under it) restarts the engine: requests wait for it again.
 page.on('framenavigated', f => { if (f === page.mainFrame()) engineReady = null; });
-server.listen(port, '127.0.0.1');
+await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
 await page.goto(`http://127.0.0.1:${port}/harness/page.html`);
 console.log(`harness: loading the engine (models from ${path.join(root, 'public/models')}) …`);
 await (engineReady ??= waitReady());

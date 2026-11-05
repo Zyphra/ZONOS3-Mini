@@ -127,7 +127,7 @@ export class Backbone {
   private slots: [SlotGpuState, SlotGpuState];
   private ids: GPUBuffer;
   private chunkIds: GPUBuffer;
-  private dyn: GPUBuffer;
+  private dyn: [GPUBuffer, GPUBuffer];      // per slot: both decode programs can sit in one submission
   private dynData = new Uint32Array(4);   // a = position of the first row, b = steering on (decode)
   private condBuf: GPUBuffer;
   private spkIn: GPUBuffer;
@@ -171,7 +171,7 @@ export class Backbone {
     this.slots = [state(0), state(1)];
     this.ids = gpu.buffer(11 * 4, 'bb.ids');
     this.chunkIds = gpu.buffer(CHUNK * 11 * 4, 'bb.chunkIds');
-    this.dyn = gpu.uniform(16, 'bb.dyn');
+    this.dyn = [gpu.uniform(16, 'bb.dyn0'), gpu.uniform(16, 'bb.dyn1')];
     this.condBuf = gpu.buffer((COND_HDR + D) * 4, 'bb.cond');
     this.spkIn = gpu.buffer(SPK_DIM * 4, 'bb.spkIn');
     this.steerBuf = gpu.buffer(Math.max(1, this.steerSources.length) * D * 4, 'bb.steer');
@@ -206,7 +206,7 @@ export class Backbone {
   private record(b: Builder, n: number, decode: boolean, ids: GPUBuffer, caps: Capture[] | null, slot: 0 | 1): GPUBuffer {
     const w = this.w;
     const T = (name: string) => w.get(name).buf;
-    const dyn = this.dyn;
+    const dyn = this.dyn[slot];
     const st = this.slots[slot];
     const probing = decode && slot === 0;
     const cap = (name: string, buf: GPUBuffer, floats: number, off = 0) => {
@@ -382,7 +382,7 @@ export class Backbone {
         gpu.write(p.ids, 0, ids.subarray(start * 11, (start + len) * 11));
         this.dynData[0] = start;
         this.dynData[1] = 0;
-        gpu.write(this.dyn, 0, this.dynData);
+        gpu.write(this.dyn[slot], 0, this.dynData);
         const first = start === 0;
         const encode = (enc: GPUCommandEncoder) => {
           if (first) {
@@ -445,24 +445,59 @@ export class Backbone {
     return on ? probe.textLen : 0;
   }
 
-  /** One decode row for `slot` at position nPast[slot]. `steer` = steerSources.length x 1024 hidden deltas (null = off).
-   *  `probe` (slot 0): returns the summed readout distribution probeAcc[0..textLen). */
-  async step(slot: 0 | 1, next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null):
-      Promise<{ logits: Float32Array; probe: Float32Array | null }> {
+  /** KV-full and steering-length checks of a decode step. */
+  private checkStep(slot: 0 | 1, steer: Float32Array | null): void {
     if (this.nPast[slot] >= CAP) throw new Error('KV cache full');
     const K = this.steerSources.length;
     if (steer && steer.length !== K * D)
       throw new Error(`zonos3: slot steering delta must hold ${K} sources x ${D} values`);
+  }
+
+  private writeDyn(slot: 0 | 1, steered: boolean): void {
+    this.dynData[0] = this.nPast[slot];
+    this.dynData[1] = steered && this.steerSources.length ? 1 : 0;
+    this.gpu.write(this.dyn[slot], 0, this.dynData);
+  }
+
+  /** One decode row for `slot` at position nPast[slot]. `steer` = steerSources.length x 1024 hidden deltas (null = off).
+   *  `probe` (slot 0): returns the summed readout distribution probeAcc[0..textLen). */
+  async step(slot: 0 | 1, next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null):
+      Promise<{ logits: Float32Array; probe: Float32Array | null }> {
+    this.checkStep(slot, steer);
     const textLen = this.writeProbe(slot, probe);
     this.gpu.write(this.ids, 0, next);
-    if (steer && K) this.gpu.write(this.steerBuf, 0, steer);
-    this.dynData[0] = this.nPast[slot];
-    this.dynData[1] = steer && K ? 1 : 0;
-    this.gpu.write(this.dyn, 0, this.dynData);
+    if (steer && this.steerSources.length) this.gpu.write(this.steerBuf, 0, steer);
+    this.writeDyn(slot, steer !== null);
     const reads = [{ buf: this.decodeLogits[slot], offset: 0, bytes: LOGITS * 4 }];
     if (textLen) reads.push({ buf: this.probeAcc, offset: 0, bytes: textLen * 4 });
     const out = await this.gpu.submitRead(enc => this.decodeProg[slot].encode(enc), reads);
     this.nPast[slot]++;
     return { logits: out[0], probe: textLen ? out[1] : null };
+  }
+
+  /** One decode row on both slots in one submission (CFG). Both read `ids` (same `next`) and `steerBuf`, so the twin's
+   *  steering is either the conditional slot's delta or off. */
+  async stepPair(next: Int32Array, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
+      Promise<{ logits: Float32Array; twinLogits: Float32Array; probe: Float32Array | null }> {
+    if (twinSteer && twinSteer !== steer) throw new Error('backbone: the CFG twin shares the conditional slot\'s steering delta');
+    this.checkStep(0, steer);
+    this.checkStep(1, twinSteer);
+    const textLen = this.writeProbe(0, probe);
+    this.gpu.write(this.ids, 0, next);
+    if (steer && this.steerSources.length) this.gpu.write(this.steerBuf, 0, steer);
+    this.writeDyn(0, steer !== null);
+    this.writeDyn(1, twinSteer !== null);
+    const reads = [
+      { buf: this.decodeLogits[0], offset: 0, bytes: LOGITS * 4 },
+      { buf: this.decodeLogits[1], offset: 0, bytes: LOGITS * 4 },
+    ];
+    if (textLen) reads.push({ buf: this.probeAcc, offset: 0, bytes: textLen * 4 });
+    const out = await this.gpu.submitRead(enc => {
+      this.decodeProg[0].encode(enc);
+      this.decodeProg[1].encode(enc);
+    }, reads);
+    this.nPast[0]++;
+    this.nPast[1]++;
+    return { logits: out[0], twinLogits: out[1], probe: textLen ? out[2] : null };
   }
 }
