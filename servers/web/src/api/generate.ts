@@ -32,10 +32,9 @@ const VOCAB = 4098;
 export const CONTEXT_CAPACITY = MAX_FRAMES + 4096;
 /** probe_max_text = min(2048, context_capacity) with LACI heads. */
 const PROBE_MAX_TEXT = 2048;
-/** Prefix streaming (PrefixStreamSettings defaults). */
-const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3;
-/** Web worker only: the first prefix chunk (earlier first audio than the native servers' PrefixStreamSettings). */
-const PREFIX_FIRST_CHUNK_FRAMES = 4;
+/** Prefix streaming (PrefixStreamSettings defaults): chunk, hold-back, and the shorter first chunk of a request
+ *  (ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES on the native servers). */
+const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3, PREFIX_FIRST_CHUNK_FRAMES = 4;
 
 /** A validated GenerateRequest resolved into what the scheduler runs (generate.cpp GenReq + GeneratePlan). */
 interface Plan {

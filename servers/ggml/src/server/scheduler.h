@@ -144,9 +144,11 @@ struct ReqJob {
 };
 
 // Prefix streaming (sgl TTSVocoderManager): a chunk once ZONOS3_PREFIX_STREAM_CHUNK_FRAMES new frames are decodable
-// beyond ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES held-back frames.
+// beyond ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES held-back frames; a job's first chunk (nothing past the silence prefill
+// emitted yet) waits for ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES instead (earlier first audio).
 struct PrefixStreamSettings {
     int chunk_frames = 15;
+    int first_chunk_frames = 4;
     int hold_back_frames = 3;
     int context_frames = 450;
 };

@@ -68,7 +68,8 @@ void usage(const char * a0) {
         "                      (default 60; 0 keeps them loaded once used)\n"
         "  --stream-decode-default prefix|whole\n"
         "                      streaming decode of requests without stream_decode (default prefix: chunks of\n"
-        "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3\n"
+        "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames (the first one\n"
+        "                      ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES=4) behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3\n"
         "                      hold-back; whole: one exact chunk at EOS)\n"
         "  --tts-default-voices-dir DIR\n"
         "                      default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy\n"
@@ -165,10 +166,13 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
 
     // Prefix streaming and silence prefill settings (the sgl vocoder's environment).
     if (!env_int("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", 15, s.prefix.chunk_frames) ||
+        !env_int("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", 4, s.prefix.first_chunk_frames) ||
         !env_int("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", 3, s.prefix.hold_back_frames) ||
         !env_int("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", 450, s.prefix.context_frames) ||
-        s.prefix.chunk_frames < 1 || s.prefix.hold_back_frames < 0 || s.prefix.context_frames < s.prefix.chunk_frames) {
-        fprintf(stderr, "error: prefix stream settings: chunk_frames >= 1, hold_back_frames >= 0, context_frames >= chunk_frames\n");
+        s.prefix.chunk_frames < 1 || s.prefix.first_chunk_frames < 1 || s.prefix.hold_back_frames < 0 ||
+        s.prefix.context_frames < s.prefix.chunk_frames) {
+        fprintf(stderr, "error: prefix stream settings: chunk_frames >= 1, first_chunk_frames >= 1, hold_back_frames >= 0, "
+                        "context_frames >= chunk_frames\n");
         return 1;
     }
     {

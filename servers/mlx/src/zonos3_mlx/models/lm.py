@@ -2,8 +2,9 @@
 
 A port of ``zonos3.reference.lm.Zonos3LM.forward`` reading the ggml server's GGUF (tensor names of
 servers/ggml/src/zonos3.cpp); the math follows servers/ggml/src/zonos3-graph.cpp ``build_graph``. Activations are float32,
-dense weights float16 (upcast per matmul), the mixers and experts of the QAT GGUF stay Q8_0 / Q4_0 (MLX affine). One
-sequence per call: the scheduler makes one call per slot per tick.
+dense weights float16 (upcast per matmul), the mixers and experts of the QAT GGUF stay Q8_0 / Q4_0 (MLX affine), and a
+quantized GGUF's F16 logits head is quantized to Q8_0 at load. One sequence per forward: the scheduler builds one per
+slot per tick and evaluates a job's branches together (``forward_lazy`` / ``finish``).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import NamedTuple
 
 import mlx.core as mx
 import numpy as np
+from gguf import GGMLQuantizationType
 from zonos3.reference.lm import ProbeSpec
 from zonos3.tts.probe import clip_window, probe_weight, readout
 
@@ -206,6 +208,15 @@ class LMOutput(NamedTuple):
     probe: list[tuple[int, float]] | None
 
 
+class PendingForward(NamedTuple):
+    """A forward's unevaluated graph (``Zonos3MLX.forward_lazy``): ``Zonos3MLX.finish`` evaluates it."""
+
+    logits: mx.array
+    state: LMState
+    probe: ProbeSpec | None
+    queries: dict[int, mx.array]
+
+
 def _to_mx(value) -> mx.array:
     if isinstance(value, mx.array):
         return value.astype(mx.float32)
@@ -253,12 +264,17 @@ class Zonos3MLX:
     def load(cls, path: str | Path) -> "Zonos3MLX":
         f = GGUFFile(path)
         config = LMConfig.from_gguf(f)
+        # a quantized checkpoint (general.file_type not F32 / F16) gets its F16 logits head as Q8_0 (half the bytes of
+        # every decode step); full-precision checkpoints keep theirs
+        quantized_file = int(f.meta("general.file_type", 1)) not in (0, 1)
         tables, weights = {}, {}
         for name in f.names():
             # float32 tables: embeddings, AttnRes queries, 1-D tensors and the GDN conv taps; the rest are matmul weights
             if len(f.shape(name)) == 1 or name.endswith(".gdn_conv.weight") or name == "attnres_q.weight" \
                     or name.startswith(("audio_embd.", "text_embd.", "cond_embd.")):
                 tables[name] = f.f32(name)
+            elif name == "output.weight" and quantized_file and f.tensor_type(name) == GGMLQuantizationType.F16:
+                weights[name] = f.weight_q8_0(name)
             else:
                 weights[name] = f.weight(name)
         model = cls(config, weights, tables, str(path))
@@ -420,6 +436,22 @@ class Zonos3MLX:
                 ) -> LMOutput:
         """Logits of ``ids`` [rows, n_codebooks + 1] continuing ``state`` (updated in place); the keyword arguments
         have the semantics of ``zonos3.reference.lm.Zonos3LM.forward``."""
+        return self.finish([self.forward_lazy(ids, state, speaker_rows=speaker_rows, condition_rows=condition_rows,
+                                              hidden_deltas=hidden_deltas, accents=accents, probe=probe,
+                                              capture=capture)])[0]
+
+    def finish(self, pending: list[PendingForward]) -> list[LMOutput]:
+        """Evaluate forwards built by ``forward_lazy`` (logits and updated states) in one ``mx.eval``, then read their
+        probes: the CFG pair of a tick goes to the GPU as one evaluation."""
+        mx.eval([p.logits for p in pending], [p.state.arrays() for p in pending])
+        return [LMOutput(p.logits, None if p.probe is None else self._readout(p.probe, p.queries, p.state))
+                for p in pending]
+
+    def forward_lazy(self, ids, state: LMState, *, speaker_rows=None, condition_rows=None,
+                     hidden_deltas=None, accents=None, probe: ProbeSpec | None = None, capture: dict | None = None
+                     ) -> PendingForward:
+        """``forward`` without the evaluation: the graph of the logits and of ``state``'s new arrays (``state`` is
+        updated in place, its position advanced); pass the result to ``finish``."""
         c = self.config
         if hasattr(ids, "numpy"):
             ids = ids.detach().cpu().numpy()
@@ -489,9 +521,7 @@ class Zonos3MLX:
             logits = c.loss_softcap * mx.tanh(logits / c.loss_softcap)
             self._save("logits", logits)
             state.position = lo + n
-            mx.eval(logits, *state.arrays())
-            readouts = None if probe is None else self._readout(probe, probe_queries, state)
-            return LMOutput(logits, readouts)
+            return PendingForward(logits, state, probe, probe_queries)
         finally:
             self._capture = self._accents = None
 

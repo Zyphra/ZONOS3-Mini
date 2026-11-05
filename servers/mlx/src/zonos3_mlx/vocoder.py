@@ -3,8 +3,9 @@
 Rows arrive delayed (codebook j of frame f in row f + j). The buffer opens with the silence-prefill rows (decoded,
 never emitted). ``whole`` mode decodes every pre-EOS frame once at end of stream, re-decoding the last
 ``overlap_frames`` already-counted rows as left context; ``prefix`` mode re-decodes the growing prefix (the causal
-decoder) every ``chunk_frames`` frames behind a hold-back, with at most ``context_frames`` of left context, and the exact
-whole decode supplies the tail at EOS. ``decode`` runs the codec (on the scheduler's worker thread in the server).
+decoder) every ``chunk_frames`` frames (the first chunk after ``first_chunk_frames``, for an earlier first audio) behind
+a hold-back, with at most ``context_frames`` of left context, and the exact whole decode supplies the tail at EOS.
+``decode`` runs the codec (on the scheduler's codec thread in the server).
 """
 
 from __future__ import annotations
@@ -16,19 +17,23 @@ import numpy as np
 import torch
 from zonos3.tts.delay import shear_up
 
-PREFIX_ERROR = "prefix stream settings: chunk_frames >= 1, hold_back_frames >= 0, context_frames >= chunk_frames"
+PREFIX_ERROR = ("prefix stream settings: chunk_frames >= 1, first_chunk_frames >= 1, hold_back_frames >= 0, "
+                "context_frames >= chunk_frames")
 
 
-def prefix_settings() -> tuple[int, int, int]:
-    """(chunk, hold_back, context) frames from ZONOS3_PREFIX_STREAM_* (defaults 15, 3, 450); ValueError if invalid."""
+def prefix_settings() -> tuple[int, int, int, int]:
+    """(chunk, first_chunk, hold_back, context) frames from ZONOS3_PREFIX_STREAM_* (defaults 15, 4, 3, 450); ValueError
+    if invalid."""
     env = os.environ.get
     try:
-        values = (int(env("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", "15")), int(env("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", "3")),
+        values = (int(env("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", "15")),
+                  int(env("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", "4")),
+                  int(env("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", "3")),
                   int(env("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", "450")))
     except ValueError:
         raise ValueError(PREFIX_ERROR) from None
-    chunk, hold, context = values
-    if chunk < 1 or hold < 0 or context < chunk:
+    chunk, first, hold, context = values
+    if chunk < 1 or first < 1 or hold < 0 or context < chunk:
         raise ValueError(PREFIX_ERROR)
     return values
 
@@ -36,15 +41,17 @@ def prefix_settings() -> tuple[int, int, int]:
 class StreamDecoder:
     def __init__(self, decode: Callable[[np.ndarray], np.ndarray], *, n_codebooks: int = 10, audio_pad_id: int = 4097,
                  hop: int = 2940, prefill_rows=None, context_codes=None, mode: str = "whole",
-                 overlap_frames: int = 4, chunk_frames: int = 15, hold_back_frames: int = 3, context_frames: int = 450):
+                 overlap_frames: int = 4, chunk_frames: int = 15, first_chunk_frames: int = 4, hold_back_frames: int = 3,
+                 context_frames: int = 450):
         if mode not in ("whole", "prefix"):
             raise ValueError(f"stream decode mode must be whole or prefix, got {mode!r}")
-        if chunk_frames < 1 or hold_back_frames < 0 or context_frames < chunk_frames:
+        if chunk_frames < 1 or first_chunk_frames < 1 or hold_back_frames < 0 or context_frames < chunk_frames:
             raise ValueError(PREFIX_ERROR)
         self.decode = decode
         self.n_codebooks, self.pad, self.eoa, self.hop = n_codebooks, audio_pad_id, audio_pad_id - 1, hop
         self.mode = mode
         self.overlap, self.chunk, self.hold_back, self.context_frames = overlap_frames, chunk_frames, hold_back_frames, context_frames
+        self.first_chunk = first_chunk_frames
         self.buffer: list[list[int]] = [] if prefill_rows is None else [
             [int(v) for v in row[:n_codebooks]] for row in np.asarray(prefill_rows).tolist()]
         self.prefill = len(self.buffer)
@@ -113,7 +120,9 @@ class StreamDecoder:
     def _prefix_chunk(self) -> bytes:
         complete = self._target()
         decodable = complete - self.hold_back
-        if decodable - self.emitted < self.chunk:
+        # the first chunk (nothing past the silence prefill streamed yet) waits for first_chunk frames
+        need = self.first_chunk if self.emitted == self.prefill else self.chunk
+        if decodable - self.emitted < need:
             return b""
         windowed = decodable > self.context_frames + self.chunk
         start = max(0, self.emitted - self.context_frames) if windowed else 0

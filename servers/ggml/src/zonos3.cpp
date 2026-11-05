@@ -233,6 +233,22 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
             ggml_backend_dev_backend_reg(dev), "ggml_backend_dev_get_extra_bufts");
         if (get_extra) for (ggml_backend_buffer_type_t * b = get_extra(dev); b && *b; ++b) extra_bufts.push_back(*b);
     }
+    // Quantized checkpoints (general.file_type not F32/F16, e.g. zonos3-ptq.gguf) run their F16 logits head as q8_0,
+    // quantized here at load: half the bytes of the largest per-step matmul. Full-precision checkpoints keep F16.
+    ggml_tensor * q8_head = nullptr;
+    {
+        const int64_t ft = gguf_find_key(gf, "general.file_type");
+        const bool quantized_file = ft >= 0 && gguf_get_kv_type(gf, ft) == GGUF_TYPE_UINT32 && gguf_get_val_u32(gf, ft) > 1;
+        ggml_tensor * t = ggml_get_tensor(meta, "output.weight");
+        if (quantized_file && t && t->type == GGML_TYPE_F16 && t->ne[0] % ggml_blck_size(GGML_TYPE_Q8_0) == 0 &&
+            ggml_is_contiguous(t)) {
+            t->type = GGML_TYPE_Q8_0;
+            t->nb[0] = ggml_type_size(GGML_TYPE_Q8_0);
+            t->nb[1] = ggml_row_size(GGML_TYPE_Q8_0, t->ne[0]);
+            for (int d = 2; d < GGML_MAX_DIMS; ++d) t->nb[d] = t->nb[d - 1] * t->ne[d - 1];
+            q8_head = t;
+        }
+    }
     std::vector<std::pair<ggml_backend_buffer_type_t, std::vector<ggml_tensor *>>> groups;
     groups.push_back({m.buft, {}});
     for (ggml_tensor * t = ggml_get_first_tensor(meta); t; t = ggml_get_next_tensor(meta, t)) {
@@ -271,15 +287,21 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
     size_t total = 0;
     for (ggml_tensor * t = ggml_get_first_tensor(meta); t; t = ggml_get_next_tensor(meta, t)) {
         const int64_t id = gguf_find_tensor(gf, ggml_get_name(t));
-        const size_t n = ggml_nbytes(t);
+        const size_t n = t == q8_head ? (size_t) ggml_nelements(t) * sizeof(ggml_fp16_t) : ggml_nbytes(t);
         buffer.resize(n);
         if (id < 0 || fseeko(f, gguf_get_data_offset(gf) + gguf_get_tensor_offset(gf, id), SEEK_SET) ||
             fread(buffer.data(), 1, n, f) != n) {
             fprintf(stderr, "zonos3: cannot read tensor '%s'\n", ggml_get_name(t)); ok = false; break;
         }
-        ggml_backend_tensor_set(t, buffer.data(), 0, n);
+        if (t == q8_head) {
+            std::vector<float> head(ggml_nelements(t));
+            ggml_fp16_to_fp32_row((const ggml_fp16_t *) buffer.data(), head.data(), (int64_t) head.size());
+            buffer.resize(ggml_nbytes(t));
+            ggml_quantize_chunk(GGML_TYPE_Q8_0, head.data(), buffer.data(), 0, ggml_nrows(t), t->ne[0], nullptr);
+        }
+        ggml_backend_tensor_set(t, buffer.data(), 0, ggml_nbytes(t));
         m.tensors.emplace(ggml_get_name(t), t);
-        total += n;
+        total += ggml_nbytes(t);
     }
     fclose(f);
     gguf_free(gf); gf = nullptr;

@@ -60,16 +60,38 @@ def test_whole_mode_is_one_exact_chunk_at_eos():
 def test_prefix_mode_streams_and_matches_the_whole_decode():
     frames = make_frames(60, seed=1)
     fake = CausalFakeDecoder()
-    dec = StreamDecoder(fake, mode="prefix", chunk_frames=5, hold_back_frames=2, context_frames=12)
+    dec = StreamDecoder(fake, mode="prefix", chunk_frames=5, first_chunk_frames=3, hold_back_frames=2,
+                        context_frames=12)
     chunks = run(dec, delayed_rows(frames))
     live = [c for c in chunks[:-1] if c]
     assert len(live) >= 8, "chunks must arrive while frames are still coming"
     first = next(i for i, c in enumerate(chunks) if c)
-    assert first == 5 + 2 + (N_CB - 1) - 1
-    assert all(len(c) % (HOP * 4) == 0 for c in live)
+    assert first == 3 + 2 + (N_CB - 1) - 1
+    assert len(chunks[first]) == 3 * HOP * 4
+    assert all(len(c) == 5 * HOP * 4 for c in live[1:])
     assert b"".join(chunks) == whole(frames)
     assert any(call < 60 - 2 and call <= 12 + 5 for call in fake.calls[1:-1])
     assert fake.calls[-1] == 60
+
+
+def test_first_prefix_chunk_lands_at_the_first_chunk_boundary_after_the_prefill():
+    """The default first chunk (4 frames) is emitted once the first 4 generated frames past the silence prefill are
+    decodable; every later chunk waits for chunk_frames; the stream still equals the whole decode bit for bit."""
+    frames = make_frames(70, seed=4)
+    rows = delayed_rows(frames)
+    prefill, gen = rows[:3], rows[3:]
+    fake = CausalFakeDecoder()
+    dec = StreamDecoder(fake, mode="prefix", prefill_rows=prefill)
+    assert (dec.first_chunk, dec.chunk, dec.hold_back) == (4, 15, 3)
+    chunks = run(dec, gen)
+    first = next(i for i, c in enumerate(chunks) if c)
+    # decodable = (3 + i + 1) - (N_CB - 1) - 3 must reach prefill + 4: 4 + 3 + (N_CB - 1) generated rows
+    assert first + 1 == 4 + 3 + (N_CB - 1)
+    assert len(chunks[first]) == 4 * HOP * 4
+    live = [c for c in chunks[first + 1:-1] if c]
+    assert live and all(len(c) == 15 * HOP * 4 for c in live)
+    full = np.frombuffer(whole(frames), dtype=np.float32)
+    np.testing.assert_array_equal(np.frombuffer(b"".join(chunks), dtype=np.float32), full[3 * HOP:])
 
 
 def test_prefix_mode_respects_eos():
@@ -105,9 +127,17 @@ def test_prefix_settings_validation(monkeypatch):
     with pytest.raises(ValueError):
         StreamDecoder(CausalFakeDecoder(), chunk_frames=0)
     with pytest.raises(ValueError):
+        StreamDecoder(CausalFakeDecoder(), first_chunk_frames=0)
+    with pytest.raises(ValueError):
         StreamDecoder(CausalFakeDecoder(), chunk_frames=20, context_frames=10)
-    monkeypatch.delenv("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", raising=False)
-    assert prefix_settings() == (15, 3, 450)
+    for name in ("CHUNK", "FIRST_CHUNK", "HOLD_BACK", "CONTEXT"):
+        monkeypatch.delenv(f"ZONOS3_PREFIX_STREAM_{name}_FRAMES", raising=False)
+    assert prefix_settings() == (15, 4, 3, 450)
+    monkeypatch.setenv("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", "0")
+    with pytest.raises(ValueError, match="first_chunk_frames >= 1"):
+        prefix_settings()
+    monkeypatch.setenv("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", "15")
+    assert prefix_settings() == (15, 15, 3, 450)
     monkeypatch.setenv("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", "0")
     with pytest.raises(ValueError, match="chunk_frames >= 1"):
         prefix_settings()

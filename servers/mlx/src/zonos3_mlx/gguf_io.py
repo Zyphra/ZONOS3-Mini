@@ -18,7 +18,7 @@ from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
-from gguf import GGMLQuantizationType, GGUFReader, GGUFValueType
+from gguf import GGMLQuantizationType, GGUFReader, GGUFValueType, quants
 
 GROUP_SIZE = 32
 _MISSING = object()
@@ -107,6 +107,16 @@ class GGUFFile:
         if kind in (GGMLQuantizationType.Q4_0, GGMLQuantizationType.Q8_0):
             return _repack(np.asarray(t.data, dtype=np.uint8), self.shape(name), kind)
         raise ValueError(f"{name}: unsupported GGUF type {kind.name}")
+
+    def tensor_type(self, name: str) -> GGMLQuantizationType:
+        return self._tensor(name).tensor_type
+
+    def weight_q8_0(self, name: str) -> Weight:
+        """A dense F16/F32 matrix quantized to Q8_0 blocks (ggml ``quantize_row_q8_0``: scale = absmax / 127,
+        round to nearest) and repacked like a stored Q8_0 tensor."""
+        shape = self.shape(name)
+        blocks = quants.quantize(self.array(name).astype(np.float32), GGMLQuantizationType.Q8_0)
+        return _repack(blocks, shape, GGMLQuantizationType.Q8_0)
 
     def f32(self, name: str) -> mx.array:
         """A dense tensor as float32 (embedding tables, norms, 1-D tensors)."""

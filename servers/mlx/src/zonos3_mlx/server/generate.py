@@ -1,8 +1,9 @@
 """Speech generation over HTTP: /v2/generate and the OpenAI-compatible /v1/audio/speech.
 
-``JobRun`` drives one scheduler job: its sink (called on the worker thread) feeds the rows to a per-request
-``StreamDecoder`` (decoding there, where every MLX call runs) and posts the audio chunks to the event loop. Gain and
-fade-out follow the sgl FrontendManager (``stream_tts_audio`` holds back the fade's tail until the end of stream).
+``JobRun`` drives one scheduler job: its sink (called on the worker thread) hands the rows to a per-request
+``StreamDecoder`` on the scheduler's codec thread (so the backbone keeps stepping while a chunk decodes; one FIFO keeps
+the chunks in order) and posts the audio chunks to the event loop. Gain and fade-out follow the sgl FrontendManager
+(``stream_tts_audio`` holds back the fade's tail until the end of stream).
 """
 
 from __future__ import annotations
@@ -49,12 +50,12 @@ class JobRun:
         c, dec = state.config, state.engine.decoder
         self.decoder = None
         if mode is not None:
-            chunk, hold, context = state.options.prefix
+            chunk, first, hold, context = state.options.prefix
             self.decoder = StreamDecoder(
                 dec.decode, n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id, hop=dec.hop,
                 prefill_rows=None if plan.prefill_rows is None else plan.prefill_rows.numpy(),
                 context_codes=None if plan.context_codes is None else plan.context_codes.numpy(), mode=mode,
-                chunk_frames=chunk, hold_back_frames=hold, context_frames=context)
+                chunk_frames=chunk, first_chunk_frames=first, hold_back_frames=hold, context_frames=context)
         self.rows: list = []
         self.eos_frame: int | None = None
         self.record: dict | None = None
@@ -73,31 +74,43 @@ class JobRun:
         self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
 
     def _sink(self, event: tuple) -> None:
-        """Worker thread: decode and forward. A decode failure aborts the job and is reported once."""
+        """Worker thread: record the rows and queue their decode on the codec thread. A failure aborts the job and is
+        reported once."""
         if self.failed:
             return
-        try:
-            kind = event[0]
-            if kind == "row":
-                row, eos = event[1], event[2]
-                self.rows.append(row)
-                if eos is not None:
-                    self.eos_frame = int(eos)
-                if self.decoder is not None:
-                    self._post(("audio", self.decoder.push(row, eos)))
-            elif kind == "done":
-                self.record = event[1]
-                if self.decoder is not None:
-                    self._post(("audio", self.decoder.finish()))
+        kind = event[0]
+        if kind == "row":
+            row, eos = event[1], event[2]
+            self.rows.append(row)
+            if eos is not None:
+                self.eos_frame = int(eos)
+            if self.decoder is not None:
+                self.state.scheduler.codec_submit(self._decode, self.decoder.push, row, eos)
+        elif kind == "done":
+            self.record = event[1]
+            if self.decoder is None:
                 self._post(("done", None))
             else:
-                self.failed = True
-                self._post(event)
+                self.state.scheduler.codec_submit(self._decode, self.decoder.finish, last=True)
+        else:
+            self.failed = True
+            self._post(event)
+
+    def _decode(self, fn, *args, last: bool = False) -> None:
+        """Codec thread: one StreamDecoder call, its audio posted (then the end of stream after ``finish``); skipped
+        once the job failed or was aborted."""
+        if self.failed or self.job.aborted:
+            return
+        try:
+            self._post(("audio", fn(*args)))
         except Exception as exc:  # noqa: BLE001 - delivered to the request
             logger.exception("decode failed")
             self.failed = True
             self.job.aborted = True
             self._post(("error", str(exc)))
+            return
+        if last:
+            self._post(("done", None))
 
     async def chunks(self):
         """float32 PCM chunks (before gain) until the job ends; RuntimeError on a generation failure."""

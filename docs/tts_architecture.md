@@ -213,7 +213,9 @@ the generator's conv-tail decoder is never used. The model is cached per device 
   `ZONOS3_STREAM_DECODE_DEFAULT=whole` turns it off): the causal decoder re-decodes the growing prefix every
   `ZONOS3_PREFIX_STREAM_CHUNK_FRAMES` (15, 1 s) new frames, holding back the last
   `ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES` (3) frames as right context, and re-decodes at most
-  `ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES` (450, 30 s) of left context so the cost per chunk stays bounded. At EOS the
+  `ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES` (450, 30 s) of left context so the cost per chunk stays bounded. A request's
+  first chunk (nothing past the silence prefill emitted yet) waits for only `ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES`
+  (4) frames, so first audio needs 9 (shear) + 3 (hold-back) + 4 = 16 generated frames instead of 27. At EOS the
   exact whole decode supplies everything after the frames already streamed.
 - With a raw-reference prompt, `decode_context_frames` (default 30) of the reference's tail codes are prepended as
   decoder context whenever a decode starts at the stream start, and their samples dropped.

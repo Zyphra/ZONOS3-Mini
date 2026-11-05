@@ -33,7 +33,7 @@ class ServerOptions:
     studio_dir: Path | None = None
     phoneme_lexicon: str | None = None
     text_normalization: bool = False
-    prefix: tuple[int, int, int] = (15, 3, 450)  # chunk, hold-back, context frames
+    prefix: tuple[int, int, int, int] = (15, 4, 3, 450)  # chunk, first-chunk, hold-back, context frames
     # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and dubbing need it)
     fusealign: bool = field(default_factory=fusealign_installed)
 
@@ -66,7 +66,7 @@ class ServerState:
         return self.engine.config
 
     async def run(self, fn, *args, **kwargs):
-        """Run ``fn`` on the scheduler's worker thread (every MLX call) and await its result."""
+        """Run ``fn`` on the scheduler's worker thread (every MLX call but the streamed decodes) and await its result."""
         return await asyncio.wrap_future(self.scheduler.submit(fn, *args, **kwargs))
 
     def close(self) -> None:
