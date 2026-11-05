@@ -488,6 +488,108 @@ def decode_rows(lm: Zonos3LM, assets: ReferenceAssets, rows: list, *, prefill_ro
     return audio[context * hop:]
 
 
+@dataclass(frozen=True)
+class StreamSettings:
+    """Prefix streaming (TTSVocoderManager, ZONOS3_PREFIX_STREAM_*): a chunk once ``chunk`` new frames are decodable
+    behind ``hold_back`` frames (``first_chunk`` for the stream's first), each decoding the prefix with at most
+    ``context`` frames of left context."""
+
+    chunk: int = 15
+    hold_back: int = 3
+    context: int = 450
+    first_chunk: int = 15
+
+
+class PrefixStream:
+    """One take's rows as they come -> float32 PCM chunks (TTSVocoderManager._decode_prefix_chunk / _decode_final in
+    prefix mode): the buffer opens with the silence-prefill rows (decoded, never emitted), the reference tail is left
+    context at the stream start, the causal decoder re-decodes the growing prefix for each chunk, and at EOS the exact
+    whole decode supplies the tail."""
+
+    def __init__(self, lm: Zonos3LM, assets: ReferenceAssets, device, *, prefill_rows: torch.Tensor | None,
+                 context_codes: torch.Tensor | None, settings: StreamSettings):
+        from zonos3.tokenizer.matched_codec import decode_model, entry
+
+        c = lm.config
+        codec = entry(c.audio_codec)
+        model = assets.decoder(c.audio_codec, torch.device(device))
+        self.decode = lambda codes: decode_model(model, codes.unsqueeze(0), codec)[0].numpy().astype(np.float32)
+        self.n_cb, self.pad, self.codebook_size, self.hop = c.n_codebooks, c.audio_pad_id, c.codebook_size, int(codec["hop"])
+        self.settings = settings
+        self.buffer = [] if prefill_rows is None else [[int(v) for v in r[: self.n_cb]] for r in prefill_rows.tolist()]
+        self.prefill = self.emitted = len(self.buffer)
+        self.context = None
+        if context_codes is not None and len(context_codes):
+            self.context = torch.as_tensor(context_codes, dtype=torch.int64).reshape(-1, self.n_cb)
+        self.eos: int | None = None
+
+    def _decode(self, start: int, end: int) -> np.ndarray:
+        """Output frames [start, end) from the delayed rows (the reference tail as left context at the stream start)."""
+        raw_end = min(end + self.n_cb - 1, len(self.buffer))
+        codes = shear_up(torch.tensor(self.buffer[start:raw_end], dtype=torch.int64), self.pad)[: end - start]
+        context = 0
+        if start == 0 and self.context is not None:
+            context = len(self.context)
+            codes = torch.cat((self.context, codes), dim=0)
+        if bool(((codes < 0) | (codes >= self.codebook_size)).any()):
+            raise ValueError("decode rows hold non-codec tokens")
+        return self.decode(codes)[context * self.hop:]
+
+    def _target(self) -> int:
+        target = len(self.buffer) - (self.n_cb - 1)
+        return target if self.eos is None else min(target, self.eos)
+
+    def push(self, row: torch.Tensor, eos_frame: int | None, finished: bool) -> np.ndarray:
+        """One generated row (``eos_frame``: the aligned EOS frame in generated rows): the PCM it completes (maybe none);
+        ``finished``: the take's last row, after which the rest is returned."""
+        codes = [int(v) for v in row[: self.n_cb].tolist()]
+        self.buffer.append(codes)
+        candidates = [] if eos_frame is None else [max(0, int(eos_frame)) + self.prefill]
+        cols = [i for i, tok in enumerate(codes) if tok == self.pad - 1]  # EOA
+        if cols:
+            candidates.append(max(0, len(self.buffer) - 1 - max(cols)))
+        if candidates:
+            self.eos = min(candidates) if self.eos is None else min(self.eos, *candidates)
+        complete = self._target()
+        if finished:
+            if complete <= self.emitted:
+                return np.zeros(0, dtype=np.float32)
+            return self._decode(0, complete)[self.emitted * self.hop:]
+        s = self.settings
+        decodable = complete - s.hold_back
+        if decodable - self.emitted < (s.first_chunk if self.emitted == self.prefill else s.chunk):
+            return np.zeros(0, dtype=np.float32)
+        start = max(0, self.emitted - s.context) if decodable > s.context + s.chunk else 0
+        chunk = self._decode(start, complete)[(self.emitted - start) * self.hop:(decodable - start) * self.hop]
+        self.emitted = decodable
+        return chunk
+
+
+class _Emit:
+    """Streamed PCM out: gained, the last ``fade_out_ms`` held back and faded at the end of the take."""
+
+    def __init__(self, on_audio, gain: float, fade_out_ms: float):
+        self.on_audio, self.gain, self.fade_out_ms = on_audio, np.float32(gain), fade_out_ms
+        self.hold = int(SAMPLE_RATE * max(0.0, fade_out_ms) / 1000.0)
+        self.held = np.zeros(0, dtype=np.float32)
+        self.parts: list[np.ndarray] = []
+
+    def __call__(self, chunk: np.ndarray, last: bool) -> None:
+        data = np.concatenate((self.held, chunk * self.gain)).astype(np.float32)
+        if last:
+            data, self.held = fade_out(data, self.fade_out_ms), data[:0]
+        elif self.hold:
+            data, self.held = data[:-self.hold], data[-self.hold:]
+        else:
+            self.held = data[:0]
+        if len(data):
+            self.parts.append(data)
+            self.on_audio(data)
+
+    def pcm(self) -> np.ndarray:
+        return np.concatenate(self.parts) if self.parts else np.zeros(0, dtype=np.float32)
+
+
 def output_gain(codec: str, headroom_db: float | None) -> float:
     if headroom_db is None:
         from zonos3.tokenizer.matched_codec import codec_names, decoder_headroom_db
@@ -545,14 +647,19 @@ def steer_fn(plan: P.PromptPlan, follower: SpanFollower | None, base_delta=None)
 
 @torch.inference_mode()
 def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=None,
-               dtype: torch.dtype | None = None) -> SynthResult:
-    """Generate and decode one v2 GenerateRequest."""
+               dtype: torch.dtype | None = None, on_plan=None, on_audio=None,
+               stream: StreamSettings = StreamSettings()) -> SynthResult:
+    """Generate and decode one v2 GenerateRequest. ``on_plan(plan)`` sees the prompt plan before generation starts;
+    ``on_audio(pcm)`` gets the output (gained, faded) as it is decoded: prefix-streamed chunks (``stream``), or the
+    whole take at the end for ``stream_decode: whole`` and LACI (whose rollbacks rewrite rows)."""
     device = torch.device(device if device is not None else lm.device)
     if lm.device != device:
         lm.to(device)
     if dtype is not None and lm.dtype != dtype:
         lm.cast(dtype)
     plan = plan_prompt(lm, request, assets=assets, device=device)
+    if on_plan is not None:
+        on_plan(plan)
     c = lm.config
     req = plan.request
     sampling = Sampling.from_request(req)
@@ -564,6 +671,15 @@ def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=N
         lead, lag = plan.follow_gate
         follower = SpanFollower(plan.follow_tokens, plan.schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag)))
     text_start, text_len = locate_text_span(plan.cond.input_ids, c.n_codebooks)
+    gain = output_gain(c.audio_codec, req.headroom_db)
+    prefix = emit = on_row = None
+    if on_audio is not None and plan.laci is None and req.stream_decode != "whole":
+        prefix = PrefixStream(lm, assets, device, prefill_rows=plan.prefill_rows, context_codes=plan.context_codes,
+                              settings=stream)
+        emit = _Emit(on_audio, gain, float(req.fade_out_ms))
+
+        def on_row(row, eos_frame, finished):
+            emit(prefix.push(row, eos_frame, finished), finished)
     record = None
     if plan.laci is None:
         probe = None
@@ -571,14 +687,18 @@ def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=N
             probe = ProbeState(assets.laci_heads[plan.language].heads, text_start, text_len)
         attempt = generate_rows(lm, plan.cond, sampling=sampling, seed=plan.seed, max_tokens=plan.max_tokens,
                                 stop_id=c.eoa_id, twin=plan.twin, cfg_scale=plan.cfg_scale, accents=accents,
-                                steer=steer_fn(plan, follower), probe=probe, observer=follower)
+                                steer=steer_fn(plan, follower), probe=probe, observer=follower, on_row=on_row)
         rows, eos_frame = attempt.rows, attempt.eos_frame
     else:
         rows, eos_frame, record = _laci(lm, plan, assets, sampling, accents, follower, text_start, text_len)
+    if emit is not None:
+        return SynthResult(emit.pcm(), plan.seed, record, rows, eos_frame, plan)
     pcm = decode_rows(lm, assets, rows, prefill_rows=plan.prefill_rows, eos_frame=eos_frame,
                       context_codes=plan.context_codes, device=device)
-    pcm = fade_out(pcm * np.float32(output_gain(c.audio_codec, req.headroom_db)), float(req.fade_out_ms))
-    return SynthResult(pcm.astype(np.float32), plan.seed, record, rows, eos_frame, plan)
+    pcm = fade_out(pcm * np.float32(gain), float(req.fade_out_ms)).astype(np.float32)
+    if on_audio is not None:
+        on_audio(pcm)
+    return SynthResult(pcm, plan.seed, record, rows, eos_frame, plan)
 
 
 def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_start, text_len):

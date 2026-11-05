@@ -5,8 +5,8 @@ reference (zonos3.reference) with generation on ZeroGPU.
 The routes are the part of api/openapi.yaml the studio and the lite page use when the server has no speech editing,
 dubbing, project store or pronunciation lexicon (``/v2/capabilities`` says so and the studio adapts): GET
 ``/v2/capabilities``, ``/v2/controls``, ``/v2/speakers``, ``/v2/speakers/{id}/preview``,
-``/v2/speakers/{id}/embedding``, POST ``/v2/speakers`` and ``/v2/generate`` (the whole take as one body: the reference
-does not stream). Speaker embeddings run on this process's CPU; only ``/v2/generate`` takes a GPU, in a held GPU session
+``/v2/speakers/{id}/embedding``, POST ``/v2/speakers`` and ``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first
+chunk). Speaker embeddings run on this process's CPU; only ``/v2/generate`` takes a GPU, in a held GPU session
 (``gpu_session`` / ``GpuSessions``), on the visitor's ZeroGPU quota through the X-IP-Token the studio forwards from
 huggingface.co (studio/src/lib/zerogpu.ts).
 """
@@ -22,7 +22,7 @@ import multiprocessing
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -31,7 +31,7 @@ import numpy as np
 import soundfile as sf
 import torch
 from fastapi import Header, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from gradio.context import LocalContext
 
 from zonos3 import languages
@@ -46,6 +46,7 @@ from zonos3.reference.lm import Zonos3LM
 from zonos3.reference.synth import (
     ReferenceAssets,
     ReferenceContext,
+    StreamSettings,
     _speaker_embedding,
     decode_base64_blob,
     load_embedding_vector,
@@ -109,8 +110,8 @@ def capabilities() -> dict:
         "codebook_sizes": list(c.codebook_sizes),
         "audio_codec": c.audio_codec,
         "max_tokens": CONTEXT.max_frames,
-        "stream_decode_modes": ["whole"],
-        "stream_decode_default": "whole",
+        "stream_decode_modes": ["prefix", "whole"],
+        "stream_decode_default": "prefix",
         "silence_prefill": {
             "available": CONTEXT.silence_available, "default_frames": silence.frames, "default_on": silence.on,
             "default_seconds": round(silence.frames * hop / SAMPLE_RATE, 3), "frame_seconds": hop / SAMPLE_RATE,
@@ -344,13 +345,17 @@ MARGIN_SECONDS = 5  # a session stops taking work this long before its ZeroGPU d
 _FORK = multiprocessing.get_context("fork")  # spaces forks its GPU workers, which inherit both pipes
 TAKE_RX, TAKE_TX = _FORK.Pipe(duplex=False)  # (take id, request body) or None (close), main process -> session
 RESULT_RX, RESULT_TX = _FORK.Pipe(duplex=False)  # (take id, kind, payload), session -> main process
+# Prefix streaming as the servers do it (15-frame chunks behind a 3-frame hold-back), but the first chunk once 4 frames
+# are decodable: first audio 16 rows into the take instead of 27.
+STREAM = StreamSettings(first_chunk=4)
 
 
 @spaces.GPU(duration=lambda seconds: seconds)
 def gpu_session(seconds: int) -> int:
     """Serve takes until none comes for HOLD_SECONDS, None arrives or ``seconds`` (less the margin) are up; returns the
-    number served. A result's kind is "ok" (payload: pcm, seed, whether painted spans followed the reading), "invalid"
-    (a request the reference refused) or "error" (the session then ends: the next take gets a fresh worker)."""
+    number served. A take's messages: "start" (seed, whether painted spans follow the reading) once planned, "audio"
+    (a float32 PCM chunk) as it is decoded, then "end", or "invalid" (a request the reference refused) or "error" (the
+    session then ends: the next take gets a fresh worker)."""
     deadline, served = time.monotonic() + seconds - MARGIN_SECONDS, 0
     while (left := deadline - time.monotonic()) > 0 and TAKE_RX.poll(min(HOLD_SECONDS, left)):
         message = TAKE_RX.recv()
@@ -359,14 +364,17 @@ def gpu_session(seconds: int) -> int:
         take_id, body = message
         served += 1
         try:
-            result = synthesize(LM, body, assets=ASSETS, device=DEVICE)
+            synthesize(LM, body, assets=ASSETS, device=DEVICE, stream=STREAM,
+                       on_plan=lambda plan: RESULT_TX.send((take_id, "start",
+                                                            (plan.seed, plan.follow_tokens is not None))),
+                       on_audio=lambda pcm: RESULT_TX.send((take_id, "audio", pcm)))
         except ValueError as exc:
             RESULT_TX.send((take_id, "invalid", str(exc)))
         except Exception as exc:
             RESULT_TX.send((take_id, "error", f"{type(exc).__name__}: {exc}"))
             break
         else:
-            RESULT_TX.send((take_id, "ok", (result.pcm, result.seed, result.plan.follow_tokens is not None)))
+            RESULT_TX.send((take_id, "end", None))
     return served
 
 
@@ -374,7 +382,10 @@ def gpu_session(seconds: int) -> int:
 class Take:
     body: dict
     request: Request
-    done: asyncio.Future  # (kind, payload), or None when the client left before the take ran
+    # (kind, payload) as the session sends them, then "end" / "invalid" / "error"; "skipped" when the client left
+    # before the take ran, "failed" (payload: the exception) when no session could run it
+    out: asyncio.Queue = field(default_factory=asyncio.Queue)
+    last: tuple | None = None  # the message that ended its audio
 
 
 class GpuSessions:
@@ -389,23 +400,23 @@ class GpuSessions:
         self.ids = 0
         self.runner: asyncio.Task | None = None
 
-    async def run(self, body: dict, request: Request):
+    def submit(self, body: dict, request: Request) -> Take:
         if self.runner is None or self.runner.done():
             self.runner = asyncio.create_task(self.serve(), context=contextvars.Context())
-        take = Take(body, request, asyncio.get_running_loop().create_future())
-        await self.takes.put(take)
-        return await take.done
+        take = Take(body, request)
+        self.takes.put_nowait(take)
+        return take
 
     async def serve(self) -> None:
         while True:
             take = await self.takes.get()
             try:
                 if await take.request.is_disconnected():
-                    take.done.set_result(None)
+                    take.out.put_nowait(("skipped", None))
                     continue
-                take.done.set_result(await self.take(take))
+                await self.take(take)
             except Exception as exc:
-                take.done.set_exception(exc)
+                take.out.put_nowait(("failed", exc))
                 continue
             if self.open() and self.left() < RENEW_SECONDS:
                 await self.close()
@@ -422,7 +433,7 @@ class GpuSessions:
         await asyncio.to_thread(TAKE_TX.send, None)
         await asyncio.wait([self.session])
 
-    async def take(self, take: Take):
+    async def take(self, take: Take) -> None:
         need = gpu_seconds(take.body)
         if self.open() and (need > self.left() or time.monotonic() - self.last > HOLD_SECONDS - MARGIN_SECONDS):
             await self.close()  # it would run out mid-take, or is about to idle out
@@ -433,11 +444,13 @@ class GpuSessions:
                 self.start(take.request, max(SESSION_SECONDS, need + MARGIN_SECONDS + 1))
             if sender is None:
                 sender = asyncio.create_task(asyncio.to_thread(TAKE_TX.send, (self.ids, take.body)))
-            result = await self.result(self.ids)
-            if result is not None:
+            done = await self.pump(self.ids, take.out)
+            if done is not None:
                 await sender
                 self.last = time.monotonic()
-                return result
+                if not done:
+                    take.out.put_nowait(("error", "the GPU session ended mid-take"))
+                return
             if self.session.exception() is not None:
                 await self.drain(sender)
                 raise self.session.exception()
@@ -455,15 +468,21 @@ class GpuSessions:
         self.seconds = seconds
         print(f"[gpu] session opened ({seconds} s)", flush=True)
 
-    async def result(self, take_id: int):
-        """The take's (kind, payload), or None once the session ended without it."""
+    async def pump(self, take_id: int, out: asyncio.Queue) -> bool | None:
+        """Forward the take's messages to ``out``: True once its last one passed, False when the session ended
+        mid-take, None when it ended before the take began."""
+        began = False
         while True:
             if await asyncio.to_thread(RESULT_RX.poll, 0.25):
                 rid, kind, payload = await asyncio.to_thread(RESULT_RX.recv)
-                if rid == take_id:
-                    return kind, payload
+                if rid != take_id:
+                    continue
+                began = True
+                out.put_nowait((kind, payload))
+                if kind in ("end", "invalid", "error"):
+                    return True
             elif self.session.done() and not RESULT_RX.poll(0):
-                return None
+                return began or None
 
     @staticmethod
     async def drain(sender: asyncio.Task) -> None:
@@ -474,6 +493,15 @@ class GpuSessions:
 
 
 GPU = GpuSessions()
+
+
+async def audio_of(take: Take):
+    """The take's PCM chunks until its audio ends (``take.last`` says how)."""
+    while (message := await take.out.get())[0] == "audio":
+        yield message[1]
+    take.last = message
+    if message[0] != "end":
+        print(f"[gpu] take ended early: {message}", flush=True)
 
 
 def pcm16_wav(pcm: np.ndarray) -> bytes:
@@ -569,28 +597,38 @@ async def embedding(speaker_id: str, x_tts_session_id: str | None = Header(defau
 @app.post("/v2/generate")
 async def generate(req: GenerateRequest, request: Request,
                    x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
-    """The take as one float32 PCM (or 16-bit WAV) body, run on the GPU session (GpuSessions)."""
+    """The take on the GPU session (GpuSessions): float32 PCM streamed as it is decoded, or buffered (stream=false, and
+    16-bit WAV)."""
     if req.stream and req.format == "wav":
         raise HTTPException(status_code=400, detail="format=wav needs stream=false")
     try:
         body = await prepare(req.model_dump(), session_of(x_tts_session_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        outcome = await GPU.run(body, request)
-    except gr.Error as exc:  # ZeroGPU refused or lost the session (quota, queue, worker)
-        status = 429 if exc.title.startswith("ZeroGPU quota") else 503
-        raise HTTPException(status_code=status, detail=exc.message) from exc
-    if outcome is None:
+    take = GPU.submit(body, request)
+    kind, payload = await take.out.get()
+    if kind == "skipped":
         return Response(status_code=499)  # the studio replaced this take while it waited for the GPU
-    kind, payload = outcome
-    if kind != "ok":
+    if kind == "failed":
+        if isinstance(payload, gr.Error):  # ZeroGPU refused or lost the session (quota, queue, worker)
+            status = 429 if payload.title.startswith("ZeroGPU quota") else 503
+            raise HTTPException(status_code=status, detail=payload.message) from payload
+        raise payload
+    if kind != "start":
         raise HTTPException(status_code=400 if kind == "invalid" else 500, detail=payload)
-    pcm, seed, reading = payload
+    seed, reading = payload
     headers = {"X-Audio-Sample-Rate": str(SAMPLE_RATE), "X-Audio-Channels": "1",
                "X-Audio-Format": "pcm16" if req.format == "wav" else "float32", "X-Seed": str(seed)}
     if req.control_spans:
         headers["X-Control-Span-Follow"] = "reading" if reading else "rate"
+    if req.stream:  # a failure mid-take ends the stream: the status line is already sent
+        return StreamingResponse((pcm.astype(np.float32).tobytes() async for pcm in audio_of(take)),
+                                 media_type="audio/pcm", headers=headers)
+    pcm = [chunk async for chunk in audio_of(take)]
+    kind, payload = take.last
+    if kind != "end":
+        raise HTTPException(status_code=400 if kind == "invalid" else 500, detail=payload)
+    pcm = np.concatenate(pcm) if pcm else np.zeros(0, dtype=np.float32)
     if req.format == "wav":
         return Response(content=pcm16_wav(pcm), media_type="audio/wav", headers=headers)
     return Response(content=pcm.astype(np.float32).tobytes(), media_type="audio/pcm", headers=headers)
