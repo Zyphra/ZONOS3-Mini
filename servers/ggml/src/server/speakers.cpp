@@ -48,12 +48,12 @@ bool reference_audio_available(const ServerState & s) { return !s.encoder_path.e
 bool speaker_encoder_available(const ServerState & s) { return !s.spk_path.empty(); }
 
 // The modes a voice supports: an embedding voice the speaker row only; an audio voice every checkpoint mode its
-// companions (or shipped <stem>.codes.npy) can compute.
+// companions (or shipped <stem>.codes.npy / <stem>.embedding.npy) can compute.
 static std::vector<std::string> voice_modes(const ServerState & s, const Speaker & sp) {
     std::vector<std::string> out;
     for (const std::string & m : checkpoint_speaker_modes(s)) {
         if (sp.source_type == "embedding") { if (m == "embedding") out.push_back(m); continue; }
-        if (m == "embedding" && (speaker_encoder_available(s) || !sp.embedding.empty())) out.push_back(m);
+        if (m == "embedding" && (speaker_encoder_available(s) || !sp.embedding_path.empty() || !sp.embedding.empty())) out.push_back(m);
         if (m == "reference" && (reference_audio_available(s) || !sp.codes_path.empty() || !sp.codes.empty())) out.push_back(m);
     }
     return out;
@@ -89,10 +89,11 @@ static bool ends_with(const std::string & s, const std::string & suffix) {
     return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// sgl _default_voice_source_type: audio files and .npy/.npz embeddings; an audio voice's .codes.npy is no voice.
+// sgl _default_voice_source_type: audio files and .npy/.npz embeddings; an audio voice's .codes.npy and
+// .embedding.npy sidecars are no voice.
 static const char * default_source_type(const fs::path & p) {
     const std::string name = lower_ascii(p.filename().string());
-    if (ends_with(name, ".codes.npy")) return nullptr;
+    if (ends_with(name, ".codes.npy") || ends_with(name, ".embedding.npy")) return nullptr;
     const std::string ext = lower_ascii(p.extension().string());
     if (ext == ".npy" || ext == ".npz") return "embedding";
     if (is_audio_ext(ext)) return "audio";
@@ -142,15 +143,18 @@ static void refresh_default_speakers_locked(ServerState & s) {
         sp.original_name = resolved.filename().string();
         sp.transcript = read_transcript(resolved);
         sp.is_default = true;
-        if (sp.source_type == "audio") {   // shipped reference codes beside the clip (<stem>.codes.npy)
-            fs::path codes = resolved;
+        if (sp.source_type == "audio") {   // shipped sidecars beside the clip: <stem>.codes.npy, <stem>.embedding.npy
+            fs::path codes = resolved, emb = resolved;
             codes.replace_extension(".codes.npy");
+            emb.replace_extension(".embedding.npy");
             if (fs::is_regular_file(codes, ec)) { sp.codes_path = codes.string(); sp.codes_mtime = file_mtime(codes); }
+            if (fs::is_regular_file(emb, ec)) { sp.embedding_path = emb.string(); sp.embedding_mtime = file_mtime(emb); }
         }
         auto old = s.default_speakers.find(sp.id);
         if (old != s.default_speakers.end() && old->second.path == sp.path && old->second.mtime == sp.mtime &&
             old->second.source_type == sp.source_type && old->second.codes_path == sp.codes_path &&
-            old->second.codes_mtime == sp.codes_mtime) {
+            old->second.codes_mtime == sp.codes_mtime && old->second.embedding_path == sp.embedding_path &&
+            old->second.embedding_mtime == sp.embedding_mtime) {
             old->second.transcript = sp.transcript;
             current[sp.id] = std::move(old->second);
             continue;
@@ -509,8 +513,8 @@ static void ensure_pcm(Speaker & v) {
     if (v.pcm.empty()) fail(400, "Failed to read default voice '" + v.label + "'.");
 }
 
-// The voice's speaker embedding (sgl _resolve_cached_speaker_embedding): an embedding file's vector, or the speaker
-// encoder's embedding of an audio voice, computed once.
+// The voice's speaker embedding (sgl _resolve_cached_speaker_embedding): an embedding file's vector, an audio voice's
+// shipped <stem>.embedding.npy (else, or when it does not load, the speaker encoder's embedding of the clip), once.
 static std::vector<float> voice_embedding(ServerState & s, const std::optional<std::string> & session, const std::string & id) {
     Speaker v = lookup_voice(s, session, id);
     const int dim = (int) s.model.hp.speaker_dim;
@@ -520,9 +524,24 @@ static std::vector<float> voice_embedding(ServerState & s, const std::optional<s
             if (!read_file(v.path, raw)) fail(400, "Failed to read default voice '" + v.label + "'.");
             v.embedding = load_embedding_vector(std::vector<uint8_t>(raw.begin(), raw.end()), dim, v.original_name);
         } else {
-            std::lock_guard<std::mutex> compute(s.reference_compute_mtx);
-            ensure_pcm(v);
-            embed_speaker_locked(s, v.pcm, v.embedding);
+            if (!v.embedding_path.empty()) {
+                std::string raw;
+                try {
+                    if (!read_file(v.embedding_path, raw)) throw std::runtime_error("unreadable");
+                    v.embedding = load_embedding_vector(std::vector<uint8_t>(raw.begin(), raw.end()), dim, std::nullopt);
+                } catch (const std::exception & e) {
+                    const auto * http = dynamic_cast<const HttpError *>(&e);
+                    fprintf(stderr, "zonos3-server: cannot load shipped embedding %s (%s); embedding %s\n",
+                            v.embedding_path.c_str(), http ? http->body.value("detail", std::string()).c_str() : e.what(),
+                            v.path.c_str());
+                    v.embedding.clear();
+                }
+            }
+            if (v.embedding.empty()) {
+                std::lock_guard<std::mutex> compute(s.reference_compute_mtx);
+                ensure_pcm(v);
+                embed_speaker_locked(s, v.pcm, v.embedding);
+            }
         }
         remember(s, session, v);
     }

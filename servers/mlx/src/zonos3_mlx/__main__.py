@@ -46,8 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3 "
                         "hold-back; whole: one exact chunk at EOS)")
     p.add_argument("--tts-default-voices-dir", default=str(paths.DEFAULT_VOICES),
-                   help="default voices: audio files (+ <stem>.codes.npy reference codes) and .npy/.npz speaker "
-                        "embeddings (default default_voices; empty disables)")
+                   help="default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy "
+                        "speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)")
     p.add_argument("--python-src", default=str(paths.PYTHON_SRC),
                    help="directory holding the zonos3 package for the text-normalization worker (default model/src)")
     p.add_argument("--worker-python", default=None, metavar="PY",

@@ -40,7 +40,8 @@ The studio's dev and preview servers serve `dist/` at `/web-engine` and `public/
 caches shards in Cache Storage (`zonos3-web-models-v4`; the name changes whenever an export reuses shard URLs, so a
 visitor never mixes old and new shards); `?models=URL` loads them from elsewhere. Models that load
 together report as one readout (`engine.init(progress)`: backbone + zac; `engine.onEncoderProgress(cb)`: spk, or
-encoder + teacher on a clip voice's first use): `{models, loaded, total, fetched}` in tensor bytes, `total` known from
+encoder + teacher on an uploaded clip's first use; default voices ship their codes and speaker embedding beside the
+clip, so they load neither encoder): `{models, loaded, total, fetched}` in tensor bytes, `total` known from
 the first readout (manifests are read first), at most every 100 ms; `fetched` counts the network bytes so a page can
 tell a download rate from Cache Storage reads. Without WebGPU (or
 with adapter limits too low) `engine.init` rejects and the studio shows the error. The speaker encoder clamps clips to

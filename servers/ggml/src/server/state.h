@@ -38,10 +38,11 @@ struct Speaker {
     std::optional<std::string> original_name;
     std::optional<std::string> transcript;    // default voices: the <voice>.txt sidecar
     std::string path, codes_path;             // default voices: the file and an audio voice's <stem>.codes.npy
+    std::string embedding_path;               // default voices: an audio voice's <stem>.embedding.npy
     std::vector<int32_t> codes;               // reference codes, ordinary [frames, 10] (lazy for audio voices)
     std::vector<float> embedding;             // [speaker_dim] (lazy for audio voices)
     std::vector<float> pcm;                   // 44.1 kHz audio of an audio voice (preview, lazy compute)
-    double created = 0, mtime = 0, codes_mtime = 0;
+    double created = 0, mtime = 0, codes_mtime = 0, embedding_mtime = 0;
     bool is_default = false;
 };
 

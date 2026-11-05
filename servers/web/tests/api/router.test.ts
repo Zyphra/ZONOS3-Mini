@@ -140,7 +140,8 @@ describe.skipIf(!haveModels)('engine api', () => {
     const emb = await call(api, 'GET', `/v2/speakers/${engine.voices[0].id}/embedding`);
     expect(emb.status).toBe(200);
     expect(validate('SpeakerEmbedding', emb.json())).toEqual([]);
-    expect(emb.json<{ embedding: number[] }>().embedding).toHaveLength(192);
+    // a default voice answers its shipped embedding (0.2), not the speaker encoder's (the clip's first sample, 0.1)
+    expect(emb.json<{ embedding: number[] }>().embedding).toEqual(new Array(192).fill(0.2));
     expect((await call(api, 'GET', '/v2/speakers/nope/embedding')).status).toBe(400);
     const gen = await call(api, 'POST', '/v2/generate', { text: 'Hi.', stream: false, speaker_embedding_id: sp.id }, SESSION);
     expect(gen.status).toBe(200);

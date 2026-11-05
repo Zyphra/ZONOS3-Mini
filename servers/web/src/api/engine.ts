@@ -24,13 +24,15 @@ export interface CodecApi {
   flush(): Promise<Float32Array>;
 }
 
-/** A shipped default voice: its clip decoded to 44.1 kHz mono by the client and its shipped reference codes. */
+/** A shipped default voice: its clip decoded to 44.1 kHz mono by the client, its shipped reference codes and its
+ *  shipped speaker embedding (so neither encoder loads for a default voice). */
 export interface DefaultVoice {
   id: string;
   label: string;
   file: string;
   pcm: Float32Array | null;     // null when the client could not decode the clip
   codes: Int32Array | null;     // ordinary [T][10]
+  embedding: Float32Array | null; // [speakerDim]
 }
 
 export interface Engine {

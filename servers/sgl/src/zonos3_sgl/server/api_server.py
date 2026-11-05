@@ -575,7 +575,10 @@ def _default_voice_root(config: ServerArgs) -> Path | None:
 
 
 def _default_voice_source_type(path: Path) -> Literal["audio", "embedding"] | None:
-    if path.name.lower().endswith(".codes.npy"):  # an audio voice's reference codes (the ggml server's)
+    name = path.name.lower()
+    # An audio voice's sidecars for the GGUF servers (reference codes, speaker embedding) are no voice; this server
+    # computes both from the clip with its own encoders.
+    if name.endswith(".codes.npy") or name.endswith(".embedding.npy"):
         return None
     suffix = path.suffix.lower()
     if suffix in _DEFAULT_VOICE_EMBEDDING_EXTENSIONS:

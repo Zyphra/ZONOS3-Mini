@@ -51,4 +51,5 @@ default_voices/*
 !default_voices/AmericanMale.mp3
 !default_voices/BritishFemale.mp3
 !default_voices/*.codes.npy
+!default_voices/*.embedding.npy
 steering/**/pooled.npz

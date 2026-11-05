@@ -88,7 +88,10 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
   const engine: Engine = {
     hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
     steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
-    voices: voices.map(v => ({ ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) })),
+    voices: voices.map(v => ({
+      ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5),
+      embedding: new Float32Array(hp.speakerDim).fill(0.2),
+    })),
     headroomDb: 3,
     async embedSpeaker(pcm) { return new Float32Array(hp.speakerDim).fill(pcm[0] ?? 0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
@@ -122,7 +125,7 @@ export function bareApi(): StubSet {
   const engine: Engine = {
     hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),
-    voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5) }],
+    voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5), embedding: null }],
     headroomDb: 3,
     async embedSpeaker() { return new Float32Array(hp.speakerDim).fill(0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
