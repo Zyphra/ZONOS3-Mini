@@ -42,7 +42,7 @@ chooser and the lite page) mount the same top bar, icons and toggle through `src
 
 ## Phone layout
 
-`/studio` also works on a phone (portrait, ≈360–430 px; the chooser at `/` still sends phones to `/lite`). Everything
+`/studio` also works on a phone (portrait, ≈360–430 px; the chooser at `/` offers it on every device). Everything
 is in `src/styles/mobile.css` (`@media (max-width: 760px)`, loaded after `styles.css`) plus the `phone` signal in
 `src/lib/media.ts` (the same breakpoint) for the few places where the markup differs:
 
@@ -71,10 +71,8 @@ pnpm --dir studio build       # gen:api, tsc, vite → studio/dist/ (commit it)
 
 Three pages, three Vite entries: `index.html` (`src/home/`) is the chooser at `/` that opens either app,
 `studio.html` (`src/main.tsx`) is the Voice Studio at `/studio`, and `lite.html` (`src/lite/`) is the lite page at
-`/lite`. The chooser passes its query on (`/?api=web` opens `/studio?api=web`). On a phone (a coarse pointer and a
-viewport under 600 px on either side) `/` skips the chooser and replaces itself with `/lite`, query and hash kept,
-before first paint; tablets and narrow desktop windows still get the chooser, and `/studio` always opens the
-studio. Every server maps `/<page>` to
+`/lite`. The chooser passes its query on (`/?api=web` opens `/studio?api=web`) and shows both apps on every device,
+phones included. Every server maps `/<page>` to
 `<page>.html` (the studio serving rule of `../api/openapi.yaml`; Vite's dev and preview servers and Cloudflare's
 static assets do the same).
 
