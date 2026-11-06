@@ -8,7 +8,7 @@
     "gen:api": "openapi-typescript ../../api/openapi.json -o src/api/schema.ts --default-non-nullable false --empty-objects-unknown --array-length",
     "build": "pnpm gen:api && tsc --noEmit -p . && tsc --noEmit -p tests && vite build",
     "typecheck": "pnpm gen:api && tsc --noEmit -p . && tsc --noEmit -p tests",
-    "test": "vitest run",
+    "test": "pnpm gen:api && vitest run",
     "export": "uv run --package zonos3-tools python scripts/export_web_models.py --models ../ggml/models --voices ../../default_voices --laci ../../laci_heads --out public/models && uv run --package zonos3-tools python scripts/export_web_aligner.py --out public/models",
     "goldens": "cd ../.. && bash servers/web/scripts/make_goldens.sh",
     "parity": "node harness/parity.mjs",

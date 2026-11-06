@@ -9,9 +9,9 @@
   },
   "packageManager": "pnpm@10.34.9+sha512.f49b5a8ea0fdedb44bb3c0c1d6575092a53c2950d95b7ad15df11f17974877a2de3a01c07e934e9b28ce716e51c09a94962c7306d09be2e1e4b18a8c8762fd32",
   "scripts": {
-    "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run",
-    "build": "tsc --noEmit -p . && vite build && esbuild src/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.js --external:@modelcontextprotocol/* --external:express --external:cors --external:zod --external:openapi-fetch --banner:js='#!/usr/bin/env node'",
+    "typecheck": "pnpm --dir .. run gen:api && tsc --noEmit -p .",
+    "test": "pnpm --dir .. run gen:api && vitest run",
+    "build": "pnpm --dir .. run gen:api && tsc --noEmit -p . && vite build && esbuild src/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.js --external:@modelcontextprotocol/* --external:express --external:cors --external:zod --external:openapi-fetch --banner:js='#!/usr/bin/env node'",
     "start": "node dist/server.js",
     "start:stdio": "node dist/server.js --stdio"
   },
@@ -33,7 +33,7 @@
     "vite-plugin-singlefile": "^2.3.4",
     "esbuild": "^0.28.2",
     "vitest": "^5.1.0",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "@types/express": "^5.0.0",
     "@types/cors": "^2.8.19"
   }

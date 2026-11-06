@@ -51,3 +51,4 @@ default_voices/*
 !default_voices/*.codes.npy
 !default_voices/*.embedding.npy
 steering/**/pooled.npz
+/node_modules/

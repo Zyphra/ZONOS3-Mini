@@ -2,3 +2,4 @@ node_modules
 .env.local
 # The repository ignores *.json; the app needs its manifest, lockfile, tsconfig and fixtures.
 !*.json
+src/api/schema.ts
