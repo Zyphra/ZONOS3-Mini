@@ -907,13 +907,33 @@ async def lite(request: Request):
     return page("lite.html", request)
 
 
-@app.api_route("/assets/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-async def asset(path: str):
-    root = (STUDIO / "assets").resolve()
+def studio_file(folder: str, path: str, cache: str) -> FileResponse:
+    root = (STUDIO / folder).resolve()
     target = (root / path).resolve()
     if not target.is_relative_to(root) or not target.is_file():
         raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    return FileResponse(target, headers={"Cache-Control": cache})
+
+
+@app.api_route("/assets/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+async def asset(path: str):
+    return studio_file("assets", path, "public, max-age=31536000, immutable")
+
+
+# The studio is an installable PWA: its manifest, icons and service worker sit at the root. Unhashed, so revalidated.
+@app.api_route("/icons/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+async def icon(path: str):
+    return studio_file("icons", path, "no-cache")
+
+
+@app.api_route("/manifest.webmanifest", methods=["GET", "HEAD"], include_in_schema=False)
+async def manifest():
+    return studio_file(".", "manifest.webmanifest", "no-cache")
+
+
+@app.api_route("/sw.js", methods=["GET", "HEAD"], include_in_schema=False)
+async def service_worker():
+    return studio_file(".", "sw.js", "no-store, max-age=0")
 
 
 app.launch(ssr_mode=False)
