@@ -367,9 +367,13 @@ def tokenize_worker(
                     )
             if vocoder_msgs:
                 audio_chunks = tts_vocoder_manager.decode_frames(vocoder_msgs)
+                # A non-final row that produced no audio (every row before EOS of a whole-decode request) needs no
+                # reply: the frontend only reads audio bytes and the finished flag, and a reply per row per request
+                # floods its event loop at high concurrency.
                 frontend_replies.extend(
                     TTSAudioReply(uid=msg.uid, audio_data=audio, finished=msg.finished, laci=msg.laci)
                     for msg, audio in zip(vocoder_msgs, audio_chunks, strict=True)
+                    if audio or msg.finished
                 )
             if frontend_replies:
                 batch_output = BatchTTSFrontendMsg(data=frontend_replies)

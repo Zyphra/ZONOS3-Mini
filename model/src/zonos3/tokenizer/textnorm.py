@@ -12,6 +12,7 @@ text_normalization flag.
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import re
@@ -192,23 +193,29 @@ class TTSTextNormalizer:
         cache_dir = os.path.join(self.cache_root, f"{lang}_{input_case}")
         os.makedirs(cache_dir, exist_ok=True)
 
-        logger.info("Loading TTS text normalizer for '%s' (%s)...", lang, input_case)
-        normalizer = Normalizer(
-            input_case=input_case,
-            lang=lang,
-            cache_dir=cache_dir,
-            overwrite_cache=False,
-        )
+        # Several tokenizer processes share this cache: one builds and writes the .far files while the others wait,
+        # then load them (an unlocked concurrent build could read another process's half-written .far).
+        with open(os.path.join(cache_dir, ".build.lock"), "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            logger.info("Loading TTS text normalizer for '%s' (%s)...", lang, input_case)
+            normalizer = Normalizer(
+                input_case=input_case,
+                lang=lang,
+                cache_dir=cache_dir,
+                overwrite_cache=False,
+            )
 
-        prefix = _VERBALIZER_FAR_PREFIX.get(lang)
-        if prefix is not None:
-            far_path = os.path.join(cache_dir, f"{prefix}_tn_True_deterministic_verbalizer.far")
-            if not os.path.exists(far_path):
-                from zonos3.vendor.nemo_text_processing.text_normalization.en.graph_utils import (
-                    generator_main,
+            prefix = _VERBALIZER_FAR_PREFIX.get(lang)
+            if prefix is not None:
+                far_path = os.path.join(
+                    cache_dir, f"{prefix}_tn_True_deterministic_verbalizer.far"
                 )
+                if not os.path.exists(far_path):
+                    from zonos3.vendor.nemo_text_processing.text_normalization.en.graph_utils import (
+                        generator_main,
+                    )
 
-                generator_main(far_path, {"verbalize": normalizer.verbalizer.fst})
+                    generator_main(far_path, {"verbalize": normalizer.verbalizer.fst})
         return normalizer
 
     def get(self, lang: str):
