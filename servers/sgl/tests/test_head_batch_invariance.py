@@ -1,4 +1,5 @@
 """The multi-codebook LM head gives a request the same logits whether it shares the GEMM with 0 or 1000 other rows."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace

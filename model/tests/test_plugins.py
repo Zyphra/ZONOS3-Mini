@@ -104,27 +104,57 @@ def test_mount_keeps_the_catch_all_last_and_extends_keepalive():
 
 
 def test_host_facts_json_roundtrip():
-    facts = HostFacts(model_name="ckpt", rate_edges=(8.0, 12.0), rate_buckets=3, laci_languages=frozenset({"en_us"}),
-                      speaker_modes=("reference", "embedding"), raw_controls=frozenset({"voice.deeper"}),
-                      phoneme_tokens=True,
-                      rate_extension=RateExtension(direction="pace.tempo", row_edges=(8.0, 12.0), below=(6.0,),
-                                                   above=(20.0,), doses={"en_us": {-1: 0.5, 3: -0.5}},
-                                                   reference_sides=("slower",)),
-                      worker_device="cpu")
+    facts = HostFacts(
+        model_name="ckpt",
+        rate_edges=(8.0, 12.0),
+        rate_buckets=3,
+        laci_languages=frozenset({"en_us"}),
+        speaker_modes=("reference", "embedding"),
+        raw_controls=frozenset({"voice.deeper"}),
+        phoneme_tokens=True,
+        rate_extension=RateExtension(
+            direction="pace.tempo",
+            row_edges=(8.0, 12.0),
+            below=(6.0,),
+            above=(20.0,),
+            doses={"en_us": {-1: 0.5, 3: -0.5}},
+            reference_sides=("slower",),
+        ),
+        worker_device="cpu",
+    )
     data = facts.to_json()
     assert data["rate_extension"]["doses"] == {"en_us": {"-1": 0.5, "3": -0.5}}
     assert HostFacts.from_json(data) == facts
-    bare = HostFacts(model_name="m", rate_edges=(), rate_buckets=0, laci_languages=frozenset(), speaker_modes=(),
-                     raw_controls=frozenset(), phoneme_tokens=False, rate_extension=None)
+    bare = HostFacts(
+        model_name="m",
+        rate_edges=(),
+        rate_buckets=0,
+        laci_languages=frozenset(),
+        speaker_modes=(),
+        raw_controls=frozenset(),
+        phoneme_tokens=False,
+        rate_extension=None,
+    )
     assert HostFacts.from_json(bare.to_json()) == bare
 
 
 def test_laci_take_request_json():
     request = GenerateRequest(text="bonjour", language="fr_fr", laci=True)
     take = LaciTakeRequest(request=request, target_frames=45.0)
-    assert take.to_json("/tmp/a.wav") == {"request": {"text": "bonjour", "language": "fr_fr", "laci": True},
-                                          "target_frames": 45.0, "adjust_rate": True, "scale": None,
-                                          "out": "/tmp/a.wav"}
-    scaled = LaciTakeRequest(request=request, target_frames=45.0, adjust_rate=False, rate_edges=(6.0, 8.0, 12.0),
-                             rate_first=-1, rate_bucket=-1, rate_doses={-1: 0.5})
+    assert take.to_json("/tmp/a.wav") == {
+        "request": {"text": "bonjour", "language": "fr_fr", "laci": True},
+        "target_frames": 45.0,
+        "adjust_rate": True,
+        "scale": None,
+        "out": "/tmp/a.wav",
+    }
+    scaled = LaciTakeRequest(
+        request=request,
+        target_frames=45.0,
+        adjust_rate=False,
+        rate_edges=(6.0, 8.0, 12.0),
+        rate_first=-1,
+        rate_bucket=-1,
+        rate_doses={-1: 0.5},
+    )
     assert scaled.to_json("o")["scale"] == {"edges": [6.0, 8.0, 12.0], "first": -1, "bucket": -1, "doses": {"-1": 0.5}}

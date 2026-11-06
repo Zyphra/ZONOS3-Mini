@@ -38,11 +38,7 @@ def block_attnres_reference(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Direct paper equation; deliberately simple and independently testable."""
     partial_source = partial_block.unsqueeze(0)
-    sources = (
-        partial_source
-        if completed_blocks is None
-        else torch.cat((completed_blocks, partial_source), dim=0)
-    )
+    sources = partial_source if completed_blocks is None else torch.cat((completed_blocks, partial_source), dim=0)
     keys = F.rms_norm(
         sources,
         (sources.shape[-1],),
@@ -100,9 +96,7 @@ def _phase1_forward_launch_config(
 ) -> tuple[int, int]:
     """Select measured metadata only for an exact production schedule row."""
     if exact_b4_shape:
-        measured = _EXACT_B4_PHASE1_FORWARD_CONFIGS.get(
-            (completed, query_count)
-        )
+        measured = _EXACT_B4_PHASE1_FORWARD_CONFIGS.get((completed, query_count))
         if measured is not None:
             return measured
     if query_count >= 4:
@@ -121,9 +115,7 @@ def _phase1_backward_launch_config(
     """Select measured metadata only for an exact production schedule row."""
     if exact_b4_shape:
         measured = (
-            _EXACT_B4_PHASE1_BACKWARD_DLSE_CONFIGS
-            if has_dlses
-            else _EXACT_B4_PHASE1_BACKWARD_NO_DLSE_CONFIGS
+            _EXACT_B4_PHASE1_BACKWARD_DLSE_CONFIGS if has_dlses else _EXACT_B4_PHASE1_BACKWARD_NO_DLSE_CONFIGS
         ).get((completed, query_count))
         if measured is not None:
             return measured
@@ -228,16 +220,13 @@ if HAS_TRITON:
         x_inv = tl.rsqrt(tl.sum(x * x, axis=0) * INV_D + EPS)
         x_logit = tl.sum(x * q, axis=0) * x_inv
         probability = tl.sigmoid(x_logit - inter_lse)
-        mixed = (inter + probability * (x - inter)).to(
-            PARTIAL.dtype.element_ty
-        ).to(tl.float32)
+        mixed = (inter + probability * (x - inter)).to(PARTIAL.dtype.element_ty).to(tl.float32)
         mixed_inv = tl.rsqrt(tl.sum(mixed * mixed, axis=0) * INV_D + EPS)
 
         tl.store(OUT + base, mixed * mixed_inv * weight, mask=mask)
         tl.store(INTRA_LOGIT + token, x_logit)
         tl.store(INTRA_INV_RMS + token, x_inv)
         tl.store(OUTPUT_INV_RMS + token, mixed_inv)
-
 
     @triton.jit
     def _phase2_norm_bwd_main_kernel(
@@ -274,29 +263,26 @@ if HAS_TRITON:
 
         probability = tl.sigmoid(x_logit - inter_lse)
         inter_probability = 1.0 - probability
-        mixed = (inter + probability * (x - inter)).to(
-            PARTIAL.dtype.element_ty
-        ).to(tl.float32)
+        mixed = (inter + probability * (x - inter)).to(PARTIAL.dtype.element_ty).to(tl.float32)
         weighted_dout = weight * dout
         norm_coupling = tl.sum(weighted_dout * mixed, axis=0)
-        dmixed = (mixed_inv * weighted_dout - (
-            mixed * (mixed_inv * mixed_inv * mixed_inv * INV_D * norm_coupling)
-        )).to(PARTIAL.dtype.element_ty).to(tl.float32)
+        dmixed = (
+            (mixed_inv * weighted_dout - (mixed * (mixed_inv * mixed_inv * mixed_inv * INV_D * norm_coupling)))
+            .to(PARTIAL.dtype.element_ty)
+            .to(tl.float32)
+        )
 
         merge_coupling = tl.sum(dmixed * (inter - x), axis=0)
         probability_product = probability * inter_probability
         dinter_lse = probability_product * merge_coupling
         dx_logit = -dinter_lse
-        dx = probability * dmixed + dx_logit * x_inv * (
-            q - x_logit * x_inv * x * INV_D
-        )
+        dx = probability * dmixed + dx_logit * x_inv * (q - x_logit * x_inv * x * INV_D)
         dinter = inter_probability * dmixed
 
         tl.store(DPARTIAL + base, dx, mask=mask)
         tl.store(DINTER + base, dinter, mask=mask)
         tl.store(DINTER_LSE + token, dinter_lse)
         tl.store(DINTRA_LOGIT + token, dx_logit)
-
 
     @triton.jit
     def _phase2_norm_bwd_reduce_kernel(
@@ -328,16 +314,10 @@ if HAS_TRITON:
         x_logit = tl.load(INTRA_LOGIT + token_offsets, mask=token_mask, other=0.0)
         inter_lse = tl.load(INTER_LSE + token_offsets, mask=token_mask, other=0.0)
         x_inv = tl.load(INTRA_INV_RMS + token_offsets, mask=token_mask, other=0.0)
-        mixed_inv = tl.load(
-            OUTPUT_INV_RMS + token_offsets, mask=token_mask, other=0.0
-        )
-        dx_logit = tl.load(
-            DINTRA_LOGIT + token_offsets, mask=token_mask, other=0.0
-        )
+        mixed_inv = tl.load(OUTPUT_INV_RMS + token_offsets, mask=token_mask, other=0.0)
+        dx_logit = tl.load(DINTRA_LOGIT + token_offsets, mask=token_mask, other=0.0)
         probability = tl.sigmoid(x_logit - inter_lse)
-        mixed = (inter + probability[:, None] * (x - inter)).to(
-            PARTIAL.dtype.element_ty
-        ).to(tl.float32)
+        mixed = (inter + probability[:, None] * (x - inter)).to(PARTIAL.dtype.element_ty).to(tl.float32)
 
         dq = tl.sum(dx_logit[:, None] * x_inv[:, None] * x, axis=0)
         dweight = tl.sum(dout * mixed * mixed_inv[:, None], axis=0)
@@ -348,7 +328,6 @@ if HAS_TRITON:
             mask=hidden_mask,
             sem="relaxed",
         )
-
 
     @triton.jit
     def _phase2_norm_bwd_fused_kernel(
@@ -384,76 +363,50 @@ if HAS_TRITON:
 
         x = tl.load(PARTIAL + offsets, mask=mask, other=0.0).to(tl.float32)
         inter = tl.load(INTER + offsets, mask=mask, other=0.0).to(tl.float32)
-        query = tl.load(
-            QUERY + hidden_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
-        weight = tl.load(
-            NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
+        query = tl.load(QUERY + hidden_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
+        weight = tl.load(NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
         dout = tl.load(DOUT + offsets, mask=mask, other=0.0).to(tl.float32)
-        inter_lse = tl.load(
-            INTER_LSE + token_offsets, mask=token_mask, other=0.0
-        ).to(tl.float32)
-        x_logit = tl.load(
-            INTRA_LOGIT + token_offsets, mask=token_mask, other=0.0
-        ).to(tl.float32)
-        x_inv = tl.load(
-            INTRA_INV_RMS + token_offsets, mask=token_mask, other=0.0
-        ).to(tl.float32)
-        mixed_inv = tl.load(
-            OUTPUT_INV_RMS + token_offsets, mask=token_mask, other=0.0
-        ).to(tl.float32)
+        inter_lse = tl.load(INTER_LSE + token_offsets, mask=token_mask, other=0.0).to(tl.float32)
+        x_logit = tl.load(INTRA_LOGIT + token_offsets, mask=token_mask, other=0.0).to(tl.float32)
+        x_inv = tl.load(INTRA_INV_RMS + token_offsets, mask=token_mask, other=0.0).to(tl.float32)
+        mixed_inv = tl.load(OUTPUT_INV_RMS + token_offsets, mask=token_mask, other=0.0).to(tl.float32)
 
         probability = tl.sigmoid(x_logit - inter_lse)
         inter_probability = 1.0 - probability
-        mixed = (inter + probability[:, None] * (x - inter)).to(
-            PARTIAL.dtype.element_ty
-        ).to(tl.float32)
+        mixed = (inter + probability[:, None] * (x - inter)).to(PARTIAL.dtype.element_ty).to(tl.float32)
         weighted_dout = weight[None, :] * dout
         norm_coupling = tl.sum(weighted_dout * mixed, axis=1)
         dmixed = (
-            mixed_inv[:, None] * weighted_dout
-            - mixed
-            * (
-                mixed_inv
-                * mixed_inv
-                * mixed_inv
-                * INV_D
-                * norm_coupling
-            )[:, None]
-        ).to(PARTIAL.dtype.element_ty).to(tl.float32)
+            (
+                mixed_inv[:, None] * weighted_dout
+                - mixed * (mixed_inv * mixed_inv * mixed_inv * INV_D * norm_coupling)[:, None]
+            )
+            .to(PARTIAL.dtype.element_ty)
+            .to(tl.float32)
+        )
 
         merge_coupling = tl.sum(dmixed * (inter - x), axis=1)
         dinter_lse = probability * inter_probability * merge_coupling
         dx_logit = -dinter_lse
         dx = probability[:, None] * dmixed + dx_logit[:, None] * x_inv[:, None] * (
-            query[None, :]
-            - x_logit[:, None]
-            * x_inv[:, None]
-            * x
-            * INV_D
+            query[None, :] - x_logit[:, None] * x_inv[:, None] * x * INV_D
         )
         dinter = inter_probability[:, None] * dmixed
         if HAS_CARRY:
-            dinter += tl.load(DCARRY + offsets, mask=mask, other=0.0).to(
-                tl.float32
-            )
+            dinter += tl.load(DCARRY + offsets, mask=mask, other=0.0).to(tl.float32)
 
         tl.store(DPARTIAL + offsets, dx, mask=mask)
         tl.store(DINTER + offsets, dinter, mask=mask)
         tl.store(DINTER_LSE + token_offsets, dinter_lse, mask=token_mask)
         dquery = tl.sum(dx_logit[:, None] * x_inv[:, None] * x, axis=0)
         dweight = tl.sum(dout * mixed * mixed_inv[:, None], axis=0)
-        tl.atomic_add(
-            DQUERY + hidden_offsets, dquery, mask=hidden_mask, sem="relaxed"
-        )
+        tl.atomic_add(DQUERY + hidden_offsets, dquery, mask=hidden_mask, sem="relaxed")
         tl.atomic_add(
             DNORM_WEIGHT + hidden_offsets,
             dweight,
             mask=hidden_mask,
             sem="relaxed",
         )
-
 
     @triton.jit
     def _phase1_norm_fwd_kernel(
@@ -492,18 +445,10 @@ if HAS_TRITON:
         else:
             bank_mask = mask
             source_inv_mask = source_mask
-        block_offsets = (
-            source_offsets[:, None] * (BT * D)
-            + token * D
-            + hidden_offsets[None, :]
-        )
-        sources = tl.load(BLOCKS + block_offsets, mask=bank_mask, other=0.0).to(
-            tl.float32
-        )
+        block_offsets = source_offsets[:, None] * (BT * D) + token * D + hidden_offsets[None, :]
+        sources = tl.load(BLOCKS + block_offsets, mask=bank_mask, other=0.0).to(tl.float32)
         source_inv = tl.load(
-            SOURCE_INV_RMS_CACHE
-            + token * MAX_SOURCES
-            + source_offsets,
+            SOURCE_INV_RMS_CACHE + token * MAX_SOURCES + source_offsets,
             mask=source_inv_mask,
             other=0.0,
         ).to(tl.float32)
@@ -514,9 +459,7 @@ if HAS_TRITON:
                 mask=hidden_mask,
                 other=0.0,
             ).to(tl.float32)
-            owner_inv = tl.rsqrt(
-                tl.sum(owner * owner, axis=0) * INV_D + EPS
-            )
+            owner_inv = tl.rsqrt(tl.sum(owner * owner, axis=0) * INV_D + EPS)
             sources = tl.where(
                 owner_source_mask[:, None],
                 owner[None, :],
@@ -545,9 +488,7 @@ if HAS_TRITON:
             exponentials = tl.exp(logits - maximum)
             denominator = tl.sum(exponentials, axis=0)
             probabilities = exponentials / denominator
-            mixed = tl.sum(probabilities[:, None] * sources, axis=0).to(
-                BLOCKS.dtype.element_ty
-            ).to(tl.float32)
+            mixed = tl.sum(probabilities[:, None] * sources, axis=0).to(BLOCKS.dtype.element_ty).to(tl.float32)
             output_base = query_index * BT * D + token * D + hidden_offsets
             if query_index == 0 and APPLY_NORM:
                 norm_weight = tl.load(
@@ -555,9 +496,7 @@ if HAS_TRITON:
                     mask=hidden_mask,
                     other=0.0,
                 ).to(tl.float32)
-                output_inv = tl.rsqrt(
-                    tl.sum(mixed * mixed, axis=0) * INV_D + EPS
-                )
+                output_inv = tl.rsqrt(tl.sum(mixed * mixed, axis=0) * INV_D + EPS)
                 output = mixed * output_inv * norm_weight
                 tl.store(OUTPUT_INV_RMS + token, output_inv)
             else:
@@ -565,14 +504,10 @@ if HAS_TRITON:
             tl.store(OUT + output_base, output, mask=hidden_mask)
             tl.store(LSES + query_index * BT + token, maximum + tl.log(denominator))
             tl.store(
-                PROBABILITIES
-                + query_index * BT * N
-                + token * N
-                + source_offsets,
+                PROBABILITIES + query_index * BT * N + token * N + source_offsets,
                 probabilities,
                 mask=source_mask,
             )
-
 
     @triton.jit
     def _phase1_single_source_norm_fwd_kernel(
@@ -596,13 +531,9 @@ if HAS_TRITON:
         hidden_offsets = tl.arange(0, BLOCK_D)
         hidden_mask = hidden_offsets < D
         owner_offsets = token * D + hidden_offsets
-        owner = tl.load(
-            OWNER + owner_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
+        owner = tl.load(OWNER + owner_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
         source_inv = tl.rsqrt(tl.sum(owner * owner, axis=0) * INV_D + EPS)
-        norm_weight = tl.load(
-            NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
+        norm_weight = tl.load(NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
 
         tl.store(NORM_OUT + owner_offsets, owner * source_inv * norm_weight, mask=hidden_mask)
         tl.store(
@@ -617,7 +548,6 @@ if HAS_TRITON:
                 source_inv,
             )
         tl.store(SOURCE_INV_RMS + token, source_inv)
-
 
     @triton.jit
     def _phase1_single_source_lse_kernel(
@@ -649,7 +579,6 @@ if HAS_TRITON:
             logit = tl.sum(owner * query, axis=0) * source_inv
             tl.store(LSES + query_index * BT + token, logit)
 
-
     @triton.jit
     def _phase1_single_source_norm_bwd_kernel(
         OWNER,
@@ -674,27 +603,17 @@ if HAS_TRITON:
         hidden_offsets = tl.arange(0, BLOCK_D)
         hidden_mask = hidden_offsets < D
         owner_offsets = token * D + hidden_offsets
-        owner = tl.load(
-            OWNER + owner_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
-        norm_weight = tl.load(
-            NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
+        owner = tl.load(OWNER + owner_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
+        norm_weight = tl.load(NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
         source_inv = tl.load(SOURCE_INV_RMS + token).to(tl.float32)
-        dnorm_out = tl.load(
-            DNORM_OUT + owner_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
+        dnorm_out = tl.load(DNORM_OUT + owner_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
         weighted_dout = norm_weight * dnorm_out
         norm_coupling = tl.sum(weighted_dout * owner, axis=0)
         downer = (
-            source_inv * weighted_dout
-            - owner
-            * source_inv
-            * source_inv
-            * source_inv
-            * INV_D
-            * norm_coupling
-        ).to(OWNER.dtype.element_ty).to(tl.float32)
+            (source_inv * weighted_dout - owner * source_inv * source_inv * source_inv * INV_D * norm_coupling)
+            .to(OWNER.dtype.element_ty)
+            .to(tl.float32)
+        )
         tl.store(
             DNORM_WEIGHT_PARTIAL + owner_offsets,
             dnorm_out * owner * source_inv,
@@ -707,29 +626,17 @@ if HAS_TRITON:
                 mask=hidden_mask,
                 other=0.0,
             ).to(tl.float32)
-            dlse = (
-                tl.load(DLSES + query_index * BT + token).to(tl.float32)
-                if HAS_DLSES
-                else 0.0
-            )
+            dlse = tl.load(DLSES + query_index * BT + token).to(tl.float32) if HAS_DLSES else 0.0
             logit = tl.sum(owner * query, axis=0) * source_inv
-            downer += dlse * (
-                source_inv * query
-                - logit * source_inv * source_inv * owner * INV_D
-            )
+            downer += dlse * (source_inv * query - logit * source_inv * source_inv * owner * INV_D)
             tl.store(
-                DQUERY_PARTIAL
-                + query_index * BT * D
-                + owner_offsets,
+                DQUERY_PARTIAL + query_index * BT * D + owner_offsets,
                 dlse * source_inv * owner,
                 mask=hidden_mask,
             )
 
-        dbank = tl.load(
-            DBANK_OWNER + owner_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
+        dbank = tl.load(DBANK_OWNER + owner_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
         tl.store(DOWNER + owner_offsets, dbank + downer, mask=hidden_mask)
-
 
     @triton.jit
     def _phase1_single_source_norm_bwd_finalize_kernel(
@@ -756,61 +663,42 @@ if HAS_TRITON:
         mask = token_mask[:, None] & hidden_mask[None, :]
         offsets = token_offsets[:, None] * D + hidden_offsets[None, :]
         owner = tl.load(OWNER + offsets, mask=mask, other=0.0).to(tl.float32)
-        norm_weight = tl.load(
-            NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0
-        ).to(tl.float32)
-        source_inv = tl.load(
-            SOURCE_INV_RMS + token_offsets, mask=token_mask, other=0.0
-        ).to(tl.float32)
-        dnorm_out = tl.load(
-            DNORM_OUT + offsets, mask=mask, other=0.0
-        ).to(tl.float32)
-        dnormalized = tl.load(
-            DNORMALIZED_OWNER + offsets, mask=mask, other=0.0
-        ).to(tl.float32)
+        norm_weight = tl.load(NORM_WEIGHT + hidden_offsets, mask=hidden_mask, other=0.0).to(tl.float32)
+        source_inv = tl.load(SOURCE_INV_RMS + token_offsets, mask=token_mask, other=0.0).to(tl.float32)
+        dnorm_out = tl.load(DNORM_OUT + offsets, mask=mask, other=0.0).to(tl.float32)
+        dnormalized = tl.load(DNORMALIZED_OWNER + offsets, mask=mask, other=0.0).to(tl.float32)
         if HAS_DBANK:
-            dbank = tl.load(
-                DBANK_OWNER + offsets, mask=mask, other=0.0
-            ).to(tl.float32)
+            dbank = tl.load(DBANK_OWNER + offsets, mask=mask, other=0.0).to(tl.float32)
         else:
             dbank = 0.0
 
         weighted_dout = norm_weight[None, :] * dnorm_out
         norm_coupling = tl.sum(weighted_dout * owner, axis=1)
         downer_norm = (
-            source_inv[:, None] * weighted_dout
-            - owner
-            * (
-                source_inv
-                * source_inv
-                * source_inv
-                * INV_D
-                * norm_coupling
-            )[:, None]
-        ).to(OWNER.dtype.element_ty).to(tl.float32)
+            (
+                source_inv[:, None] * weighted_dout
+                - owner * (source_inv * source_inv * source_inv * INV_D * norm_coupling)[:, None]
+            )
+            .to(OWNER.dtype.element_ty)
+            .to(tl.float32)
+        )
         lse_coupling = tl.sum(dnormalized * owner, axis=1)
-        downer_lse = source_inv[:, None] * dnormalized - owner * (
-            source_inv
-            * source_inv
-            * source_inv
-            * INV_D
-            * lse_coupling
-        )[:, None]
+        downer_lse = (
+            source_inv[:, None] * dnormalized
+            - owner * (source_inv * source_inv * source_inv * INV_D * lse_coupling)[:, None]
+        )
         tl.store(
             DOWNER + offsets,
             dbank + downer_norm + downer_lse,
             mask=mask,
         )
-        dnorm_weight = tl.sum(
-            dnorm_out * owner * source_inv[:, None], axis=0
-        )
+        dnorm_weight = tl.sum(dnorm_out * owner * source_inv[:, None], axis=0)
         tl.atomic_add(
             DNORM_WEIGHT + hidden_offsets,
             dnorm_weight,
             mask=hidden_mask,
             sem="relaxed",
         )
-
 
     @triton.jit
     def _phase1_norm_bwd_main_kernel(
@@ -864,18 +752,10 @@ if HAS_TRITON:
         source_mask = source_offsets < N
         hidden_mask = hidden_offsets < D
         mask = source_mask[:, None] & hidden_mask[None, :]
-        block_offsets = (
-            source_offsets[:, None] * (BT * D)
-            + token * D
-            + hidden_offsets[None, :]
-        )
-        sources = tl.load(BLOCKS + block_offsets, mask=mask, other=0.0).to(
-            tl.float32
-        )
+        block_offsets = source_offsets[:, None] * (BT * D) + token * D + hidden_offsets[None, :]
+        sources = tl.load(BLOCKS + block_offsets, mask=mask, other=0.0).to(tl.float32)
         source_inv = tl.load(
-            SOURCE_INV_RMS_CACHE
-            + token * MAX_SOURCES
-            + source_offsets,
+            SOURCE_INV_RMS_CACHE + token * MAX_SOURCES + source_offsets,
             mask=source_mask,
             other=0.0,
         ).to(tl.float32)
@@ -933,9 +813,7 @@ if HAS_TRITON:
             else:
                 dout = (
                     tl.load(
-                        DOUT0
-                        + query_index * BT * D
-                        + grad_output_offsets,
+                        DOUT0 + query_index * BT * D + grad_output_offsets,
                         mask=hidden_mask,
                         other=0.0,
                     ).to(tl.float32)
@@ -943,17 +821,12 @@ if HAS_TRITON:
                     else tl.zeros((BLOCK_D,), tl.float32)
                 )
             probabilities = tl.load(
-                PROBABILITIES
-                + query_index * BT * N
-                + token * N
-                + source_offsets,
+                PROBABILITIES + query_index * BT * N + token * N + source_offsets,
                 mask=source_mask,
                 other=0.0,
             ).to(tl.float32)
             if query_index == 0 and APPLY_NORM:
-                mixed = tl.sum(probabilities[:, None] * sources, axis=0).to(
-                    BLOCKS.dtype.element_ty
-                ).to(tl.float32)
+                mixed = tl.sum(probabilities[:, None] * sources, axis=0).to(BLOCKS.dtype.element_ty).to(tl.float32)
                 norm_weight = tl.load(
                     NORM_WEIGHTS + hidden_offsets,
                     mask=hidden_mask,
@@ -962,98 +835,59 @@ if HAS_TRITON:
                 output_inv = tl.load(OUTPUT_INV_RMS + token).to(tl.float32)
                 weighted_dout = norm_weight * dout
                 norm_coupling = tl.sum(weighted_dout * mixed, axis=0)
-                dmixed = (output_inv * weighted_dout - (
-                    mixed
-                    * output_inv
-                    * output_inv
-                    * output_inv
-                    * INV_D
-                    * norm_coupling
-                )).to(BLOCKS.dtype.element_ty).to(tl.float32)
+                dmixed = (
+                    (
+                        output_inv * weighted_dout
+                        - (mixed * output_inv * output_inv * output_inv * INV_D * norm_coupling)
+                    )
+                    .to(BLOCKS.dtype.element_ty)
+                    .to(tl.float32)
+                )
             else:
                 dmixed = dout
 
             grad_value_dots = tl.sum(sources * dmixed[None, :], axis=1)
-            expected_grad_value_dot = tl.sum(
-                probabilities * grad_value_dots, axis=0
-            )
+            expected_grad_value_dot = tl.sum(probabilities * grad_value_dots, axis=0)
             if SPLIT_GRADS:
                 if query_index == 0:
-                    grad_lse = (
-                        tl.load(DLSE0 + token).to(tl.float32)
-                        if HAS_DLSE0
-                        else 0.0
-                    )
+                    grad_lse = tl.load(DLSE0 + token).to(tl.float32) if HAS_DLSE0 else 0.0
                 elif query_index == 1:
-                    grad_lse = (
-                        tl.load(DLSE1 + token).to(tl.float32)
-                        if HAS_DLSE1
-                        else 0.0
-                    )
+                    grad_lse = tl.load(DLSE1 + token).to(tl.float32) if HAS_DLSE1 else 0.0
                 elif query_index == 2:
-                    grad_lse = (
-                        tl.load(DLSE2 + token).to(tl.float32)
-                        if HAS_DLSE2
-                        else 0.0
-                    )
+                    grad_lse = tl.load(DLSE2 + token).to(tl.float32) if HAS_DLSE2 else 0.0
                 else:
-                    grad_lse = (
-                        tl.load(DLSE3 + token).to(tl.float32)
-                        if HAS_DLSE3
-                        else 0.0
-                    )
+                    grad_lse = tl.load(DLSE3 + token).to(tl.float32) if HAS_DLSE3 else 0.0
             else:
-                grad_lse = (
-                    tl.load(DLSE0 + query_index * BT + token).to(tl.float32)
-                    if HAS_DLSE0
-                    else 0.0
-                )
-            dlogits = probabilities * (
-                grad_lse + grad_value_dots - expected_grad_value_dot
-            )
+                grad_lse = tl.load(DLSE0 + query_index * BT + token).to(tl.float32) if HAS_DLSE0 else 0.0
+            dlogits = probabilities * (grad_lse + grad_value_dots - expected_grad_value_dot)
             if COMPUTE_SOURCE_GRADS:
                 logits = tl.sum(sources * query[None, :], axis=1) * source_inv
                 grad_sources += probabilities[:, None] * dmixed[None, :] + (
                     dlogits[:, None]
                     * (
                         source_inv[:, None] * query[None, :]
-                        - logits[:, None]
-                        * source_inv[:, None]
-                        * source_inv[:, None]
-                        * sources
-                        * INV_D
+                        - logits[:, None] * source_inv[:, None] * source_inv[:, None] * sources * INV_D
                     )
                 )
             if WRITE_DLOGITS:
                 tl.store(
-                    DLOGITS
-                    + query_index * BT * N
-                    + token * N
-                    + source_offsets,
+                    DLOGITS + query_index * BT * N + token * N + source_offsets,
                     dlogits,
                     mask=source_mask,
                 )
             if WRITE_QUERY_COEFFICIENTS:
                 tl.store(
-                    QUERY_COEFFICIENTS
-                    + source_offsets * BT * Q
-                    + token * Q
-                    + query_index,
+                    QUERY_COEFFICIENTS + source_offsets * BT * Q + token * Q + query_index,
                     dlogits * source_inv,
                     mask=source_mask,
                 )
             if WRITE_QUERY_PARTIAL:
                 dquery = tl.sum(
-                    dlogits[:, None]
-                    * source_inv[:, None]
-                    * sources,
+                    dlogits[:, None] * source_inv[:, None] * sources,
                     axis=0,
                 )
                 tl.store(
-                    DQUERY_PARTIAL
-                    + query_index * BT * D
-                    + token * D
-                    + hidden_offsets,
+                    DQUERY_PARTIAL + query_index * BT * D + token * D + hidden_offsets,
                     dquery,
                     mask=hidden_mask,
                 )
@@ -1065,11 +899,8 @@ if HAS_TRITON:
                 )
         if COMPUTE_SOURCE_GRADS:
             if ACCUMULATE_SOURCE_GRADS:
-                grad_sources += tl.load(
-                    DBLOCKS + block_offsets, mask=mask, other=0.0
-                ).to(tl.float32)
+                grad_sources += tl.load(DBLOCKS + block_offsets, mask=mask, other=0.0).to(tl.float32)
             tl.store(DBLOCKS + block_offsets, grad_sources, mask=mask)
-
 
     @triton.jit
     def _phase1_source_bwd_kernel(
@@ -1105,18 +936,10 @@ if HAS_TRITON:
         source_mask = source_offsets < N
         hidden_mask = hidden_offsets < D
         mask = source_mask[:, None] & hidden_mask[None, :]
-        block_offsets = (
-            source_offsets[:, None] * (BT * D)
-            + token * D
-            + hidden_offsets[None, :]
-        )
-        sources = tl.load(BLOCKS + block_offsets, mask=mask, other=0.0).to(
-            tl.float32
-        )
+        block_offsets = source_offsets[:, None] * (BT * D) + token * D + hidden_offsets[None, :]
+        sources = tl.load(BLOCKS + block_offsets, mask=mask, other=0.0).to(tl.float32)
         source_inv = tl.load(
-            SOURCE_INV_RMS_CACHE
-            + token * MAX_SOURCES
-            + source_offsets,
+            SOURCE_INV_RMS_CACHE + token * MAX_SOURCES + source_offsets,
             mask=source_mask,
             other=0.0,
         ).to(tl.float32)
@@ -1173,9 +996,7 @@ if HAS_TRITON:
             else:
                 dout = (
                     tl.load(
-                        DOUT0
-                        + query_index * BT * D
-                        + grad_output_offsets,
+                        DOUT0 + query_index * BT * D + grad_output_offsets,
                         mask=hidden_mask,
                         other=0.0,
                     ).to(tl.float32)
@@ -1183,18 +1004,12 @@ if HAS_TRITON:
                     else tl.zeros((BLOCK_D,), tl.float32)
                 )
             probabilities = tl.load(
-                PROBABILITIES
-                + query_index * BT * N
-                + token * N
-                + source_offsets,
+                PROBABILITIES + query_index * BT * N + token * N + source_offsets,
                 mask=source_mask,
                 other=0.0,
             ).to(tl.float32)
             dlogits = tl.load(
-                DLOGITS
-                + query_index * BT * N
-                + token * N
-                + source_offsets,
+                DLOGITS + query_index * BT * N + token * N + source_offsets,
                 mask=source_mask,
                 other=0.0,
             ).to(tl.float32)
@@ -1203,20 +1018,13 @@ if HAS_TRITON:
                 dlogits[:, None]
                 * (
                     source_inv[:, None] * query[None, :]
-                    - logits[:, None]
-                    * source_inv[:, None]
-                    * source_inv[:, None]
-                    * sources
-                    * INV_D
+                    - logits[:, None] * source_inv[:, None] * source_inv[:, None] * sources * INV_D
                 )
             )
 
         if ACCUMULATE_SOURCE_GRADS:
-            grad_sources += tl.load(
-                DBLOCKS + block_offsets, mask=mask, other=0.0
-            ).to(tl.float32)
+            grad_sources += tl.load(DBLOCKS + block_offsets, mask=mask, other=0.0).to(tl.float32)
         tl.store(DBLOCKS + block_offsets, grad_sources, mask=mask)
-
 
     @triton.jit
     def _phase1_norm_bwd_grouped_reduce_kernel(
@@ -1250,34 +1058,23 @@ if HAS_TRITON:
             + source_offsets[None, :, None] * (BT * D)
             + token_offsets[:, None, None] * D
             + hidden_offsets[None, None, :],
-            mask=(
-                token_mask[:, None, None]
-                & source_mask[None, :, None]
-                & hidden_mask[None, None, :]
-            ),
+            mask=(token_mask[:, None, None] & source_mask[None, :, None] & hidden_mask[None, None, :]),
             other=0.0,
         ).to(tl.float32)
         source_inv = tl.load(
-            SOURCE_INV_RMS_CACHE
-            + token_offsets[:, None] * MAX_SOURCES
-            + source_offsets[None, :],
+            SOURCE_INV_RMS_CACHE + token_offsets[:, None] * MAX_SOURCES + source_offsets[None, :],
             mask=token_mask[:, None] & source_mask[None, :],
             other=0.0,
         ).to(tl.float32)
 
         for query_index in tl.static_range(Q):
             dlogits = tl.load(
-                DLOGITS
-                + query_index * BT * N
-                + token_offsets[:, None] * N
-                + source_offsets[None, :],
+                DLOGITS + query_index * BT * N + token_offsets[:, None] * N + source_offsets[None, :],
                 mask=token_mask[:, None] & source_mask[None, :],
                 other=0.0,
             ).to(tl.float32)
             dquery_rows = tl.sum(
-                dlogits[:, :, None]
-                * source_inv[:, :, None]
-                * source_values,
+                dlogits[:, :, None] * source_inv[:, :, None] * source_values,
                 axis=1,
             )
             dquery = tl.sum(dquery_rows, axis=0)
@@ -1289,21 +1086,21 @@ if HAS_TRITON:
             )
             if query_index == 0 and APPLY_NORM:
                 probabilities = tl.load(
-                    PROBABILITIES
-                    + token_offsets[:, None] * N
-                    + source_offsets[None, :],
+                    PROBABILITIES + token_offsets[:, None] * N + source_offsets[None, :],
                     mask=token_mask[:, None] & source_mask[None, :],
                     other=0.0,
                 ).to(tl.float32)
-                mixed = tl.sum(
-                    probabilities[:, :, None] * source_values,
-                    axis=1,
-                ).to(BLOCKS.dtype.element_ty).to(tl.float32)
+                mixed = (
+                    tl.sum(
+                        probabilities[:, :, None] * source_values,
+                        axis=1,
+                    )
+                    .to(BLOCKS.dtype.element_ty)
+                    .to(tl.float32)
+                )
                 dout = (
                     tl.load(
-                        DOUT
-                        + token_offsets[:, None] * D
-                        + hidden_offsets[None, :],
+                        DOUT + token_offsets[:, None] * D + hidden_offsets[None, :],
                         mask=token_mask[:, None] & hidden_mask[None, :],
                         other=0.0,
                     ).to(tl.float32)
@@ -1315,16 +1112,13 @@ if HAS_TRITON:
                     mask=token_mask,
                     other=0.0,
                 ).to(tl.float32)
-                dnorm_weight = tl.sum(
-                    dout * mixed * output_inv[:, None], axis=0
-                )
+                dnorm_weight = tl.sum(dout * mixed * output_inv[:, None], axis=0)
                 tl.atomic_add(
                     DNORM_WEIGHT + hidden_offsets,
                     dnorm_weight,
                     mask=hidden_mask,
                     sem="relaxed",
                 )
-
 
     @triton.jit
     def _reduce_query_weight_partials_kernel(
@@ -1368,6 +1162,7 @@ if HAS_TRITON:
                 mask=hidden_offsets < D,
                 sem="relaxed",
             )
+
     @triton.jit
     def _reduce_norm_weight_partial_kernel(
         DNORM_WEIGHT_PARTIAL,
@@ -1381,9 +1176,7 @@ if HAS_TRITON:
         hidden_offsets = tl.program_id(1) * BLOCK_H + tl.arange(0, BLOCK_H)
         mask = (token_offsets[:, None] < BT) & (hidden_offsets[None, :] < D)
         partial = tl.load(
-            DNORM_WEIGHT_PARTIAL
-            + token_offsets[:, None] * D
-            + hidden_offsets[None, :],
+            DNORM_WEIGHT_PARTIAL + token_offsets[:, None] * D + hidden_offsets[None, :],
             mask=mask,
             other=0.0,
         ).to(tl.float32)
@@ -1393,7 +1186,6 @@ if HAS_TRITON:
             mask=hidden_offsets < D,
             sem="relaxed",
         )
-
 
     @triton.jit
     def _phase1_norm_bwd_reduce_kernel(
@@ -1429,25 +1221,17 @@ if HAS_TRITON:
                 other=0.0,
             ).to(tl.float32)
             source_inv = tl.load(
-                SOURCE_INV_RMS_CACHE
-                + token_offsets * MAX_SOURCES
-                + source_index,
+                SOURCE_INV_RMS_CACHE + token_offsets * MAX_SOURCES + source_index,
                 mask=token_mask,
                 other=0.0,
             ).to(tl.float32)
             probability = tl.load(
-                PROBABILITIES
-                + query_index * BT * N
-                + token_offsets * N
-                + source_index,
+                PROBABILITIES + query_index * BT * N + token_offsets * N + source_index,
                 mask=token_mask,
                 other=0.0,
             ).to(tl.float32)
             dlogit = tl.load(
-                DLOGITS
-                + query_index * BT * N
-                + token_offsets * N
-                + source_index,
+                DLOGITS + query_index * BT * N + token_offsets * N + source_index,
                 mask=token_mask,
                 other=0.0,
             ).to(tl.float32)
@@ -1525,29 +1309,17 @@ if HAS_TRITON:
             logit = tl.sum(product, axis=0)
             tl.store(weight_base + source64 * BT, logit)
             new_maximum = tl.maximum(maximum, logit)
-            denominator = denominator * tl.exp(maximum - new_maximum) + tl.exp(
-                logit - new_maximum
-            )
+            denominator = denominator * tl.exp(maximum - new_maximum) + tl.exp(logit - new_maximum)
             maximum = new_maximum
 
-        partial = tl.load(PARTIAL + token * D + offs, mask=mask, other=0.0).to(
-            tl.float32
-        )
-        partial_inv_rms = tl.rsqrt(
-            tl.sum(partial * partial, axis=0) * INV_D + EPS
-        )
-        partial_key = (partial * partial_inv_rms).to(
-            PARTIAL.dtype.element_ty
-        ).to(tl.float32)
-        partial_product = (partial_key * q).to(PARTIAL.dtype.element_ty).to(
-            tl.float32
-        )
+        partial = tl.load(PARTIAL + token * D + offs, mask=mask, other=0.0).to(tl.float32)
+        partial_inv_rms = tl.rsqrt(tl.sum(partial * partial, axis=0) * INV_D + EPS)
+        partial_key = (partial * partial_inv_rms).to(PARTIAL.dtype.element_ty).to(tl.float32)
+        partial_product = (partial_key * q).to(PARTIAL.dtype.element_ty).to(tl.float32)
         partial_logit = tl.sum(partial_product, axis=0)
         tl.store(weight_base + C * BT, partial_logit)
         new_maximum = tl.maximum(maximum, partial_logit)
-        denominator = denominator * tl.exp(maximum - new_maximum) + tl.exp(
-            partial_logit - new_maximum
-        )
+        denominator = denominator * tl.exp(maximum - new_maximum) + tl.exp(partial_logit - new_maximum)
         maximum = new_maximum
 
         # A second source pass is intentional: it avoids materializing normalized
@@ -1561,26 +1333,19 @@ if HAS_TRITON:
                 other=0.0,
             ).to(tl.float32)
             logit = tl.load(weight_base + source64 * BT)
-            weight = (tl.exp(logit - maximum) / denominator).to(
-                BLOCKS.dtype.element_ty
-            )
+            weight = (tl.exp(logit - maximum) / denominator).to(BLOCKS.dtype.element_ty)
             tl.store(weight_base + source64 * BT, weight.to(tl.float32))
             term = (value * weight.to(tl.float32)).to(BLOCKS.dtype.element_ty)
             mixed += term.to(tl.float32)
 
-        partial_weight = (tl.exp(partial_logit - maximum) / denominator).to(
-            PARTIAL.dtype.element_ty
-        )
+        partial_weight = (tl.exp(partial_logit - maximum) / denominator).to(PARTIAL.dtype.element_ty)
         tl.store(
             weight_base + C * BT,
             partial_weight.to(tl.float32),
         )
-        partial_term = (partial * partial_weight.to(tl.float32)).to(
-            PARTIAL.dtype.element_ty
-        )
+        partial_term = (partial * partial_weight.to(tl.float32)).to(PARTIAL.dtype.element_ty)
         mixed += partial_term.to(tl.float32)
         tl.store(OUT + token * D + offs, mixed, mask=mask)
-
 
     @triton.jit
     def _block_attnres_bwd_kernel(
@@ -1608,9 +1373,7 @@ if HAS_TRITON:
         offs = tl.arange(0, BLOCK_D)
         mask = offs < D
         q = tl.load(QUERY + offs, mask=mask, other=0.0).to(tl.float32)
-        dout = tl.load(DOUT + token * D + offs, mask=mask, other=0.0).to(
-            tl.float32
-        )
+        dout = tl.load(DOUT + token * D + offs, mask=mask, other=0.0).to(tl.float32)
         block_base = BLOCKS + token * D
         dblock_base = DBLOCKS + token * D
         weight_base = WEIGHTS + token
@@ -1626,9 +1389,7 @@ if HAS_TRITON:
             weight = tl.load(weight_base + source64 * BT)
             coupling += weight * tl.sum(dout * value, axis=0)
 
-        partial = tl.load(PARTIAL + token * D + offs, mask=mask, other=0.0).to(
-            tl.float32
-        )
+        partial = tl.load(PARTIAL + token * D + offs, mask=mask, other=0.0).to(tl.float32)
         partial_weight = tl.load(weight_base + C * BT)
         coupling += partial_weight * tl.sum(dout * partial, axis=0)
 
@@ -1647,9 +1408,7 @@ if HAS_TRITON:
             key = (value * inv_rms).to(BLOCKS.dtype.element_ty).to(tl.float32)
             dq += dlogit * key
             key_dot_query = tl.sum(key * q, axis=0)
-            dvalue = weight * dout + dlogit * inv_rms * (
-                q - key * key_dot_query * INV_D
-            )
+            dvalue = weight * dout + dlogit * inv_rms * (q - key * key_dot_query * INV_D)
             destination = dblock_base + source64 * STRIDE_BLOCK + offs
             if ACCUMULATE:
                 dvalue += tl.load(destination, mask=mask, other=0.0)
@@ -1657,12 +1416,8 @@ if HAS_TRITON:
 
         partial_dweight = tl.sum(dout * partial, axis=0)
         partial_dlogit = partial_weight * (partial_dweight - coupling)
-        partial_inv_rms = tl.rsqrt(
-            tl.sum(partial * partial, axis=0) * INV_D + EPS
-        )
-        partial_key = (partial * partial_inv_rms).to(
-            PARTIAL.dtype.element_ty
-        ).to(tl.float32)
+        partial_inv_rms = tl.rsqrt(tl.sum(partial * partial, axis=0) * INV_D + EPS)
+        partial_key = (partial * partial_inv_rms).to(PARTIAL.dtype.element_ty).to(tl.float32)
         # Keep this after partial_key is defined; written explicitly instead of
         # sharing source-loop state so the current partial is never copied.
         dq += partial_dlogit * partial_key
@@ -1758,10 +1513,7 @@ class FusedBlockAttnResContext:
         return completed, owner_row, call_index
 
     def validate_owner(self, partial: torch.Tensor) -> None:
-        if (
-            tuple(partial.shape[:-1]) != self.token_shape
-            or partial.shape[-1] != self.dim
-        ):
+        if tuple(partial.shape[:-1]) != self.token_shape or partial.shape[-1] != self.dim:
             raise RuntimeError(
                 "Block AttnRes context shape changed within one model forward: "
                 f"expected {(*self.token_shape, self.dim)}, got {tuple(partial.shape)}"
@@ -1784,33 +1536,23 @@ class FusedBlockAttnResContext:
         norm_weights: torch.Tensor,
     ) -> None:
         self.validate_owner(owner)
-        if (
-            queries.ndim != 2
-            or queries.shape[0] == 0
-            or queries.shape[1] != self.dim
-        ):
+        if queries.ndim != 2 or queries.shape[0] == 0 or queries.shape[1] != self.dim:
             raise RuntimeError(
-                "cached Block AttnRes queries must have shape "
-                f"(Q, {self.dim}) with Q > 0, got {tuple(queries.shape)}"
+                f"cached Block AttnRes queries must have shape (Q, {self.dim}) with Q > 0, got {tuple(queries.shape)}"
             )
         if tuple(norm_weights.shape) != (self.dim,):
             raise RuntimeError(
-                "cached Block AttnRes norm weights must have shape "
-                f"({self.dim},), got {tuple(norm_weights.shape)}"
+                f"cached Block AttnRes norm weights must have shape ({self.dim},), got {tuple(norm_weights.shape)}"
             )
         for label, tensor in (
             ("queries", queries),
             ("norm weights", norm_weights),
         ):
             if tensor.device != self.blocks.device:
-                raise RuntimeError(
-                    f"cached Block AttnRes {label} must be on {self.blocks.device}, "
-                    f"got {tensor.device}"
-                )
+                raise RuntimeError(f"cached Block AttnRes {label} must be on {self.blocks.device}, got {tensor.device}")
             if tensor.dtype != self.blocks.dtype:
                 raise RuntimeError(
-                    f"cached Block AttnRes {label} must have dtype "
-                    f"{self.blocks.dtype}, got {tensor.dtype}"
+                    f"cached Block AttnRes {label} must have dtype {self.blocks.dtype}, got {tensor.dtype}"
                 )
 
     def claim_routing_mode(self, routing_mode: str) -> None:
@@ -1840,15 +1582,9 @@ class FusedBlockAttnResContext:
         first = self._next_backward_call is None
         if first:
             if call_index != self.call_count - 1:
-                raise RuntimeError(
-                    "Block AttnRes fused backward must begin at the final routing call"
-                )
+                raise RuntimeError("Block AttnRes fused backward must begin at the final routing call")
             if self.dblocks is None:
-                factory = (
-                    torch.zeros
-                    if self.zero_initialize_gradient_bank
-                    else torch.empty
-                )
+                factory = torch.zeros if self.zero_initialize_gradient_bank else torch.empty
                 self.dblocks = factory(
                     (self.completed_count, *self.token_shape, self.dim),
                     device=self.blocks.device,
@@ -1916,9 +1652,7 @@ class _SharedFlashPhase1(torch.autograd.Function):
             raise RuntimeError("shared Block AttnRes source-bank ordering changed")
 
         phase_1 = _load_flash_attnres_internal_ops()
-        blocks = state.completed_view().reshape(
-            state.completed_count, 1, state.bt, state.dim
-        )
+        blocks = state.completed_view().reshape(state.completed_count, 1, state.bt, state.dim)
         outputs, lses, inverse_rms_norms, attention_logits = (
             phase_1._phase_1_batched_attention_forward_with_aux_triton_op(
                 blocks,
@@ -1969,20 +1703,12 @@ class _SharedFlashPhase1(torch.autograd.Function):
         # corresponding output-gradient row, so the FP32 output-gradient buffer
         # safely doubles as its query-gradient reduction scratch.
         phase_1._batched_attention_backward_accumulate(
-            state.completed_view()[:completed].reshape(
-                completed, 1, state.bt, state.dim
-            ),
+            state.completed_view()[:completed].reshape(completed, 1, state.bt, state.dim),
             queries,
             lses.reshape(query_count, 1, state.bt),
             grad_outputs_f32,
-            (
-                None
-                if grad_lses is None
-                else grad_lses.reshape(query_count, 1, state.bt).contiguous()
-            ),
-            state.dblocks[:completed].reshape(
-                completed, 1, state.bt, state.dim
-            ),
+            (None if grad_lses is None else grad_lses.reshape(query_count, 1, state.bt).contiguous()),
+            state.dblocks[:completed].reshape(completed, 1, state.bt, state.dim),
             grad_queries,
             grad_outputs_f32,
             eps=norm_eps,
@@ -2076,11 +1802,7 @@ class _SharedFlashPhase1Norm(torch.autograd.Function):
         launch_stream = torch.cuda.current_stream(device=owner.device)
         if async_future:
             state.future_stream.wait_stream(launch_stream)
-        with (
-            torch.cuda.stream(state.future_stream)
-            if async_future
-            else torch.cuda.stream(launch_stream)
-        ):
+        with torch.cuda.stream(state.future_stream) if async_future else torch.cuda.stream(launch_stream):
             _phase1_norm_fwd_kernel[(state.bt,)](
                 state.blocks,
                 owner,
@@ -2170,38 +1892,24 @@ class _SharedFlashPhase1Norm(torch.autograd.Function):
         ) = ctx.meta
         if split_outputs:
             if len(grad_results) != 2 * query_count:
-                raise RuntimeError(
-                    "split phase-1 backward received an inconsistent gradient count"
-                )
+                raise RuntimeError("split phase-1 backward received an inconsistent gradient count")
             grad_output_rows = tuple(grad_results[:query_count])
             grad_lse_rows = tuple(grad_results[query_count:])
         else:
             if len(grad_results) != 2:
-                raise RuntimeError(
-                    "packed phase-1 backward received an inconsistent gradient count"
-                )
+                raise RuntimeError("packed phase-1 backward received an inconsistent gradient count")
             grad_outputs, grad_lses = grad_results
             grad_output_rows = (grad_outputs,)
             grad_lse_rows = (grad_lses,)
         overwrite_source_grads = state.begin_backward(call_index, completed)
         if append_owner:
             state.wait_for_source_backward()
-        grad_output_rows = tuple(
-            None if grad is None else grad.contiguous()
-            for grad in grad_output_rows
-        )
-        grad_lse_rows = tuple(
-            None if grad is None else grad.contiguous()
-            for grad in grad_lse_rows
-        )
+        grad_output_rows = tuple(None if grad is None else grad.contiguous() for grad in grad_output_rows)
+        grad_lse_rows = tuple(None if grad is None else grad.contiguous() for grad in grad_lse_rows)
         output_grad_flags = tuple(grad is not None for grad in grad_output_rows)
         lse_grad_flags = tuple(grad is not None for grad in grad_lse_rows)
-        grad_output_ptrs = tuple(
-            grad if grad is not None else queries for grad in grad_output_rows
-        )
-        grad_lse_ptrs = tuple(
-            grad if grad is not None else probabilities for grad in grad_lse_rows
-        )
+        grad_output_ptrs = tuple(grad if grad is not None else queries for grad in grad_output_rows)
+        grad_lse_ptrs = tuple(grad if grad is not None else probabilities for grad in grad_lse_rows)
         grad_output_ptrs += (queries,) * (4 - len(grad_output_ptrs))
         grad_lse_ptrs += (probabilities,) * (4 - len(grad_lse_ptrs))
         output_grad_flags += (False,) * (4 - len(output_grad_flags))
@@ -2220,9 +1928,7 @@ class _SharedFlashPhase1Norm(torch.autograd.Function):
             and apply_norm
         )
         write_dlogits = use_grouped_reduction or async_future
-        dlogits = (
-            torch.empty_like(probabilities) if write_dlogits else probabilities
-        )
+        dlogits = torch.empty_like(probabilities) if write_dlogits else probabilities
         query_coefficients = (
             torch.empty(
                 (completed, state.bt, query_count),
@@ -2306,12 +2012,8 @@ class _SharedFlashPhase1Norm(torch.autograd.Function):
         dnorm_weights = torch.zeros_like(norm_weights, dtype=torch.float32)
         if use_query_gemm:
             dqueries = torch.mm(
-                query_coefficients.reshape(
-                    completed * state.bt, query_count
-                ).transpose(0, 1),
-                state.blocks[:completed].reshape(
-                    completed * state.bt, state.dim
-                ),
+                query_coefficients.reshape(completed * state.bt, query_count).transpose(0, 1),
+                state.blocks[:completed].reshape(completed * state.bt, state.dim),
                 out_dtype=torch.float32,
             )
             if apply_norm:
@@ -2418,16 +2120,10 @@ class _SharedFlashPhase1Norm(torch.autograd.Function):
                 probabilities,
                 dlogits,
                 state.dblocks,
-                *(
-                    grad
-                    for grad in grad_output_rows
-                    if grad is not None
-                ),
+                *(grad for grad in grad_output_rows if grad is not None),
             ):
                 tensor.record_stream(state.future_stream)
-        owner_grad = (
-            state.dblocks[owner_row].to(owner_dtype) if append_owner else None
-        )
+        owner_grad = state.dblocks[owner_row].to(owner_dtype) if append_owner else None
         return (
             owner_grad,
             dqueries.to(queries.dtype),
@@ -2477,9 +2173,7 @@ class _SharedFlashSingleSourcePhase1Norm(torch.autograd.Function):
             device=owner.device,
             dtype=torch.float32,
         )
-        source_inv_rms = torch.empty(
-            (state.bt,), device=owner.device, dtype=torch.float32
-        )
+        source_inv_rms = torch.empty((state.bt,), device=owner.device, dtype=torch.float32)
         forward_warps = 1 if query_count >= 4 else (2 if query_count == 2 else 4)
         _phase1_single_source_norm_fwd_kernel[(state.bt,)](
             owner,
@@ -2513,9 +2207,7 @@ class _SharedFlashSingleSourcePhase1Norm(torch.autograd.Function):
                 num_warps=1,
                 num_stages=2,
             )
-        ctx.save_for_backward(
-            queries, norm_weights, source_inv_rms, normalized_owner
-        )
+        ctx.save_for_backward(queries, norm_weights, source_inv_rms, normalized_owner)
         ctx.state = state
         ctx.meta = (
             owner_row,
@@ -2571,9 +2263,7 @@ class _SharedFlashSingleSourcePhase1Norm(torch.autograd.Function):
             )
         dnorm_weights = torch.zeros_like(norm_weights, dtype=torch.float32)
         block_bt = 4
-        _phase1_single_source_norm_bwd_finalize_kernel[
-            (triton.cdiv(state.bt, block_bt),)
-        ](
+        _phase1_single_source_norm_bwd_finalize_kernel[(triton.cdiv(state.bt, block_bt),)](
             state.blocks[owner_row],
             norm_weights,
             source_inv_rms,
@@ -2625,9 +2315,7 @@ class _StatelessSingleSourcePhase1Norm(torch.autograd.Function):
             device=owner.device,
             dtype=torch.float32,
         )
-        source_inv_rms = torch.empty(
-            (bt,), device=owner.device, dtype=torch.float32
-        )
+        source_inv_rms = torch.empty((bt,), device=owner.device, dtype=torch.float32)
         forward_warps = 1 if query_count >= 4 else (2 if query_count == 2 else 4)
         _phase1_single_source_norm_fwd_kernel[(bt,)](
             owner,
@@ -2661,17 +2349,13 @@ class _StatelessSingleSourcePhase1Norm(torch.autograd.Function):
                 num_warps=1,
                 num_stages=2,
             )
-        ctx.save_for_backward(
-            owner, queries, norm_weights, source_inv_rms, normalized_owner
-        )
+        ctx.save_for_backward(owner, queries, norm_weights, source_inv_rms, normalized_owner)
         ctx.meta = (token_shape, dim, bt, query_count, block_d)
         return norm_output, lses
 
     @staticmethod
     def backward(ctx, grad_norm_output, grad_lses):
-        owner, queries, norm_weights, source_inv_rms, normalized_owner = (
-            ctx.saved_tensors
-        )
+        owner, queries, norm_weights, source_inv_rms, normalized_owner = ctx.saved_tensors
         token_shape, dim, bt, query_count, block_d = ctx.meta
         if grad_norm_output is None:
             grad_norm_output = torch.zeros_like(owner)
@@ -2680,9 +2364,7 @@ class _StatelessSingleSourcePhase1Norm(torch.autograd.Function):
         grad_lses = None if grad_lses is None else grad_lses.contiguous()
         if grad_lses is None:
             dqueries = torch.zeros_like(queries, dtype=torch.float32)
-            dnormalized_owner = torch.zeros(
-                (bt, dim), device=owner.device, dtype=torch.float32
-            )
+            dnormalized_owner = torch.zeros((bt, dim), device=owner.device, dtype=torch.float32)
         else:
             grad_lses_bf16 = grad_lses.reshape(query_count, bt).to(owner.dtype)
             dqueries = torch.mm(
@@ -2698,9 +2380,7 @@ class _StatelessSingleSourcePhase1Norm(torch.autograd.Function):
         owner_grad = torch.empty_like(owner)
         dnorm_weights = torch.zeros_like(norm_weights, dtype=torch.float32)
         block_bt = 4
-        _phase1_single_source_norm_bwd_finalize_kernel[
-            (triton.cdiv(bt, block_bt),)
-        ](
+        _phase1_single_source_norm_bwd_finalize_kernel[(triton.cdiv(bt, block_bt),)](
             owner,
             norm_weights,
             source_inv_rms,
@@ -2982,9 +2662,7 @@ class _FusedPhase2Norm(torch.autograd.Function):
         dpartial = torch.empty_like(partial)
         dinter = torch.empty_like(interblock_output)
         dinter_lse = torch.empty_like(interblock_lse)
-        parameter_grads = torch.zeros(
-            (2, dim), device=dout.device, dtype=torch.float32
-        )
+        parameter_grads = torch.zeros((2, dim), device=dout.device, dtype=torch.float32)
         dquery, dnorm_weight = parameter_grads.unbind(0)
         block_bt = 4
         _phase2_norm_bwd_fused_kernel[(triton.cdiv(bt, block_bt),)](

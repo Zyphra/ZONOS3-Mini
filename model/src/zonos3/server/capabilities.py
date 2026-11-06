@@ -27,7 +27,9 @@ class CapabilityFacts:
     text_tokenizer_spec: dict | None
     text_normalization_enabled: bool
     accents: list[str]  # the accent adapters a request may name
-    speaker_modes: list[str]  # the checkpoint's, in order: "reference" (raw reference prefix), "embedding" (speaker row)
+    speaker_modes: list[
+        str
+    ]  # the checkpoint's, in order: "reference" (raw reference prefix), "embedding" (speaker row)
     speaker_embedding_dim: int
     speaker_embedding_codec: str | None
     n_codebooks: int
@@ -52,8 +54,15 @@ class CapabilityFacts:
     projects: dict  # zonos3.server.projects.ProjectStore.capabilities(), or {"enabled": False}
 
 
-def condition_spec(*, names: Sequence[str], count: int, bucket_counts: Sequence[int], edges: Mapping | None,
-                   flags: Mapping | None, units: Mapping | None) -> dict:
+def condition_spec(
+    *,
+    names: Sequence[str],
+    count: int,
+    bucket_counts: Sequence[int],
+    edges: Mapping | None,
+    flags: Mapping | None,
+    units: Mapping | None,
+) -> dict:
     """The checkpoint's condition rows (loudness / fmax / speaking-rate buckets, flag rows): names, per-name bucket
     counts (the count is the unknown id), edges, flag values, units and the prompt layout."""
     names = [str(name) for name in names][:count]
@@ -90,17 +99,28 @@ def silence_prefill_spec(audio_codec: str, hop: int | None) -> dict:
     if hop is None:
         return {"available": False, "default_frames": None, "codec": codec}
     default = silence_prefill_default()
-    return {"available": True, "default_frames": default.frames, "default_on": default.on,
-                "default_seconds": round(default.frames * hop / SAMPLE_RATE, 3), "frame_seconds": hop / SAMPLE_RATE,
-                "codec": codec,
-                "note": "codec-matched silence frames open the audio stream before the model starts (their audio is not "
-                     "emitted); a request without silence_prefill_frames gets the server default, "
-                     "silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length"}
+    return {
+        "available": True,
+        "default_frames": default.frames,
+        "default_on": default.on,
+        "default_seconds": round(default.frames * hop / SAMPLE_RATE, 3),
+        "frame_seconds": hop / SAMPLE_RATE,
+        "codec": codec,
+        "note": "codec-matched silence frames open the audio stream before the model starts (their audio is not "
+        "emitted); a request without silence_prefill_frames gets the server default, "
+        "silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length",
+    }
 
 
 def tag_cfg_capabilities(available: bool, trained: bool) -> dict:
-    return {"available": available, "trained": trained, "tags": list(NONVERBAL_MARKUP_TAGS),
-            "min_scale": TAG_CFG_MIN_SCALE, "max_scale": TAG_CFG_MAX_SCALE, "default_scale": 1.0}
+    return {
+        "available": available,
+        "trained": trained,
+        "tags": list(NONVERBAL_MARKUP_TAGS),
+        "min_scale": TAG_CFG_MIN_SCALE,
+        "max_scale": TAG_CFG_MAX_SCALE,
+        "default_scale": 1.0,
+    }
 
 
 def decoder_capability(audio_codec: str) -> dict | None:
@@ -121,7 +141,9 @@ def phoneme_capabilities(text_tokenizer_spec: dict | None, lexicon) -> dict:
     phonemes = None if not text_tokenizer_spec else text_tokenizer_spec.get("phonemes")
     return {
         # null: "(IPA)" in plain text (paren-trained checkpoints); else the U+E000 IPA U+E001 group syntax.
-        "phoneme_tokens": None if phonemes is None else {
+        "phoneme_tokens": None
+        if phonemes is None
+        else {
             "open_marker": phonemes["open_marker"],
             "close_marker": phonemes["close_marker"],
             "symbols": list(phonemes["symbols"]),
@@ -143,8 +165,9 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         "text_norm_languages": list(languages.CODES),
         "accents": list(f.accents),
         "speaker_enabled": bool(modes),
-        "speaker_conditioning_type": ("raw_reference_prefix" if "reference" in modes
-                                      else "embedding" if embedding else "none"),
+        "speaker_conditioning_type": (
+            "raw_reference_prefix" if "reference" in modes else "embedding" if embedding else "none"
+        ),
         "speaker_embedding_dim": int(f.speaker_embedding_dim),
         "speaker_embedding_codec": f.speaker_embedding_codec,
         "n_codebooks": int(f.n_codebooks),
@@ -155,10 +178,14 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         "stream_decode_default": stream_decode_default(f.prefix_stream),
         "silence_prefill": silence_prefill_spec(f.audio_codec, f.silence_hop),
         "tag_cfg": tag_cfg_capabilities(f.tag_cfg_available, f.tag_cfg_trained),
-        "decode_context": {"available": True, "default_frames": DECODE_CONTEXT_FRAMES, "max_frames": 450,
-                           "note": "decode the generated frames behind the last decode_context_frames of the "
-                                   "raw-reference prompt (their audio dropped), so the first generated frame is not the "
-                                   "decoder's position 0; no-op without a reference prompt"},
+        "decode_context": {
+            "available": True,
+            "default_frames": DECODE_CONTEXT_FRAMES,
+            "max_frames": 450,
+            "note": "decode the generated frames behind the last decode_context_frames of the "
+            "raw-reference prompt (their audio dropped), so the first generated frame is not the "
+            "decoder's position 0; no-op without a reference prompt",
+        },
         "speaker_modes": modes,
         "speaker_mode_default": modes[0] if modes else None,
         "decoder": f.decoder,
@@ -168,7 +195,7 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         # both paths: the twin drops the reference prefix or the speaker row
         "speaker_cfg_modes": modes if cfg else [],
         "speaker_cfg_unconditional": "remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_"
-                                     "generated_history",
+        "generated_history",
         "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
         # LACI (laci=true): languages with alignment heads (--laci-heads); needs speaker / controls CFG 1
         "laci_languages": sorted(f.laci_languages),
@@ -190,5 +217,7 @@ def capabilities_document(f: CapabilityFacts) -> dict:
 def models_document(model_path: str) -> dict:
     """GET /v1/models: the one model, ``root`` the checkpoint's base name."""
     root = PurePosixPath(str(model_path).rstrip("/")).name
-    return {"object": "list", "data": [{"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra",
-                                        "root": root}]}
+    return {
+        "object": "list",
+        "data": [{"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra", "root": root}],
+    }

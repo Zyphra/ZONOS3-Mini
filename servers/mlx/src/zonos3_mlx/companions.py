@@ -53,13 +53,23 @@ def load_steer(path: str | Path) -> SteeringBundle:
             raise ValueError(f"{path}: set {set_name!r} is {space!r}; bundles take raw or attnres_source sets")
         named, axes = groups[set_name]["named"], groups[set_name]["axis"]
         dim = int(next(iter({**named, **axes}.values())).numel()) if named or axes else 0
-        sets[set_name] = DirectionSet(dim=dim, named=named, axes=axes, space=space,
-                                      source_index=source if space == HIDDEN_SPACE else None,
-                                      calibration=Calibration.from_document(json.loads(calibration))
-                                      if calibration else None)
+        sets[set_name] = DirectionSet(
+            dim=dim,
+            named=named,
+            axes=axes,
+            space=space,
+            source_index=source if space == HIDDEN_SPACE else None,
+            calibration=Calibration.from_document(json.loads(calibration)) if calibration else None,
+        )
     raw = f.meta(k("rate_extension"), "")
-    return build_bundle(Path(path), f.meta(k("name")), sets, timing=json.loads(f.meta(k("timing"), "{}")),
-                        ui=json.loads(f.meta(k("ui"), "{}")), rate_extension=json.loads(raw) if raw else None)
+    return build_bundle(
+        Path(path),
+        f.meta(k("name")),
+        sets,
+        timing=json.loads(f.meta(k("timing"), "{}")),
+        ui=json.loads(f.meta(k("ui"), "{}")),
+        rate_extension=json.loads(raw) if raw else None,
+    )
 
 
 # ----------------------------------------------------------------------------------------------------- accents
@@ -68,7 +78,9 @@ def load_steer(path: str | Path) -> SteeringBundle:
 @dataclass
 class _Slot:
     linear: dict[str, tuple[mx.array, mx.array]]  # GGUF base name -> (down [K, in], up [out, K])
-    experts: dict[int, dict[str, tuple[mx.array, mx.array]]]  # layer -> gate|up|down -> (down [E, r, in], up [E, out, r])
+    experts: dict[
+        int, dict[str, tuple[mx.array, mx.array]]
+    ]  # layer -> gate|up|down -> (down [E, r, in], up [E, out, r])
     router_bias: dict[int, mx.array]
 
 
@@ -117,8 +129,9 @@ class AccentBank:
                     if up.shape[0] % n_codebooks == 0:  # zonos3.models.accent_format.fit_head
                         k = up.shape[1]
                         blocks = up.reshape(n_codebooks, -1, k)
-                        up = mx.concatenate([blocks, mx.zeros((n_codebooks, 1, k), up.dtype)],
-                                            axis=1).reshape(head_rows, k)
+                        up = mx.concatenate([blocks, mx.zeros((n_codebooks, 1, k), up.dtype)], axis=1).reshape(
+                            head_rows, k
+                        )
                 slots[slot].linear[base] = (down, up)
         return cls(names, formats, slots)
 

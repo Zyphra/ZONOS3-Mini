@@ -112,14 +112,23 @@ def scan_default_voices(root: Path, previous: dict[str, DefaultVoice]) -> dict[s
             continue
         speaker_id = default_voice_id(root, path)
         existing = previous.get(speaker_id)
-        if (existing is not None and existing.path == resolved and existing.mtime == stat.st_mtime
-                and existing.source_type == source_type):
+        if (
+            existing is not None
+            and existing.path == resolved
+            and existing.mtime == stat.st_mtime
+            and existing.source_type == source_type
+        ):
             existing.transcript = read_voice_transcript(existing.path)
             current[speaker_id] = existing
             continue
         current[speaker_id] = DefaultVoice(
-            speaker_id=speaker_id, label=default_voice_label(resolved), source_type=source_type, path=resolved,
-            mtime=stat.st_mtime, original_name=resolved.name, transcript=read_voice_transcript(resolved),
+            speaker_id=speaker_id,
+            label=default_voice_label(resolved),
+            source_type=source_type,
+            path=resolved,
+            mtime=stat.st_mtime,
+            original_name=resolved.name,
+            transcript=read_voice_transcript(resolved),
         )
     return current
 
@@ -141,8 +150,9 @@ def voice_preview(voice: DefaultVoice) -> tuple[bytes, str]:
     return voice.audio_bytes, voice.audio_media_type or "audio/wav"
 
 
-async def warm_voice_embeddings(voices: Iterable[DefaultVoice], embed: Callable[[DefaultVoice], Awaitable],
-                                logger: logging.Logger) -> None:
+async def warm_voice_embeddings(
+    voices: Iterable[DefaultVoice], embed: Callable[[DefaultVoice], Awaitable], logger: logging.Logger
+) -> None:
     """Compute every default voice's speaker embedding once (the studio's Who map places them all); a voice without
     one is logged."""
     for voice in voices:
@@ -195,9 +205,18 @@ def serialize_default_voice(voice: DefaultVoice, *, modes: list[str], embedding_
     }
 
 
-def serialize_session_voice(*, speaker_id: str, label: str, source_type: str, original_name: str | None,
-                            created_at: float, has_preview: bool, embedding_dim: int, modes: list[str],
-                            disabled: list[str]) -> dict:
+def serialize_session_voice(
+    *,
+    speaker_id: str,
+    label: str,
+    source_type: str,
+    original_name: str | None,
+    created_at: float,
+    has_preview: bool,
+    embedding_dim: int,
+    modes: list[str],
+    disabled: list[str],
+) -> dict:
     """A session voice of GET /v2/speakers and POST /v2/speakers."""
     return {
         "id": speaker_id,

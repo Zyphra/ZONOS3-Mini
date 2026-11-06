@@ -25,15 +25,27 @@ def condition_tokens(state: ServerState) -> dict | None:
     c = state.config
     if c.condition_count == 0:
         return None
-    return condition_spec(names=c.condition_names, count=c.condition_count, bucket_counts=c.condition_bucket_counts,
-                          edges=c.condition_edges, flags=state.engine.condition_flags, units=c.condition_units)
+    return condition_spec(
+        names=c.condition_names,
+        count=c.condition_count,
+        bucket_counts=c.condition_bucket_counts,
+        edges=c.condition_edges,
+        flags=state.engine.condition_flags,
+        units=c.condition_units,
+    )
 
 
 def decoder(state: ServerState) -> dict:
     name = Path(state.engine.paths["zac"]).name
-    return {"kind": "istft_mr", "label": f"Multi-resolution iSTFT head ({name}); causal", "checkpoint": name,
-            "expect_step": None, "headroom_db": float(state.engine.decoder.headroom_db), "causal": True,
-            "codec": state.config.audio_codec}
+    return {
+        "kind": "istft_mr",
+        "label": f"Multi-resolution iSTFT head ({name}); causal",
+        "checkpoint": name,
+        "expect_step": None,
+        "headroom_db": float(state.engine.decoder.headroom_db),
+        "causal": True,
+        "codec": state.config.audio_codec,
+    }
 
 
 def edit_model(state: ServerState) -> EditModel:
@@ -111,8 +123,13 @@ def router(state: ServerState) -> APIRouter:
         if lexicon is None:
             raise HTTPException(status_code=404, detail="This server has no pronunciation lexicon.")
         try:
-            return await asyncio.to_thread(lexicon.phonemize_for, request.text, request.language,
-                                           state.config.text_tokenizer_spec, guess=request.guess)
+            return await asyncio.to_thread(
+                lexicon.phonemize_for,
+                request.text,
+                request.language,
+                state.config.text_tokenizer_spec,
+                guess=request.guess,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

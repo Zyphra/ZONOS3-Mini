@@ -202,9 +202,7 @@ class TTSTextNormalizer:
 
         prefix = _VERBALIZER_FAR_PREFIX.get(lang)
         if prefix is not None:
-            far_path = os.path.join(
-                cache_dir, f"{prefix}_tn_True_deterministic_verbalizer.far"
-            )
+            far_path = os.path.join(cache_dir, f"{prefix}_tn_True_deterministic_verbalizer.far")
             if not os.path.exists(far_path):
                 from zonos3.vendor.nemo_text_processing.text_normalization.en.graph_utils import (
                     generator_main,
@@ -275,7 +273,7 @@ class TTSTextNormalizer:
             for i in range(0, len(pieces), 2):
                 stretch = pieces[i]
                 if stretch.strip():
-                    lead, trail = stretch[: len(stretch) - len(stretch.lstrip())], stretch[len(stretch.rstrip()):]
+                    lead, trail = stretch[: len(stretch) - len(stretch.lstrip())], stretch[len(stretch.rstrip()) :]
                     pieces[i] = lead + self._normalize_text(stretch.strip(), language) + trail
             return "".join(pieces)
         return self._normalize_text(text, language)
@@ -288,9 +286,7 @@ class TTSTextNormalizer:
         try:
             result = self._normalize_once(text, lang)
         except Exception:  # noqa: BLE001
-            logger.exception(
-                "TTS text normalization failed for lang=%s; retrying sentence by sentence", language
-            )
+            logger.exception("TTS text normalization failed for lang=%s; retrying sentence by sentence", language)
             pieces = []
             for piece in _SENTENCE_RE.split(text):
                 if not piece or not piece.strip():

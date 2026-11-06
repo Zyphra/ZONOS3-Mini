@@ -1,4 +1,5 @@
 """speaker_mode: reference | embedding per request for checkpoints that carry both conditioning paths."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -10,8 +11,14 @@ from zonos3.tts import plan  # noqa: E402
 
 
 def cfg(reference: bool, embedding: bool):
-    return SimpleNamespace(model_config=SimpleNamespace(speaker_reference_prefix_enabled=reference, speaker_enabled=embedding,
-                                                         speaker_embedding_dim=256, audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000"))
+    return SimpleNamespace(
+        model_config=SimpleNamespace(
+            speaker_reference_prefix_enabled=reference,
+            speaker_enabled=embedding,
+            speaker_embedding_dim=256,
+            audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000",
+        )
+    )
 
 
 def mode(config, value):

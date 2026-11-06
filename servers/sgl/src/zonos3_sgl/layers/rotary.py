@@ -43,9 +43,7 @@ class RotaryEmbedding(StateLessOP):
         if self.head_size != 32:
             from flashinfer import apply_rope_with_cos_sin_cache_inplace
 
-            self.apply_rope_with_cos_sin_cache_inplace = (
-                apply_rope_with_cos_sin_cache_inplace
-            )
+            self.apply_rope_with_cos_sin_cache_inplace = apply_rope_with_cos_sin_cache_inplace
 
     def _apply_torch_rope_inplace(
         self,
@@ -63,15 +61,11 @@ class RotaryEmbedding(StateLessOP):
         source = heads.float()
         if is_neox:
             first, second = source.chunk(2, dim=-1)
-            rotated = torch.cat(
-                (first * cos - second * sin, second * cos + first * sin), dim=-1
-            )
+            rotated = torch.cat((first * cos - second * sin, second * cos + first * sin), dim=-1)
         else:
             pairs = source.reshape(token_count, -1, self.head_size // 2, 2)
             even, odd = pairs.unbind(dim=-1)
-            rotated = torch.stack(
-                (even * cos - odd * sin, even * sin + odd * cos), dim=-1
-            ).flatten(-2)
+            rotated = torch.stack((even * cos - odd * sin, even * sin + odd * cos), dim=-1).flatten(-2)
         heads.copy_(rotated.to(dtype=heads.dtype))
 
     def forward(
@@ -85,11 +79,13 @@ class RotaryEmbedding(StateLessOP):
             if is_neox:
                 raise ValueError("Training RoPE requires interleaved pairs")
             freqs = self._freqs_cis[positions.to(torch.long), None, :]
+
             def rotate(tensor):
                 heads = tensor.reshape(tensor.shape[0], -1, self.head_size)
                 pairs = torch.view_as_complex(heads.float().unflatten(-1, (-1, 2)))
                 result = torch.view_as_real(pairs * freqs).flatten(-2)
                 return result.to(dtype=tensor.dtype).reshape_as(tensor)
+
             return rotate(query), rotate(key)
         if self.head_size == 32:
             self._apply_torch_rope_inplace(positions, query, is_neox=is_neox)
@@ -140,9 +136,7 @@ def get_rope(
     if t.device == torch.device("meta"):
         # we cannot use meta device for rope
         if _ROPE_DEVICE is None:
-            raise RuntimeError(
-                "We cannot use meta device for rope. Please call set_rope_device() first."
-            )
+            raise RuntimeError("We cannot use meta device for rope. Please call set_rope_device() first.")
         with torch.device(_ROPE_DEVICE):
             return _get_rope(head_dim, rotary_dim, max_position, base, rope_map)
     return _get_rope(head_dim, rotary_dim, max_position, base, rope_map)

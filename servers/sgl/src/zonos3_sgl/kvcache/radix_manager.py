@@ -166,9 +166,7 @@ class RadixCacheManager(BaseCacheManager):
     def evict(self, size: int) -> torch.Tensor:
         if size == 0:
             return self.empty_tensor
-        assert (
-            size <= self.evictable_size
-        ), f"Cannot evict {size}, only {self.evictable_size} is evictable"
+        assert size <= self.evictable_size, f"Cannot evict {size}, only {self.evictable_size} is evictable"
 
         leave_nodes = self._collect_leave_nodes_for_evict()
         heapq.heapify(leave_nodes)
@@ -176,9 +174,7 @@ class RadixCacheManager(BaseCacheManager):
         evicted_size = 0
 
         while evicted_size < size:
-            assert (
-                leave_nodes
-            ), f"Cannot evict enough cache, need {size}, only {evicted_size} evicted"
+            assert leave_nodes, f"Cannot evict enough cache, need {size}, only {evicted_size} evicted"
             node = heapq.heappop(leave_nodes)
             assert node.ref_count == 0 and node.is_leaf() and not node.is_root()
             evicted_size += node.length

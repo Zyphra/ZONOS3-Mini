@@ -108,7 +108,7 @@ class TTSReq:
     # Decode context / silence prefill (2026-10-17), handed to the detokenizer with the first generated row.
     decode_context_codes: torch.Tensor | None = None
     prefill_rows: torch.Tensor | None = None
-    context_sent: bool = False               # set once the detokenizer got them (first emitted row)
+    context_sent: bool = False  # set once the detokenizer got them (first emitted row)
     # Hidden-space steering delta of the request's controls, added on every generated frame: one hidden-size slot per
     # steered Full AttnRes bank source, flattened; 1D CPU float32 tensor.
     steering_delta: torch.Tensor | None = None
@@ -152,9 +152,7 @@ class TTSReq:
             if emb.dim() == 2 and emb.shape[0] == 1:
                 emb = emb.squeeze(0)
             if emb.dim() != 1:
-                raise ValueError(
-                    f"speaker_embedding must be 1D or (1, D), got shape {tuple(emb.shape)}"
-                )
+                raise ValueError(f"speaker_embedding must be 1D or (1, D), got shape {tuple(emb.shape)}")
             self.speaker_embedding = emb.to(dtype=torch.float32, device="cpu")
 
         if self.steering_delta is not None:
@@ -162,9 +160,7 @@ class TTSReq:
             if d.dim() == 2 and d.shape[0] == 1:
                 d = d.squeeze(0)
             if d.dim() != 1:
-                raise ValueError(
-                    f"steering_delta must be 1D or (1, D), got shape {tuple(d.shape)}"
-                )
+                raise ValueError(f"steering_delta must be 1D or (1, D), got shape {tuple(d.shape)}")
             self.steering_delta = d.to(dtype=torch.float32, device="cpu")
 
         if self.steer_schedule is not None:

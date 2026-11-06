@@ -7,6 +7,7 @@ through unchanged, so the cluster servers keep running from their local registri
 (Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (was ``lm/mect_60k``,
 which was ``lm/fullenc_120k`` before).
 """
+
 from __future__ import annotations
 
 import os
@@ -28,7 +29,7 @@ def split(uri: str) -> tuple[str, str]:
     """hf://owner/repo/a/b -> ('owner/repo', 'a/b'); hf://owner/repo -> ('owner/repo', '')."""
     if not is_hf(uri):
         raise ValueError(f"not an hf:// location: {uri!r}")
-    parts = uri[len(PREFIX):].strip("/").split("/", 2)
+    parts = uri[len(PREFIX) :].strip("/").split("/", 2)
     if len(parts) < 2 or not parts[0] or not parts[1]:
         raise ValueError(f"hf:// location needs owner/repo: {uri!r}")
     return f"{parts[0]}/{parts[1]}", (parts[2] if len(parts) > 2 else "")
@@ -74,8 +75,12 @@ def resolve_dir_or_local(path) -> str:
     from huggingface_hub import snapshot_download
 
     print(f"[release] fetching folder {path}", file=sys.stderr, flush=True)
-    root = snapshot_download(repo_id=repo_id, repo_type="model", token=_token(),
-                             allow_patterns=[f"{inside}/*", f"{inside}/**"] if inside else None)
+    root = snapshot_download(
+        repo_id=repo_id,
+        repo_type="model",
+        token=_token(),
+        allow_patterns=[f"{inside}/*", f"{inside}/**"] if inside else None,
+    )
     return str(Path(root) / inside) if inside else root
 
 

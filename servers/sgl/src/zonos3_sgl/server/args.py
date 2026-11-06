@@ -117,7 +117,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         type=str,
         default=RELEASE_LM,
         help="Zonos3 TTS checkpoint: an hf://owner/repo/folder location (default: the ZONOS3 Mini release LM "
-             f"{RELEASE_LM}; HF_TOKEN or a stored login while that repo is private), a Hugging Face repo id, or a local path.",
+        f"{RELEASE_LM}; HF_TOKEN or a stored login while that repo is private), a Hugging Face repo id, or a local path.",
     )
 
     parser.add_argument(
@@ -440,14 +440,14 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         kwargs["steer_bundle"] = os.path.abspath(os.path.expanduser(kwargs["steer_bundle"]))
         from zonos3.tts.steering import load_bundle
 
-        load_bundle(kwargs["steer_bundle"])   # fail at startup, not on the first request
+        load_bundle(kwargs["steer_bundle"])  # fail at startup, not on the first request
     if kwargs.get("tts_phoneme_lexicon"):
         kwargs["tts_phoneme_lexicon"] = os.path.expanduser(kwargs["tts_phoneme_lexicon"])
         if not os.path.isfile(os.path.join(kwargs["tts_phoneme_lexicon"], "data.mdb")):
             parser.error(f"--tts-phoneme-lexicon {kwargs['tts_phoneme_lexicon']} has no data.mdb")
     if kwargs.get("studio_projects_dir"):
         kwargs["studio_projects_dir"] = os.path.abspath(os.path.expanduser(kwargs["studio_projects_dir"]))
-        os.makedirs(kwargs["studio_projects_dir"], exist_ok=True)   # fail at startup, not on the first save
+        os.makedirs(kwargs["studio_projects_dir"], exist_ok=True)  # fail at startup, not on the first save
 
     DTYPE_MAP = {
         "float16": torch.float16,
@@ -515,9 +515,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     speaking_rate_num_buckets = int(getattr(checkpoint_config, "speaking_rate_num_buckets", 0) or 0)
     if speaking_rate_num_buckets > 0:
         kwargs["tts_speaking_rate_num_buckets"] = speaking_rate_num_buckets
-        kwargs["tts_speaking_rate_buckets"] = tuple(
-            getattr(checkpoint_config, "speaking_rate_buckets", None) or ()
-        )
+        kwargs["tts_speaking_rate_buckets"] = tuple(getattr(checkpoint_config, "speaking_rate_buckets", None) or ())
 
     if bool(getattr(checkpoint_config, "speaker_background_token_enabled", False)):
         kwargs["tts_speaker_background_token_enabled"] = True
@@ -527,16 +525,12 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     quality_num_buckets = int(getattr(checkpoint_config, "quality_num_buckets", 0) or 0)
     if quality_num_buckets > 0:
         raw_quality_buckets = getattr(checkpoint_config, "quality_buckets", None) or {}
-        raw_quality_features = (
-            getattr(checkpoint_config, "quality_features", None) or raw_quality_buckets.keys()
-        )
+        raw_quality_features = getattr(checkpoint_config, "quality_features", None) or raw_quality_buckets.keys()
         quality_features = tuple(str(item) for item in (raw_quality_features or ()))
         kwargs["tts_quality_num_buckets"] = quality_num_buckets
         kwargs["tts_quality_features"] = quality_features
         kwargs["tts_quality_buckets"] = {
-            str(feature): tuple(
-                str(item) for item in (raw_quality_buckets.get(feature, ()) or ())
-            )
+            str(feature): tuple(str(item) for item in (raw_quality_buckets.get(feature, ()) or ()))
             for feature in quality_features
         }
         kwargs["tts_quality_dropout"] = getattr(checkpoint_config, "quality_dropout", None)

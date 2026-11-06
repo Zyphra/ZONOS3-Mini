@@ -148,13 +148,25 @@ def _write_bank_bundle(root, hidden=4):
     directory = root / "moods"
     directory.mkdir(parents=True, exist_ok=True)
     np.save(directory / "sad.npy", np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32))
-    (directory / "manifest.json").write_text(json.dumps({
-        "dim": hidden, "space": "attnres_source", "source_index": 4,
-        "directions": {"sad": {"file": "sad.npy", "kind": "named", "norm": 1.0}},
-    }))
-    (directory / "calibration.json").write_text(json.dumps({
-        "global_default": 2.0, "default": {"sad": 3.0}, "by_speaker": {"voice_a": {"sad": 0.0}},
-    }))
+    (directory / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dim": hidden,
+                "space": "attnres_source",
+                "source_index": 4,
+                "directions": {"sad": {"file": "sad.npy", "kind": "named", "norm": 1.0}},
+            }
+        )
+    )
+    (directory / "calibration.json").write_text(
+        json.dumps(
+            {
+                "global_default": 2.0,
+                "default": {"sad": 3.0},
+                "by_speaker": {"voice_a": {"sad": 0.0}},
+            }
+        )
+    )
     (root / "bundle.json").write_text(json.dumps({"name": "t", "sets": {"mood": "moods"}, "ui": {"controls": []}}))
     return root / "bundle.json"
 
@@ -177,8 +189,15 @@ def test_raw_reference_model_steers_without_speaker_embedding(tmp_path, monkeypa
     assert torch.allclose(rules.hidden_delta, torch.tensor([0.0, -1.5, 0.0, 0.0]))
 
     def speaker(speaker_id):
-        entry = SimpleNamespace(speaker_id=speaker_id, label=speaker_id, source_type="audio", embedding=torch.empty(0),
-                                created_at=0.0, original_name=None, audio_bytes=b"clip")
+        entry = SimpleNamespace(
+            speaker_id=speaker_id,
+            label=speaker_id,
+            source_type="audio",
+            embedding=torch.empty(0),
+            created_at=0.0,
+            original_name=None,
+            audio_bytes=b"clip",
+        )
         return api_server._speaker_document(config, entry)
 
     assert speaker("voice_a")["disabled_controls"] == ["mood.sad"]
@@ -261,12 +280,20 @@ def test_dual_path_checkpoints_cache_clips_and_embedding_files(monkeypatch):
     np.save(buf, np.array([1.0, 2.0, 2.0], dtype=np.float32))
     npy = "data:application/octet-stream;base64," + base64.b64encode(buf.getvalue()).decode()
 
-    clip = asyncio.run(api_server.tts_cache_speaker(
-        SpeakerCreateRequest(speaker_audio_base64="data:audio/wav;base64,AAAA", label="Clip"), "s"))
-    designed = asyncio.run(api_server.tts_cache_speaker(
-        SpeakerCreateRequest(speaker_embedding_base64=npy, speaker_embedding_name="designed.npy"), "s"))
+    clip = asyncio.run(
+        api_server.tts_cache_speaker(
+            SpeakerCreateRequest(speaker_audio_base64="data:audio/wav;base64,AAAA", label="Clip"), "s"
+        )
+    )
+    designed = asyncio.run(
+        api_server.tts_cache_speaker(
+            SpeakerCreateRequest(speaker_embedding_base64=npy, speaker_embedding_name="designed.npy"), "s"
+        )
+    )
 
-    resolve = lambda sid: asyncio.run(api_server._resolve_cached_speaker_embedding(config=config, session_id="s", speaker_id=sid))
+    resolve = lambda sid: asyncio.run(
+        api_server._resolve_cached_speaker_embedding(config=config, session_id="s", speaker_id=sid)
+    )
     assert torch.equal(resolve(clip["id"]), torch.tensor([0.0, 1.0, 0.0]))
     assert torch.allclose(resolve(designed["id"]), torch.tensor([1.0, 2.0, 2.0]))
     # v2 Speaker shape: a clip supports both modes, an embedding file speaker_mode=embedding only

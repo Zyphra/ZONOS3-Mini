@@ -1,5 +1,6 @@
 """Span steering by reading position (zonos3.tts.span_follow): character spans -> text-span token positions, and the
 per-request gate (ramps, smoothing, decisions per frame, LACI rollbacks)."""
+
 from __future__ import annotations
 
 import os
@@ -27,18 +28,33 @@ O, C = "\ue000", "\ue001"
 
 @pytest.fixture
 def spec(tmp_path):
-    tokenizer, size = wordlevel_spec(["please", "call", "stella", "tomorrow", "morning", ".", "[UNK]"],
-                                     whitespace=True)
+    tokenizer, size = wordlevel_spec(["please", "call", "stella", "tomorrow", "morning", ".", "[UNK]"], whitespace=True)
     path = tmp_path / "superbpe.json"
     path.write_text(tokenizer)
-    return {"kind": "superbpe", "path": str(path), "sha256": sha256_file(path),
-                "vocab_size": size, "offset": 4, "bos": 2, "eos": 3}
+    return {
+        "kind": "superbpe",
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "vocab_size": size,
+        "offset": 4,
+        "bos": 2,
+        "eos": 3,
+    }
 
 
 def phoneme_spec(spec):
     text_vocab = spec["vocab_size"] + 4
-    return {**spec, "phonemes": {"open_id": text_vocab + 1, "close_id": text_vocab + 2, "symbols": list("stɛlə"),
-                                     "open_marker": O, "close_marker": C, "inventory_sha256": "0" * 64}}
+    return {
+        **spec,
+        "phonemes": {
+            "open_id": text_vocab + 1,
+            "close_id": text_vocab + 2,
+            "symbols": list("stɛlə"),
+            "open_marker": O,
+            "close_marker": C,
+            "inventory_sha256": "0" * 64,
+        },
+    }
 
 
 # ------------------------------------------------------------------------------------------------- token mapping
@@ -47,8 +63,12 @@ def phoneme_spec(spec):
 def test_one_char_range_per_text_id(spec):
     """token_char_ranges lines up with text_ids for words, phoneme groups and bytes (BOS / EOS included)."""
     ps = phoneme_spec(spec)
-    for text, sp in (("please call stella tomorrow morning .", spec), (f"please call {O}stɛlə{C} tomorrow .", ps),
-                     (f"{O}stɛlə{C}", ps), ("please", ps)):
+    for text, sp in (
+        ("please call stella tomorrow morning .", spec),
+        (f"please call {O}stɛlə{C} tomorrow .", ps),
+        (f"{O}stɛlə{C}", ps),
+        ("please", ps),
+    ):
         assert len(token_char_ranges(text, sp)) == len(text_ids(text, sp)), text
     assert len(token_char_ranges("café ü", None)) == len("café ü".encode()) + 2  # byte ids: one per UTF-8 byte
 
@@ -82,26 +102,32 @@ def test_offsets_follow_text_normalization(spec):
     original, final = "Call Stella at 3 tomorrow.", "Call Stella at three tomorrow."
     assert map_offsets(original, final, [5, 11]) == [5, 11]  # before the rewrite: unchanged
     s, e = original.index("3"), original.index("3") + 1
-    assert final[map_offsets(original, final, [s])[0]:map_offsets(original, final, [e], end=True)[0]] == "three"
+    assert final[map_offsets(original, final, [s])[0] : map_offsets(original, final, [e], end=True)[0]] == "three"
     t = original.index("tomorrow")
-    assert final[map_offsets(original, final, [t])[0]:].startswith("tomorrow")
+    assert final[map_offsets(original, final, [t])[0] :].startswith("tomorrow")
     assert map_offsets(original, final, [len(original)]) == [len(final)]
 
 
 REAL = Path(os.environ["ZONOS3_TEST_PHONEME_MODEL"]) if os.environ.get("ZONOS3_TEST_PHONEME_MODEL") else None
 
 
-@pytest.mark.skipif(REAL is None or not (REAL / "params.json").exists(),
-                    reason="set ZONOS3_TEST_PHONEME_MODEL to a phoneme-token checkpoint")
+@pytest.mark.skipif(
+    REAL is None or not (REAL / "params.json").exists(),
+    reason="set ZONOS3_TEST_PHONEME_MODEL to a phoneme-token checkpoint",
+)
 def test_release_superbpe_lines_up():
     real = load_spec(REAL)
     o, c = real["phonemes"]["open_marker"], real["phonemes"]["close_marker"]
     phone = real["phonemes"]["symbols"][0]
-    for text in ("Hello world, of the people.", "Il était excité, et en même temps inquiet : peut-être.",
-                 f"Please call {o}{phone * 3}{c} tomorrow morning.", "  spaced   out  "):
+    for text in (
+        "Hello world, of the people.",
+        "Il était excité, et en même temps inquiet : peut-être.",
+        f"Please call {o}{phone * 3}{c} tomorrow morning.",
+        "  spaced   out  ",
+    ):
         assert len(token_char_ranges(text, real)) == len(text_ids(text, real)), text
     text = "Please call Stella. Ask her to bring these things with her from the store."
-    (a, b), = span_token_ranges(text, text, [(text.index("Stella"), text.index("Stella") + 6)], real)
+    ((a, b),) = span_token_ranges(text, text, [(text.index("Stella"), text.index("Stella") + 6)], real)
     words = "".join(text[x:y] for x, y in token_char_ranges(text, real)[a:b])
     assert "Stella" in words and "Please" not in words and "Ask" not in words
 
@@ -137,13 +163,13 @@ def test_ramps_in_at_the_lead_and_out_after_the_span():
     w = [x[0] for x in drive(f, reading)]
     on = next(i for i, x in enumerate(w) if x > 0)
     # frame on + 1 is the first decided with the median of 3 readouts (of frames <= on - 1) at 10 - lead
-    assert w[on:on + 3] == pytest.approx([1 / 3, 2 / 3, 1.0])
-    assert sorted(reading[on - 4:on - 1])[1] == 9 and sorted(reading[on - 5:on - 2])[1] == 8
+    assert w[on : on + 3] == pytest.approx([1 / 3, 2 / 3, 1.0])
+    assert sorted(reading[on - 4 : on - 1])[1] == 9 and sorted(reading[on - 5 : on - 2])[1] == 8
     off = next(i for i in range(on + 2, len(w)) if w[i] < 1)
-    assert w[off:off + 3] == pytest.approx([2 / 3, 1 / 3, 0.0])
-    assert sorted(reading[off - 4:off - 1])[1] == 12  # the token after the span (lag 0)
-    assert sorted(reading[off - 5:off - 2])[1] == 11
-    assert all(x == 0 for x in w[off + 2:])
+    assert w[off : off + 3] == pytest.approx([2 / 3, 1 / 3, 0.0])
+    assert sorted(reading[off - 4 : off - 1])[1] == 12  # the token after the span (lag 0)
+    assert sorted(reading[off - 5 : off - 2])[1] == 11
+    assert all(x == 0 for x in w[off + 2 :])
 
 
 def test_a_lone_spike_does_not_open_a_span_and_jumps_are_capped():

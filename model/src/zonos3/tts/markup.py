@@ -49,4 +49,6 @@ def trained_on_tags(checkpoint_dir) -> bool:
         sources = ((yaml.safe_load(path.read_text()) or {}).get("data") or {}).get("sources") or {}
     except (OSError, yaml.YAMLError, AttributeError):
         return False
-    return isinstance(sources, dict) and any(isinstance(s, dict) and s.get("nonverbal") is True for s in sources.values())
+    return isinstance(sources, dict) and any(
+        isinstance(s, dict) and s.get("nonverbal") is True for s in sources.values()
+    )

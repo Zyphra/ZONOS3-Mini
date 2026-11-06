@@ -9,6 +9,7 @@ exactly and every property below is checked bit for bit:
   * an EOS frame bounds both the streamed chunks and the tail;
   * the flag travels through the message serialization.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -66,7 +67,13 @@ def whole_decode(frames: np.ndarray) -> bytes:
 def run(manager: vocoder.TTSVocoderManager, rows: list[list[int]], uid: int = 7, stream_decode=None, eos_frame=None):
     chunks = []
     for i, row in enumerate(rows):
-        msg = TTSDetokenizeMsg(uid=uid, audio_codes=list(row), finished=i == len(rows) - 1, eos_frame=eos_frame, stream_decode=stream_decode)
+        msg = TTSDetokenizeMsg(
+            uid=uid,
+            audio_codes=list(row),
+            finished=i == len(rows) - 1,
+            eos_frame=eos_frame,
+            stream_decode=stream_decode,
+        )
         chunks.extend(manager.decode_frames([msg]))
     return chunks
 
@@ -97,8 +104,13 @@ def test_default_mode_is_one_exact_chunk_at_eos(fake):
 def test_prefix_mode_streams_and_matches_the_whole_decode(fake):
     frames = make_frames(60, seed=1)
     manager = vocoder.TTSVocoderManager(
-        n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC,
-        prefix_chunk_frames=5, prefix_hold_back_frames=2, prefix_context_frames=12, prefix_first_chunk_frames=5,
+        n_codebooks=N_CB,
+        audio_pad_id=PAD,
+        audio_codec=CODEC,
+        prefix_chunk_frames=5,
+        prefix_hold_back_frames=2,
+        prefix_context_frames=12,
+        prefix_first_chunk_frames=5,
     )
     rows = delayed_rows(frames)
     chunks = run(manager, rows, stream_decode="prefix")
@@ -123,8 +135,13 @@ def test_prefix_mode_streams_and_matches_the_whole_decode(fake):
 def test_prefix_mode_first_chunk_is_shorter(fake):
     frames = make_frames(60, seed=3)
     manager = vocoder.TTSVocoderManager(
-        n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC,
-        prefix_chunk_frames=5, prefix_hold_back_frames=2, prefix_context_frames=12, prefix_first_chunk_frames=2,
+        n_codebooks=N_CB,
+        audio_pad_id=PAD,
+        audio_codec=CODEC,
+        prefix_chunk_frames=5,
+        prefix_hold_back_frames=2,
+        prefix_context_frames=12,
+        prefix_first_chunk_frames=2,
     )
     chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
     live = [c for c in chunks[:-1] if c]
@@ -143,8 +160,12 @@ def test_prefix_mode_respects_eos(fake):
     eos = 31
     frames[eos:, :] = EOA
     manager = vocoder.TTSVocoderManager(
-        n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC,
-        prefix_chunk_frames=4, prefix_hold_back_frames=1, prefix_context_frames=100,
+        n_codebooks=N_CB,
+        audio_pad_id=PAD,
+        audio_codec=CODEC,
+        prefix_chunk_frames=4,
+        prefix_hold_back_frames=1,
+        prefix_context_frames=100,
     )
     chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
     assert b"".join(chunks) == whole_decode(frames[:eos])
@@ -170,6 +191,8 @@ def test_prefix_settings_validation():
     with pytest.raises(ValueError):
         vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_first_chunk_frames=0)
     with pytest.raises(ValueError):
-        vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_chunk_frames=20, prefix_context_frames=10)
+        vocoder.TTSVocoderManager(
+            n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_chunk_frames=20, prefix_context_frames=10
+        )
     m = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
     assert m.prefix == StreamSettings(chunk=15, first_chunk=4, hold_back=3, context=450)

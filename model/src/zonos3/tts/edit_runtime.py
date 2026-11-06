@@ -113,8 +113,9 @@ class EditEngine(Protocol):
     async def encode(self, audio: bytes, max_seconds: float) -> np.ndarray:
         """Ordinary codec codes ``[frames, n_codebooks]`` (int64) of an upload."""
 
-    async def check(self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets,
-                    condition_values) -> set[str]:
+    async def check(
+        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
+    ) -> set[str]:
         """Engine-level checks before any work: the target's pronunciation groups, every region's steering doses
         against the server's bundle (ValueError without one) and the condition buckets / values. Returns the dosed
         ids that move the speaker embedding (raw-space directions)."""
@@ -133,15 +134,20 @@ def edit_capabilities(model: EditModel, available: bool, transcribe: bool) -> di
     /v2/edit/transcribe, transcripts inside /v2/edit and ``verify``."""
     editing = model.max_spans > 0
     speech_editing = editing and available
-    return {"speech_editing": speech_editing, "edit_transcribe": speech_editing and transcribe,
-            "edit_max_spans": model.max_spans if editing else 0,
-            "edit_frame_rate": model.frame_rate if editing else None, "edit_max_seconds": EDIT_MAX_SECONDS,
-            "edit_align_max_seconds": EDIT_MAX_SECONDS}
+    return {
+        "speech_editing": speech_editing,
+        "edit_transcribe": speech_editing and transcribe,
+        "edit_max_spans": model.max_spans if editing else 0,
+        "edit_frame_rate": model.frame_rate if editing else None,
+        "edit_max_seconds": EDIT_MAX_SECONDS,
+        "edit_align_max_seconds": EDIT_MAX_SECONDS,
+    }
 
 
 def public_words(words) -> list[dict]:
-    return [{"word": w.word, "start": w.start, "end": w.end, "confidence": w.confidence, "tokens": w.tokens}
-            for w in words]
+    return [
+        {"word": w.word, "start": w.start, "end": w.end, "confidence": w.confidence, "tokens": w.tokens} for w in words
+    ]
 
 
 def region_doses(req, model: EditModel) -> list[dict[str, float]] | None:
@@ -151,8 +157,10 @@ def region_doses(req, model: EditModel) -> list[dict[str, float]] | None:
         if req.spans is None:
             raise ValueError("region_controls needs explicit spans (one entry per span).")
         if len(req.region_controls) != len(req.spans):
-            raise ValueError(f"region_controls has {len(req.region_controls)} entries for {len(req.spans)} spans; "
-                             "send one per span (null for none).")
+            raise ValueError(
+                f"region_controls has {len(req.region_controls)} entries for {len(req.spans)} spans; "
+                "send one per span (null for none)."
+            )
     regions = len(req.spans) if req.spans is not None else 1
     doses = []
     for k in range(regions):
@@ -189,8 +197,9 @@ class EditRuntime:
 
     def require_editing(self) -> None:
         if self.model.max_spans <= 0:
-            raise ValueError("The loaded checkpoint does not support speech editing (needs span_end_id and marker "
-                             "rows).")
+            raise ValueError(
+                "The loaded checkpoint does not support speech editing (needs span_end_id and marker rows)."
+            )
 
     # ---- workers ----------------------------------------------------------------------------------------------
 
@@ -218,8 +227,9 @@ class EditRuntime:
         """The words of ``text`` in the clip with their edit tokens (``utterances``: the long-form anchors of a
         transcript of the same clip; without speech recognition a long clip aligns without them)."""
         asr = self.asr if self.transcribes else None
-        return await asyncio.to_thread(edit_align.edit_aligned_words, asr, self.aligner, path, text, language,
-                                       utterances)
+        return await asyncio.to_thread(
+            edit_align.edit_aligned_words, asr, self.aligner, path, text, language, utterances
+        )
 
     async def _write_audio(self, audio: bytes, directory: str, max_seconds: float) -> tuple[str, float]:
         """Decode an upload, check its length and store it as WAV for the ASR and FuseAlign workers."""
@@ -243,8 +253,9 @@ class EditRuntime:
         language = self.language(req.language)
         await self.require_recognition(req.language, SEND_TO_ALIGN)
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
-            path, duration = await self._write_audio(decode_base64_blob(req.audio_base64, "audio_base64"), tmp,
-                                                     EDIT_MAX_SECONDS)
+            path, duration = await self._write_audio(
+                decode_base64_blob(req.audio_base64, "audio_base64"), tmp, EDIT_MAX_SECONDS
+            )
             transcript = await self._transcribe(path, language)
             words = await self._aligned_words(path, transcript.text, language, transcript.utterances)
         return {"text": transcript.text, "duration": duration, "words": public_words(words)}
@@ -259,8 +270,9 @@ class EditRuntime:
             raise ValueError("text is empty.")
         language = self.language(req.language)
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
-            path, duration = await self._write_audio(decode_base64_blob(req.audio_base64, "audio_base64"), tmp,
-                                                     EDIT_MAX_SECONDS)
+            path, duration = await self._write_audio(
+                decode_base64_blob(req.audio_base64, "audio_base64"), tmp, EDIT_MAX_SECONDS
+            )
             words = await self._aligned_words(path, text, language)
         return {"text": text, "duration": duration, "words": public_words(words)}
 
@@ -277,8 +289,9 @@ class EditRuntime:
         m = self.model
         self.require_editing()
         if req.tag_cfg_scale != 1.0:
-            raise ValueError("tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); "
-                             "use 1.0.")
+            raise ValueError(
+                "tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); use 1.0."
+            )
         frame_rate, n_cb = m.frame_rate, m.n_codebooks
         # Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt
         # text and never reach the ASR or FuseAlign (word diff, alignment, verify; target_tokens).
@@ -303,8 +316,10 @@ class EditRuntime:
             raise ValueError("speaker_embedding needs a checkpoint with a speaker-embedding row.")
         raw = await self.engine.check(target_text, doses, req.condition_buckets, req.condition_values)
         if raw and not use_row:
-            raise ValueError(f"Controls {', '.join(sorted(raw))} move the speaker embedding and need the speaker row "
-                             "(speaker_embedding true or unset, on a speaker-embedding checkpoint).")
+            raise ValueError(
+                f"Controls {', '.join(sorted(raw))} move the speaker embedding and need the speaker row "
+                "(speaker_embedding true or unset, on a speaker-embedding checkpoint)."
+            )
         audio = decode_base64_blob(req.audio_base64, "audio_base64")
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             original_path, duration = await self._write_audio(audio, tmp, EDIT_MAX_SECONDS)
@@ -328,8 +343,9 @@ class EditRuntime:
                 for w in given:
                     if w["tokens"] is None:
                         w["tokens"] = textmatch.tokens(w["word"])
-                words = edit_words(given, [w["tokens"] for w in given], textmatch.tokens(original_text),
-                                   duration=duration)
+                words = edit_words(
+                    given, [w["tokens"] for w in given], textmatch.tokens(original_text), duration=duration
+                )
             elif req.spans is None or windowed or (req.min_fill_ratio > 0 and original_text):
                 utterances = None
                 if not original_text:
@@ -341,47 +357,86 @@ class EditRuntime:
             if req.spans is not None:
                 spans = seconds_to_spans(req.spans, len(codes), frame_rate)
             else:
-                spans = diff_spans(words, normalized_target[0], total_frames=len(codes), frame_rate=frame_rate,
-                                   margin_seconds=req.margin_seconds, max_spans=m.max_spans).spans
+                spans = diff_spans(
+                    words,
+                    normalized_target[0],
+                    total_frames=len(codes),
+                    frame_rate=frame_rate,
+                    margin_seconds=req.margin_seconds,
+                    max_spans=m.max_spans,
+                ).spans
             validate_edit_spans(spans, len(codes), m.max_spans)
             windows = [whole_clip_window(spans, len(codes), target_text)]
             if windowed:
-                windows = plan_edit_windows(spans, words, target_words, normalized_target[1:],
-                                            total_frames=len(codes), frame_rate=frame_rate,
-                                            context_seconds=req.context_seconds, target_text=target_text)
+                windows = plan_edit_windows(
+                    spans,
+                    words,
+                    target_words,
+                    normalized_target[1:],
+                    total_frames=len(codes),
+                    frame_rate=frame_rate,
+                    context_seconds=req.context_seconds,
+                    target_text=target_text,
+                )
             if words is not None:
-                expected = expected_fill_seconds(spans, words, target_words, normalized_target[1:],
-                                                 frame_rate=frame_rate)
+                expected = expected_fill_seconds(
+                    spans, words, target_words, normalized_target[1:], frame_rate=frame_rate
+                )
             else:
                 expected = [length / frame_rate for _, length in spans]
             # The span-end token is masked until a fill reaches min_fill_ratio of its expected length.
-            min_frames = [min(int(req.min_fill_ratio * seconds * frame_rate), int(req.max_span_seconds * frame_rate))
-                          for seconds in expected]
+            min_frames = [
+                min(int(req.min_fill_ratio * seconds * frame_rate), int(req.max_span_seconds * frame_rate))
+                for seconds in expected
+            ]
             max_tokens = int(req.max_span_seconds * frame_rate) + n_cb + 1
             # Without explicit spans the request's controls apply to every diffed region alike.
-            region_controls = [None if doses is None else doses[k if req.spans is not None else 0]
-                               for k in range(len(spans))]
+            region_controls = [
+                None if doses is None else doses[k if req.spans is not None else 0] for k in range(len(spans))
+            ]
             base_seed = req.seed if req.seed is not None else random.randrange(2**31 - 8)
-            sampling = {"temperature": req.temperature, "topk": req.topk, "top_p": req.top_p, "min_p": req.min_p,
-                        "repetition_window": req.repetition_window, "repetition_penalty": req.repetition_penalty,
-                        "repetition_codebooks": req.repetition_codebooks}
+            sampling = {
+                "temperature": req.temperature,
+                "topk": req.topk,
+                "top_p": req.top_p,
+                "min_p": req.min_p,
+                "repetition_window": req.repetition_window,
+                "repetition_penalty": req.repetition_penalty,
+                "repetition_codebooks": req.repetition_codebooks,
+            }
 
             async def take(k: int) -> dict:
                 fills, stopped = [None] * len(spans), [None] * len(spans)
                 for window in windows:
-                    window_codes = codes[window.start: window.end]
+                    window_codes = codes[window.start : window.end]
                     window_spans = [[int(start), int(length)] for start, length in window.spans(spans)]
                     window_fills: list[np.ndarray] = []
                     for region in window.regions:
-                        rows, eos_frame = await self.engine.fill(FillJob(
-                            text=window.text, language=language, text_normalization=req.text_normalization,
-                            sampling=sampling, seed=base_seed + k, max_tokens=max_tokens,
-                            min_frames=min_frames[region], condition_buckets=req.condition_buckets,
-                            condition_values=req.condition_values, speaker_embedding=speaker_embedding,
-                            controls=region_controls[region], controls_text=target_text, window_codes=window_codes,
-                            spans=window_spans, fills=list(window_fills)))
-                        fill, ended = extract_fill(rows, None if eos_frame is None or eos_frame < 0 else eos_frame,
-                                                   audio_pad_id=m.audio_pad_id, codebook_sizes=list(m.codebook_sizes))
+                        rows, eos_frame = await self.engine.fill(
+                            FillJob(
+                                text=window.text,
+                                language=language,
+                                text_normalization=req.text_normalization,
+                                sampling=sampling,
+                                seed=base_seed + k,
+                                max_tokens=max_tokens,
+                                min_frames=min_frames[region],
+                                condition_buckets=req.condition_buckets,
+                                condition_values=req.condition_values,
+                                speaker_embedding=speaker_embedding,
+                                controls=region_controls[region],
+                                controls_text=target_text,
+                                window_codes=window_codes,
+                                spans=window_spans,
+                                fills=list(window_fills),
+                            )
+                        )
+                        fill, ended = extract_fill(
+                            rows,
+                            None if eos_frame is None or eos_frame < 0 else eos_frame,
+                            audio_pad_id=m.audio_pad_id,
+                            codebook_sizes=list(m.codebook_sizes),
+                        )
                         window_fills.append(np.asarray(fill, dtype=np.int32))
                         fills[region], stopped[region] = window_fills[-1], ended
                 spliced = np.asarray(splice_edit(codes, spans, fills), dtype=np.int32)
@@ -396,37 +451,54 @@ class EditRuntime:
                     heard = await self._transcribe(edited_path, edit_lang)
                     if verify_reference is None:
                         scored = textmatch.verify(plain_target_text, heard.text)
-                        verify = {"asr_text": heard.text, "wer": scored["word_errors"] / max(1, scored["ref_words"]),
-                                  "cer": scored["cer"]}
-                        take_words = public_words(await self._aligned_words(edited_path, plain_target_text,
-                                                                            edit_lang, heard.utterances))
+                        verify = {
+                            "asr_text": heard.text,
+                            "wer": scored["word_errors"] / max(1, scored["ref_words"]),
+                            "cer": scored["cer"],
+                        }
+                        take_words = public_words(
+                            await self._aligned_words(edited_path, plain_target_text, edit_lang, heard.utterances)
+                        )
                     else:
                         # Groups are wildcard words: any one recognized word matches; the take's words come from
                         # aligning the target with each group replaced by the word heard.
                         scored = wildcard_verify(verify_reference, textmatch.tokens(heard.text))
-                        verify = {"asr_text": heard.text, "wer": scored["word_errors"] / max(1, scored["ref_words"]),
-                                  "cer": scored["cer"], "groups": scored["groups"]}
+                        verify = {
+                            "asr_text": heard.text,
+                            "wer": scored["word_errors"] / max(1, scored["ref_words"]),
+                            "cer": scored["cer"],
+                            "groups": scored["groups"],
+                        }
                         heard_text = fill_groups(plain_target_text, [g["heard"] for g in scored["groups"]])
                         if heard_text:
-                            take_words = public_words(await self._aligned_words(edited_path, heard_text, edit_lang,
-                                                                                heard.utterances))
+                            take_words = public_words(
+                                await self._aligned_words(edited_path, heard_text, edit_lang, heard.utterances)
+                            )
                 edited_regions, shift = [], 0
                 for (start, length), fill in zip(spans, fills, strict=True):
                     edited_regions.append([(start + shift) / frame_rate, (start + shift + len(fill)) / frame_rate])
                     shift += len(fill) - length
-                return {"seed": base_seed + k,
-                        "audio_base64": base64.b64encode(pcm16_wav_bytes(edited, SAMPLE_RATE)).decode("ascii"),
-                        "duration": len(edited) / SAMPLE_RATE, "edited_regions": edited_regions,
-                        "fill_seconds": [len(fill) / frame_rate for fill in fills], "stopped": stopped,
-                        "verify": verify, "words": take_words}
+                return {
+                    "seed": base_seed + k,
+                    "audio_base64": base64.b64encode(pcm16_wav_bytes(edited, SAMPLE_RATE)).decode("ascii"),
+                    "duration": len(edited) / SAMPLE_RATE,
+                    "edited_regions": edited_regions,
+                    "fill_seconds": [len(fill) / frame_rate for fill in fills],
+                    "stopped": stopped,
+                    "verify": verify,
+                    "words": take_words,
+                }
 
             takes = await asyncio.gather(*(take(k) for k in range(req.num_takes)))
         return {
-            "sample_rate": SAMPLE_RATE, "original_text": original_text, "target_text": target_text,
+            "sample_rate": SAMPLE_RATE,
+            "original_text": original_text,
+            "target_text": target_text,
             "words": None if words is None else public_words(words),
             "spans": [[start / frame_rate, (start + length) / frame_rate] for start, length in spans],
             # The audio the model saw per window (full-clip seconds); null when the clip was edited whole.
             "contexts": [[w.start / frame_rate, w.end / frame_rate] for w in windows] if windowed else None,
             # Each region's expected fill length (seconds); its fills last at least min_fill_ratio of it.
-            "expected_seconds": expected, "takes": list(takes),
+            "expected_seconds": expected,
+            "takes": list(takes),
         }

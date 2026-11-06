@@ -55,10 +55,7 @@ def exclusive_attention_output(
     query_heads = output.shape[-2]
     kv_heads = own_value.shape[-2]
     if query_heads % kv_heads != 0:
-        raise ValueError(
-            f"XSA requires query heads ({query_heads}) to be divisible by "
-            f"KV heads ({kv_heads})."
-        )
+        raise ValueError(f"XSA requires query heads ({query_heads}) to be divisible by KV heads ({kv_heads}).")
     if query_heads != kv_heads:
         own_value = own_value.repeat_interleave(query_heads // kv_heads, dim=-2)
 
@@ -86,11 +83,7 @@ def block_attnres_route(
     """
 
     partial_source = partial_block.unsqueeze(0)
-    sources = (
-        partial_source
-        if completed_blocks is None
-        else torch.cat((completed_blocks, partial_source), dim=0)
-    )
+    sources = partial_source if completed_blocks is None else torch.cat((completed_blocks, partial_source), dim=0)
     keys = F.rms_norm(
         sources,
         (sources.shape[-1],),
@@ -325,8 +318,11 @@ class Attention(BaseOP):
         ctx = get_global_ctx()
         is_capturing = torch.cuda.is_current_stream_capturing()
         debug_attn = (
-            _logger.isEnabledFor(logging.DEBUG) and ctx.batch.is_decode and not is_capturing and
-            self.attn.layer_id == 0 and _model_debug_counter <= 10
+            _logger.isEnabledFor(logging.DEBUG)
+            and ctx.batch.is_decode
+            and not is_capturing
+            and self.attn.layer_id == 0
+            and _model_debug_counter <= 10
         )
 
         gate = torch.sigmoid(self.gater.forward(x))
@@ -444,8 +440,8 @@ class FeedForward(BaseOP):
         # Reference does: h * F.silu(gate) = up * SiLU(gate)
         h_gate = self.w_in.forward(x)
         inter_size = self._inter_size
-        h = h_gate[..., :inter_size]      # first half = h (up projection)
-        gate = h_gate[..., inter_size:]   # second half = gate
+        h = h_gate[..., :inter_size]  # first half = h (up projection)
+        gate = h_gate[..., inter_size:]  # second half = gate
         # Match reference: h * F.silu(gate)
         y = h * F.silu(gate)
         return self.w_out.forward(y)
@@ -471,11 +467,16 @@ class FusedGroupedExperts(BaseOP):
         self.num_experts = config.moe_n_experts
         self.hidden_size = get_routed_moe_dim(config.hidden_size, config.moe_alpha)
         # Use intermediate_size for MoE (moe_intermediate_size may be 0)
-        self.intermediate_size = config.moe_intermediate_size if config.moe_intermediate_size > 0 else config.intermediate_size
+        self.intermediate_size = (
+            config.moe_intermediate_size if config.moe_intermediate_size > 0 else config.intermediate_size
+        )
         self.top_k = config.get_num_experts_per_tok(layer_id)
-        self._use_sonic_experts = os.environ.get(
-            "ZONOS3_USE_TRAINING_SONIC_EXPERTS", "0"
-        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._use_sonic_experts = os.environ.get("ZONOS3_USE_TRAINING_SONIC_EXPERTS", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self._use_training_router_weights = os.environ.get(
             "ZONOS3_USE_TRAINING_ROUTER_WEIGHTS", "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -485,12 +486,8 @@ class FusedGroupedExperts(BaseOP):
         local_intermediate = divide_even(self.intermediate_size, tp_info.size)
 
         # Fused weights: gate_up_proj = [w1, w3], down_proj = w2
-        self.gate_up_proj = torch.empty(
-            self.num_experts, 2 * local_intermediate, self.hidden_size
-        )
-        self.down_proj = torch.empty(
-            self.num_experts, self.hidden_size, local_intermediate
-        )
+        self.gate_up_proj = torch.empty(self.num_experts, 2 * local_intermediate, self.hidden_size)
+        self.down_proj = torch.empty(self.num_experts, self.hidden_size, local_intermediate)
 
         self._fused_moe = FusedMoE(
             num_experts=self.num_experts,
@@ -519,8 +516,7 @@ class FusedGroupedExperts(BaseOP):
             from sonicmoe.functional import moe_general_routing_inputs
         except ImportError as exc:
             raise ImportError(
-                "ZONOS3_USE_TRAINING_SONIC_EXPERTS requires the pinned "
-                "training sonicmoe package on PYTHONPATH"
+                "ZONOS3_USE_TRAINING_SONIC_EXPERTS requires the pinned training sonicmoe package on PYTHONPATH"
             ) from exc
 
         # The native router normalizes over the selected experts before it
@@ -535,12 +531,8 @@ class FusedGroupedExperts(BaseOP):
                 # Per-request expert adapters ride inside the same kernels
                 # (zonos3_sgl.layers.accent.sonic_experts_with_accents).
                 return sonic_experts_with_accents(self, x, scores, topk_ids, *accents)
-        token_indices = torch.arange(
-            num_tokens, dtype=torch.int32, device=x.device
-        ).repeat_interleave(top_k)
-        stream_id = (
-            torch.cuda.current_stream(device=x.device).cuda_stream if x.is_cuda else 0
-        )
+        token_indices = torch.arange(num_tokens, dtype=torch.int32, device=x.device).repeat_interleave(top_k)
+        stream_id = torch.cuda.current_stream(device=x.device).cuda_stream if x.is_cuda else 0
         output, _ = moe_general_routing_inputs(
             x=x.contiguous(),
             router_scores=scores.reshape(-1).contiguous(),
@@ -585,18 +577,14 @@ class FusedGroupedExperts(BaseOP):
 
         def _convert_sonic_w13_to_gate_up(w13: torch.Tensor) -> torch.Tensor:
             assert w13.dim() == 3, f"Expected SonicMoE w13 to be rank-3, got {w13.shape}"
-            assert w13.shape[1] % 2 == 0, (
-                f"Expected even fused width in SonicMoE w13, got {w13.shape}"
-            )
+            assert w13.shape[1] % 2 == 0, f"Expected even fused width in SonicMoE w13, got {w13.shape}"
             gate = w13[:, 0::2, :]
             up = w13[:, 1::2, :]
             return torch.cat([gate, up], dim=1)
 
         # Check if we have unfused weights that need fusion
         if gate_up_key not in state_dict and sonic_w13_key in state_dict:
-            state_dict[gate_up_key] = _convert_sonic_w13_to_gate_up(
-                state_dict.pop(sonic_w13_key)
-            )
+            state_dict[gate_up_key] = _convert_sonic_w13_to_gate_up(state_dict.pop(sonic_w13_key))
         elif gate_up_key not in state_dict and w1_key in state_dict and w3_key in state_dict:
             w1 = state_dict.pop(w1_key)
             w3 = state_dict.pop(w3_key)
@@ -639,9 +627,7 @@ class FusedGroupedExperts(BaseOP):
     ) -> torch.Tensor:
         if self._use_sonic_experts:
             if topk_weights is None or topk_ids is None:
-                raise ValueError(
-                    "The SonicMoE audit path requires precomputed top-k weights and IDs"
-                )
+                raise ValueError("The SonicMoE audit path requires precomputed top-k weights and IDs")
             return self._forward_sonic(x, topk_weights, topk_ids)
         return self._fused_moe.forward(
             x,
@@ -695,9 +681,7 @@ class RouterMLP(BaseOP):
 
         if not _internal and state_dict:
             keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = F.gelu(self._0.forward(x))
@@ -733,14 +717,8 @@ class Router(BaseOP):
         self.num_experts = config.moe_n_experts
         self.top_k = config.get_num_experts_per_tok(layer_id)
         self.router_type = normalize_moe_router_type(config.moe_router_type)
-        self.router_dim = (
-            config.moe_router_dim
-            if self.router_type == "mlp"
-            else self.hidden_size
-        )
-        self.moe_balancing_strategy = normalize_moe_balancing_strategy(
-            config.moe_balancing_strategy
-        )
+        self.router_dim = config.moe_router_dim if self.router_type == "mlp" else self.hidden_size
+        self.moe_balancing_strategy = normalize_moe_balancing_strategy(config.moe_balancing_strategy)
         self.use_quantile_balancing = self.moe_balancing_strategy == "quantile"
         self._use_training_router_weights = os.environ.get(
             "ZONOS3_USE_TRAINING_ROUTER_WEIGHTS", "0"
@@ -749,22 +727,16 @@ class Router(BaseOP):
 
         if self.router_type == "mlp":
             # Preserve the historical checkpoint schema for the default router.
-            self.down_proj = _RouterLinear(
-                self.hidden_size, self.router_dim, has_bias=True
-            )
+            self.down_proj = _RouterLinear(self.hidden_size, self.router_dim, has_bias=True)
             self.router_mlp = RouterMLP(self.router_dim, self.num_experts)
         else:
-            self.router_linear = _RouterLinear(
-                self.hidden_size, self.num_experts, has_bias=False
-            )
+            self.router_linear = _RouterLinear(self.hidden_size, self.num_experts, has_bias=False)
 
         # RMSNorm for EDA
         self.rmsnorm_eda = RMSNorm(size=self.router_dim, eps=config.rms_norm_eps)
 
         # EDA: use_eda is True for all layers except the first MoE layer
-        self.use_eda = bool(config.moe_router_use_eda) and (
-            layer_id != config.moe_start_from_layer
-        )
+        self.use_eda = bool(config.moe_router_use_eda) and (layer_id != config.moe_start_from_layer)
         if self.use_eda:
             self.router_states_scale = torch.ones(self.router_dim)
 
@@ -780,9 +752,7 @@ class Router(BaseOP):
             bias = accent_router_bias(self, self.balancing_biases.detach().float())
             if self.use_quantile_balancing:
                 if router_logits is None:
-                    raise ValueError(
-                        "Quantile balancing requires the pre-softmax logits."
-                    )
+                    raise ValueError("Quantile balancing requires the pre-softmax logits.")
                 routing_scores = router_logits.float() - bias
             else:
                 routing_scores = expert_prob.float() + bias
@@ -793,9 +763,7 @@ class Router(BaseOP):
             expert_choice = expert_choice[..., : self.top_k]
 
         route_prob = torch.gather(expert_prob, dim=-1, index=expert_choice)
-        return route_prob.reshape(-1, self.top_k), expert_choice.reshape(-1, self.top_k).to(
-            dtype=torch.int32
-        )
+        return route_prob.reshape(-1, self.top_k), expert_choice.reshape(-1, self.top_k).to(dtype=torch.int32)
 
     def load_state_dict(
         self,
@@ -834,10 +802,7 @@ class Router(BaseOP):
         # EDA: blend with previous router states
         if self.use_eda:
             if router_states is None:
-                raise ValueError(
-                    f"EDA router at layer {self._layer_id} requires states from "
-                    "the preceding MoE layer."
-                )
+                raise ValueError(f"EDA router at layer {self._layer_id} requires states from the preceding MoE layer.")
             hidden_states = hidden_states + router_states * self.router_states_scale
 
         # Save for next layer's EDA
@@ -852,23 +817,13 @@ class Router(BaseOP):
             else self.router_linear.forward(hidden_states)
         )
         expert_prob = torch.softmax(router_logits.float(), dim=-1)
-        route_prob_flat, expert_choice_flat = self._select_balanced_topk(
-            expert_prob, router_logits
-        )
-        if (
-            self._use_training_router_weights
-            and self.use_quantile_balancing
-            and self.top_k > 1
-        ):
+        route_prob_flat, expert_choice_flat = self._select_balanced_topk(expert_prob, router_logits)
+        if self._use_training_router_weights and self.use_quantile_balancing and self.top_k > 1:
             # Match the current training router exactly. It gathers selected
             # raw logits and then applies a small softmax, avoiding the extra
             # full-softmax/gather/renormalize rounding path.
-            selected_logits = torch.gather(
-                router_logits, dim=-1, index=expert_choice_flat.to(torch.long)
-            ).float()
-            route_prob_flat = torch.softmax(selected_logits, dim=-1).reshape(
-                -1, self.top_k
-            )
+            selected_logits = torch.gather(router_logits, dim=-1, index=expert_choice_flat.to(torch.long)).float()
+            route_prob_flat = torch.softmax(selected_logits, dim=-1).reshape(-1, self.top_k)
 
         return route_prob_flat, expert_choice_flat, hidden_states_next
 
@@ -891,15 +846,13 @@ class MoEFeedForward(BaseOP):
         # Experts with weight fusion
         self.experts = FusedGroupedExperts(config, layer_id)
         if self.use_latent_moe:
-            self.latent_down = SimpleLinear(
-                self.hidden_size, self.routed_dim, has_bias=False
-            )
-            self.latent_up = SimpleLinear(
-                self.routed_dim, self.hidden_size, has_bias=False
-            )
+            self.latent_down = SimpleLinear(self.hidden_size, self.routed_dim, has_bias=False)
+            self.latent_up = SimpleLinear(self.routed_dim, self.hidden_size, has_bias=False)
 
     @nvtx_annotate("MoEFeedForward")
-    def forward(self, x: torch.Tensor, router_states: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, router_states: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass for MoE layer.
 
         Args:
@@ -914,14 +867,10 @@ class MoEFeedForward(BaseOP):
         x_input = x.view(-1, hidden_dim)
 
         # Compute router weights/ids and EDA states for next layer.
-        topk_weights, topk_ids, router_states_next = self.router.forward(
-            x_input, router_states
-        )
+        topk_weights, topk_ids, router_states_next = self.router.forward(x_input, router_states)
 
         # Expert computation
-        routed_input = (
-            self.latent_down.forward(x_input) if self.use_latent_moe else x_input
-        )
+        routed_input = self.latent_down.forward(x_input) if self.use_latent_moe else x_input
         output = self.experts.forward(
             routed_input,
             topk_weights=topk_weights,
@@ -946,6 +895,7 @@ class TransformerBlock(BaseOP):
     def __init__(self, config: ModelConfig, layer_id: int):
         if config.attention_pattern == "gdn3_global1" and (layer_id + 1) % 4:
             from .gdn import OriginalGDN
+
             self.attention = OriginalGDN(config, layer_id)
         else:
             self.attention = Attention(config, layer_id)
@@ -991,29 +941,51 @@ class TransformerBlock(BaseOP):
         batch = get_global_ctx().batch
         is_capturing = torch.cuda.is_current_stream_capturing()
         debug_this_layer = (
-            _logger.isEnabledFor(logging.DEBUG) and batch.is_decode and not is_capturing and
-            self._layer_id == 0 and _model_debug_counter <= 10
+            _logger.isEnabledFor(logging.DEBUG)
+            and batch.is_decode
+            and not is_capturing
+            and self._layer_id == 0
+            and _model_debug_counter <= 10
         )
 
         if debug_this_layer:
-            _logger.debug("Layer 0 Step %d Input x: norm=%.4f, mean=%.6f", _model_debug_counter, x.norm().item(), x.mean().item())
+            _logger.debug(
+                "Layer 0 Step %d Input x: norm=%.4f, mean=%.6f", _model_debug_counter, x.norm().item(), x.mean().item()
+            )
 
         x, residual = self.attention_norm.forward(x, residual)
 
         if debug_this_layer:
-            _logger.debug("Layer 0 Step %d After attn_norm: x_norm=%.4f, res_norm=%.4f", _model_debug_counter, x.norm().item(), residual.norm().item())
+            _logger.debug(
+                "Layer 0 Step %d After attn_norm: x_norm=%.4f, res_norm=%.4f",
+                _model_debug_counter,
+                x.norm().item(),
+                residual.norm().item(),
+            )
 
         x = self.attention.forward(x)
 
         if debug_this_layer:
-            _logger.debug("Layer 0 Step %d After attention: x_norm=%.4f, mean=%.6f", _model_debug_counter, x.norm().item(), x.mean().item())
+            _logger.debug(
+                "Layer 0 Step %d After attention: x_norm=%.4f, mean=%.6f",
+                _model_debug_counter,
+                x.norm().item(),
+                x.mean().item(),
+            )
             x_flat = x.view(-1)[:10]
-            _logger.debug("Layer 0 Step %d Attn out[:10]: %s", _model_debug_counter, [f'{v:.4f}' for v in x_flat.tolist()])
+            _logger.debug(
+                "Layer 0 Step %d Attn out[:10]: %s", _model_debug_counter, [f"{v:.4f}" for v in x_flat.tolist()]
+            )
 
         x, residual = self.ffn_norm.forward(x, residual)
 
         if debug_this_layer:
-            _logger.debug("Layer 0 Step %d After ffn_norm: x_norm=%.4f, res_norm=%.4f", _model_debug_counter, x.norm().item(), residual.norm().item())
+            _logger.debug(
+                "Layer 0 Step %d After ffn_norm: x_norm=%.4f, res_norm=%.4f",
+                _model_debug_counter,
+                x.norm().item(),
+                residual.norm().item(),
+            )
 
         # MoE layers return router_states for EDA
         if self.is_moe:
@@ -1059,9 +1031,7 @@ class TransformerBlock(BaseOP):
         )
         ffn_input = self.ffn_norm.forward(ffn_input, None)[0]
         if self.is_moe:
-            ffn_out, router_states = self.feed_forward.forward(
-                ffn_input, router_states
-            )
+            ffn_out, router_states = self.feed_forward.forward(ffn_input, router_states)
         else:
             ffn_out = self.feed_forward.forward(ffn_input)
             router_states = None
@@ -1111,9 +1081,7 @@ class Zonos3ForCausalLM(BaseOP):
             else None
         )
         speaker_projection_input_dim = (
-            int(config.speaker_lda_dim)
-            if self.speaker_lda_projection is not None
-            else config.speaker_embedding_dim
+            int(config.speaker_lda_dim) if self.speaker_lda_projection is not None else config.speaker_embedding_dim
         )
         self.speaker_projection = (
             LinearReplicated(
@@ -1140,9 +1108,7 @@ class Zonos3ForCausalLM(BaseOP):
             if getattr(config, "condition_tokens_enabled", False)
             else None
         )
-        self.layers = OPList(
-            [TransformerBlock(config, layer_id) for layer_id in range(config.num_layers)]
-        )
+        self.layers = OPList([TransformerBlock(config, layer_id) for layer_id in range(config.num_layers)])
 
         # Training stores all residual-site queries in one tensor so fused
         # kernels can batch them. Preserve that checkpoint key and replicate it
@@ -1255,18 +1221,18 @@ class Zonos3ForCausalLM(BaseOP):
         if self.block_attnres_queries is not None and self.config.residual_type == "full_attnres":
             if os.environ.get("ZONOS3_USE_TRAINING_ATTNRES") == "1":
                 from .training_attnres import forward_layers_full
+
                 h = forward_layers_full(self, x, state=self._attnres_state(x) if is_decode else None)
             else:
                 h = self._forward_full_attnres_reference(x)
         elif self.block_attnres_queries is not None and os.environ.get("ZONOS3_USE_TRAINING_ATTNRES") == "1":
             from .training_attnres import forward_layers
+
             h = forward_layers(self, x)
         elif self.block_attnres_queries is not None:
             completed_blocks: torch.Tensor | None = None
             for layer_id, layer in enumerate(self.layers.op_list):
-                query_pair = self.block_attnres_queries[
-                    2 * layer_id : 2 * layer_id + 2
-                ]
+                query_pair = self.block_attnres_queries[2 * layer_id : 2 * layer_id + 2]
                 x, router_states, completed_blocks = layer.forward_block_attnres(
                     x,
                     completed_blocks,
@@ -1287,7 +1253,13 @@ class Zonos3ForCausalLM(BaseOP):
                 if should_debug and _model_debug_counter <= 10:
                     if layer_id in [0, 1, 5, 10, 15, len(self.layers.op_list) - 1]:
                         res_norm = residual.norm().item() if residual is not None else 0
-                        _logger.debug("  After layer %d: x_norm=%.4f, x_mean=%.6f, res_norm=%.4f", layer_id, x.norm().item(), x.mean().item(), res_norm)
+                        _logger.debug(
+                            "  After layer %d: x_norm=%.4f, x_mean=%.6f, res_norm=%.4f",
+                            layer_id,
+                            x.norm().item(),
+                            x.mean().item(),
+                            res_norm,
+                        )
 
             h = self.out_norm.forward(x, residual)[0]
 
@@ -1324,9 +1296,7 @@ class Zonos3ForCausalLM(BaseOP):
             )[0]
             attention_out = self.steer_bank_source(2 * layer_id + 1, layer.attention.forward(attention_input), delta)
             sources = torch.cat((sources, attention_out.unsqueeze(0)), dim=0)
-            ffn_input = layer.ffn_norm.forward(
-                full_attnres_route(sources, queries[2 * layer_id + 1], eps), None
-            )[0]
+            ffn_input = layer.ffn_norm.forward(full_attnres_route(sources, queries[2 * layer_id + 1], eps), None)[0]
             if layer.is_moe:
                 ffn_out, router_states = layer.feed_forward.forward(ffn_input, router_states)
             else:
@@ -1348,11 +1318,10 @@ class Zonos3ForCausalLM(BaseOP):
         hidden = self._forward_model(batch.input_ids)
 
         is_capturing = torch.cuda.is_current_stream_capturing()
-        if (batch.is_decode and _logger.isEnabledFor(logging.DEBUG)
-                and not is_capturing and _model_debug_counter <= 10):
+        if batch.is_decode and _logger.isEnabledFor(logging.DEBUG) and not is_capturing and _model_debug_counter <= 10:
             _logger.debug("  Hidden for logits: norm=%.4f, mean=%.6f", hidden.norm().item(), hidden.mean().item())
             h_flat = hidden.view(-1)[:10]
-            _logger.debug("  Hidden[:10]: %s", [f'{v:.4f}' for v in h_flat.tolist()])
+            _logger.debug("  Hidden[:10]: %s", [f"{v:.4f}" for v in h_flat.tolist()])
 
         return self.compute_logits(hidden)
 

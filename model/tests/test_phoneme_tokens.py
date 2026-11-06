@@ -1,4 +1,5 @@
 """Phoneme-token checkpoints: open/phone/close text ids after the padding row, as the training loader."""
+
 from __future__ import annotations
 
 import json
@@ -19,8 +20,14 @@ TEXT_VOCAB = 3 + 4
 
 
 def _phonemes(symbols="kæt"):
-    return {"open_id": TEXT_VOCAB + 1, "close_id": TEXT_VOCAB + 2, "symbols": list(symbols),
-                "open_marker": O, "close_marker": C, "inventory_sha256": "0" * 64}
+    return {
+        "open_id": TEXT_VOCAB + 1,
+        "close_id": TEXT_VOCAB + 2,
+        "symbols": list(symbols),
+        "open_marker": O,
+        "close_marker": C,
+        "inventory_sha256": "0" * 64,
+    }
 
 
 def test_groups_encode_as_open_phones_close(superbpe_spec):
@@ -40,9 +47,17 @@ def test_phoneme_ids_must_follow_the_padding_row_and_match_the_extra_rows(superb
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     for extra, ok in ((5, True), (4, False)):
-        (model_dir / "params.json").write_text(json.dumps({"model": {
-            "text_tokenizer_spec": {**superbpe_spec, "phonemes": _phonemes()}, "text_vocab": TEXT_VOCAB,
-            "text_extra_tokens": extra}}))
+        (model_dir / "params.json").write_text(
+            json.dumps(
+                {
+                    "model": {
+                        "text_tokenizer_spec": {**superbpe_spec, "phonemes": _phonemes()},
+                        "text_vocab": TEXT_VOCAB,
+                        "text_extra_tokens": extra,
+                    }
+                }
+            )
+        )
         if ok:
             assert load_spec(model_dir)["phonemes"]["symbols"] == list("kæt")
         else:
@@ -55,15 +70,17 @@ def test_phoneme_rows_are_not_edit_marker_rows(superbpe_spec):
     tokens do not claim are edit markers (edit_max_spans), so a phoneme checkpoint cannot edit."""
     from zonos3.tts.edit import edit_marker_rows
 
-    assert edit_marker_rows(3, None) == 3                       # edit checkpoint: three marker rows
-    assert edit_marker_rows(3, superbpe_spec) == 3              # SuperBPE spec without phonemes
+    assert edit_marker_rows(3, None) == 3  # edit checkpoint: three marker rows
+    assert edit_marker_rows(3, superbpe_spec) == 3  # SuperBPE spec without phonemes
     assert edit_marker_rows(5, {**superbpe_spec, "phonemes": _phonemes()}) == 0
 
 
 def _merged_spec(base, markers):
     phonemes = _phonemes()
-    return {**base, "phonemes": {**phonemes, "open_id": phonemes["open_id"] + markers,
-                                 "close_id": phonemes["close_id"] + markers}}
+    return {
+        **base,
+        "phonemes": {**phonemes, "open_id": phonemes["open_id"] + markers, "close_id": phonemes["close_id"] + markers},
+    }
 
 
 def test_phoneme_block_after_edit_markers(superbpe_spec, tmp_path):
@@ -80,8 +97,9 @@ def test_phoneme_block_after_edit_markers(superbpe_spec, tmp_path):
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     for extra, ok in ((8, True), (9, False), (5, False)):
-        (model_dir / "params.json").write_text(json.dumps({"model": {
-            "text_tokenizer_spec": merged, "text_vocab": TEXT_VOCAB, "text_extra_tokens": extra}}))
+        (model_dir / "params.json").write_text(
+            json.dumps({"model": {"text_tokenizer_spec": merged, "text_vocab": TEXT_VOCAB, "text_extra_tokens": extra}})
+        )
         if ok:
             assert load_spec(model_dir)["phonemes"]["open_id"] == TEXT_VOCAB + 4
         else:
@@ -95,21 +113,34 @@ def test_add_text_extra_rows_appends_after_existing_rows(superbpe_spec, tmp_path
     """A base with edit marker rows keeps them; the phoneme rows and ids go after them."""
     base = tmp_path / "base"
     base.mkdir()
-    table = torch.arange((TEXT_VOCAB + 1 + 3) * 2, dtype=torch.float32).reshape(-1, 2)   # 3 marker rows
+    table = torch.arange((TEXT_VOCAB + 1 + 3) * 2, dtype=torch.float32).reshape(-1, 2)  # 3 marker rows
     torch.save({"multi_embedder.embedders.1.weight": table, "other": torch.ones(3)}, base / "model.pth")
-    (base / "params.json").write_text(json.dumps({"model": {
-        "n_codebooks": 1, "text_vocab": TEXT_VOCAB, "text_extra_tokens": 3,
-        "text_tokenizer_spec": dict(superbpe_spec)}}))
+    (base / "params.json").write_text(
+        json.dumps(
+            {
+                "model": {
+                    "n_codebooks": 1,
+                    "text_vocab": TEXT_VOCAB,
+                    "text_extra_tokens": 3,
+                    "text_tokenizer_spec": dict(superbpe_spec),
+                }
+            }
+        )
+    )
     rows = torch.full((5, 2), -1.0)
-    torch.save({"format": "zonos-text-extra/1", "text_vocab": TEXT_VOCAB, "rows": rows, "phonemes": _phonemes()},
-               tmp_path / "rows.pt")
+    torch.save(
+        {"format": "zonos-text-extra/1", "text_vocab": TEXT_VOCAB, "rows": rows, "phonemes": _phonemes()},
+        tmp_path / "rows.pt",
+    )
     out = add_text_extra_rows.add_text_extra_rows(base, tmp_path / "rows.pt", tmp_path / "out")
     model = json.loads((out / "params.json").read_text())["model"]
     assert model["text_extra_tokens"] == 8
-    assert (model["text_tokenizer_spec"]["phonemes"]["open_id"], model["text_tokenizer_spec"]["phonemes"]["close_id"]) \
-        == (TEXT_VOCAB + 4, TEXT_VOCAB + 5)
+    assert (
+        model["text_tokenizer_spec"]["phonemes"]["open_id"],
+        model["text_tokenizer_spec"]["phonemes"]["close_id"],
+    ) == (TEXT_VOCAB + 4, TEXT_VOCAB + 5)
     merged = torch.load(out / "model.pth", weights_only=True)["multi_embedder.embedders.1.weight"]
-    assert torch.equal(merged[: len(table)], table) and torch.equal(merged[len(table):], rows)
+    assert torch.equal(merged[: len(table)], table) and torch.equal(merged[len(table) :], rows)
     assert json.loads((out / "text_extra.json").read_text())["first_row"] == TEXT_VOCAB + 4
 
 
@@ -125,15 +156,24 @@ def test_runtime_rows_follow_the_edit_vocabulary_and_leave_plain_text_alone(supe
     params = {**TINY, "text_vocab": text_vocab, "text_extra_tokens": 3, "text_tokenizer_spec": dict(superbpe_spec)}
     base = tmp_path / "base"
     base.mkdir()
-    torch.save(tiny_model(text_vocab=text_vocab, text_extra_tokens=3,
-                          text_tokenizer_spec=dict(superbpe_spec)).state_dict(),
-               base / "model.pth")
+    torch.save(
+        tiny_model(text_vocab=text_vocab, text_extra_tokens=3, text_tokenizer_spec=dict(superbpe_spec)).state_dict(),
+        base / "model.pth",
+    )
     (base / "params.json").write_text(json.dumps({"model": params}))
-    phonemes = {"open_id": text_vocab + 1, "close_id": text_vocab + 2, "symbols": list("kæt"), "open_marker": O,
-                    "close_marker": C, "inventory_sha256": "0" * 64}
+    phonemes = {
+        "open_id": text_vocab + 1,
+        "close_id": text_vocab + 2,
+        "symbols": list("kæt"),
+        "open_marker": O,
+        "close_marker": C,
+        "inventory_sha256": "0" * 64,
+    }
     rows = torch.randn(5, TINY["dim"], generator=torch.Generator().manual_seed(1))
-    torch.save({"format": "zonos-text-extra/1", "text_vocab": text_vocab, "rows": rows, "phonemes": phonemes},
-               tmp_path / "rows.pt")
+    torch.save(
+        {"format": "zonos-text-extra/1", "text_vocab": text_vocab, "rows": rows, "phonemes": phonemes},
+        tmp_path / "rows.pt",
+    )
 
     def prompt(ids):
         out = torch.full((len(ids), N_CB + 1), TINY["audio_pad_id"], dtype=torch.long)

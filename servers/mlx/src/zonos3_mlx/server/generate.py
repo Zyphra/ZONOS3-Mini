@@ -37,8 +37,14 @@ class JobRun:
     """One scheduler job and its audio. ``mode``: "whole" / "prefix" decode, or None for the rows only (edit fills,
     which stop on ``stop_id``: the span-end token)."""
 
-    def __init__(self, state: ServerState, plan: Plan, mode: str | None, sampling: Sampling | None = None,
-                 stop_id: int | None = None):
+    def __init__(
+        self,
+        state: ServerState,
+        plan: Plan,
+        mode: str | None,
+        sampling: Sampling | None = None,
+        stop_id: int | None = None,
+    ):
         self.state, self.plan = state, plan
         self.loop = asyncio.get_running_loop()
         self.queue: asyncio.Queue = asyncio.Queue()
@@ -46,15 +52,25 @@ class JobRun:
         self.decoder = None
         if mode is not None:
             self.decoder = StreamDecoder(
-                dec.decode, n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id, hop=dec.hop,
-                prefill_rows=plan.prefill_rows, context_codes=plan.context_codes, mode=mode,
-                settings=state.options.prefix)
+                dec.decode,
+                n_codebooks=c.n_codebooks,
+                audio_pad_id=c.audio_pad_id,
+                hop=dec.hop,
+                prefill_rows=plan.prefill_rows,
+                context_codes=plan.context_codes,
+                mode=mode,
+                settings=state.options.prefix,
+            )
         self.rows: list = []
         self.eos_frame: int | None = None
         self.record: dict | None = None
         self.failed = False
-        self.job = Job(plan, sampling or Sampling.from_request(plan.request), self._sink,
-                       c.eoa_id if stop_id is None else int(stop_id))
+        self.job = Job(
+            plan,
+            sampling or Sampling.from_request(plan.request),
+            self._sink,
+            c.eoa_id if stop_id is None else int(stop_id),
+        )
 
     def start(self) -> "JobRun":
         self.state.scheduler.enqueue(self.job)  # ValueError: CFG on --batch 1
@@ -160,8 +176,12 @@ async def generate_response(state: ServerState, req: GenerateRequest, session_id
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     run = await run_plan(state, plan, mode or "whole")
-    headers = speech_headers(fmt=req.format, seed=plan.seed, control_spans=bool(req.control_spans),
-                             follows_reading=plan.follow_tokens is not None)
+    headers = speech_headers(
+        fmt=req.format,
+        seed=plan.seed,
+        control_spans=bool(req.control_spans),
+        follows_reading=plan.follow_tokens is not None,
+    )
     gain = state.engine.output_gain(req.headroom_db)
     if req.stream:
         return StreamingResponse(_stream(run, gain, float(req.fade_out_ms)), media_type="audio/pcm", headers=headers)
@@ -203,7 +223,9 @@ def router(state: ServerState) -> APIRouter:
     r = APIRouter()
 
     @r.post("/v2/generate")
-    async def generate(req: GenerateRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
+    async def generate(
+        req: GenerateRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")
+    ):
         return await generate_response(state, req, normalize_session_id(x_tts_session_id))
 
     @r.post("/v1/audio/speech")
@@ -222,8 +244,9 @@ def router(state: ServerState) -> APIRouter:
             if not known:
                 raise HTTPException(status_code=400, detail=f"unknown voice '{req.voice}'")
             fields["speaker_embedding_id"] = req.voice
-        request = GenerateRequest(text=req.input, stream=req.response_format == "pcm", format=req.response_format,
-                                  **fields)
+        request = GenerateRequest(
+            text=req.input, stream=req.response_format == "pcm", format=req.response_format, **fields
+        )
         return await generate_response(state, request, session_id)
 
     return r

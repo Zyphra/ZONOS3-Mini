@@ -17,6 +17,7 @@ Every subcommand loads its weights into the module that runs them (zonos3.refere
 MossCodec, transformers' Wav2Vec2BertModel, MECTFbankSpeakerEmbedding) with a strict load, so an unknown or missing
 checkpoint tensor is an error; `--help` on a subcommand describes its GGUF layout.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -133,8 +134,11 @@ LM_NAMES: tuple[tuple[str, tuple[str, ...], object], ...] = (
     (r"layers\.(?P<L>\d+)\.feed_forward\.w_out\.weight", ("blk.{L}.ffn_down.weight",), None),
     # gate_up_proj rows [0, H) are the gate and [H, 2H) the up projection (tools/convert_lingua_checkpoint.py:
     # cat(w13[:, 0::2], w13[:, 1::2])).
-    (r"layers\.(?P<L>\d+)\.feed_forward\.experts\.gate_up_proj",
-     ("blk.{L}.ffn_gate_exps.weight", "blk.{L}.ffn_up_exps.weight"), _halves1),
+    (
+        r"layers\.(?P<L>\d+)\.feed_forward\.experts\.gate_up_proj",
+        ("blk.{L}.ffn_gate_exps.weight", "blk.{L}.ffn_up_exps.weight"),
+        _halves1,
+    ),
     (r"layers\.(?P<L>\d+)\.feed_forward\.experts\.down_proj", ("blk.{L}.ffn_down_exps.weight",), None),
     (r"layers\.(?P<L>\d+)\.feed_forward\.latent_down\.weight", ("blk.{L}.ffn_latent_down.weight",), None),
     (r"layers\.(?P<L>\d+)\.feed_forward\.latent_up\.weight", ("blk.{L}.ffn_latent_up.weight",), None),
@@ -192,17 +196,26 @@ def validate_conditions(model, bucket_counts):
     edges, units = model.get("condition_edges"), model.get("condition_units")
     if not isinstance(edges, dict) or set(edges) != set(CONDITION_NAMES):
         unsupported("params.condition_edges", edges)
-    if not isinstance(units, dict) or set(units) != set(CONDITION_NAMES) \
-            or not all(isinstance(units[n], str) and units[n] for n in CONDITION_NAMES):
+    if (
+        not isinstance(units, dict)
+        or set(units) != set(CONDITION_NAMES)
+        or not all(isinstance(units[n], str) and units[n] for n in CONDITION_NAMES)
+    ):
         unsupported("params.condition_units", units)
     for name, count in zip(CONDITION_NAMES, bucket_counts):
         values = edges[name]
-        if (not isinstance(values, list) or len(values) != count - 1
-                or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
-                or any(b <= a for a, b in zip(values, values[1:]))):
+        if (
+            not isinstance(values, list)
+            or len(values) != count - 1
+            or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
+            or any(b <= a for a, b in zip(values, values[1:]))
+        ):
             unsupported(f"params.condition_edges.{name}", values)
-    return {"names": list(CONDITION_NAMES), "units": [units[n] for n in CONDITION_NAMES],
-            "edges": {n: [float(v) for v in edges[n]] for n in CONDITION_NAMES}}
+    return {
+        "names": list(CONDITION_NAMES),
+        "units": [units[n] for n in CONDITION_NAMES],
+        "edges": {n: [float(v) for v in edges[n]] for n in CONDITION_NAMES},
+    }
 
 
 def _run_name(conversion: dict) -> str | None:
@@ -211,18 +224,18 @@ def _run_name(conversion: dict) -> str | None:
     if "checkpoints" not in parts:
         return None
     i = len(parts) - 1 - parts[::-1].index("checkpoints")
-    if i >= 3 and parts[i - 2:i] == ("runs", "main"):
+    if i >= 3 and parts[i - 2 : i] == ("runs", "main"):
         return parts[i - 3]
     return parts[i - 1] if i >= 1 else None
 
 
 @dataclass
 class LMSource:
-    model: object      # zonos3.reference.lm.Zonos3LM, float32 weights
-    params: dict       # params.json "model" table
-    tokenizer: str     # tokenizer JSON text
-    spec: dict         # params.text_tokenizer_spec
-    meta: dict         # name, qat, conditions, silence_frame, speaker_dim, bucket_counts, tag_cfg_trained
+    model: object  # zonos3.reference.lm.Zonos3LM, float32 weights
+    params: dict  # params.json "model" table
+    tokenizer: str  # tokenizer JSON text
+    spec: dict  # params.text_tokenizer_spec
+    meta: dict  # name, qat, conditions, silence_frame, speaker_dim, bucket_counts, tag_cfg_trained
 
 
 def load_lm(lm_dir, silence_frame=None) -> LMSource:
@@ -253,10 +266,13 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
         Zonos3LMConfig.from_params({**trained, **params})  # the training config's keys meet the same rules
         data = config.get("data", {})
         tspec = params.get("text_tokenizer_spec") or {}
-        for key, wanted in {"codec": params.get("audio_codec"), "text_tokenizer": "superbpe",
-                            "text_tokenizer_sha256": tspec.get("sha256"),
-                            "text_tokenizer_vocab_size": tspec.get("vocab_size"),
-                            "speaker_embedding_codec": params.get("speaker_embedding_codec")}.items():
+        for key, wanted in {
+            "codec": params.get("audio_codec"),
+            "text_tokenizer": "superbpe",
+            "text_tokenizer_sha256": tspec.get("sha256"),
+            "text_tokenizer_vocab_size": tspec.get("vocab_size"),
+            "speaker_embedding_codec": params.get("speaker_embedding_codec"),
+        }.items():
             if data.get(key) != wanted:
                 unsupported("data." + key, data.get(key))
     cfg = Zonos3LMConfig.from_params(params)
@@ -271,28 +287,44 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
     raw = (lm_dir / spec["path"]).read_bytes()
     if spec.get("sha256") and sha256_bytes(raw) != spec["sha256"]:
         unsupported("tokenizer SHA256", sha256_bytes(raw))
-    silence_path = (Path(silence_frame) if silence_frame
-                    else lm_dir / ".." / ".." / "registries" / f"silence_frame_{cfg.audio_codec}.json")
+    silence_path = (
+        Path(silence_frame)
+        if silence_frame
+        else lm_dir / ".." / ".." / "registries" / f"silence_frame_{cfg.audio_codec}.json"
+    )
     silence = read_json(silence_path)
     frame = silence.get("frame")
     if silence.get("codec") != cfg.audio_codec:
         unsupported("silence frame codec", silence.get("codec"))
-    if (not isinstance(frame, list) or len(frame) != cfg.n_codebooks
-            or not all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v < cfg.codebook_size for v in frame)):
+    if (
+        not isinstance(frame, list)
+        or len(frame) != cfg.n_codebooks
+        or not all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v < cfg.codebook_size for v in frame)
+    ):
         unsupported("silence frame", frame)
     model = Zonos3LM.load(lm_dir, dtype=torch.float32)
     qat = qat_targets(bake, model.state_dict()) if bake else None
     if bake:
         name = QAT_GENERAL_NAME
-    elif conversion is not None and conversion.get("checkpoint_step") == RELEASE_STEP and _run_name(conversion) == MODEL_NAME:
+    elif (
+        conversion is not None
+        and conversion.get("checkpoint_step") == RELEASE_STEP
+        and _run_name(conversion) == MODEL_NAME
+    ):
         name = GENERAL_NAME
     else:
         run = (conversion and _run_name(conversion)) or lm_dir.name
         step = conversion.get("checkpoint_step") if conversion else None
         name = f"ZONOS3 {run}" + (f" step {step}" if step is not None else "")
-    meta = {"name": name, "qat": qat, "conditions": conditions, "silence_frame": [int(v) for v in frame],
-            "speaker_dim": cfg.speaker_embedding_dim, "bucket_counts": list(cfg.condition_bucket_counts),
-            "tag_cfg_trained": trained_on_tags(lm_dir)}
+    meta = {
+        "name": name,
+        "qat": qat,
+        "conditions": conditions,
+        "silence_frame": [int(v) for v in frame],
+        "speaker_dim": cfg.speaker_embedding_dim,
+        "bucket_counts": list(cfg.condition_bucket_counts),
+        "tag_cfg_trained": trained_on_tags(lm_dir),
+    }
     return LMSource(model, params, raw.decode("utf-8"), spec, meta)
 
 
@@ -331,9 +363,12 @@ def mix_targets(sd):
 
 
 def is_high_precision(name):
-    return (name in ("output.weight", "text_embd.weight", "attnres_q.weight", "speaker_proj.weight")
-            or name.startswith(("audio_embd.", "cond_embd.")) or name.endswith(".router.weight")
-            or name.endswith(".gdn_in.weight"))
+    return (
+        name in ("output.weight", "text_embd.weight", "attnres_q.weight", "speaker_proj.weight")
+        or name.startswith(("audio_embd.", "cond_embd."))
+        or name.endswith(".router.weight")
+        or name.endswith(".gdn_in.weight")
+    )
 
 
 def pick_qtype(name, ndim, ne0, outtype, targets=None):
@@ -425,24 +460,46 @@ def write_lm_metadata(writer, src: LMSource, outtype):
 
     c, meta, spec = src.model.config, src.meta, src.spec
     writer.add_string("general.name", meta["name"])
-    ints = {"block_count": c.n_layers, "context_length": c.max_seqlen, "embedding_length": c.dim,
-            "head_dim": c.head_dim, "attention.head_count": c.n_heads, "attention.head_count_kv": c.n_kv_heads,
-            "feed_forward_length": c.ffn_hidden, "expert_count": c.n_experts, "n_codebooks": c.n_codebooks,
-            "codebook_size": c.codebook_size, "audio_vocab": c.audio_vocab, "eoa_id": c.eoa_id,
-            "audio_pad_id": c.audio_pad_id, "text_vocab": c.text_vocab, "gdn.head_count": GDN_HEADS,
-            "gdn.head_dim": GDN_HEAD_DIM, "gdn.conv_kernel": GDN_KERNEL,
-            "speaker.embedding_length": meta["speaker_dim"], "condition.count": c.condition_count}
+    ints = {
+        "block_count": c.n_layers,
+        "context_length": c.max_seqlen,
+        "embedding_length": c.dim,
+        "head_dim": c.head_dim,
+        "attention.head_count": c.n_heads,
+        "attention.head_count_kv": c.n_kv_heads,
+        "feed_forward_length": c.ffn_hidden,
+        "expert_count": c.n_experts,
+        "n_codebooks": c.n_codebooks,
+        "codebook_size": c.codebook_size,
+        "audio_vocab": c.audio_vocab,
+        "eoa_id": c.eoa_id,
+        "audio_pad_id": c.audio_pad_id,
+        "text_vocab": c.text_vocab,
+        "gdn.head_count": GDN_HEADS,
+        "gdn.head_dim": GDN_HEAD_DIM,
+        "gdn.conv_kernel": GDN_KERNEL,
+        "speaker.embedding_length": meta["speaker_dim"],
+        "condition.count": c.condition_count,
+    }
     for key, value in ints.items():
         writer.add_uint32(f"{ARCH}.{key}", value)
-    for key, value in {"rope.freq_base": c.rope_theta, "attention.layer_norm_rms_epsilon": c.norm_eps,
-                       "attention.qk_norm_epsilon": 1e-6, "logit_softcap": c.loss_softcap}.items():
+    for key, value in {
+        "rope.freq_base": c.rope_theta,
+        "attention.layer_norm_rms_epsilon": c.norm_eps,
+        "attention.qk_norm_epsilon": 1e-6,
+        "logit_softcap": c.loss_softcap,
+    }.items():
         writer.add_float32(f"{ARCH}.{key}", float(value))
     writer.add_array(f"{ARCH}.expert_used_count_per_layer", [0] + [c.moe_topk] * (c.n_layers - 1))
     # one bucket count per condition table (table i: counts[i] + 1 rows, id counts[i] = unknown)
     writer.add_array(f"{ARCH}.condition.bucket_counts", [int(n) for n in meta["bucket_counts"]])
-    for key, value in {"codec": "mossdual", "moe.balancing": "quantile",
-                       "attention.pattern": src.params["attention_pattern"], "residual.type": "full_attnres",
-                       "tokenizer.json": src.tokenizer}.items():
+    for key, value in {
+        "codec": "mossdual",
+        "moe.balancing": "quantile",
+        "attention.pattern": src.params["attention_pattern"],
+        "residual.type": "full_attnres",
+        "tokenizer.json": src.tokenizer,
+    }.items():
         writer.add_string(f"{ARCH}.{key}", value)
     for key in ("offset", "bos", "eos"):
         writer.add_uint32(f"{ARCH}.tokenizer.{key}", spec[key])
@@ -467,8 +524,10 @@ def cmd_lm(args, parser):
 
         adapter = load_adapter(args.edit_adapter)
         if adapter.grown is None:
-            parser.error(f"--edit-adapter {args.edit_adapter}: a {adapter.format} adapter carries no vocabulary "
-                         "(zonos-accent-lora/3 needed)")
+            parser.error(
+                f"--edit-adapter {args.edit_adapter}: a {adapter.format} adapter carries no vocabulary "
+                "(zonos-accent-lora/3 needed)"
+            )
         src.model.grow(adapter.grown)
         src.meta["name"] += f" + {adapter.name} vocabulary"
     if args.phoneme_rows:
@@ -482,7 +541,9 @@ def cmd_lm(args, parser):
     qat = src.meta["qat"]
     args.outtype = args.outtype or (MIX_OUTTYPE if qat else "f16")
     if qat and args.outtype != MIX_OUTTYPE:
-        parser.error(f"{args.lm_dir} is a Q4_0-expert/Q8_0-mixer QAT checkpoint; export it with --outtype {MIX_OUTTYPE}")
+        parser.error(
+            f"{args.lm_dir} is a Q4_0-expert/Q8_0-mixer QAT checkpoint; export it with --outtype {MIX_OUTTYPE}"
+        )
     targets = qat if qat else mix_targets(src.model.state_dict()) if args.outtype == MIX_OUTTYPE else None
     if targets is not None and not qat:
         src.meta["name"] += " Q4_0-expert/Q8_0-mixer PTQ"
@@ -501,8 +562,10 @@ def cmd_lm(args, parser):
         print(f"QAT grid check: {inexact} blocks without an exact (q, fp16 scale) reproduction", flush=True)
         if inexact:
             raise ValueError("baked weights do not lie on the Q4_0/Q8_0 grid; refusing to export")
-    print(f"Exported {len(src.model.state_dict())} model tensors as {len(seen)} GGUF tensors; storage={counts}",
-          flush=True)
+    print(
+        f"Exported {len(src.model.state_dict())} model tensors as {len(seen)} GGUF tensors; storage={counts}",
+        flush=True,
+    )
     write_gguf(writer, progress=True)
     print(f"Wrote {args.out}", flush=True)
 
@@ -521,16 +584,44 @@ tensor is f32 (the Hann windows are stored so the runtime uses torch's exact val
 DEC_ARCH = "mossdual_istft"
 DEC_STEP = 600000
 HEAD_STEP = 50000
-PATCHES = [2, 2, 2, 2, 23]      # generator patches (the last, x23, fed the removed conv tail)
-STAGE_PATCH = [2, 2, 2, 2, 1]   # patches the runtime applies
+PATCHES = [2, 2, 2, 2, 23]  # generator patches (the last, x23, fed the removed conv tail)
+STAGE_PATCH = [2, 2, 2, 2, 1]  # patches the runtime applies
 VARIANTS = ("full_mr", "keep2_plain")
-HEAD_CHECKS = {"type": "mr_istft", "depth": 8, "hidden": 2048, "hop": 184, "frame_rate": 240,
-               "n_ffts": [736, 2208], "fir_kernel": 127, "trainable_stages": list(range(9))}
+HEAD_CHECKS = {
+    "type": "mr_istft",
+    "depth": 8,
+    "hidden": 2048,
+    "hop": 184,
+    "frame_rate": 240,
+    "n_ffts": [736, 2208],
+    "fir_kernel": 127,
+    "trainable_stages": list(range(9)),
+}
 HEADROOM_DB = 3.0
-LAYER_KEYS = ["norm1.weight", "norm1.bias", "qkv.weight", "attention_out.weight", "attention_scale",
-              "norm2.weight", "norm2.bias", "ffn.0.weight", "ffn.3.weight", "ffn_scale"]
-LAYER_NAMES = ["norm1.weight", "norm1.bias", "qkv.weight", "wo.weight", "attn_scale",
-               "norm2.weight", "norm2.bias", "ffn1.weight", "ffn2.weight", "ffn_scale"]
+LAYER_KEYS = [
+    "norm1.weight",
+    "norm1.bias",
+    "qkv.weight",
+    "attention_out.weight",
+    "attention_scale",
+    "norm2.weight",
+    "norm2.bias",
+    "ffn.0.weight",
+    "ffn.3.weight",
+    "ffn_scale",
+]
+LAYER_NAMES = [
+    "norm1.weight",
+    "norm1.bias",
+    "qkv.weight",
+    "wo.weight",
+    "attn_scale",
+    "norm2.weight",
+    "norm2.bias",
+    "ffn1.weight",
+    "ffn2.weight",
+    "ffn_scale",
+]
 LAYER_MAT = {"qkv.weight", "wo.weight", "ffn1.weight", "ffn2.weight"}
 
 
@@ -542,19 +633,34 @@ def validate_generator(state):
     if state.get("step") != DEC_STEP:
         codec_fail(f"step={state.get('step')}")
     cfg = state["config"]["model"]
-    for key, want in {"architecture": "s1_semantic_rvq_moss_v2_hybrid", "sample_rate": 44100,
-                      "internal_sample_rate": 44160, "frame_rate": 15, "internal_hop_length": 2944,
-                      "external_samples_per_frame": 2940}.items():
+    for key, want in {
+        "architecture": "s1_semantic_rvq_moss_v2_hybrid",
+        "sample_rate": 44100,
+        "internal_sample_rate": 44160,
+        "frame_rate": 15,
+        "internal_hop_length": 2944,
+        "external_samples_per_frame": 2940,
+    }.items():
         if cfg.get(key) != want:
             codec_fail(f"{key}={cfg.get(key)}")
     bn = cfg["bottleneck"]
-    for key, want in {"type": "dual_encoding_semantic_residual_rvq", "semantic_codebooks": 1,
-                      "residual_codebooks": 9, "semantic_codebook_size": 4096,
-                      "residual_codebook_size": 4096, "codebook_dim": 8}.items():
+    for key, want in {
+        "type": "dual_encoding_semantic_residual_rvq",
+        "semantic_codebooks": 1,
+        "residual_codebooks": 9,
+        "semantic_codebook_size": 4096,
+        "residual_codebook_size": 4096,
+        "codebook_dim": 8,
+    }.items():
         if bn.get(key) != want:
             codec_fail(f"bottleneck.{key}={bn.get(key)}")
     sh = bn["semantic_head"]
-    if (sh.get("type"), sh.get("causal"), sh.get("width"), sh.get("out_channels")) != ("ConvNeXtDecoder", True, 768, 1024):
+    if (sh.get("type"), sh.get("causal"), sh.get("width"), sh.get("out_channels")) != (
+        "ConvNeXtDecoder",
+        True,
+        768,
+        1024,
+    ):
         codec_fail(f"semantic_head={sh}")
     stages = cfg["decoder_stages"]
     kinds = [s["type"] for s in stages]
@@ -563,8 +669,14 @@ def validate_generator(state):
         codec_fail(f"decoder stage types {kinds}")
     moss = stages[0:10:2]
     for s in moss:
-        if (s["causal"], s["norm"], s["positional_embedding"], s["max_period"], s["gating"], s["activation"]) != \
-                (True, "layer_norm", "rope", 10000, "none", "gelu"):
+        if (s["causal"], s["norm"], s["positional_embedding"], s["max_period"], s["gating"], s["activation"]) != (
+            True,
+            "layer_norm",
+            "rope",
+            10000,
+            "none",
+            "gelu",
+        ):
             codec_fail(f"moss stage {s}")
     patches = [s["patch_size"] for s in stages[1:10:2]]
     if patches != PATCHES or any(s["direction"] != "up" for s in stages[1:10:2]):
@@ -609,13 +721,35 @@ def validate_head(hc, ck, gen_cfg, moss, cfg_name):
         for layer in range(n):
             want.update(f"stages.{s}.layers.{layer}.{k}" for k in LAYER_KEYS)
     for b in range(head["depth"]):
-        want.update(f"head.blocks.{b}.{k}" for k in ("dwconv.weight", "dwconv.bias", "norm.weight", "norm.bias",
-                                                     "pwconv1.weight", "pwconv1.bias", "pwconv2.weight", "pwconv2.bias"))
-    want.update(["head.norm.weight", "head.norm.bias", "head.outs.0.weight", "head.outs.0.bias",
-                 "head.outs.1.weight", "head.outs.1.bias", "head.mixer.weight"])
+        want.update(
+            f"head.blocks.{b}.{k}"
+            for k in (
+                "dwconv.weight",
+                "dwconv.bias",
+                "norm.weight",
+                "norm.bias",
+                "pwconv1.weight",
+                "pwconv1.bias",
+                "pwconv2.weight",
+                "pwconv2.bias",
+            )
+        )
+    want.update(
+        [
+            "head.norm.weight",
+            "head.norm.bias",
+            "head.outs.0.weight",
+            "head.outs.0.bias",
+            "head.outs.1.weight",
+            "head.outs.1.bias",
+            "head.mixer.weight",
+        ]
+    )
     got = set(ck["trainable"])
     if got != want:
-        codec_fail(f"head checkpoint keys differ: missing {sorted(want - got)[:8]}, unexpected {sorted(got - want)[:8]}")
+        codec_fail(
+            f"head checkpoint keys differ: missing {sorted(want - got)[:8]}, unexpected {sorted(got - want)[:8]}"
+        )
     return head, layers
 
 
@@ -652,11 +786,23 @@ def cmd_codec_decoder(args, parser):
 
     w = GGUFWriter(args.out, DEC_ARCH)
     w.add_string("general.name", f"ZONOS3 Mini MR-iSTFT decoder ({variant}, step {HEAD_STEP})")
-    for key, val in {"sample_rate": 44100, "internal_sample_rate": 44160, "frame_rate": 15, "hop": 2940,
-                     "internal_hop": 2944, "n_codebooks": 10, "codebook_size": 4096, "latent_dim": 1024,
-                     "semantic_dim": sh["width"], "sem_head.depth": sh["depth"],
-                     "head.depth": head["depth"], "head.hidden": head["hidden"], "head.hop": head["hop"],
-                     "head.fir_kernel": head["fir_kernel"], "head.step": HEAD_STEP}.items():
+    for key, val in {
+        "sample_rate": 44100,
+        "internal_sample_rate": 44160,
+        "frame_rate": 15,
+        "hop": 2940,
+        "internal_hop": 2944,
+        "n_codebooks": 10,
+        "codebook_size": 4096,
+        "latent_dim": 1024,
+        "semantic_dim": sh["width"],
+        "sem_head.depth": sh["depth"],
+        "head.depth": head["depth"],
+        "head.hidden": head["hidden"],
+        "head.hop": head["hop"],
+        "head.fir_kernel": head["fir_kernel"],
+        "head.step": HEAD_STEP,
+    }.items():
         w.add_uint32(f"{DEC_ARCH}.{key}", val)
     w.add_array(f"{DEC_ARCH}.head.n_fft", [int(n) for n in head["n_ffts"]])
     w.add_float32(f"{DEC_ARCH}.head.max_log_magnitude", math.log(100.0))
@@ -664,11 +810,17 @@ def cmd_codec_decoder(args, parser):
     w.add_string(f"{DEC_ARCH}.head.variant", variant)
     w.add_float32(f"{DEC_ARCH}.ln_eps", 1e-5)
     w.add_float32(f"{DEC_ARCH}.convnext_eps", 1e-6)
-    for key, field in {"in_dim": "input_dimension", "out_dim": "output_dimension", "d_model": "d_model",
-                       "n_head": "num_heads", "n_ff": "dim_feedforward", "context": "context_frames"}.items():
+    for key, field in {
+        "in_dim": "input_dimension",
+        "out_dim": "output_dimension",
+        "d_model": "d_model",
+        "n_head": "num_heads",
+        "n_ff": "dim_feedforward",
+        "context": "context_frames",
+    }.items():
         vals = [int(s[field]) for s in moss]
         if key == "out_dim":
-            vals[4] = 0   # decoder.8.output_proj is an Identity in the iSTFT codec
+            vals[4] = 0  # decoder.8.output_proj is an Identity in the iSTFT codec
         w.add_array(f"{DEC_ARCH}.stage.{key}", vals)
     w.add_array(f"{DEC_ARCH}.stage.n_layer", layers)
     w.add_array(f"{DEC_ARCH}.stage.patch", STAGE_PATCH)
@@ -711,8 +863,11 @@ def cmd_codec_decoder(args, parser):
     with torch.no_grad():
         # RVQ codebooks folded through their 1x1 out_proj: table[id] = codebook[id] @ W^T.
         def table(prefix):
-            return (get(prefix + ".codebook.weight") @ _wn_key(get, sd, prefix + ".out_proj").squeeze(-1).T,
-                    get(prefix + ".out_proj.bias"))
+            return (
+                get(prefix + ".codebook.weight") @ _wn_key(get, sd, prefix + ".out_proj").squeeze(-1).T,
+                get(prefix + ".out_proj.bias"),
+            )
+
         t, b = table("quantizer.semantic_quantizer.quantizers.0")
         put("sem.table", t)
         put("sem.bias", b)
@@ -780,12 +935,23 @@ def cmd_codec_encoder(args, parser):
     state = torch.load(args.generator, map_location="cpu", mmap=True, weights_only=True)
     cfg, _, sh = validate_generator(state)
     specs = cfg["encoder_stages"]
-    if [s["type"] for s in specs] != ["S1CausalWNConv1d", "S1EncoderBlock", "S1EncoderBlock"] + ["PatchedPretransform", "MossProjectedTransformer"] * 5:
+    if [s["type"] for s in specs] != ["S1CausalWNConv1d", "S1EncoderBlock", "S1EncoderBlock"] + [
+        "PatchedPretransform",
+        "MossProjectedTransformer",
+    ] * 5:
         raise SystemExit("unsupported encoder stages")
     patches = [s["patch_size"] for s in specs[3::2]]
     if patches != [23, 2, 2, 2, 2] or any(s["direction"] != "down" for s in specs[3::2]):
         raise SystemExit("unsupported encoder patching")
-    if [s["stride"] for s in specs[1:3]] != [2, 4] or cfg["dual_encoding"] != {"width": 768, "hidden": 2048, "depth": 4, "causal": True, "window_ratio": 2.0, "strategy": "frozen_ssl_to_q1_decoded_semantic_residual", "normalization": "unchanged_baseline"}:
+    if [s["stride"] for s in specs[1:3]] != [2, 4] or cfg["dual_encoding"] != {
+        "width": 768,
+        "hidden": 2048,
+        "depth": 4,
+        "causal": True,
+        "window_ratio": 2.0,
+        "strategy": "frozen_ssl_to_q1_decoded_semantic_residual",
+        "normalization": "unchanged_baseline",
+    }:
         raise SystemExit("unsupported S1/semantic encoder configuration")
     moss = specs[4::2]
     model = MossCodec(cfg)
@@ -802,12 +968,33 @@ def cmd_codec_encoder(args, parser):
 
     w = GGUFWriter(args.out, ENC_ARCH)
     w.add_string("general.name", "fixed600k frozen dual Opus reference encoder")
-    for key, value in {"sample_rate": 44100, "internal_sample_rate": 44160, "frame_rate": 15, "hop": 2940, "internal_hop": 2944, "n_codebooks": 10, "codebook_size": 4096, "latent_dim": 1024, "semantic_dim": 768, "semantic_depth": 4, "lane_frames": 300, "context_frames": 150}.items():
+    for key, value in {
+        "sample_rate": 44100,
+        "internal_sample_rate": 44160,
+        "frame_rate": 15,
+        "hop": 2940,
+        "internal_hop": 2944,
+        "n_codebooks": 10,
+        "codebook_size": 4096,
+        "latent_dim": 1024,
+        "semantic_dim": 768,
+        "semantic_depth": 4,
+        "lane_frames": 300,
+        "context_frames": 150,
+    }.items():
         w.add_uint32(f"{ENC_ARCH}.{key}", value)
     w.add_float32(f"{ENC_ARCH}.window_ratio", cfg["dual_encoding"]["window_ratio"])
     w.add_float32(f"{ENC_ARCH}.ln_eps", 1e-5)
     w.add_float32(f"{ENC_ARCH}.convnext_eps", 1e-6)
-    for key, field in {"in_dim": "input_dimension", "out_dim": "output_dimension", "d_model": "d_model", "n_head": "num_heads", "n_layer": "num_layers", "n_ff": "dim_feedforward", "context": "context_frames"}.items():
+    for key, field in {
+        "in_dim": "input_dimension",
+        "out_dim": "output_dimension",
+        "d_model": "d_model",
+        "n_head": "num_heads",
+        "n_layer": "num_layers",
+        "n_ff": "dim_feedforward",
+        "context": "context_frames",
+    }.items():
         w.add_array(f"{ENC_ARCH}.stage.{key}", [int(s[field]) for s in moss])
     w.add_array(f"{ENC_ARCH}.stage.patch", patches)
     count = 0
@@ -866,8 +1053,23 @@ def cmd_codec_encoder(args, parser):
             put(o + ".out.weight", get(p + ".output_proj.weight"), mat=True)
             for layer in range(spec["num_layers"]):
                 lp, lo = f"{p}.layers.{layer}", f"{o}.l{layer}"
-                for src, dst in [("norm1.weight", "norm1.weight"), ("norm1.bias", "norm1.bias"), ("norm2.weight", "norm2.weight"), ("norm2.bias", "norm2.bias"), ("attention_scale", "attn_scale"), ("ffn_scale", "ffn_scale"), ("qkv.weight", "qkv.weight"), ("attention_out.weight", "wo.weight"), ("ffn.0.weight", "ffn1.weight"), ("ffn.3.weight", "ffn2.weight")]:
-                    put(lo + "." + dst, get(lp + "." + src), mat=dst in ["qkv.weight", "wo.weight", "ffn1.weight", "ffn2.weight"])
+                for src, dst in [
+                    ("norm1.weight", "norm1.weight"),
+                    ("norm1.bias", "norm1.bias"),
+                    ("norm2.weight", "norm2.weight"),
+                    ("norm2.bias", "norm2.bias"),
+                    ("attention_scale", "attn_scale"),
+                    ("ffn_scale", "ffn_scale"),
+                    ("qkv.weight", "qkv.weight"),
+                    ("attention_out.weight", "wo.weight"),
+                    ("ffn.0.weight", "ffn1.weight"),
+                    ("ffn.3.weight", "ffn2.weight"),
+                ]:
+                    put(
+                        lo + "." + dst,
+                        get(lp + "." + src),
+                        mat=dst in ["qkv.weight", "wo.weight", "ffn1.weight", "ffn2.weight"],
+                    )
         put("sem_enc.in.weight", wnp("semantic_encoder.0").squeeze(-1))
         put("sem_enc.in.bias", get("semantic_encoder.0.bias"))
         for b in range(sh["depth"]):
@@ -902,12 +1104,20 @@ opmath precision."""
 
 SSL_ARCH = "w2vbert_ssl"
 SSL_EXPECTED_CONFIG = {
-    "model_type": "wav2vec2-bert", "num_hidden_layers": 16, "hidden_size": 1024,
-    "intermediate_size": 4096, "num_attention_heads": 16,
-    "feature_projection_input_dim": 160, "conv_depthwise_kernel_size": 31,
-    "left_max_position_embeddings": 64, "right_max_position_embeddings": 8,
-    "position_embeddings_type": "relative_key", "hidden_act": "swish",
-    "layer_norm_eps": 1e-5, "add_adapter": False, "apply_spec_augment": False,
+    "model_type": "wav2vec2-bert",
+    "num_hidden_layers": 16,
+    "hidden_size": 1024,
+    "intermediate_size": 4096,
+    "num_attention_heads": 16,
+    "feature_projection_input_dim": 160,
+    "conv_depthwise_kernel_size": 31,
+    "left_max_position_embeddings": 64,
+    "right_max_position_embeddings": 8,
+    "position_embeddings_type": "relative_key",
+    "hidden_act": "swish",
+    "layer_norm_eps": 1e-5,
+    "add_adapter": False,
+    "apply_spec_augment": False,
     "use_intermediate_ffn_before_adapter": False,
 }
 
@@ -972,7 +1182,9 @@ def cmd_ssl_teacher(args, parser):
     expected["masked_spec_embed"] = (1024,)
     keys = set(sd)
     if keys != set(expected):
-        raise ValueError(f"teacher tensor schema mismatch: missing={sorted(set(expected) - keys)}, unexpected={sorted(keys - set(expected))}")
+        raise ValueError(
+            f"teacher tensor schema mismatch: missing={sorted(set(expected) - keys)}, unexpected={sorted(keys - set(expected))}"
+        )
     for key, shape in expected.items():
         if tuple(sd[key].shape) != shape:
             raise ValueError(f"wrong shape for {key}: {tuple(sd[key].shape)}, expected {shape}")
@@ -981,9 +1193,22 @@ def cmd_ssl_teacher(args, parser):
     args.out.parent.mkdir(parents=True, exist_ok=True)
     w = GGUFWriter(str(args.out), SSL_ARCH)
     w.add_string("general.name", "Matched Wav2Vec2-BERT semantic teacher layer 16")
-    meta = {"sample_rate": 16000, "max_seconds": 60, "n_layer": 16, "n_embd": 1024,
-                "n_head": 16, "n_ff": 4096, "rel_left": 64, "rel_right": 8, "conv_kernel": 31,
-                "n_mels": 80, "frame_length": 400, "hop_length": 160, "fft_length": 512, "stride": 2}
+    meta = {
+        "sample_rate": 16000,
+        "max_seconds": 60,
+        "n_layer": 16,
+        "n_embd": 1024,
+        "n_head": 16,
+        "n_ff": 4096,
+        "rel_left": 64,
+        "rel_right": 8,
+        "conv_kernel": 31,
+        "n_mels": 80,
+        "frame_length": 400,
+        "hop_length": 160,
+        "fft_length": 512,
+        "stride": 2,
+    }
     for key, value in meta.items():
         w.add_uint32(f"{SSL_ARCH}.{key}", value)
     for key, value in {"eps": 1e-5, "preemphasis": 0.97, "mel_floor": 1.192092955078125e-07}.items():
@@ -1014,7 +1239,10 @@ def cmd_ssl_teacher(args, parser):
     if consumed != keys:
         raise ValueError(f"unconsumed teacher tensors: {sorted(keys - consumed)}")
     write_gguf(w, progress=True)
-    print(f"consumed {len(consumed)} checkpoint tensors; exported {len(mapping)} inference tensors and 3 frontend tables -> {args.out}", flush=True)
+    print(
+        f"consumed {len(consumed)} checkpoint tensors; exported {len(mapping)} inference tensors and 3 frontend tables -> {args.out}",
+        flush=True,
+    )
 
 
 # ===================================================================================================== speaker-encoder
@@ -1127,10 +1355,23 @@ SPK_ARCH = "mect_spk"
 ENCODER = "ownmect_s2"
 PREFIX = "model."
 BN_EPS = 1e-5
-EXPECTED_BACKBONE_CONFIG = {"moe_type": "token", "num_experts_shard": 2, "num_experts_token": 4,
-                            "top_k_shard": None, "top_k_token": None, "shard_scale": 1.0}
-EXPECTED_FBANK = {"num_mel_bins": 80, "frame_length": 25, "frame_shift": 10, "dither": 0.0,
-                  "energy_floor": 0.0, "window_type": "hamming", "scale": 32768}
+EXPECTED_BACKBONE_CONFIG = {
+    "moe_type": "token",
+    "num_experts_shard": 2,
+    "num_experts_token": 4,
+    "top_k_shard": None,
+    "top_k_token": None,
+    "shard_scale": 1.0,
+}
+EXPECTED_FBANK = {
+    "num_mel_bins": 80,
+    "frame_length": 25,
+    "frame_shift": 10,
+    "dither": 0.0,
+    "energy_floor": 0.0,
+    "window_type": "hamming",
+    "scale": 32768,
+}
 HIDDEN = 64
 POS_K = 113
 N_EXPERTS = 4
@@ -1157,7 +1398,7 @@ class Mapper:
     """Builds the (dst, src, expected_shape, transform) list; consumed source keys are tracked."""
 
     def __init__(self):
-        self.items = []     # (dst, src, shape, fn)
+        self.items = []  # (dst, src, shape, fn)
         self.bn_items = []  # (dst_prefix, src_prefix, channels)
         self.src_keys = []
 
@@ -1213,11 +1454,11 @@ def build_spk_mapping():
                 a1 = ic_r // groups
                 a2 = oc // groups
                 for j in range(a1):
-                    m.tensor(f"{cd}conv1.w{j}", cs + "conv1.weight", (oc, a1, 3, 3), lambda t, j=j: t[:, j:j + 1])
+                    m.tensor(f"{cd}conv1.w{j}", cs + "conv1.weight", (oc, a1, 3, 3), lambda t, j=j: t[:, j : j + 1])
                 m.conv1x1(cd + "pw1", cs + "conv_pw1", oc, oc)
                 m.bn(cd + "bn1", cs + "bn1", oc)
                 for j in range(a2):
-                    m.tensor(f"{cd}conv2.w{j}", cs + "conv2.weight", (oc, a2, 3, 3), lambda t, j=j: t[:, j:j + 1])
+                    m.tensor(f"{cd}conv2.w{j}", cs + "conv2.weight", (oc, a2, 3, 3), lambda t, j=j: t[:, j : j + 1])
                 m.conv1x1(cd + "pw2", cs + "conv_pw2", oc, oc)
                 m.bn(cd + "bn2", cs + "bn2", oc)
                 stride_tuple = R == 0 and STAGE_STRIDE_IS_TUPLE[si]
@@ -1236,7 +1477,9 @@ def build_spk_mapping():
             m.tensor(dst + "rproj.weight", src + "reduce_project.0.weight", (HIDDEN, FEAT, 1), lambda t: t.squeeze(-1))
             m.tensor(dst + "rproj.bias", src + "reduce_project.0.bias", (HIDDEN,))
             m.affine(dst + "rproj.ln", src + "reduce_project.1", HIDDEN)
-            m.tensor(dst + "pos.dw.weight", src + "pos_conv.pos_conv.0.weight", (HIDDEN, 1, POS_K), lambda t: t.squeeze(1))
+            m.tensor(
+                dst + "pos.dw.weight", src + "pos_conv.pos_conv.0.weight", (HIDDEN, 1, POS_K), lambda t: t.squeeze(1)
+            )
             m.tensor(dst + "pos.dw.bias", src + "pos_conv.pos_conv.0.bias", (HIDDEN,))
             m.bn(dst + "pos.bn", src + "pos_conv.pos_conv.1", HIDDEN)
             m.conv1d1(dst + "pos.pw", src + "pos_conv.pos_conv.3", HIDDEN, HIDDEN)
@@ -1251,8 +1494,7 @@ def build_spk_mapping():
             m.affine(dst + "ln2", tr + "final_layer_norm", HIDDEN)
             m.conv1d1(dst + "eproj", src + "expansion_project.0", HIDDEN, FEAT)
             c_in, f_in = c_out_r, f_out_r
-    m.tensor("fe.dense_w", fe + "dense3.inputs_weights", (1, 4, FEAT, 1),
-             lambda t: torch.softmax(t, dim=1)[0, :, :, 0])
+    m.tensor("fe.dense_w", fe + "dense3.inputs_weights", (1, 4, FEAT, 1), lambda t: torch.softmax(t, dim=1)[0, :, :, 0])
     ep = PREFIX + "encoding_layers."
     m.tensor("pool.l1.weight", ep + "linear1.weight", (128, FEAT, 1), lambda t: t.squeeze(-1))
     m.tensor("pool.l1.bias", ep + "linear1.bias", (128,))
@@ -1264,9 +1506,16 @@ def build_spk_mapping():
 
 
 def validate_spk_registry(entry):
-    expect = {"type": "mect_fbank", "backbone_type": "MECT_B2", "backbone_config": EXPECTED_BACKBONE_CONFIG,
-              "pooling": "ASTP", "embed_dim": 192, "sample_rate": 16000, "max_seconds": 60,
-              "fbank": EXPECTED_FBANK}
+    expect = {
+        "type": "mect_fbank",
+        "backbone_type": "MECT_B2",
+        "backbone_config": EXPECTED_BACKBONE_CONFIG,
+        "pooling": "ASTP",
+        "embed_dim": 192,
+        "sample_rate": 16000,
+        "max_seconds": 60,
+        "fbank": EXPECTED_FBANK,
+    }
     for key, value in expect.items():
         if entry.get(key) != value:
             fail(f"speaker encoder registry {key}: {entry.get(key)!r}, expected {value!r}")
@@ -1288,8 +1537,10 @@ def cmd_speaker_encoder(args, parser):
     expected_keys = set(m.src_keys)
     keys = set(sd)
     if keys != expected_keys:
-        fail(f"speaker encoder schema mismatch: missing={sorted(expected_keys - keys)[:8]}, "
-             f"unknown={sorted(keys - expected_keys)[:8]}")
+        fail(
+            f"speaker encoder schema mismatch: missing={sorted(expected_keys - keys)[:8]}, "
+            f"unknown={sorted(keys - expected_keys)[:8]}"
+        )
     for dst, src, shape, fn in m.items:
         if tuple(sd[src].shape) != shape:
             fail(f"wrong shape for {src}: {tuple(sd[src].shape)}, expected {shape}")
@@ -1307,11 +1558,26 @@ def cmd_speaker_encoder(args, parser):
     args.out.parent.mkdir(parents=True, exist_ok=True)
     w = GGUFWriter(str(args.out), SPK_ARCH)
     w.add_string("general.name", f"ZONOS3 Mini speaker encoder {ENCODER} (MECT-B2 + ASTP, 192-d)")
-    for key, value in {"sample_rate": 16000, "max_seconds": 60, "embedding_length": 192, "n_mels": 80, "frame_length": 400,
-                           "frame_shift": 160, "n_fft": 512, "n_heads": 4, "n_experts": N_EXPERTS, "pos_kernel": POS_K}.items():
+    for key, value in {
+        "sample_rate": 16000,
+        "max_seconds": 60,
+        "embedding_length": 192,
+        "n_mels": 80,
+        "frame_length": 400,
+        "frame_shift": 160,
+        "n_fft": 512,
+        "n_heads": 4,
+        "n_experts": N_EXPERTS,
+        "pos_kernel": POS_K,
+    }.items():
         w.add_uint32(f"{SPK_ARCH}.{key}", value)
-    for key, value in {"preemphasis": 0.97, "waveform_scale": 32768.0, "log_floor": 1.1920928955078125e-07,
-                           "ln_eps": 1e-6, "pool_var_floor": 1e-7}.items():
+    for key, value in {
+        "preemphasis": 0.97,
+        "waveform_scale": 32768.0,
+        "log_floor": 1.1920928955078125e-07,
+        "ln_eps": 1e-6,
+        "pool_var_floor": 1e-7,
+    }.items():
         w.add_float32(f"{SPK_ARCH}.{key}", value)
     w.add_string(f"{SPK_ARCH}.backbone", "MECT_B2")
 
@@ -1412,10 +1678,16 @@ def cmd_steer(args, parser):
     if len(hidden_dims) > 1:
         raise SystemExit(f"error: hidden sets disagree on the hidden size: {sorted(hidden_dims)}")
     for did, table in bundle.timing.items():
-        ok = isinstance(table, list) and len(table) > 0 and all(
-            isinstance(p, (list, tuple)) and len(p) == 2
-            and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in p)
-            for p in table)
+        ok = (
+            isinstance(table, list)
+            and len(table) > 0
+            and all(
+                isinstance(p, (list, tuple))
+                and len(p) == 2
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in p)
+                for p in table
+            )
+        )
         if not ok:
             raise SystemExit(f"error: timing['{did}'] must be a non-empty list of finite [dose, factor] pairs")
 
@@ -1432,7 +1704,9 @@ def cmd_steer(args, parser):
     w.add_array(f"{STEER_ARCH}.direction.kinds", kinds)
     w.add_string(f"{STEER_ARCH}.timing", json.dumps(bundle.timing))
     w.add_string(f"{STEER_ARCH}.ui", json.dumps(bundle.ui, ensure_ascii=False))
-    w.add_string(f"{STEER_ARCH}.rate_extension", json.dumps(spec["rate_extension"]) if spec.get("rate_extension") else "")
+    w.add_string(
+        f"{STEER_ARCH}.rate_extension", json.dumps(spec["rate_extension"]) if spec.get("rate_extension") else ""
+    )
     for i, vec in enumerate(vectors):
         w.add_tensor(f"steer.dir.{i}", vec)
     write_gguf(w)
@@ -1533,22 +1807,37 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def command(name, doc, fn):
-        p = sub.add_parser(name, help=doc.split("\n")[0], description=doc,
-                           formatter_class=argparse.RawDescriptionHelpFormatter)
+        p = sub.add_parser(
+            name, help=doc.split("\n")[0], description=doc, formatter_class=argparse.RawDescriptionHelpFormatter
+        )
         p.set_defaults(fn=fn)
         return p
 
     p = command("lm", LM_DOC, cmd_lm)
-    p.add_argument("lm_dir", help="release directory lm/mect_60k, a derived checkpoint, or a QAT-baked directory (bake.json)")
-    p.add_argument("--silence-frame", help="silence-frame registry JSON (default <lm_dir>/../../registries/silence_frame_<audio_codec>.json)")
-    p.add_argument("--edit-adapter", help="a zonos-accent-lora/3 speech-edit adapter: the backbone gets its vocabulary "
-                                          "(span_end_id and the grown rows)")
-    p.add_argument("--phoneme-rows", help="zonos-text-extra/1 phoneme tokens appended to the text table (after "
-                                          "--edit-adapter's rows): pronunciation groups")
+    p.add_argument(
+        "lm_dir", help="release directory lm/mect_60k, a derived checkpoint, or a QAT-baked directory (bake.json)"
+    )
+    p.add_argument(
+        "--silence-frame",
+        help="silence-frame registry JSON (default <lm_dir>/../../registries/silence_frame_<audio_codec>.json)",
+    )
+    p.add_argument(
+        "--edit-adapter",
+        help="a zonos-accent-lora/3 speech-edit adapter: the backbone gets its vocabulary "
+        "(span_end_id and the grown rows)",
+    )
+    p.add_argument(
+        "--phoneme-rows",
+        help="zonos-text-extra/1 phoneme tokens appended to the text table (after "
+        "--edit-adapter's rows): pronunciation groups",
+    )
     p.add_argument("-o", "--out", required=True)
-    p.add_argument("--outtype", choices=("f32", "f16", "q8_0", MIX_OUTTYPE),
-                   help=f"default f16 (plain directory) or {MIX_OUTTYPE} (QAT directory; the only valid type for it). "
-                        f"{MIX_OUTTYPE} on a plain directory quantizes the same tensors post-training (round to nearest)")
+    p.add_argument(
+        "--outtype",
+        choices=("f32", "f16", "q8_0", MIX_OUTTYPE),
+        help=f"default f16 (plain directory) or {MIX_OUTTYPE} (QAT directory; the only valid type for it). "
+        f"{MIX_OUTTYPE} on a plain directory quantizes the same tensors post-training (round to nearest)",
+    )
 
     p = command("codec-decoder", CODEC_DECODER_DOC, cmd_codec_decoder)
     p.add_argument("generator", help="autoencoder/generator.pt")
@@ -1569,8 +1858,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("speaker-encoder", SPK_DOC, cmd_speaker_encoder)
     p.add_argument("checkpoint", type=Path, help=f"speaker_encoders/{ENCODER}/ckpt_0037.pth")
     p.add_argument("-o", "--out", type=Path, required=True)
-    p.add_argument("--registry", type=Path, default=None,
-                   help="speaker_encoder_registry.json (default zonos3.models.mect_speaker.registry_path())")
+    p.add_argument(
+        "--registry",
+        type=Path,
+        default=None,
+        help="speaker_encoder_registry.json (default zonos3.models.mect_speaker.registry_path())",
+    )
 
     p = command("steer", STEER_DOC, cmd_steer)
     p.add_argument("bundle", type=Path)

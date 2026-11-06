@@ -1,5 +1,6 @@
 """Scheduler samples GDN-family logits in float32; reference codes pass through the HTTP layer checked and cut to
 the reference limit."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -38,8 +39,11 @@ def test_inline_reference_codes_are_checked_and_cut():
     from zonos3.tts import plan
 
     codec = "opus_dual_3n_600k_sched600k_r4096_step600000"
-    config = SimpleNamespace(model_config=SimpleNamespace(n_codebooks=3, codebook_size=4097), tts_audio_codec=codec,
-                             tts_speaker_reference_max_seconds=1.0)
+    config = SimpleNamespace(
+        model_config=SimpleNamespace(n_codebooks=3, codebook_size=4097),
+        tts_audio_codec=codec,
+        tts_speaker_reference_max_seconds=1.0,
+    )
     ctx = api_server._RulesContext(config)
     convert = lambda codes: plan.reference_codes(ctx, codes)  # noqa: E731
     assert convert(None) is None

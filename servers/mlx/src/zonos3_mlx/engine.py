@@ -30,8 +30,12 @@ from zonos3_mlx.models.codec_decoder import CodecDecoder
 from zonos3_mlx.models.lm import LMConfig, Zonos3MLX
 
 COMPANIONS = {  # zac: the default decoder (keep2_plain head); --zac zac.gguf selects the full-size one
-    "zac": "zac-keep2.gguf", "spk_encoder": "spk-encoder.gguf", "zac_encoder": "zac-encoder.gguf",
-    "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "accent_adapters": "accents.gguf",
+    "zac": "zac-keep2.gguf",
+    "spk_encoder": "spk-encoder.gguf",
+    "zac_encoder": "zac-encoder.gguf",
+    "ssl_teacher": "ssl-teacher.gguf",
+    "steer": "steer.gguf",
+    "accent_adapters": "accents.gguf",
 }
 
 
@@ -61,9 +65,17 @@ class Engine:
     silence_available = True  # every backbone GGUF carries its codec's silence frame
     condition_flags: Mapping = MappingProxyType({})  # the GGUF converter refuses checkpoints with flag rows
 
-    def __init__(self, lm: Zonos3MLX, decoder: CodecDecoder, *, paths: dict[str, str | None],
-                 laci_heads: dict[str, str] | None = None, max_frames: int = MAX_FRAMES, normalizer=None,
-                 reference_idle_unload: float = 60.0):
+    def __init__(
+        self,
+        lm: Zonos3MLX,
+        decoder: CodecDecoder,
+        *,
+        paths: dict[str, str | None],
+        laci_heads: dict[str, str] | None = None,
+        max_frames: int = MAX_FRAMES,
+        normalizer=None,
+        reference_idle_unload: float = 60.0,
+    ):
         self.lm = lm
         self.config: LMConfig = lm.config
         self.decoder = decoder
@@ -77,22 +89,33 @@ class Engine:
             self.speaker_encoder = SpeakerEncoder.load(paths["spk_encoder"])
         self.steer_bundle: SteeringBundle | None = companions.load_steer(paths["steer"]) if paths.get("steer") else None
         self.steering_sources = () if self.steer_bundle is None else tuple(self.steer_bundle.hidden_sources)
-        self.accents = (companions.AccentBank.load(paths["accent_adapters"],
-                                                   head_rows=lm.config.n_codebooks * lm.config.audio_vocab)
-                        if paths.get("accent_adapters") else None)
+        self.accents = (
+            companions.AccentBank.load(
+                paths["accent_adapters"], head_rows=lm.config.n_codebooks * lm.config.audio_vocab
+            )
+            if paths.get("accent_adapters")
+            else None
+        )
         self.accent_names = [] if self.accents is None else list(self.accents.accent_names)
         if self.accents is not None and self.accents.edit is not None and lm.config.span_end_id is None:
-            raise ValueError(f"{paths['accent_adapters']}: {self.accents.edit} is a speech-edit adapter; the backbone "
-                             "lacks its vocabulary (convert it with tools/convert_gguf.py lm --edit-adapter)")
+            raise ValueError(
+                f"{paths['accent_adapters']}: {self.accents.edit} is a speech-edit adapter; the backbone "
+                "lacks its vocabulary (convert it with tools/convert_gguf.py lm --edit-adapter)"
+            )
         self.laci_heads = {lang: LaciHeads.load(path) for lang, path in (laci_heads or {}).items()}
         self.laci_paths = dict(laci_heads or {})
         self.laci_languages = frozenset(self.laci_heads)
         for lang, heads in self.laci_heads.items():
             for layer, head in heads.heads:
-                if not (0 <= layer < self.config.n_layers) or self.config.uses_gdn(layer) or not (
-                        0 <= head < self.config.n_heads):
-                    raise ValueError(f"--laci-heads {lang}={self.laci_paths[lang]}: head ({layer}, {head}) is not an "
-                                     "attention head of this model")
+                if (
+                    not (0 <= layer < self.config.n_layers)
+                    or self.config.uses_gdn(layer)
+                    or not (0 <= head < self.config.n_heads)
+                ):
+                    raise ValueError(
+                        f"--laci-heads {lang}={self.laci_paths[lang]}: head ({layer}, {head}) is not an "
+                        "attention head of this model"
+                    )
         self._reference_lock = threading.Lock()
         self._reference_encoder = None
         self._reference_last_use = 0.0
@@ -100,23 +123,44 @@ class Engine:
         c = self.config
         self.n_codebooks, self.codebook_size, self.hidden_size = c.n_codebooks, c.codebook_size, c.dim
         self.condition_names, self.condition_bucket_counts, self.condition_edges = (
-            c.condition_names, c.condition_bucket_counts, c.condition_edges)
+            c.condition_names,
+            c.condition_bucket_counts,
+            c.condition_edges,
+        )
         # R2: the reference prefix first, then the speaker row (ggml checkpoint_speaker_modes)
-        self.speaker_modes = [mode for mode, on in (("reference", c.speaker_reference_prefix_enabled),
-                                                    ("embedding", c.speaker_embedding_dim > 0)) if on]
+        self.speaker_modes = [
+            mode
+            for mode, on in (
+                ("reference", c.speaker_reference_prefix_enabled),
+                ("embedding", c.speaker_embedding_dim > 0),
+            )
+            if on
+        ]
         self.text_tokenizer_spec = c.text_tokenizer_spec or None
         self.audio_pad_id, self.text_vocab, self.span_end_id, self.max_seqlen = (
-            c.audio_pad_id, c.text_vocab, c.span_end_id, c.max_seqlen)
-        self._builder = TTSPromptBuilder(TTSPromptConfig(
-            n_codebooks=c.n_codebooks, codebook_sizes=c.codebook_sizes, audio_pad_id=c.audio_pad_id,
-            text_vocab=c.text_vocab, text_tokenizer_spec=c.text_tokenizer_spec))
+            c.audio_pad_id,
+            c.text_vocab,
+            c.span_end_id,
+            c.max_seqlen,
+        )
+        self._builder = TTSPromptBuilder(
+            TTSPromptConfig(
+                n_codebooks=c.n_codebooks,
+                codebook_sizes=c.codebook_sizes,
+                audio_pad_id=c.audio_pad_id,
+                text_vocab=c.text_vocab,
+                text_tokenizer_spec=c.text_tokenizer_spec,
+            )
+        )
 
     @classmethod
     def load(cls, model: str | Path, *, zac: str | None = None, **kwargs) -> "Engine":
         given = {"zac": zac, **{k: kwargs.pop(k) for k in list(kwargs) if k in COMPANIONS}}
         paths = find_companions(model, given)
         if not paths.get("zac"):
-            raise FileNotFoundError(f"--zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to {model})")
+            raise FileNotFoundError(
+                f"--zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to {model})"
+            )
         lm = Zonos3MLX.load(model)
         return cls(lm, CodecDecoder.load(paths["zac"]), paths=paths, **kwargs)
 
@@ -140,16 +184,20 @@ class Engine:
                 from zonos3_mlx.models.codec_encoder import CodecEncoder
                 from zonos3_mlx.models.ssl_teacher import SSLTeacher
 
-                self._reference_encoder = CodecEncoder.load(self.paths["zac_encoder"],
-                                                            SSLTeacher.load(self.paths["ssl_teacher"]))
+                self._reference_encoder = CodecEncoder.load(
+                    self.paths["zac_encoder"], SSLTeacher.load(self.paths["ssl_teacher"])
+                )
             self._reference_last_use = time.monotonic()
             return self._reference_encoder
 
     def unload_idle_reference_encoder(self) -> bool:
         """Free the reference encoder after --reference-idle-unload idle seconds (0 keeps it); True when freed."""
         with self._reference_lock:
-            if (self._reference_encoder is None or self.reference_idle_unload <= 0
-                    or time.monotonic() - self._reference_last_use < self.reference_idle_unload):
+            if (
+                self._reference_encoder is None
+                or self.reference_idle_unload <= 0
+                or time.monotonic() - self._reference_last_use < self.reference_idle_unload
+            ):
                 return False
             self._reference_encoder = None
         import mlx.core as mx
@@ -201,17 +249,34 @@ class Plan(PromptPlan):
     follow_language: str | None = None
 
 
-def plan_request(engine: Engine, request: Mapping, speaker: Speaker | None, *, laci_take: LaciTake | None = None,
-                 edit: EditLayout | None = None, hidden_delta=None) -> Plan:
+def plan_request(
+    engine: Engine,
+    request: Mapping,
+    speaker: Speaker | None,
+    *,
+    laci_take: LaciTake | None = None,
+    edit: EditLayout | None = None,
+    hidden_delta=None,
+) -> Plan:
     """The scheduler plan of ``request``: ``zonos3.tts.plan.plan_prompt`` over the engine with the speaker inputs the
     HTTP layer resolved (None: none, in the request's speaker mode). ``laci_take``: a LACI take's duration target
     and rate scale (zonos3.server.plugins.LaciTakeRequest);
     ``edit``: a speech-edit region (the edit layout, no silence prefill, stop on span-end; ``hidden_delta`` its
     steering delta; it runs on the speech-edit adapter at strength 1 when accents.gguf has one). Raises ValueError for
     a request the server refuses (HTTP 400)."""
-    plan = plan_prompt(engine, request, lambda req, mode: Speaker(mode) if speaker is None else speaker,
-                       hidden_delta=hidden_delta, edit=edit, duration_target=laci_take is not None)
+    plan = plan_prompt(
+        engine,
+        request,
+        lambda req, mode: Speaker(mode) if speaker is None else speaker,
+        hidden_delta=hidden_delta,
+        edit=edit,
+        duration_target=laci_take is not None,
+    )
     if edit is not None and engine.accents is not None and engine.accents.edit is not None:
         plan.accent = (engine.accents.edit, 1.0)
-    return Plan(**vars(plan), laci_take=laci_take, edit=edit,
-                follow_language=plan.language if plan.follow_tokens is not None else None)
+    return Plan(
+        **vars(plan),
+        laci_take=laci_take,
+        edit=edit,
+        follow_language=plan.language if plan.follow_tokens is not None else None,
+    )

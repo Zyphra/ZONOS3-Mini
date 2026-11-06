@@ -16,8 +16,18 @@ def test_laci(client, caps):
 
 def test_laci_with_speaker_cfg_is_400(client, caps, default_voice):
     needs(caps["laci_languages"] and caps["speaker_cfg_supported"], "needs LACI heads and speaker CFG")
-    error(generate(client, {"laci": True, "language": _language(caps), "speaker_embedding_id": default_voice["id"],
-                            "speaker_cfg_scale": 1.5}), 400)
+    error(
+        generate(
+            client,
+            {
+                "laci": True,
+                "language": _language(caps),
+                "speaker_embedding_id": default_voice["id"],
+                "speaker_cfg_scale": 1.5,
+            },
+        ),
+        400,
+    )
 
 
 def test_language_without_heads_is_400(client, caps):
@@ -33,7 +43,13 @@ def test_reading_follow(client, caps):
     needs(r.status_code == 200, "the server has no steering bundle")
     hidden = [d for d, v in r.json()["directions"].items() if "vector" not in v]
     needs(hidden, "the bundle has no hidden-space direction")
-    r = generate(client, {"language": _language(caps), "control_span_follow": "reading",
-                          "control_spans": [{"start": 0, "end": 5, "controls": {hidden[0]: 1.0}}]})
+    r = generate(
+        client,
+        {
+            "language": _language(caps),
+            "control_span_follow": "reading",
+            "control_spans": [{"start": 0, "end": 5, "controls": {hidden[0]: 1.0}}],
+        },
+    )
     pcm(r)
     assert r.headers["x-control-span-follow"] == "reading"

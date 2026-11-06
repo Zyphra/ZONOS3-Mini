@@ -1,4 +1,5 @@
 """Mimi-style SSL frame averaging and the frozen W2V-BERT semantic teacher (the inference parts of the s1dac losses)."""
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -31,12 +32,15 @@ def average_ssl_frames(target, student_frames, window_ratio=2.0):
         left = (centers - half_width).clamp(0, teacher_frames)
         right = (centers + half_width).clamp(0, teacher_frames)
         prefix = F.pad(values.cumsum(dim=-1), (1, 0))
+
         def integral(position):
             index = position.floor().long()
             fraction = position - index
-            return (prefix.index_select(-1, index)
-                    + values.index_select(-1, index.clamp(max=teacher_frames-1)) * fraction)
-        return (integral(right) - integral(left)) / (right-left)
+            return (
+                prefix.index_select(-1, index) + values.index_select(-1, index.clamp(max=teacher_frames - 1)) * fraction
+            )
+
+        return (integral(right) - integral(left)) / (right - left)
 
 
 class SemanticTeacher(nn.Module):
@@ -45,8 +49,8 @@ class SemanticTeacher(nn.Module):
         if layer != 16:
             raise ValueError("The recipe targets transformer layer 16")
         from transformers import Wav2Vec2BertModel
-        self.model = Wav2Vec2BertModel.from_pretrained(
-            path, dtype=dtype, local_files_only=True)
+
+        self.model = Wav2Vec2BertModel.from_pretrained(path, dtype=dtype, local_files_only=True)
         self.model.encoder.layers = nn.ModuleList(list(self.model.encoder.layers[:layer]))
         self.model.config.num_hidden_layers = layer
         self.model.eval().requires_grad_(False)
@@ -56,4 +60,6 @@ class SemanticTeacher(nn.Module):
         self.model.eval()
         return self.model(
             input_features=features.to(next(self.model.parameters()).dtype),
-            attention_mask=attention_mask, return_dict=True).last_hidden_state
+            attention_mask=attention_mask,
+            return_dict=True,
+        ).last_hidden_state

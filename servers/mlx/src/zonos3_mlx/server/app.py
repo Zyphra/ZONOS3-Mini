@@ -30,8 +30,14 @@ def create_app(state: ServerState) -> FastAPI:
             state.close()
 
     # The spec of this API is api/openapi.yaml; FastAPI's generated docs would describe a second one.
-    app = FastAPI(title="Zonos3 API Server (MLX)", version="2.0.0", lifespan=lifespan, openapi_url=None,
-                  docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="Zonos3 API Server (MLX)",
+        version="2.0.0",
+        lifespan=lifespan,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+    )
     app.state.zonos3 = state
 
     # Innermost, so CORS and the access check wrap its early status line; plugins.mount extends the list with the

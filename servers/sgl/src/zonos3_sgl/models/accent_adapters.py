@@ -121,9 +121,7 @@ def _resolve_linear(model, module: str):
     """The served op that applies the shift of lingua LoRA module ``module``."""
     target = lora_target(module)
     if target is None:
-        raise ValueError(
-            f"accent adapter shifts {module!r}, outside the LoRA targets {', '.join(TARGETS)}"
-        )
+        raise ValueError(f"accent adapter shifts {module!r}, outside the LoRA targets {', '.join(TARGETS)}")
     owner, op = _resolve(model, module)
     owners, ops = _served_classes()[target]
     if not isinstance(owner, owners) or not isinstance(op, ops):
@@ -192,9 +190,7 @@ class AccentAdapters:
         try:
             return self.slots[name]
         except KeyError:
-            raise ValueError(
-                f"unknown accent {name!r}; loaded: {', '.join(self.names)}"
-            ) from None
+            raise ValueError(f"unknown accent {name!r}; loaded: {', '.join(self.names)}") from None
 
     def mask(self, slots: torch.Tensor, scales: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
         """[tokens, K]: each token's strength on its adapter's columns."""
@@ -202,9 +198,7 @@ class AccentAdapters:
         return hit.to(dtype) * scales.to(dtype).unsqueeze(1)
 
 
-def attach_accent_adapters(
-    model, directory: str | Path, device: torch.device, dtype: torch.dtype
-) -> AccentAdapters:
+def attach_accent_adapters(model, directory: str | Path, device: torch.device, dtype: torch.dtype) -> AccentAdapters:
     """Load every adapter in ``directory`` onto ``model``'s ops."""
     names = list_accent_adapters(directory)
     factors: dict[str, list[tuple[int, int, torch.Tensor, torch.Tensor, tuple[int, ...]]]] = {}
@@ -225,9 +219,7 @@ def attach_accent_adapters(
             experts.setdefault(module, {})[slot] = weights
         widths.append(adapter.rank)
 
-    column_slots = torch.repeat_interleave(
-        torch.arange(1, len(names) + 1, dtype=torch.int32), torch.tensor(widths)
-    )
+    column_slots = torch.repeat_interleave(torch.arange(1, len(names) + 1, dtype=torch.int32), torch.tensor(widths))
     width = int(column_slots.numel())
     ops = {}
     for module, entries in factors.items():
@@ -238,9 +230,7 @@ def attach_accent_adapters(
         up = torch.zeros(width, out_features)
         for slot, start, pair_down, pair_up, shape in entries:
             if shape != tuple(weight.shape):
-                raise ValueError(
-                    f"{names[slot - 1]}: {module}.weight shape {shape} != served {tuple(weight.shape)}"
-                )
+                raise ValueError(f"{names[slot - 1]}: {module}.weight shape {shape} != served {tuple(weight.shape)}")
             rank = pair_down.shape[0]
             down[start : start + rank] = pair_down
             up[start : start + rank] = pair_up
@@ -283,9 +273,10 @@ def _attach_expert_factors(
             for weight, (pair_up, pair_down) in weights.items():
                 num, out_features, in_features = served[weight]
                 rank = pair_down.shape[-2]
-                if (
-                    tuple(pair_up.shape) != (num, out_features, rank)
-                    or tuple(pair_down.shape) != (num, rank, in_features)
+                if tuple(pair_up.shape) != (num, out_features, rank) or tuple(pair_down.shape) != (
+                    num,
+                    rank,
+                    in_features,
                 ):
                     raise ValueError(
                         f"slot {slot}: {module}.{weight} factors up {tuple(pair_up.shape)}, "
@@ -376,9 +367,7 @@ def ensure_batch_invariance(adapters: AccentAdapters, rows=(1, 2, 3, 4, 5, 8, 16
             scales = torch.rand(1024, device=device, generator=generator) + 0.5
             reference = expert_pair_shift(accents, weight, x, tokens, experts, pair_slots, scales)
             for n in rows:
-                shift = expert_pair_shift(
-                    accents, weight, x[:n], tokens[:n], experts[:n], pair_slots[:n], scales[:n]
-                )
+                shift = expert_pair_shift(accents, weight, x[:n], tokens[:n], experts[:n], pair_slots[:n], scales[:n])
                 if not torch.equal(shift, reference[:n]):
                     raise RuntimeError(
                         f"accent expert side path of {name}.{weight} is not batch-invariant at {n} pairs"

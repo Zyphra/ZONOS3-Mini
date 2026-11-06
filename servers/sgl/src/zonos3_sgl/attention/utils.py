@@ -20,9 +20,7 @@ class BaseCaptureData:
     out_loc: torch.Tensor
 
     @classmethod
-    def create(
-        cls, max_bs: int, max_seq_len: int, device: torch.device, frame_width: int = 1, **kwargs
-    ):
+    def create(cls, max_bs: int, max_seq_len: int, device: torch.device, frame_width: int = 1, **kwargs):
         # Audio token frames are 2D (batch, frame_width); frame_width == 1 keeps a 1D layout
         if frame_width > 1:
             input_ids = torch.zeros((max_bs, frame_width), dtype=torch.int32, device=device)

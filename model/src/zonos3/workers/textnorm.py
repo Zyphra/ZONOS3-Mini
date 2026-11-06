@@ -6,6 +6,7 @@ answers each with one JSON line on stdout, in order, until stdin closes: ``{"id"
 ``{"id": int, "error": str}``. The NeMo grammars load once per language and stay loaded. ``TextNormalizerClient`` is
 the Python side of the protocol (the MLX server's; the ggml server's is textnorm.cpp).
 """
+
 from __future__ import annotations
 
 import json
@@ -32,8 +33,16 @@ class TextNormalizerClient:
     def _start(self) -> subprocess.Popen:
         env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
         env["PYTHONPATH"] = str(self.python_src)
-        return subprocess.Popen([self.python, str(self.script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=None, env=env, text=True, encoding="utf-8", bufsize=1)
+        return subprocess.Popen(
+            [self.python, str(self.script)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
 
     def _call(self, request: dict) -> dict:
         if self._proc is None or self._proc.poll() is not None:

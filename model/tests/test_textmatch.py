@@ -28,6 +28,8 @@ def test_word_errors_match_the_former_worker(reference, hypothesis, expected):
 
 def test_verify_reports_word_errors_reference_words_and_cer():
     assert textmatch.verify("I was twelve years old.", "i was thirteen years old") == {
-        "word_errors": 1, "ref_words": 5, "cer": pytest.approx(textmatch.char_error_rate("I was twelve years old.",
-                                                                                         "i was thirteen years old"))}
+        "word_errors": 1,
+        "ref_words": 5,
+        "cer": pytest.approx(textmatch.char_error_rate("I was twelve years old.", "i was thirteen years old")),
+    }
     assert textmatch.verify("", "anything") == {"word_errors": 1, "ref_words": 0, "cer": 0.0}

@@ -8,6 +8,7 @@ this runs on any platform (no iconutil/ImageMagick needed).
 
     python3 scripts/make-app-icon.py [outdir=assets/app]
 """
+
 import math
 import sys
 from pathlib import Path
@@ -49,8 +50,7 @@ def make_master(phase: float = 0.0) -> Image.Image:
     # subtle radial glow behind the mark
     glow = Image.new("L", (SIZE, SIZE), 0)
     ImageDraw.Draw(glow).ellipse((112, 112, SIZE - 112, SIZE - 112), fill=46)
-    img.paste(Image.new("RGBA", (SIZE, SIZE), (46, 42, 36, 255)), (0, 0),
-              glow.filter(ImageFilter.GaussianBlur(180)))
+    img.paste(Image.new("RGBA", (SIZE, SIZE), (46, 42, 36, 255)), (0, 0), glow.filter(ImageFilter.GaussianBlur(180)))
 
     # orange smoke waves (front) + a faint silver one (back)
     img.alpha_composite(wave_layer((190, 190, 200), 120, 2.4 + phase, 70, 60, 60))
@@ -85,6 +85,7 @@ def main() -> None:
     master.save(outdir / "zonos3.icns")
     # Regenerate project artwork as Z3, not renamed pixels with legacy branding.
     assets = outdir.parent
+
     def artwork(phase=0.0):
         image = Image.new("RGB", (1200, 628), (10, 11, 14))
         mark = make_master(phase).convert("RGB").resize((600, 600), Image.Resampling.LANCZOS)
@@ -94,11 +95,12 @@ def main() -> None:
         draw.text((642, 380), "Native speech synthesis", font=load_font(33), fill=(190, 190, 200))
         draw.text((642, 438), "zonos3.cpp", font=load_font(36), fill=(255, 170, 60))
         return image
+
     artwork().save(assets / "ZONOS3BlogThumbnail.png")
-    frames = [artwork(i * 2 * math.pi / 24).resize((600, 314), Image.Resampling.LANCZOS)
-              for i in range(24)]
-    frames[0].save(assets / "zonos3_arlooop_animated.gif", save_all=True,
-                   append_images=frames[1:], duration=90, loop=0, disposal=2)
+    frames = [artwork(i * 2 * math.pi / 24).resize((600, 314), Image.Resampling.LANCZOS) for i in range(24)]
+    frames[0].save(
+        assets / "zonos3_arlooop_animated.gif", save_all=True, append_images=frames[1:], duration=90, loop=0, disposal=2
+    )
     print(f"wrote {outdir}/zonos3.png .ico .icns and Zonos3 artwork")
 
 

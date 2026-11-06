@@ -10,6 +10,7 @@ to whole-tensor cosine and exact all-row/codebook logits argmax agreement.
 Codec-code captures and integer tensors require exact values, regardless of tolerance.
 Reported errors and worst-row cosine always cover all rows, not just the last one.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,9 +35,12 @@ def cosine(a, b):
 def metrics(golden, native):
     g, c = golden.astype(np.float64).ravel(), native.astype(np.float64).ravel()
     difference = np.abs(g - c)
-    return {"maxabs": float(difference.max()), "maxrel": float((difference / np.maximum(np.abs(g), 1e-6)).max()),
-            "rmse": float(np.sqrt(np.mean(difference * difference))),
-            "cos": cosine(g, c)}
+    return {
+        "maxabs": float(difference.max()),
+        "maxrel": float((difference / np.maximum(np.abs(g), 1e-6)).max()),
+        "rmse": float(np.sqrt(np.mean(difference * difference))),
+        "cos": cosine(g, c),
+    }
 
 
 def main():
@@ -48,7 +52,12 @@ def main():
     parser.add_argument("--atol", type=float, default=1e-4)
     parser.add_argument("--rtol", type=float, default=1e-3)
     args = parser.parse_args()
-    if not -1 <= args.cos <= 1 or args.atol < 0 or args.rtol < 0 or not np.isfinite([args.cos, args.atol, args.rtol]).all():
+    if (
+        not -1 <= args.cos <= 1
+        or args.atol < 0
+        or args.rtol < 0
+        or not np.isfinite([args.cos, args.atol, args.rtol]).all()
+    ):
         parser.error("thresholds must be finite; cosine in [-1,1], atol/rtol nonnegative")
     manifest_path = args.golden / "manifest.json"
     if manifest_path.exists():
@@ -93,7 +102,11 @@ def main():
             continue
         compared += 1
         m = metrics(g, c)
-        row_cos = min(cosine(ga.astype(np.float64).ravel(), ca.astype(np.float64).ravel()) for ga, ca in zip(g, c)) if g.ndim >= 2 else None
+        row_cos = (
+            min(cosine(ga.astype(np.float64).ravel(), ca.astype(np.float64).ravel()) for ga, ca in zip(g, c))
+            if g.ndim >= 2
+            else None
+        )
         exact = np.issubdtype(g.dtype, np.integer) or name == "codes" or name.endswith(".codes")
         close = (g == c) if exact else np.isclose(g, c, atol=args.atol, rtol=args.rtol)
         ok = bool(close.all()) and m["cos"] >= args.cos
@@ -108,8 +121,12 @@ def main():
                 ok = ok and agreement == 1.0
         failures += not ok
         row_display = f"{row_cos:>11.6f}" if row_cos is not None else f"{'-':>11}"
-        print(f"{name:<26}{str(g.shape):<23}{m['maxabs']:>11.4g}{m['maxrel']:>11.4g}{m['rmse']:>11.4g}{m['cos']:>11.6f}{row_display}  {'ok' if ok else 'FAIL'}{extra}")
-    print(f"\n{len(names)} expected, {compared} numerically compared, {failures} failure(s); atol={args.atol:g} rtol={args.rtol:g} cos={args.cos:g}")
+        print(
+            f"{name:<26}{str(g.shape):<23}{m['maxabs']:>11.4g}{m['maxrel']:>11.4g}{m['rmse']:>11.4g}{m['cos']:>11.6f}{row_display}  {'ok' if ok else 'FAIL'}{extra}"
+        )
+    print(
+        f"\n{len(names)} expected, {compared} numerically compared, {failures} failure(s); atol={args.atol:g} rtol={args.rtol:g} cos={args.cos:g}"
+    )
     return 1 if failures else 0
 
 

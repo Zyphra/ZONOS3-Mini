@@ -47,8 +47,9 @@ class MlxEditEngine:
         codes = await speakers.encode_reference(self.state, audio, max_seconds=max_seconds)
         return codes.to(torch.int64).numpy()
 
-    async def check(self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets,
-                    condition_values) -> set[str]:
+    async def check(
+        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
+    ) -> set[str]:
         engine = self.state.engine
         bundle = engine.steer_bundle
         validate_phoneme_groups(engine.text_tokenizer_spec, target_text)
@@ -67,16 +68,33 @@ class MlxEditEngine:
         c = state.config
         embedding, delta = job.speaker_embedding, None
         if job.controls:
-            resolved = resolve_controls(engine.steer_bundle, job.controls, None, text=job.controls_text,
-                                        speaker_embedding=embedding, sources=engine.steering_sources,
-                                        hidden_size=engine.hidden_size)
+            resolved = resolve_controls(
+                engine.steer_bundle,
+                job.controls,
+                None,
+                text=job.controls_text,
+                speaker_embedding=embedding,
+                sources=engine.steering_sources,
+                hidden_size=engine.hidden_size,
+            )
             embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
-        request = {"text": job.text, "language": job.language, "text_normalization": job.text_normalization,
-                   **job.sampling, "seed": job.seed, "max_tokens": job.max_tokens,
-                   "condition_buckets": job.condition_buckets, "condition_values": job.condition_values,
-                   "stream": False}
-        layout = EditLayout(torch.as_tensor(job.window_codes, dtype=torch.int64), job.spans,
-                            [torch.as_tensor(f, dtype=torch.int32) for f in job.fills], job.min_frames)
+        request = {
+            "text": job.text,
+            "language": job.language,
+            "text_normalization": job.text_normalization,
+            **job.sampling,
+            "seed": job.seed,
+            "max_tokens": job.max_tokens,
+            "condition_buckets": job.condition_buckets,
+            "condition_values": job.condition_values,
+            "stream": False,
+        }
+        layout = EditLayout(
+            torch.as_tensor(job.window_codes, dtype=torch.int64),
+            job.spans,
+            [torch.as_tensor(f, dtype=torch.int32) for f in job.fills],
+            job.min_frames,
+        )
         speaker = Speaker("embedding", embedding=embedding)
         plan = await asyncio.to_thread(plan_request, engine, request, speaker, edit=layout, hidden_delta=delta)
         sampling = replace(Sampling.from_request(plan.request), min_frames=int(job.min_frames))
@@ -86,8 +104,11 @@ class MlxEditEngine:
         finally:
             run.abort()
         # the finishing row is not part of the generated span (it only completes the delayed codebooks' flush)
-        rows = (torch.stack([torch.as_tensor(r) for r in run.rows[:-1]])[:, : c.n_codebooks].numpy()
-                if len(run.rows) > 1 else np.zeros((0, c.n_codebooks), dtype=np.int32))
+        rows = (
+            torch.stack([torch.as_tensor(r) for r in run.rows[:-1]])[:, : c.n_codebooks].numpy()
+            if len(run.rows) > 1
+            else np.zeros((0, c.n_codebooks), dtype=np.int32)
+        )
         return rows, -1 if run.eos_frame is None else run.eos_frame
 
     async def decode(self, codes: np.ndarray) -> np.ndarray:

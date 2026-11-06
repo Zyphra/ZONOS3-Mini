@@ -68,8 +68,10 @@ class EngineConfig:
 
         config = ModelConfig.from_checkpoint_config(self.checkpoint_config)
         grown = self.grown_vocabulary
-        if grown is not None and (config.span_end_id, config.text_extra_tokens) != (grown.span_end_id,
-                                                                                     grown.text_extra_tokens):
+        if grown is not None and (config.span_end_id, config.text_extra_tokens) != (
+            grown.span_end_id,
+            grown.text_extra_tokens,
+        ):
             if config.span_end_id is not None or config.text_extra_tokens:
                 raise ValueError(
                     f"the accent adapters grow the vocabulary (span_end_id {grown.span_end_id}, "
@@ -84,8 +86,11 @@ class EngineConfig:
             )
         extra = self.text_extra_rows
         if extra is not None:
-            config = replace(config, text_extra_tokens=config.text_extra_tokens + extra.count,
-                             vocab_size=config.vocab_size + extra.count)
+            config = replace(
+                config,
+                text_extra_tokens=config.text_extra_tokens + extra.count,
+                vocab_size=config.vocab_size + extra.count,
+            )
         return config
 
     @cached_property

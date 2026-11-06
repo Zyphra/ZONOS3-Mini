@@ -25,9 +25,7 @@ FUSEALIGN = REPO / "third_party" / "fusealign-multilingual"
 
 
 def git(*args: str, repo: Path = REPO) -> str:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
-    ).stdout
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
 
 
 def stage(dest: Path) -> None:

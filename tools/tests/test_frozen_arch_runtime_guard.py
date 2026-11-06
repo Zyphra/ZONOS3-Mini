@@ -1,4 +1,5 @@
 """The converter refuses training-only knobs the runtime hard-codes (frozen GDN / Full-AttnRes family, 2026-10)."""
+
 from __future__ import annotations
 
 import pytest

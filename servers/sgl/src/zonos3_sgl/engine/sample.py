@@ -12,13 +12,9 @@ if TYPE_CHECKING:
     from zonos3_sgl.core import TTSBatch
 
 
-def make_device_tensor(
-    data: List, dtype: torch.dtype, device: torch.device
-) -> torch.Tensor:
+def make_device_tensor(data: List, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
     """Create a tensor on device from a list."""
-    return torch.tensor(data, dtype=dtype, pin_memory=True).to(
-        device, non_blocking=True
-    )
+    return torch.tensor(data, dtype=dtype, pin_memory=True).to(device, non_blocking=True)
 
 
 @dataclass
@@ -54,9 +50,7 @@ class TTSSampler:
     end_token_ids: tuple[int, ...]
     codebook_sizes: tuple[int, ...] | None = None
 
-    def prepare(
-        self, batch: TTSBatch, token_pool: torch.Tensor | None = None
-    ) -> TTSBatchSamplingArgs:
+    def prepare(self, batch: TTSBatch, token_pool: torch.Tensor | None = None) -> TTSBatchSamplingArgs:
         """Prepare sampling arguments from a TTS batch.
 
         Args:
@@ -70,9 +64,7 @@ class TTSSampler:
         stop_ids = [int(r.stop_id) for r in batch.reqs]
         for stop_id in stop_ids:
             if stop_id not in self.end_token_ids:
-                raise ValueError(
-                    f"Request stop id {stop_id} is not an end token of this model {self.end_token_ids}"
-                )
+                raise ValueError(f"Request stop id {stop_id} is not an end token of this model {self.end_token_ids}")
 
         clamped = [clamp_sampling(p, n_codebooks=self.n_codebooks, codebook_size=self.codebook_size) for p in params]
         temps = [c.temperature for c in clamped]
@@ -107,27 +99,26 @@ class TTSSampler:
                         device=self.device, dtype=torch.int64, non_blocking=True
                     )
                 else:
-                    history = token_pool[
-                        req.table_idx, start : req.device_len, : self.n_codebooks
-                    ].to(dtype=torch.int64)
+                    history = token_pool[req.table_idx, start : req.device_len, : self.n_codebooks].to(
+                        dtype=torch.int64
+                    )
 
                 history = history.transpose(0, 1).contiguous()
                 valid = (history >= 0) & (history < self.codebook_size)
                 valid[repetition_codebooks[i] :] = False
-                repetition_token_ids[i, :, -window:] = torch.where(
-                    valid, history, torch.full_like(history, -1)
-                )
+                repetition_token_ids[i, :, -window:] = torch.where(valid, history, torch.full_like(history, -1))
 
-            repetition_penalties_tensor = make_device_tensor(
-                repetition_penalties, torch.float32, self.device
-            )
+            repetition_penalties_tensor = make_device_tensor(repetition_penalties, torch.float32, self.device)
 
         # sampling_params.min_frames: a stop token in codebook c at generated frame s ends the
         # generation at aligned frame s - c, so it is masked while s < min_frames + c.
         stop_blocked = None
         if any(p.min_frames > 0 for p in params):
             stop_blocked = make_device_tensor(
-                [[r.total_generated < p.min_frames + c for c in range(self.n_codebooks)] for r, p in zip(batch.reqs, params)],
+                [
+                    [r.total_generated < p.min_frames + c for c in range(self.n_codebooks)]
+                    for r, p in zip(batch.reqs, params)
+                ],
                 torch.bool,
                 self.device,
             )
@@ -144,9 +135,7 @@ class TTSSampler:
             stop_blocked=stop_blocked,
         )
 
-    def sample(
-        self, logits: torch.Tensor, args: TTSBatchSamplingArgs
-    ) -> List[List[int]]:
+    def sample(self, logits: torch.Tensor, args: TTSBatchSamplingArgs) -> List[List[int]]:
         """Sample from multi-codebook logits.
 
         Args:
@@ -173,9 +162,7 @@ class TTSSampler:
             stop_blocked=args.stop_blocked,
         )
 
-    def sample_to_tensor(
-        self, logits: torch.Tensor, args: TTSBatchSamplingArgs
-    ) -> torch.Tensor:
+    def sample_to_tensor(self, logits: torch.Tensor, args: TTSBatchSamplingArgs) -> torch.Tensor:
         """Sample and return as tensor instead of list.
 
         Args:

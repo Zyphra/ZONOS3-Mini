@@ -4,6 +4,7 @@ The cond3 finetunes share one bucket count for their tables (params ``condition_
 is the unknown row). The rate30 finetunes widen one table (params ``condition_bucket_counts`` [10, 10, 30]): table i
 has counts[i] + 1 rows and its unknown id is counts[i]. Without the field every table has ``condition_n_buckets``.
 """
+
 from __future__ import annotations
 
 from typing import Sequence

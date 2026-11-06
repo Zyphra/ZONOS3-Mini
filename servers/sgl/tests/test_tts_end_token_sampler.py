@@ -137,17 +137,43 @@ def test_min_frames_hold_the_aligned_stop_frame_back(min_frames):
     from zonos3_sgl.core import TTSReq
 
     n = 2
-    req = TTSReq(input_ids=torch.full((2, n + 1), PAD, dtype=torch.int32), table_idx=0, cached_len=0, output_len=64,
-                 uid=0, sampling_params=TTSSamplingParams(min_frames=min_frames), cache_handle=None, n_codebooks=n,
-                 audio_pad_id=PAD, stop_id=SPAN_END)
-    sampler = TTSSampler(device=torch.device("cpu"), n_codebooks=n, codebook_size=CODEBOOK_SIZE, text_vocab=99,
-                         audio_pad_id=PAD, end_token_ids=(EOA, SPAN_END), codebook_sizes=CODEBOOK_SIZES)
+    req = TTSReq(
+        input_ids=torch.full((2, n + 1), PAD, dtype=torch.int32),
+        table_idx=0,
+        cached_len=0,
+        output_len=64,
+        uid=0,
+        sampling_params=TTSSamplingParams(min_frames=min_frames),
+        cache_handle=None,
+        n_codebooks=n,
+        audio_pad_id=PAD,
+        stop_id=SPAN_END,
+    )
+    sampler = TTSSampler(
+        device=torch.device("cpu"),
+        n_codebooks=n,
+        codebook_size=CODEBOOK_SIZE,
+        text_vocab=99,
+        audio_pad_id=PAD,
+        end_token_ids=(EOA, SPAN_END),
+        codebook_sizes=CODEBOOK_SIZES,
+    )
     stop_first = torch.tensor([[[1.0, 0.0, 0.0, 0.0, -9.0, -9.0, 9.0]] * n])
     for _ in range(min_frames + n + 2):
         args = sampler.prepare(SimpleNamespace(reqs=[req]))
-        tokens = sample_tts(stop_first, torch.zeros(1), torch.full((1,), 7), torch.ones(1), torch.zeros(1),
-                            codebook_size=CODEBOOK_SIZE, audio_pad_id=PAD, stop_token_ids=args.stop_token_ids,
-                            codebook_sizes=CODEBOOK_SIZES, text_vocab=99, stop_blocked=args.stop_blocked)[0]
+        tokens = sample_tts(
+            stop_first,
+            torch.zeros(1),
+            torch.full((1,), 7),
+            torch.ones(1),
+            torch.zeros(1),
+            codebook_size=CODEBOOK_SIZE,
+            audio_pad_id=PAD,
+            stop_token_ids=args.stop_token_ids,
+            codebook_sizes=CODEBOOK_SIZES,
+            text_vocab=99,
+            stop_blocked=args.stop_blocked,
+        )[0]
         req.total_generated += 1
         if req.check_eos(tokens[:n]):
             break
@@ -155,9 +181,23 @@ def test_min_frames_hold_the_aligned_stop_frame_back(min_frames):
 
 
 def test_min_frames_off_builds_no_mask():
-    req = SimpleNamespace(sampling_params=TTSSamplingParams(repetition_penalty=1.0), total_generated=0, history_rows=0,
-                          device_len=1,
-                          table_idx=0, input_ids=torch.zeros((1, 3), dtype=torch.int32), rng=None, stop_id=EOA)
-    sampler = TTSSampler(device=torch.device("cpu"), n_codebooks=2, codebook_size=CODEBOOK_SIZE, text_vocab=99,
-                         audio_pad_id=PAD, end_token_ids=(EOA,), codebook_sizes=CODEBOOK_SIZES)
+    req = SimpleNamespace(
+        sampling_params=TTSSamplingParams(repetition_penalty=1.0),
+        total_generated=0,
+        history_rows=0,
+        device_len=1,
+        table_idx=0,
+        input_ids=torch.zeros((1, 3), dtype=torch.int32),
+        rng=None,
+        stop_id=EOA,
+    )
+    sampler = TTSSampler(
+        device=torch.device("cpu"),
+        n_codebooks=2,
+        codebook_size=CODEBOOK_SIZE,
+        text_vocab=99,
+        audio_pad_id=PAD,
+        end_token_ids=(EOA,),
+        codebook_sizes=CODEBOOK_SIZES,
+    )
     assert sampler.prepare(SimpleNamespace(reqs=[req])).stop_blocked is None

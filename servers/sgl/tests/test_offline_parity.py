@@ -132,9 +132,7 @@ def test_offline_receive_threads_speaker_fields():
 def test_offline_receive_no_voice_defaults():
     llm = _bare_llm()
     ids = llm._prompt_builder.build("hello")
-    llm.pending_requests = [
-        PendingRequest(input_ids=ids, sampling_params=TTSSamplingParams())
-    ]
+    llm.pending_requests = [PendingRequest(input_ids=ids, sampling_params=TTSSamplingParams())]
 
     msg = _drain(llm)[0]
 

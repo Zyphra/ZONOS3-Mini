@@ -134,8 +134,7 @@ def _conditioning_base_text_vocab(
     )
     if base_text_vocab < 0:
         raise ValueError(
-            "text_vocab is smaller than the configured conditioning buckets; "
-            "cannot locate conditioning tokens."
+            "text_vocab is smaller than the configured conditioning buckets; cannot locate conditioning tokens."
         )
     return base_text_vocab
 
@@ -163,9 +162,7 @@ def quality_token_id(
 
     bucket = int(quality_bucket)
     if bucket < 0 or bucket >= num_buckets:
-        raise ValueError(
-            f"quality bucket for feature {feature} must be in [0, {num_buckets - 1}], got {bucket}."
-        )
+        raise ValueError(f"quality bucket for feature {feature} must be in [0, {num_buckets - 1}], got {bucket}.")
 
     base_text_vocab = _conditioning_base_text_vocab(
         text_vocab,
@@ -175,12 +172,7 @@ def quality_token_id(
         accurate_mode_num_buckets,
         context="quality conditioning",
     )
-    return (
-        base_text_vocab
-        + int(speaking_rate_num_buckets)
-        + sum(counts[:feature])
-        + bucket
-    )
+    return base_text_vocab + int(speaking_rate_num_buckets) + sum(counts[:feature]) + bucket
 
 
 def speaker_background_token_id(
@@ -194,9 +186,7 @@ def speaker_background_token_id(
     """Token id for the clean/noisy speaker-background marker."""
     num_buckets = int(speaker_background_num_buckets)
     if num_buckets < 2:
-        raise ValueError(
-            "speaker_background_num_buckets must be at least 2 for background tokens."
-        )
+        raise ValueError("speaker_background_num_buckets must be at least 2 for background tokens.")
 
     counts = _normalize_quality_bucket_counts(quality_bucket_counts)
     base_text_vocab = _conditioning_base_text_vocab(
@@ -207,12 +197,7 @@ def speaker_background_token_id(
         accurate_mode_num_buckets,
         context="speaker-background conditioning",
     )
-    return (
-        base_text_vocab
-        + int(speaking_rate_num_buckets)
-        + sum(counts)
-        + (0 if bool(clean) else 1)
-    )
+    return base_text_vocab + int(speaking_rate_num_buckets) + sum(counts) + (0 if bool(clean) else 1)
 
 
 def accurate_mode_token_id(
@@ -228,9 +213,7 @@ def accurate_mode_token_id(
         raise ValueError("accurate_mode_num_buckets must be positive.")
     background_count = int(speaker_background_num_buckets)
     if background_count < 2:
-        raise ValueError(
-            "speaker_background_num_buckets must be at least 2 for accurate-mode tokens."
-        )
+        raise ValueError("speaker_background_num_buckets must be at least 2 for accurate-mode tokens.")
 
     counts = _normalize_quality_bucket_counts(quality_bucket_counts)
     base_text_vocab = _conditioning_base_text_vocab(
@@ -241,12 +224,7 @@ def accurate_mode_token_id(
         accurate_count,
         context="accurate-mode conditioning",
     )
-    return (
-        base_text_vocab
-        + int(speaking_rate_num_buckets)
-        + sum(counts)
-        + background_count
-    )
+    return base_text_vocab + int(speaking_rate_num_buckets) + sum(counts) + background_count
 
 
 def tokens_to_prompt_tokens(
@@ -308,9 +286,7 @@ def shear(x: torch.Tensor, pad: int) -> torch.Tensor:
     T, C = x.shape
     padded = x.new_full((C - 1 + T, C), pad)
     padded[C - 1 :] = x
-    row_idx = (C - 1) + torch.arange(T, device=x.device).unsqueeze(1) - torch.arange(
-        C, device=x.device
-    )
+    row_idx = (C - 1) + torch.arange(T, device=x.device).unsqueeze(1) - torch.arange(C, device=x.device)
     return padded.gather(0, row_idx)
 
 
@@ -342,8 +318,7 @@ def speaker_reference_prefix_tokens(
 
     if codes.ndim != 2 or codes.shape[1] != config.n_codebooks:
         raise ValueError(
-            "Speaker-reference codes must have shape "
-            f"[time, {config.n_codebooks}], got {tuple(codes.shape)}."
+            f"Speaker-reference codes must have shape [time, {config.n_codebooks}], got {tuple(codes.shape)}."
         )
     if codes.shape[0] == 0:
         raise ValueError("Speaker-reference codes must not be empty.")
@@ -418,11 +393,13 @@ class TTSPromptBuilder:
         self.config = config
         if config.text_tokenizer_spec is not None:
             from .superbpe import validate_spec
+
             validate_spec(config.text_tokenizer_spec, config.text_vocab)
 
     def text_ids(self, text):
         if self.config.text_tokenizer_spec is not None:
             from .superbpe import text_ids
+
             return text_ids(text, self.config.text_tokenizer_spec)
         return text_to_byte_ids(text)
 
@@ -452,7 +429,9 @@ class TTSPromptBuilder:
     ) -> torch.Tensor:
         """``count`` all-pad rows (audio pad on every codebook, text pad) for the loudness / fmax / speaking-rate
         buckets of the cond3 finetunes; the model replaces their embeddings by the bucket tables."""
-        rows = torch.full((int(count), self.config.n_codebooks + 1), self.config.audio_pad_id, dtype=dtype, device=device)
+        rows = torch.full(
+            (int(count), self.config.n_codebooks + 1), self.config.audio_pad_id, dtype=dtype, device=device
+        )
         rows[:, self.config.n_codebooks] = self.config.text_vocab
         return rows
 

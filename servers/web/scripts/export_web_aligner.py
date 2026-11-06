@@ -15,6 +15,7 @@ the web kernels (ggml memory order, the gemm's [K][O][IC] weight layout):
 The Dia embedding (BF16) is a host tensor (rows gathered on the CPU); the Dia norm weights are f32 of their bf16 values.
 The Silero VAD tensors are not exported (no long-form alignment in the browser).
 """
+
 import argparse
 import os
 
@@ -59,18 +60,40 @@ def export_aligner(path, out):
     dia = {k.split(".", 1)[1]: v for k, v in kv.items() if k.startswith("dia.")}
     dim, nl, nh, ffn, feat = hp["dim"], hp["n_layers"], hp["n_heads"], hp["ffn_dim"], hp["feat_dim"]
     win, hop, nup = hp["patch_window"], hp["patch_hop"], hp["n_upsample"]
-    D, dl, dnh, dhd, inter = (dia["hidden_size"], dia["num_layers"], dia["num_heads"], dia["head_dim"],
-                              dia["intermediate_size"])
+    D, dl, dnh, dhd, inter = (
+        dia["hidden_size"],
+        dia["num_layers"],
+        dia["num_heads"],
+        dia["head_dim"],
+        dia["intermediate_size"],
+    )
     HD = dnh * dhd
     if win != 2 * hop or hp["text_dim"] != D or dim % nh or dia["vocab_size"] != 256:
         raise SystemExit(f"{path}: unsupported FuseAlign hyperparameters")
     meta = {
-        "general.architecture": "fusealign", "format": "fusealign-gguf/1", "source": os.path.basename(path),
-        "dim": dim, "n_layers": nl, "n_heads": nh, "ffn_dim": ffn, "feat_dim": feat, "patch_window": win,
-        "patch_hop": hop, "n_upsample": nup, "rope_theta": hp["rope_theta"], "norm_eps": 1e-6,
-        "presence_threshold": hp["presence_threshold"], "max_text_bytes": hp["max_text_bytes"],
-        "max_seconds": hp["max_seconds"], "dia_hidden": D, "dia_layers": dl, "dia_heads": dnh, "dia_head_dim": dhd,
-        "dia_intermediate": inter, "dia_norm_eps": dia["norm_eps"], "dia_rope_theta": dia["rope_theta"],
+        "general.architecture": "fusealign",
+        "format": "fusealign-gguf/1",
+        "source": os.path.basename(path),
+        "dim": dim,
+        "n_layers": nl,
+        "n_heads": nh,
+        "ffn_dim": ffn,
+        "feat_dim": feat,
+        "patch_window": win,
+        "patch_hop": hop,
+        "n_upsample": nup,
+        "rope_theta": hp["rope_theta"],
+        "norm_eps": 1e-6,
+        "presence_threshold": hp["presence_threshold"],
+        "max_text_bytes": hp["max_text_bytes"],
+        "max_seconds": hp["max_seconds"],
+        "dia_hidden": D,
+        "dia_layers": dl,
+        "dia_heads": dnh,
+        "dia_head_dim": dhd,
+        "dia_intermediate": inter,
+        "dia_norm_eps": dia["norm_eps"],
+        "dia_rope_theta": dia["rope_theta"],
         "dia_max_positions": dia["max_position_embeddings"],
     }
     w = Writer(os.path.join(out, "aligner"), "aligner", meta)
@@ -115,13 +138,15 @@ def export_aligner(path, out):
         w.add(f"fa.{head}.in_b", f32(g, p + "0.bias", [feat]), "f32", [feat])
         for s in range(nup):
             up = f32(g, p + f"{1 + 2 * s}.weight", [UP_KERNEL, feat, feat])  # [in][out][k]
-            even = np.stack([up[:, :, 3].T, up[:, :, 1].T])                  # [k][out][in]
+            even = np.stack([up[:, :, 3].T, up[:, :, 1].T])  # [k][out][in]
             odd = np.stack([up[:, :, 2].T, up[:, :, 0].T])
             w.add(f"fa.{head}.up{s}.even", np.ascontiguousarray(even), "f32", [feat, feat, 2])
             w.add(f"fa.{head}.up{s}.odd", np.ascontiguousarray(odd), "f32", [feat, feat, 2])
             w.add(f"fa.{head}.up{s}.b", f32(g, p + f"{1 + 2 * s}.bias", [feat]), "f32", [feat])
         k = 1 + 2 * nup
-        smooth = f32(g, p + f"{k}.weight", [SMOOTH_KERNEL, feat, feat]).transpose(2, 0, 1)  # [out][in][k] -> [k][out][in]
+        smooth = f32(g, p + f"{k}.weight", [SMOOTH_KERNEL, feat, feat]).transpose(
+            2, 0, 1
+        )  # [out][in][k] -> [k][out][in]
         w.add(f"fa.{head}.smooth", np.ascontiguousarray(smooth), "f32", [feat, feat, SMOOTH_KERNEL])
         w.add(f"fa.{head}.smooth_b", f32(g, p + f"{k}.bias", [feat]), "f32", [feat])
         w.add(f"fa.{head}.out", f32(g, p + f"{k + 2}.weight", [1, feat, feat]).reshape(feat, feat), "f32", [feat, feat])
@@ -129,8 +154,9 @@ def export_aligner(path, out):
 
     # Word MLPs
     mlps = ("start", "end", "presence")
-    w.add("fa.mlp0", np.concatenate([f32(g, f"model.{m}_mlp.0.weight", [dim, dim]) for m in mlps]), "f32",
-          [dim, 3 * dim])
+    w.add(
+        "fa.mlp0", np.concatenate([f32(g, f"model.{m}_mlp.0.weight", [dim, dim]) for m in mlps]), "f32", [dim, 3 * dim]
+    )
     w.add("fa.mlp0_b", np.concatenate([f32(g, f"model.{m}_mlp.0.bias", [dim]) for m in mlps]), "f32", [3 * dim])
     for m in mlps:
         o = 1 if m == "presence" else feat
@@ -141,8 +167,11 @@ def export_aligner(path, out):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gguf", default=None, help=f"FuseAlign q8_0 GGUF (default: {GGUF_FILE} from the local "
-                                                 f"Hugging Face cache of {HF_REPO})")
+    ap.add_argument(
+        "--gguf",
+        default=None,
+        help=f"FuseAlign q8_0 GGUF (default: {GGUF_FILE} from the local Hugging Face cache of {HF_REPO})",
+    )
     ap.add_argument("--out", required=True, help="models output directory (writes <out>/aligner)")
     a = ap.parse_args()
     path = a.gguf
@@ -151,8 +180,10 @@ def main():
 
         path = try_to_load_from_cache(HF_REPO, GGUF_FILE)
         if not isinstance(path, str):
-            raise SystemExit(f"{HF_REPO}/{GGUF_FILE} is not in the Hugging Face cache: hf download {HF_REPO} "
-                             f"{GGUF_FILE} (or pass --gguf)")
+            raise SystemExit(
+                f"{HF_REPO}/{GGUF_FILE} is not in the Hugging Face cache: hf download {HF_REPO} "
+                f"{GGUF_FILE} (or pass --gguf)"
+            )
     export_aligner(path, a.out)
 
 

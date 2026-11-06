@@ -15,7 +15,9 @@ PAD_TEXT = 8196
 
 
 def _prompt(prefix: int, cond: int, text_ids: list[int], tail: int = 0, bos: bool = True, eos: bool = True):
-    text_col = [PAD_TEXT] * prefix + [0] * cond + ([2] if bos else []) + text_ids + ([3] if eos else []) + [PAD_TEXT] * tail
+    text_col = (
+        [PAD_TEXT] * prefix + [0] * cond + ([2] if bos else []) + text_ids + ([3] if eos else []) + [PAD_TEXT] * tail
+    )
     ids = torch.zeros(len(text_col), N_CB + 1, dtype=torch.int32)
     ids[:, N_CB] = torch.tensor(text_col, dtype=torch.int32)
     return ids
@@ -62,8 +64,9 @@ def _batch(probes, device_lens, generator):
         register_attention_layer(layer)
     page_table = torch.stack([torch.randperm(PAGES, generator=generator)[:60] for _ in probes]).to(torch.int32)
     reqs = [SimpleNamespace(align_probe=p, device_len=n) for p, n in zip(probes, device_lens)]
-    batch = SimpleNamespace(reqs=reqs, size=len(reqs), padded_size=len(reqs),
-                            attn_metadata=SimpleNamespace(page_table=page_table))
+    batch = SimpleNamespace(
+        reqs=reqs, size=len(reqs), padded_size=len(reqs), attn_metadata=SimpleNamespace(page_table=page_table)
+    )
     prepare(batch, None, N_HEADS, torch.device("cpu"))
     return batch, page_table
 
@@ -114,7 +117,9 @@ def test_masked_heads_match_explicit_reference(window):
     masked_heads = ((3, 0), (7, 5))
     probes = [
         AlignProbe(heads=((3, 1),), observer=None, text_start=5, text_len=20),
-        AlignProbe(heads=masked_heads, observer=None, text_start=30, text_len=13, mask=dict.fromkeys(masked_heads, window)),
+        AlignProbe(
+            heads=masked_heads, observer=None, text_start=30, text_len=13, mask=dict.fromkeys(masked_heads, window)
+        ),
     ]
     n_keys = 50
     batch, page_table = _batch(probes, [40, n_keys], g)

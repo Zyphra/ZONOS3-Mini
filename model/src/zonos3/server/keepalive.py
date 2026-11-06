@@ -8,6 +8,7 @@ detail but travels in the body, since the status line is already sent: ``{"detai
 Requests without the header take the normal path. ``paths`` is read on every request: a list the server extends with
 plugin paths before it serves.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,9 +47,17 @@ class KeepaliveMiddleware:
                 chunks.append(message.get("body", b""))
 
         task = asyncio.ensure_future(self.app(scope, receive, capture))
-        await send({"type": "http.response.start", "status": 200,
-                    "headers": [(b"content-type", b"application/json"), (b"cache-control", b"no-store"),
-                                (b"x-keepalive", b"1")]})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"cache-control", b"no-store"),
+                    (b"x-keepalive", b"1"),
+                ],
+            }
+        )
         await send({"type": "http.response.body", "body": b" ", "more_body": True})
         while not task.done():
             done, _ = await asyncio.wait({task}, timeout=self.interval)

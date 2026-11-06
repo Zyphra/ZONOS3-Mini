@@ -95,8 +95,11 @@ class LMConfig:
         span_end = f.meta(_key("span_end_id"), None)
         condition_count = int(f.meta(_key("condition.count")))
         counts = f.meta(_key("condition.bucket_counts"), None)  # legacy GGUFs: one u32 condition.bucket_count
-        counts = (tuple(int(n) for n in counts) if counts is not None
-                  else (int(f.meta(_key("condition.bucket_count"))),) * condition_count)
+        counts = (
+            tuple(int(n) for n in counts)
+            if counts is not None
+            else (int(f.meta(_key("condition.bucket_count"))),) * condition_count
+        )
         return cls(
             n_layers=int(f.meta(_key("block_count"))),
             max_seqlen=int(f.meta(_key("context_length"))),
@@ -240,8 +243,9 @@ def _softplus(x: mx.array) -> mx.array:
 def _gather_matmul(x: mx.array, W: Weight, idx: mx.array) -> mx.array:
     """Per routed pair ``x[t, r] @ W[idx[t, r]].T``: x [n, k, 1, in], idx [n, k] -> [n, k, 1, out]."""
     if W.scales is not None:
-        return mx.gather_qmm(x, W.w, W.scales, W.biases, rhs_indices=idx, transpose=True, group_size=GROUP_SIZE,
-                             bits=W.bits)
+        return mx.gather_qmm(
+            x, W.w, W.scales, W.biases, rhs_indices=idx, transpose=True, group_size=GROUP_SIZE, bits=W.bits
+        )
     if idx.size >= W.w.shape[0]:
         return mx.gather_mm(x, W.w.astype(mx.float32).swapaxes(-1, -2), rhs_indices=idx)
     picked = W.w[idx].astype(mx.float32)  # [n, k, out, in]
@@ -270,8 +274,12 @@ class Zonos3MLX:
         tables, weights = {}, {}
         for name in f.names():
             # float32 tables: embeddings, AttnRes queries, 1-D tensors and the GDN conv taps; the rest are matmul weights
-            if len(f.shape(name)) == 1 or name.endswith(".gdn_conv.weight") or name == "attnres_q.weight" \
-                    or name.startswith(("audio_embd.", "text_embd.", "cond_embd.")):
+            if (
+                len(f.shape(name)) == 1
+                or name.endswith(".gdn_conv.weight")
+                or name == "attnres_q.weight"
+                or name.startswith(("audio_embd.", "text_embd.", "cond_embd."))
+            ):
                 tables[name] = f.f32(name)
             elif name == "output.weight" and quantized_file and f.tensor_type(name) == GGMLQuantizationType.F16:
                 weights[name] = f.weight_q8_0(name)
@@ -321,7 +329,7 @@ class Zonos3MLX:
         mask = None
         if n > 1:
             mask = mx.arange(need)[None, :] <= (lo + mx.arange(n))[:, None]
-        out = mx.fast.scaled_dot_product_attention(q[None], keys[None], values[None], scale=hd ** -0.5, mask=mask)[0]
+        out = mx.fast.scaled_dot_product_attention(q[None], keys[None], values[None], scale=hd**-0.5, mask=mask)[0]
         if probe is not None:
             queries[layer] = q  # [nh, n, hd]
             if probe.windows:
@@ -345,7 +353,7 @@ class Zonos3MLX:
                 continue
             wlo, whi = clip_window(window, probe.text_len)
             outside = in_text & ((tidx < wlo) | (tidx > whi))
-            logits = (q[head] @ keys[head // rep].T) * c.head_dim ** -0.5
+            logits = (q[head] @ keys[head // rep].T) * c.head_dim**-0.5
             logits = mx.where(outside[None, :] | ~causal, -mx.inf, logits)
             heads.append(mx.softmax(logits, axis=-1) @ values[head // rep])
         return mx.stack(heads)
@@ -369,7 +377,7 @@ class Zonos3MLX:
         for j in range(1, K):
             conv = conv + sequence[j : j + n] * weight[:, j]
         conv = _silu(conv)
-        state.conv_state[layer] = sequence[-(K - 1):].T
+        state.conv_state[layer] = sequence[-(K - 1) :].T
         q = conv[:, :inner].reshape(n, H, S)
         k = conv[:, inner : 2 * inner].reshape(n, H, S)
         v = conv[:, 2 * inner :].reshape(n, H, S)
@@ -380,15 +388,24 @@ class Zonos3MLX:
         s0 = state.gdn_state.get(layer)
         if s0 is None:
             s0 = mx.zeros((H, S, S), dtype=mx.float32)
-        y, s1 = gated_delta((q * S ** -0.5)[None], k[None], v[None], decay[None], beta[None], s0[None])
+        y, s1 = gated_delta((q * S**-0.5)[None], k[None], v[None], decay[None], beta[None], s0[None])
         state.gdn_state[layer] = s1[0]
         recurrent = y[0]
         normalized = _rms(recurrent, self.t[p + "gdn_norm.weight"], 1e-5)
         gated = (normalized * _silu(z.reshape(n, H, S))).reshape(n, inner)
         if self._capture is not None:
-            for name, tensor in (("gdn_conv", conv), ("gdn_q", q), ("gdn_k", k), ("gdn_v", v), ("gdn_decay", decay),
-                                 ("gdn_beta", beta), ("gdn_recurrent", recurrent), ("gdn_gated", gated),
-                                 ("gdn_state", state.gdn_state[layer]), ("gdn_conv_state", state.conv_state[layer])):
+            for name, tensor in (
+                ("gdn_conv", conv),
+                ("gdn_q", q),
+                ("gdn_k", k),
+                ("gdn_v", v),
+                ("gdn_decay", decay),
+                ("gdn_beta", beta),
+                ("gdn_recurrent", recurrent),
+                ("gdn_gated", gated),
+                ("gdn_state", state.gdn_state[layer]),
+                ("gdn_conv_state", state.conv_state[layer]),
+            ):
                 self._save(f"{name}_{layer}", tensor)
         return self._lin(p + "attn_output", gated)
 
@@ -431,25 +448,55 @@ class Zonos3MLX:
 
     # -- forward -----------------------------------------------------------------------------------------------------
 
-    def forward(self, ids, state: LMState, *, speaker_rows=None, condition_rows=None,
-                hidden_deltas=None, accents=None, probe: ProbeSpec | None = None, capture: dict | None = None
-                ) -> LMOutput:
+    def forward(
+        self,
+        ids,
+        state: LMState,
+        *,
+        speaker_rows=None,
+        condition_rows=None,
+        hidden_deltas=None,
+        accents=None,
+        probe: ProbeSpec | None = None,
+        capture: dict | None = None,
+    ) -> LMOutput:
         """Logits of ``ids`` [rows, n_codebooks + 1] continuing ``state`` (updated in place); the keyword arguments
         have the semantics of ``zonos3.reference.lm.Zonos3LM.forward``."""
-        return self.finish([self.forward_lazy(ids, state, speaker_rows=speaker_rows, condition_rows=condition_rows,
-                                              hidden_deltas=hidden_deltas, accents=accents, probe=probe,
-                                              capture=capture)])[0]
+        return self.finish(
+            [
+                self.forward_lazy(
+                    ids,
+                    state,
+                    speaker_rows=speaker_rows,
+                    condition_rows=condition_rows,
+                    hidden_deltas=hidden_deltas,
+                    accents=accents,
+                    probe=probe,
+                    capture=capture,
+                )
+            ]
+        )[0]
 
     def finish(self, pending: list[PendingForward]) -> list[LMOutput]:
         """Evaluate forwards built by ``forward_lazy`` (logits and updated states) in one ``mx.eval``, then read their
         probes: the CFG pair of a tick goes to the GPU as one evaluation."""
         mx.eval([p.logits for p in pending], [p.state.arrays() for p in pending])
-        return [LMOutput(p.logits, None if p.probe is None else self._readout(p.probe, p.queries, p.state))
-                for p in pending]
+        return [
+            LMOutput(p.logits, None if p.probe is None else self._readout(p.probe, p.queries, p.state)) for p in pending
+        ]
 
-    def forward_lazy(self, ids, state: LMState, *, speaker_rows=None, condition_rows=None,
-                     hidden_deltas=None, accents=None, probe: ProbeSpec | None = None, capture: dict | None = None
-                     ) -> PendingForward:
+    def forward_lazy(
+        self,
+        ids,
+        state: LMState,
+        *,
+        speaker_rows=None,
+        condition_rows=None,
+        hidden_deltas=None,
+        accents=None,
+        probe: ProbeSpec | None = None,
+        capture: dict | None = None,
+    ) -> PendingForward:
         """``forward`` without the evaluation: the graph of the logits and of ``state``'s new arrays (``state`` is
         updated in place, its position advanced); pass the result to ``finish``."""
         c = self.config
@@ -532,8 +579,9 @@ class Zonos3MLX:
         layers = c.attention_layers
         weights = probe_weight(probe.heads, layers, c.n_heads)
         lo, hi = probe.text_start, probe.text_start + probe.text_len
-        keys = torch.from_numpy(np.stack([np.array(state.kv[layer][0][:, lo:hi].transpose(1, 0, 2))
-                                          for layer in layers]))  # [L, T, KV, D]
+        keys = torch.from_numpy(
+            np.stack([np.array(state.kv[layer][0][:, lo:hi].transpose(1, 0, 2)) for layer in layers])
+        )  # [L, T, KV, D]
         q = torch.from_numpy(np.stack([np.array(probe_queries[layer].transpose(1, 0, 2)) for layer in layers]))
         # q [L, rows, H, D]
-        return [readout(q[:, r], keys, layers, weights, probe.windows, c.head_dim ** -0.5) for r in range(q.shape[1])]
+        return [readout(q[:, r], keys, layers, weights, probe.windows, c.head_dim**-0.5) for r in range(q.shape[1])]

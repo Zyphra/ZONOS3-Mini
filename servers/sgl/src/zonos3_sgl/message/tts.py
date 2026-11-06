@@ -229,8 +229,8 @@ class TTSUserMsg(BaseTTSBackendMsg):
     condition_token_start: int = -1
     # Decode context / silence prefill (2026-10-17): what precedes the generated rows for the vocoder, relayed by
     # the scheduler to the request's first detokenize message (the detokenizer is its own process).
-    decode_context_codes: torch.Tensor | None = None     # undelayed [K, n_codebooks] int32 reference tail
-    prefill_rows: torch.Tensor | None = None             # [T, n_codebooks + 1] int32 sheared silence rows
+    decode_context_codes: torch.Tensor | None = None  # undelayed [K, n_codebooks] int32 reference tail
+    prefill_rows: torch.Tensor | None = None  # [T, n_codebooks + 1] int32 sheared silence rows
     # Accent adapter name and strength (see TTSTokenizeMsg).
     accent: str | None = None
     accent_strength: float = 1.0

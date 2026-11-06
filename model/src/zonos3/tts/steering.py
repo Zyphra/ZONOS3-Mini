@@ -20,6 +20,7 @@ measurement from an earlier take, or a default), stretched inside each span by t
 ``RAMP_FRAMES`` at both edges. ``control_span_follow: "reading"`` places the same
 span deltas by the model's reading position instead (zonos3.tts.span_follow).
 """
+
 from __future__ import annotations
 
 import json
@@ -33,7 +34,7 @@ import torch
 from .directions import HIDDEN_SPACE, RAW_SPACE, DirectionSet
 from .markup import nonverbal_marker_spans
 
-RAMP_FRAMES = 3                # 0.2 s at 15 frames per second
+RAMP_FRAMES = 3  # 0.2 s at 15 frames per second
 DEFAULT_FRAMES_PER_CHAR = 1.0  # release LM, embedding mode, unsteered (15 fps, ~15 characters per second)
 
 
@@ -92,8 +93,9 @@ def no_steering_message(hint: str, *, field: str | None = None) -> str:
     return f"This server has no steering bundle ({hint}); `{field}` are unavailable."
 
 
-def build_bundle(origin: Path, name: str, sets: Dict[str, DirectionSet], *, timing: dict, ui: dict,
-                 rate_extension: dict | None) -> SteeringBundle:
+def build_bundle(
+    origin: Path, name: str, sets: Dict[str, DirectionSet], *, timing: dict, ui: dict, rate_extension: dict | None
+) -> SteeringBundle:
     """A bundle of loaded direction sets (``origin``: the bundle file, for messages and ``path``): every check of the
     bundle file format (set names, non-empty sets, one raw embedding dim, timing of known directions, a hidden
     rate_extension direction), the directions and the rate extension."""
@@ -108,8 +110,14 @@ def build_bundle(origin: Path, name: str, sets: Dict[str, DirectionSet], *, timi
             raw_dims.add(int(loaded.dim))
         for direction, vec in {**loaded.named, **loaded.axes}.items():
             did = f"{set_name}.{direction}"
-            directions[did] = Direction(did, set_name, direction, loaded.space, vec,
-                                        loaded.source_index if loaded.space == HIDDEN_SPACE else None)
+            directions[did] = Direction(
+                did,
+                set_name,
+                direction,
+                loaded.space,
+                vec,
+                loaded.source_index if loaded.space == HIDDEN_SPACE else None,
+            )
     if len(raw_dims) > 1:
         raise ValueError(f"{origin}: raw sets disagree on the embedding dim: {sorted(raw_dims)}")
     unknown = sorted(set(timing) - set(directions))
@@ -119,16 +127,20 @@ def build_bundle(origin: Path, name: str, sets: Dict[str, DirectionSet], *, timi
     if rate_extension:
         r = rate_extension
         if r["direction"] not in directions or directions[r["direction"]].space != HIDDEN_SPACE:
-            raise ValueError(f"{origin}: rate_extension direction {r['direction']!r} is not a hidden direction of the "
-                             "bundle")
+            raise ValueError(
+                f"{origin}: rate_extension direction {r['direction']!r} is not a hidden direction of the bundle"
+            )
         extension = RateExtension(
-            direction=r["direction"], row_edges=tuple(float(e) for e in r["row_edges"]),
-            below=tuple(float(e) for e in r["below"]), above=tuple(float(e) for e in r["above"]),
+            direction=r["direction"],
+            row_edges=tuple(float(e) for e in r["row_edges"]),
+            below=tuple(float(e) for e in r["below"]),
+            above=tuple(float(e) for e in r["above"]),
             doses={lang: {int(b): float(d) for b, d in doses.items()} for lang, doses in r["languages"].items()},
             reference_sides=tuple(r.get("reference_sides", ("slower", "faster"))),
         )
-    return SteeringBundle(name=name, path=origin, sets=dict(sets), directions=directions, timing=timing, ui=ui,
-                          rate_extension=extension)
+    return SteeringBundle(
+        name=name, path=origin, sets=dict(sets), directions=directions, timing=timing, ui=ui, rate_extension=extension
+    )
 
 
 def load_bundle(path: str | Path) -> SteeringBundle:
@@ -142,8 +154,14 @@ def load_bundle(path: str | Path) -> SteeringBundle:
         if loaded is None:
             raise ValueError(f"{path}: set {set_name!r} has no directions at {directory}")
         sets[set_name] = loaded
-    return build_bundle(path, spec.get("name", path.stem), sets, timing=spec.get("timing", {}), ui=spec.get("ui", {}),
-                        rate_extension=spec.get("rate_extension"))
+    return build_bundle(
+        path,
+        spec.get("name", path.stem),
+        sets,
+        timing=spec.get("timing", {}),
+        ui=spec.get("ui", {}),
+        rate_extension=spec.get("rate_extension"),
+    )
 
 
 def _duration_factor(bundle: SteeringBundle, controls: Mapping[str, float]) -> float:
@@ -198,14 +216,19 @@ def resolve_controls(
     check_controls(bundle, controls, [d for s in spans for d in s.get("controls", {})])
 
     def hidden_vector(doses: Mapping[str, float]) -> torch.Tensor | None:
-        parts = [(bundle.directions[d], v) for d, v in doses.items()
-                 if float(v) != 0.0 and bundle.directions[d].space == HIDDEN_SPACE]
+        parts = [
+            (bundle.directions[d], v)
+            for d, v in doses.items()
+            if float(v) != 0.0 and bundle.directions[d].space == HIDDEN_SPACE
+        ]
         if not parts:
             return None
         out = torch.zeros(len(sources), hidden_size, dtype=torch.float32)
         for d, v in parts:
             if d.vector.numel() != hidden_size:
-                raise ValueError(f"Control {d.id!r} has dim {d.vector.numel()}, the model's hidden size is {hidden_size}.")
+                raise ValueError(
+                    f"Control {d.id!r} has dim {d.vector.numel()}, the model's hidden size is {hidden_size}."
+                )
             out[list(sources).index(int(d.source_index))] += float(v) * d.vector
         return out.flatten()
 
@@ -224,7 +247,9 @@ def resolve_controls(
                 raise ValueError(f"Control {did!r} has dim {vec.numel()}, the speaker embedding has {base.numel()}.")
             delta += v * vec
         moved = base + delta
-        embedding = (moved * (torch.linalg.vector_norm(base) / torch.linalg.vector_norm(moved).clamp_min(1e-8))).contiguous()
+        embedding = (
+            moved * (torch.linalg.vector_norm(base) / torch.linalg.vector_norm(moved).clamp_min(1e-8))
+        ).contiguous()
 
     hidden = hidden_vector(controls)
 
@@ -242,8 +267,10 @@ def resolve_controls(
                 raise ValueError(f"control span [{start}, {end}) is outside the text (0..{n}).")
             for did in doses:
                 if bundle.directions[did].space != HIDDEN_SPACE:
-                    raise ValueError(f"Control {did!r} moves the speaker embedding and cannot vary inside a request; "
-                                     "only hidden-space controls take spans.")
+                    raise ValueError(
+                        f"Control {did!r} moves the speaker embedding and cannot vary inside a request; "
+                        "only hidden-space controls take spans."
+                    )
             cleaned.append((start, end, doses))
         cleaned.sort()
         for (s0, e0, _), (s1, _e1, _) in zip(cleaned, cleaned[1:]):
@@ -301,8 +328,14 @@ def controls_document(bundle: SteeringBundle, *, speaker_embedding_dim: int | No
         if d.space == RAW_SPACE:
             entry["vector"] = [round(float(x), 6) for x in d.vector]
         directions[did] = entry
-    return {"bundle": bundle.name, "embedding_dim": speaker_embedding_dim, "sets": sets, "directions": directions,
-            "timing": bundle.timing, "ui": bundle.ui}
+    return {
+        "bundle": bundle.name,
+        "embedding_dim": speaker_embedding_dim,
+        "sets": sets,
+        "directions": directions,
+        "timing": bundle.timing,
+        "ui": bundle.ui,
+    }
 
 
 def disabled_controls(bundle: SteeringBundle | None, speaker_id: str | None) -> list[str]:
@@ -310,5 +343,9 @@ def disabled_controls(bundle: SteeringBundle | None, speaker_id: str | None) -> 
     ``<set>.<name>``, or ``<set>.<name>-`` when only the negative pole is disabled; bundle direction order."""
     if bundle is None:
         return []
-    return [f"{name}.{c}" for name, d in bundle.sets.items() if d.calibration is not None
-            for c in d.calibration.disabled(speaker_id, d.names)]
+    return [
+        f"{name}.{c}"
+        for name, d in bundle.sets.items()
+        if d.calibration is not None
+        for c in d.calibration.disabled(speaker_id, d.names)
+    ]

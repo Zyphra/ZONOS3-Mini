@@ -44,7 +44,11 @@ class SpeakerEncoder:
         k = lambda key: f.meta(f"{ARCH}.{key}")  # noqa: E731
         self.path = str(path)
         self.embedding_length = int(k("embedding_length"))
-        self.n_mels, self.frame_length, self.frame_shift = int(k("n_mels")), int(k("frame_length")), int(k("frame_shift"))
+        self.n_mels, self.frame_length, self.frame_shift = (
+            int(k("n_mels")),
+            int(k("frame_length")),
+            int(k("frame_shift")),
+        )
         self.n_fft = int(k("n_fft"))
         self.n_heads = int(k("n_heads"))
         self.pos_kernel = int(k("pos_kernel"))
@@ -89,7 +93,7 @@ class SpeakerEncoder:
         shifted = np.concatenate([frames[:, :1], frames[:, :-1]], axis=1)
         frames = (frames - self.preemph * shifted) * self.window
         spec = np.fft.rfft(frames, n=self.n_fft, axis=1)
-        power = spec.real ** 2 + spec.imag ** 2
+        power = spec.real**2 + spec.imag**2
         return np.log(np.maximum(power @ self.mel_banks.T, self.log_floor)).astype(np.float32)
 
     # -------------------------------------------------------------------------------------------- network

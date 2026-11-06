@@ -5,6 +5,7 @@ and iSTFT head geometry (hop 184, n_fft 736/2208, FIR 127), shrunk widths. Tenso
 
 Usage:  python scripts/make-dummy-zac.py -o dummy-zac.gguf [--codes-out dummy-zac-codes.npy]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,22 +37,46 @@ def main():
     rng = np.random.default_rng(0)
     w = GGUFWriter(args.out, ARCH)
     w.add_string("general.name", "mossdual_istft dummy")
-    for key, val in {"sample_rate": 44100, "internal_sample_rate": 44160, "frame_rate": 15, "hop": 2940,
-                     "internal_hop": 2944, "n_codebooks": 10, "codebook_size": 4096, "latent_dim": LATENT,
-                     "semantic_dim": SEM, "sem_head.depth": SEM_DEPTH, "resample.orig": RS_ORIG,
-                     "resample.new": RS_NEW, "resample.width": RS_WIDTH}.items():
+    for key, val in {
+        "sample_rate": 44100,
+        "internal_sample_rate": 44160,
+        "frame_rate": 15,
+        "hop": 2940,
+        "internal_hop": 2944,
+        "n_codebooks": 10,
+        "codebook_size": 4096,
+        "latent_dim": LATENT,
+        "semantic_dim": SEM,
+        "sem_head.depth": SEM_DEPTH,
+        "resample.orig": RS_ORIG,
+        "resample.new": RS_NEW,
+        "resample.width": RS_WIDTH,
+    }.items():
         w.add_uint32(f"{ARCH}.{key}", val)
     w.add_float32(f"{ARCH}.ln_eps", 1e-5)
     w.add_float32(f"{ARCH}.convnext_eps", 1e-6)
-    for key, val in {"head.depth": HEAD_DEPTH, "head.hidden": HEAD_HIDDEN, "head.hop": HEAD_HOP,
-                     "head.fir_kernel": FIR, "head.step": HEAD_STEP}.items():
+    for key, val in {
+        "head.depth": HEAD_DEPTH,
+        "head.hidden": HEAD_HIDDEN,
+        "head.hop": HEAD_HOP,
+        "head.fir_kernel": FIR,
+        "head.step": HEAD_STEP,
+    }.items():
         w.add_uint32(f"{ARCH}.{key}", val)
     w.add_array(f"{ARCH}.head.n_fft", N_FFT)
     w.add_float32(f"{ARCH}.head.max_log_magnitude", float(np.log(100.0)))
     w.add_float32(f"{ARCH}.headroom_db", 3.0)
     w.add_string(f"{ARCH}.head.variant", "full_mr")
-    for key, vals in {"in_dim": IN_DIM, "out_dim": OUT_DIM, "d_model": [D_MODEL] * 5, "n_head": [N_HEAD] * 5,
-                      "n_layer": [N_LAYER] * 5, "n_ff": [N_FF] * 5, "context": CONTEXT, "patch": PATCH}.items():
+    for key, vals in {
+        "in_dim": IN_DIM,
+        "out_dim": OUT_DIM,
+        "d_model": [D_MODEL] * 5,
+        "n_head": [N_HEAD] * 5,
+        "n_layer": [N_LAYER] * 5,
+        "n_ff": [N_FF] * 5,
+        "context": CONTEXT,
+        "patch": PATCH,
+    }.items():
         w.add_array(f"{ARCH}.stage.{key}", vals)
     count = 0
 
@@ -118,7 +143,7 @@ def main():
     mixer = 0.01 * rng.standard_normal((len(N_FFT), FIR)).astype(np.float32)
     mixer[0, (FIR - 1) // 2] = 1.0
     put("head.mixer.weight", mixer)
-    for i, n in enumerate(N_FFT):   # torch.hann_window(n, periodic=True)
+    for i, n in enumerate(N_FFT):  # torch.hann_window(n, periodic=True)
         put(f"head.window.{i}", (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(n) / n)).astype(np.float32))
     put("resample.kernel", rnd(RS_NEW, 2 * RS_WIDTH + RS_ORIG))
     convert_gguf.write_gguf(w, progress=False)

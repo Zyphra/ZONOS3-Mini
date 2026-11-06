@@ -48,8 +48,12 @@ def check_format(stream: bool, fmt: str) -> None:
 def speech_headers(*, fmt: str, seed: int, control_spans: bool, follows_reading: bool) -> dict[str, str]:
     """The headers of a speech response: its audio format, the seed it sampled with and, with ``control_spans``,
     whether the painted spans follow the reading (``follows_reading``) or the speaking rate."""
-    headers = {"X-Audio-Sample-Rate": str(SAMPLE_RATE), "X-Audio-Channels": "1",
-               "X-Audio-Format": "pcm16" if fmt == "wav" else "float32", "X-Seed": str(seed)}
+    headers = {
+        "X-Audio-Sample-Rate": str(SAMPLE_RATE),
+        "X-Audio-Channels": "1",
+        "X-Audio-Format": "pcm16" if fmt == "wav" else "float32",
+        "X-Seed": str(seed),
+    }
     if control_spans:
         headers["X-Control-Span-Follow"] = "reading" if follows_reading else "rate"
     return headers

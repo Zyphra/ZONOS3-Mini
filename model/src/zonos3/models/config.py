@@ -46,10 +46,7 @@ def normalize_moe_router_type(router_type: str) -> str:
     try:
         return aliases[normalized]
     except KeyError as exc:
-        raise ValueError(
-            f"Unsupported model.moe_router_type={router_type!r}. "
-            "Expected 'mlp' or 'linear'."
-        ) from exc
+        raise ValueError(f"Unsupported model.moe_router_type={router_type!r}. Expected 'mlp' or 'linear'.") from exc
 
 
 def get_routed_moe_dim(dim: int, alpha: float) -> int:
@@ -153,8 +150,7 @@ class ModelConfig:
         residual_type = str(self.residual_type).strip().lower().replace("-", "_")
         if residual_type not in {"standard", "block_attnres", "full_attnres"}:
             raise ValueError(
-                "residual_type must be 'standard', 'block_attnres' or 'full_attnres', got "
-                f"{residual_type!r}."
+                f"residual_type must be 'standard', 'block_attnres' or 'full_attnres', got {residual_type!r}."
             )
         object.__setattr__(self, "residual_type", residual_type)
         if self.block_attnres_block_size <= 0 or self.block_attnres_block_size % 2:
@@ -173,8 +169,7 @@ class ModelConfig:
         object.__setattr__(self, "codebook_sizes", codebook_sizes)
         if self.span_end_id is not None and int(self.span_end_id) != int(self.audio_pad_id) + 1:
             raise ValueError(
-                f"span_end_id must equal audio_pad_id + 1 ({int(self.audio_pad_id) + 1}), "
-                f"got {self.span_end_id}."
+                f"span_end_id must equal audio_pad_id + 1 ({int(self.audio_pad_id) + 1}), got {self.span_end_id}."
             )
 
     @property
@@ -225,9 +220,7 @@ class ModelConfig:
         if moe_multiple_of is None:
             moe_multiple_of = multiple_of
         moe_ffn_dim = int(moe_ffn_dim_multiplier * dim)
-        moe_intermediate_size = moe_multiple_of * (
-            (moe_ffn_dim + moe_multiple_of - 1) // moe_multiple_of
-        )
+        moe_intermediate_size = moe_multiple_of * ((moe_ffn_dim + moe_multiple_of - 1) // moe_multiple_of)
 
         # Total vocab = n_codebooks * audio_vocab + text_vocab (if present)
         span_end_id = getattr(config, "span_end_id", None)
@@ -240,9 +233,7 @@ class ModelConfig:
         moe_router_topk = getattr(config, "moe_router_topk", 1)
         special_topk_layers = getattr(config, "special_topk_layers", None)
         moe_router_dim = getattr(config, "moe_router_dim", 256)
-        moe_router_type = normalize_moe_router_type(
-            getattr(config, "moe_router_type", "mlp")
-        )
+        moe_router_type = normalize_moe_router_type(getattr(config, "moe_router_type", "mlp"))
         moe_router_use_eda = bool(
             getattr(
                 config,
@@ -253,9 +244,7 @@ class ModelConfig:
         moe_alpha = float(getattr(config, "moe_alpha", 1.0))
         get_routed_moe_dim(dim, moe_alpha)
         moe_impl = getattr(config, "moe_impl", "grouped")
-        moe_balancing_strategy = normalize_moe_balancing_strategy(
-            getattr(config, "moe_balancing_strategy", "legacy")
-        )
+        moe_balancing_strategy = normalize_moe_balancing_strategy(getattr(config, "moe_balancing_strategy", "legacy"))
 
         return cls(
             attention_pattern=getattr(config, "attention_pattern", "global"),
@@ -285,8 +274,7 @@ class ModelConfig:
             n_codebooks=config.n_codebooks,
             codebook_size=config.codebook_size,
             codebook_sizes=tuple(
-                getattr(config, "codebook_sizes", None)
-                or [config.codebook_size] * config.n_codebooks
+                getattr(config, "codebook_sizes", None) or [config.codebook_size] * config.n_codebooks
             ),
             audio_codec=str(getattr(config, "audio_codec", "opus_dual_3n_600k_sched600k_r4096_step600000")),
             text_vocab=config.text_vocab,
@@ -302,9 +290,7 @@ class ModelConfig:
             moe_balancing_strategy=moe_balancing_strategy,
             use_xsa=bool(getattr(config, "use_xsa", False)),
             residual_type=getattr(config, "residual_type", "standard"),
-            block_attnres_block_size=int(
-                getattr(config, "block_attnres_block_size", 4)
-            ),
+            block_attnres_block_size=int(getattr(config, "block_attnres_block_size", 4)),
             # TTS fields
             eoa_id=config.eoa_id,
             audio_pad_id=config.audio_pad_id,
@@ -328,23 +314,16 @@ class ModelConfig:
             }
             or None,
             condition_units=dict(getattr(config, "condition_units", None) or {}) or None,
-            condition_flags={str(k): dict(v or {}) for k, v in (getattr(config, "condition_flags", None) or {}).items()} or None,
+            condition_flags={str(k): dict(v or {}) for k, v in (getattr(config, "condition_flags", None) or {}).items()}
+            or None,
             speaker_enabled=getattr(config, "speaker_enabled", False),
-            speaker_reference_prefix_enabled=bool(
-                getattr(config, "speaker_reference_prefix_enabled", False)
-            ),
-            speaker_reference_max_seconds=float(
-                getattr(config, "speaker_reference_max_seconds", 30.0)
-            ),
+            speaker_reference_prefix_enabled=bool(getattr(config, "speaker_reference_prefix_enabled", False)),
+            speaker_reference_max_seconds=float(getattr(config, "speaker_reference_max_seconds", 30.0)),
             speaker_embedding_dim=getattr(config, "speaker_embedding_dim", 128),
             speaker_embedding_codec=getattr(config, "speaker_embedding_codec", None),
             speaker_lda_dim=getattr(config, "speaker_lda_dim", None),
-            speaker_background_token_enabled=bool(
-                getattr(config, "speaker_background_token_enabled", False)
-            ),
-            accurate_mode_token_enabled=bool(
-                getattr(config, "accurate_mode_token_enabled", False)
-            ),
+            speaker_background_token_enabled=bool(getattr(config, "speaker_background_token_enabled", False)),
+            accurate_mode_token_enabled=bool(getattr(config, "accurate_mode_token_enabled", False)),
             speaking_rate_num_buckets=getattr(config, "speaking_rate_num_buckets", 0),
             speaking_rate_buckets=tuple(getattr(config, "speaking_rate_buckets", None) or ()),
             quality_num_buckets=int(getattr(config, "quality_num_buckets", 0) or 0),

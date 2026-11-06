@@ -12,8 +12,11 @@ from .support import check, error, generate, needs, pcm
 @pytest.fixture
 def uploaded(client, caps, session, voice_b64):
     needs(caps["speaker_audio_upload"], "the checkpoint takes no speaker audio")
-    r = client.post("/v2/speakers", json={"label": "conformance", "speaker_audio_base64": voice_b64,
-                                          "speaker_audio_name": "voice.mp3"}, headers=session)
+    r = client.post(
+        "/v2/speakers",
+        json={"label": "conformance", "speaker_audio_base64": voice_b64, "speaker_audio_name": "voice.mp3"},
+        headers=session,
+    )
     assert r.status_code == 200, r.text[:500]
     check(r.json(), "#/components/schemas/Speaker")
     return r.json()
@@ -31,8 +34,14 @@ def test_create_needs_a_session(client, voice_b64):
 
 def test_create_needs_exactly_one_source(client, session, voice_b64):
     error(client.post("/v2/speakers", json={}, headers=session), 400)
-    error(client.post("/v2/speakers", json={"speaker_audio_base64": voice_b64, "speaker_embedding_base64": voice_b64},
-                      headers=session), 400)
+    error(
+        client.post(
+            "/v2/speakers",
+            json={"speaker_audio_base64": voice_b64, "speaker_embedding_base64": voice_b64},
+            headers=session,
+        ),
+        400,
+    )
 
 
 def test_create_rejects_unknown_fields(client, session, voice_b64):
@@ -79,8 +88,17 @@ def test_blend(client, caps, speakers):
     needs(caps["speaker_embedding_blend"], "speaker_embedding_blend is off")
     defaults = [s for s in speakers if s["is_default"]]
     needs(len(defaults) >= 2, "blending needs two default voices")
-    pcm(generate(client, {"speaker_mode": "embedding", "speaker_blend_embedding_id_a": defaults[0]["id"],
-                          "speaker_blend_embedding_id_b": defaults[1]["id"], "speaker_blend_t": 0.5}))
+    pcm(
+        generate(
+            client,
+            {
+                "speaker_mode": "embedding",
+                "speaker_blend_embedding_id_a": defaults[0]["id"],
+                "speaker_blend_embedding_id_b": defaults[1]["id"],
+                "speaker_blend_t": 0.5,
+            },
+        )
+    )
 
 
 def test_unknown_id_is_400(client, caps):

@@ -1,4 +1,5 @@
 """The server default for streaming responses is the progressive prefix decode (2026-10-15)."""
+
 import pytest
 from pydantic import ValidationError
 from zonos3.server import speech
@@ -17,15 +18,15 @@ def test_matched_codec_streams_progressively_by_default(monkeypatch):
     assert MATCHED and not speech.prefix_stream_supported("not-a-codec")
     assert resolve(None) == "prefix"
     assert resolve("prefix") == "prefix"
-    assert resolve("whole") is None          # explicit opt-out
-    assert resolve(None, streaming=False) is None   # non-streaming = whole decode
+    assert resolve("whole") is None  # explicit opt-out
+    assert resolve(None, streaming=False) is None  # non-streaming = whole decode
     assert resolve("prefix", streaming=False) is None
 
 
 def test_env_restores_the_whole_decode_default(monkeypatch):
     monkeypatch.setenv("ZONOS3_STREAM_DECODE_DEFAULT", "whole")
     assert resolve(None) is None
-    assert resolve("prefix") == "prefix"      # an explicit request still wins
+    assert resolve("prefix") == "prefix"  # an explicit request still wins
 
 
 def test_prefix_needs_a_matched_codec():

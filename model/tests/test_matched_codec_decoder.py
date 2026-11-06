@@ -1,4 +1,5 @@
 """The matched codec decodes only through the causal iSTFT head declared in the registry (no conv-tail fallback)."""
+
 import copy
 import json
 from pathlib import Path
@@ -15,7 +16,7 @@ def test_registry_declares_the_istft_decoder():
         config = Path(resolve_file(hf_join(spec["campaign"], spec["config"])))
         assert config.is_file() and Path(resolve_file(hf_join(spec["campaign"], spec["checkpoint"]))).is_file()
         cfg = json.loads(config.read_text())
-        assert cfg.get("decoder", {}).get("type") != "original"          # never the conv tail
+        assert cfg.get("decoder", {}).get("type") != "original"  # never the conv tail
         assert cfg["init"]["generator_checkpoint"] == matched_codec.entry(codec)["checkpoint"]
         assert matched_codec.decoder_headroom_db(codec) == 3.0
         info = matched_codec.decoder_info(codec)

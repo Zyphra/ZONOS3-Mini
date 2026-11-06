@@ -125,8 +125,12 @@ CPU = torch.device("cpu")
 # CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with CPU ones in this process.
 EDIT_ADAPTER = load_adapter(resolve_file(f"{RELEASE_LM}/edit_lora/z3m_omni3b_edit_lora.pt"))
 PHONEME_ROWS = TextExtraRows.load(resolve_file(f"{RELEASE_LM}/phoneme_tokens/phoneme_tokens_s15000.pt"))
-LM = (Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32).grow(EDIT_ADAPTER.grown)
-      .append_text_rows(PHONEME_ROWS).to(DEVICE))
+LM = (
+    Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32)
+    .grow(EDIT_ADAPTER.grown)
+    .append_text_rows(PHONEME_ROWS)
+    .to(DEVICE)
+)
 CONFIG = LM.config
 ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k.json"))
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
@@ -147,8 +151,11 @@ ASSETS.normalizer().warmup()
 # --------------------------------------------------------------------------------------------- capabilities
 
 
-EDIT_MODEL = EditModel.from_config(CONFIG, hop=int(matched_codec.entry(CONFIG.audio_codec)["hop"]),
-                                   max_spans=edit_marker_rows(CONFIG.text_extra_tokens, CONTEXT.text_tokenizer_spec))
+EDIT_MODEL = EditModel.from_config(
+    CONFIG,
+    hop=int(matched_codec.entry(CONFIG.audio_codec)["hop"]),
+    max_spans=edit_marker_rows(CONFIG.text_extra_tokens, CONTEXT.text_tokenizer_spec),
+)
 
 
 def capabilities() -> dict:
@@ -156,36 +163,45 @@ def capabilities() -> dict:
     LoRA and the gold lexicon; no plugins, no project store."""
     c = CONFIG
     modes = list(CONTEXT.speaker_modes)
-    return capabilities_document(CapabilityFacts(
-        text_tokenizer_spec=CONTEXT.text_tokenizer_spec or None,
-        text_normalization_enabled=ASSETS.normalizer() is not None,
-        accents=CONTEXT.accent_names,
-        speaker_modes=modes,
-        speaker_embedding_dim=c.speaker_embedding_dim,
-        speaker_embedding_codec=c.speaker_embedding_codec,
-        n_codebooks=c.n_codebooks,
-        codebook_sizes=list(c.codebook_sizes),
-        audio_codec=c.audio_codec,
-        max_tokens=CONTEXT.max_frames,
-        prefix_stream=prefix_stream_supported(c.audio_codec),
-        silence_hop=dual_codec_hop(c.audio_codec),
-        tag_cfg_available=True,
-        tag_cfg_trained=trained_on_tags(resolve_dir_or_local(RELEASE_LM)),
-        decoder=decoder_capability(c.audio_codec),
-        condition_tokens=None if c.condition_count == 0 else condition_spec(
-            names=c.condition_names, count=c.condition_count, bucket_counts=c.condition_bucket_counts,
-            edges=c.condition_edges, flags=getattr(c, "condition_flags", None), units=c.condition_units),
-        speaker_audio_upload=bool(modes),
-        speaker_cfg_available=bool(modes),
-        laci_languages=CONTEXT.laci_languages,
-        plugins=[],
-        default_voices_enabled=True,
-        edit_model=EDIT_MODEL,
-        edit_available=True,
-        edit_transcribe=True,
-        lexicon=LEXICON,
-        projects={"enabled": False},
-    ))
+    return capabilities_document(
+        CapabilityFacts(
+            text_tokenizer_spec=CONTEXT.text_tokenizer_spec or None,
+            text_normalization_enabled=ASSETS.normalizer() is not None,
+            accents=CONTEXT.accent_names,
+            speaker_modes=modes,
+            speaker_embedding_dim=c.speaker_embedding_dim,
+            speaker_embedding_codec=c.speaker_embedding_codec,
+            n_codebooks=c.n_codebooks,
+            codebook_sizes=list(c.codebook_sizes),
+            audio_codec=c.audio_codec,
+            max_tokens=CONTEXT.max_frames,
+            prefix_stream=prefix_stream_supported(c.audio_codec),
+            silence_hop=dual_codec_hop(c.audio_codec),
+            tag_cfg_available=True,
+            tag_cfg_trained=trained_on_tags(resolve_dir_or_local(RELEASE_LM)),
+            decoder=decoder_capability(c.audio_codec),
+            condition_tokens=None
+            if c.condition_count == 0
+            else condition_spec(
+                names=c.condition_names,
+                count=c.condition_count,
+                bucket_counts=c.condition_bucket_counts,
+                edges=c.condition_edges,
+                flags=getattr(c, "condition_flags", None),
+                units=c.condition_units,
+            ),
+            speaker_audio_upload=bool(modes),
+            speaker_cfg_available=bool(modes),
+            laci_languages=CONTEXT.laci_languages,
+            plugins=[],
+            default_voices_enabled=True,
+            edit_model=EDIT_MODEL,
+            edit_available=True,
+            edit_transcribe=True,
+            lexicon=LEXICON,
+            projects={"enabled": False},
+        )
+    )
 
 
 CAPABILITIES = capabilities()
@@ -205,12 +221,20 @@ def serialize(voice: DefaultVoice | SessionVoice) -> dict:
     modes = voice_speaker_modes(list(CONTEXT.speaker_modes), voice.source_type)
     disabled = disabled_controls(ASSETS.steer_bundle, voice.speaker_id)
     if isinstance(voice, DefaultVoice):
-        return serialize_default_voice(voice, modes=modes, embedding_dim=CONFIG.speaker_embedding_dim,
-                                       disabled=disabled)
-    return serialize_session_voice(speaker_id=voice.speaker_id, label=voice.label, source_type=voice.source_type,
-                                   original_name=voice.original_name, created_at=voice.created_at,
-                                   has_preview=bool(voice.audio_bytes), embedding_dim=CONFIG.speaker_embedding_dim,
-                                   modes=modes, disabled=disabled)
+        return serialize_default_voice(
+            voice, modes=modes, embedding_dim=CONFIG.speaker_embedding_dim, disabled=disabled
+        )
+    return serialize_session_voice(
+        speaker_id=voice.speaker_id,
+        label=voice.label,
+        source_type=voice.source_type,
+        original_name=voice.original_name,
+        created_at=voice.created_at,
+        has_preview=bool(voice.audio_bytes),
+        embedding_dim=CONFIG.speaker_embedding_dim,
+        modes=modes,
+        disabled=disabled,
+    )
 
 
 def find_voice(session_id: str | None, speaker_id: str) -> DefaultVoice | SessionVoice:
@@ -237,8 +261,9 @@ def embed_audio(audio: bytes) -> torch.Tensor:
 async def voice_embedding(voice: DefaultVoice | SessionVoice) -> torch.Tensor:
     if voice.embedding is None:
         if voice.source_type == "embedding":  # a default .npy/.npz voice (session ones carry theirs)
-            voice.embedding = load_embedding_vector(read_voice_file(voice), expected_dim=CONFIG.speaker_embedding_dim,
-                                                    file_name=voice.original_name)
+            voice.embedding = load_embedding_vector(
+                read_voice_file(voice), expected_dim=CONFIG.speaker_embedding_dim, file_name=voice.original_name
+            )
         else:
             voice.embedding = await asyncio.to_thread(embed_audio, voice_audio(voice))
     return voice.embedding.detach().to(torch.float32).clone()
@@ -255,8 +280,9 @@ async def resolve_embedding(session_id: str | None, req: P.Request) -> torch.Ten
     if selected == 0:
         return None
     if selected > 1:
-        raise ValueError("Provide speaker conditioning via upload, one cached speaker id, or two cached ids for "
-                         "blending.")
+        raise ValueError(
+            "Provide speaker conditioning via upload, one cached speaker id, or two cached ids for blending."
+        )
     if blended:
         if not req.speaker_blend_embedding_id_a or not req.speaker_blend_embedding_id_b:
             raise ValueError("Provide both cached speaker ids to blend between two speakers.")
@@ -266,8 +292,11 @@ async def resolve_embedding(session_id: str | None, req: P.Request) -> torch.Ten
     if cached:
         return await voice_embedding(find_voice(session_id, req.speaker_embedding_id))
     if req.speaker_embedding_base64:
-        return load_embedding_vector(decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
-                                     expected_dim=CONFIG.speaker_embedding_dim, file_name=req.speaker_embedding_name)
+        return load_embedding_vector(
+            decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
+            expected_dim=CONFIG.speaker_embedding_dim,
+            file_name=req.speaker_embedding_name,
+        )
     raw = decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64")
     return await asyncio.to_thread(embed_audio, raw)
 
@@ -283,17 +312,28 @@ async def prepare(body: dict, session_id: str | None) -> dict:
     as .npy, a voice's reference codes or clip), so the GPU call only generates."""
     req = P.parse_request(body)
     mode = P.request_head(CONTEXT, req).mode
-    ids = {"speaker_embedding_id": None, "speaker_blend_embedding_id_a": None, "speaker_blend_embedding_id_b": None,
-           "speaker_blend_t": None}
+    ids = {
+        "speaker_embedding_id": None,
+        "speaker_blend_embedding_id_a": None,
+        "speaker_blend_embedding_id_b": None,
+        "speaker_blend_t": None,
+    }
     if mode == "embedding":
         vector = await resolve_embedding(session_id, req)
         if vector is not None:
-            body.update(ids, speaker_audio_base64=None, speaker_audio_name=None,
-                        speaker_embedding_base64=npy_base64(vector), speaker_embedding_name=None)
+            body.update(
+                ids,
+                speaker_audio_base64=None,
+                speaker_audio_name=None,
+                speaker_embedding_base64=npy_base64(vector),
+                speaker_embedding_name=None,
+            )
         return body
     if req.speaker_embedding_base64 or req.speaker_blend_embedding_id_a or req.speaker_blend_embedding_id_b:
-        raise ValueError("This checkpoint conditions on raw reference audio and does not accept speaker embedding "
-                         "files or embedding blends.")
+        raise ValueError(
+            "This checkpoint conditions on raw reference audio and does not accept speaker embedding "
+            "files or embedding blends."
+        )
     if req.speaker_embedding_id:
         if req.speaker_audio_base64 or req.speaker_reference_codes is not None:
             raise ValueError("Provide either reference audio or codes, or a cached speaker id, not both.")
@@ -305,8 +345,10 @@ async def prepare(body: dict, session_id: str | None) -> dict:
         if codes is not None:  # a default voice's shipped reference prefix codes
             body["speaker_reference_codes"] = np.load(codes).tolist()
         else:
-            body.update(speaker_audio_base64=base64.b64encode(voice_audio(voice)).decode("ascii"),
-                        speaker_audio_name=voice.original_name)
+            body.update(
+                speaker_audio_base64=base64.b64encode(voice_audio(voice)).decode("ascii"),
+                speaker_audio_name=voice.original_name,
+            )
     return body
 
 
@@ -342,9 +384,13 @@ def _asr():
     if "asr" not in _WORKERS:
         from qwen_asr import Qwen3ASRModel
 
-        _WORKERS["asr"] = Qwen3ASRModel.from_pretrained(resolve_dir_or_local("hf://Qwen/Qwen3-ASR-1.7B"),
-                                                        dtype=torch.bfloat16, device_map="cuda:0",
-                                                        max_inference_batch_size=32, max_new_tokens=1024)
+        _WORKERS["asr"] = Qwen3ASRModel.from_pretrained(
+            resolve_dir_or_local("hf://Qwen/Qwen3-ASR-1.7B"),
+            dtype=torch.bfloat16,
+            device_map="cuda:0",
+            max_inference_batch_size=32,
+            max_new_tokens=1024,
+        )
     return _WORKERS["asr"]
 
 
@@ -381,15 +427,26 @@ def edit_job(op: str, args: dict):
         audio = decode_model(model, codes.unsqueeze(0), matched_codec.entry(CONFIG.audio_codec))[0].numpy()
         return (audio * np.float32(output_gain(CONFIG.audio_codec, None))).astype(np.float32)
     if op == "fill":
-        layout = EditLayout(torch.as_tensor(args["codes"], dtype=torch.int64), args["spans"],
-                            [torch.as_tensor(f, dtype=torch.int32) for f in args["fills"]])
+        layout = EditLayout(
+            torch.as_tensor(args["codes"], dtype=torch.int64),
+            args["spans"],
+            [torch.as_tensor(f, dtype=torch.int32) for f in args["fills"]],
+        )
         embedding = args["embedding"]
-        rows, eos_frame = edit_region(LM, args["body"], assets=ASSETS, layout=layout, min_frames=args["min_frames"],
-                                      speaker_embedding=None if embedding is None else embedding.to(DEVICE),
-                                      hidden_delta=args["hidden_delta"], accents=EDIT_LORA, device=DEVICE)
+        rows, eos_frame = edit_region(
+            LM,
+            args["body"],
+            assets=ASSETS,
+            layout=layout,
+            min_frames=args["min_frames"],
+            speaker_embedding=None if embedding is None else embedding.to(DEVICE),
+            hidden_delta=args["hidden_delta"],
+            accents=EDIT_LORA,
+            device=DEVICE,
+        )
         n_cb = CONFIG.n_codebooks
         # the finishing row is not part of the generated span (it only completes the delayed codebooks' flush)
-        out = (torch.stack(rows[:-1])[:, :n_cb].numpy() if len(rows) > 1 else np.zeros((0, n_cb), dtype=np.int32))
+        out = torch.stack(rows[:-1])[:, :n_cb].numpy() if len(rows) > 1 else np.zeros((0, n_cb), dtype=np.int32)
         return out, -1 if eos_frame is None else int(eos_frame)
     raise ValueError(f"unknown edit job {op!r}")
 
@@ -427,10 +484,14 @@ def gpu_session(seconds: int) -> int:
             if isinstance(body, tuple):
                 RESULT_TX.send((job_id, "result", edit_job(*body[1:])))
                 continue
-            synthesize(LM, body, assets=ASSETS, device=DEVICE,
-                       on_plan=lambda plan: RESULT_TX.send((job_id, "start",
-                                                            (plan.seed, plan.follow_tokens is not None))),
-                       on_audio=lambda pcm: RESULT_TX.send((job_id, "audio", pcm)))
+            synthesize(
+                LM,
+                body,
+                assets=ASSETS,
+                device=DEVICE,
+                on_plan=lambda plan: RESULT_TX.send((job_id, "start", (plan.seed, plan.follow_tokens is not None))),
+                on_audio=lambda pcm: RESULT_TX.send((job_id, "audio", pcm)),
+            )
         except ValueError as exc:
             RESULT_TX.send((job_id, "invalid", str(exc)))
         except Exception as exc:
@@ -525,8 +586,9 @@ class GpuSessions:
         context = contextvars.Context()
         context.run(LocalContext.request.set, gr.Request(request=request))
         self.session = asyncio.create_task(asyncio.to_thread(gpu_session, seconds), context=context)
-        self.session.add_done_callback(lambda s: print(f"[gpu] session closed: {s.exception() or s.result()} take(s)",
-                                                       flush=True))
+        self.session.add_done_callback(
+            lambda s: print(f"[gpu] session closed: {s.exception() or s.result()} take(s)", flush=True)
+        )
         self.opened = self.last = time.monotonic()
         self.seconds = seconds
         print(f"[gpu] session opened ({seconds} s)", flush=True)
@@ -637,17 +699,39 @@ class SpaceEditEngine:
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
         embedding, delta = job.speaker_embedding, None
         if job.controls:
-            resolved = resolve_controls(ASSETS.steer_bundle, job.controls, None, text=job.controls_text,
-                                        speaker_embedding=embedding, sources=CONTEXT.steering_sources,
-                                        hidden_size=CONTEXT.hidden_size)
+            resolved = resolve_controls(
+                ASSETS.steer_bundle,
+                job.controls,
+                None,
+                text=job.controls_text,
+                speaker_embedding=embedding,
+                sources=CONTEXT.steering_sources,
+                hidden_size=CONTEXT.hidden_size,
+            )
             embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
-        request = {"text": job.text, "language": job.language, "text_normalization": job.text_normalization,
-                   **job.sampling, "seed": job.seed, "max_tokens": job.max_tokens, "speaker_mode": "embedding",
-                   "condition_buckets": job.condition_buckets, "condition_values": job.condition_values,
-                   "stream": False}
-        return await edit_call(EDIT_REQUEST.get()[0], "fill", body=request, codes=np.asarray(job.window_codes),
-                               spans=job.spans, fills=[np.asarray(f) for f in job.fills], min_frames=int(job.min_frames),
-                               embedding=embedding, hidden_delta=delta)
+        request = {
+            "text": job.text,
+            "language": job.language,
+            "text_normalization": job.text_normalization,
+            **job.sampling,
+            "seed": job.seed,
+            "max_tokens": job.max_tokens,
+            "speaker_mode": "embedding",
+            "condition_buckets": job.condition_buckets,
+            "condition_values": job.condition_values,
+            "stream": False,
+        }
+        return await edit_call(
+            EDIT_REQUEST.get()[0],
+            "fill",
+            body=request,
+            codes=np.asarray(job.window_codes),
+            spans=job.spans,
+            fills=[np.asarray(f) for f in job.fills],
+            min_frames=int(job.min_frames),
+            embedding=embedding,
+            hidden_delta=delta,
+        )
 
     async def decode(self, codes: np.ndarray) -> np.ndarray:
         return await edit_call(EDIT_REQUEST.get()[0], "decode", codes=np.asarray(codes))
@@ -704,8 +788,9 @@ async def phonemize(req: PhonemizeRequest):
     """Gold-lexicon IPA for the words of a text (espeak-ng guesses for the words it lacks); a pronunciation with a symbol
     outside the phoneme tokens is "unsupported"."""
     try:
-        return await asyncio.to_thread(LEXICON.phonemize_for, req.text, req.language, CONTEXT.text_tokenizer_spec,
-                                       guess=req.guess)
+        return await asyncio.to_thread(
+            LEXICON.phonemize_for, req.text, req.language, CONTEXT.text_tokenizer_spec, guess=req.guess
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -724,25 +809,40 @@ async def list_speakers(x_tts_session_id: str | None = Header(default=None, alia
 
 
 @app.post("/v2/speakers")
-async def create_speaker(req: SpeakerCreateRequest,
-                         x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
+async def create_speaker(
+    req: SpeakerCreateRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")
+):
     try:
         session_id = require_session_id(x_tts_session_id)
         if req.speaker_audio_base64 and req.speaker_embedding_base64:
             raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
         if req.speaker_embedding_base64:
             name = req.speaker_embedding_name
-            embedding = load_embedding_vector(decode_base64_blob(req.speaker_embedding_base64,
-                                                                 "speaker_embedding_base64"),
-                                              expected_dim=CONFIG.speaker_embedding_dim, file_name=name)
-            voice = SessionVoice(new_speaker_id(), speaker_label(req.label, name, fallback="Speaker embedding"),
-                                 "embedding", time.time(), name, embedding=embedding)
+            embedding = load_embedding_vector(
+                decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
+                expected_dim=CONFIG.speaker_embedding_dim,
+                file_name=name,
+            )
+            voice = SessionVoice(
+                new_speaker_id(),
+                speaker_label(req.label, name, fallback="Speaker embedding"),
+                "embedding",
+                time.time(),
+                name,
+                embedding=embedding,
+            )
         elif req.speaker_audio_base64:
             name = req.speaker_audio_name
             audio = decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64")
-            voice = SessionVoice(new_speaker_id(), speaker_label(req.label, name, fallback="Speaker audio"), "audio",
-                                 time.time(), name, audio_bytes=audio,
-                                 preview_wav=await asyncio.to_thread(_transcode_audio_bytes_to_wav, audio))
+            voice = SessionVoice(
+                new_speaker_id(),
+                speaker_label(req.label, name, fallback="Speaker audio"),
+                "audio",
+                time.time(),
+                name,
+                audio_bytes=audio,
+                preview_wav=await asyncio.to_thread(_transcode_audio_bytes_to_wav, audio),
+            )
             await voice_embedding(voice)
         else:
             raise ValueError("Provide an audio file or saved embedding file to cache.")
@@ -777,8 +877,11 @@ async def embedding(speaker_id: str, x_tts_session_id: str | None = Header(defau
 
 
 @app.post("/v2/generate")
-async def generate(req: GenerateRequest, request: Request,
-                   x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
+async def generate(
+    req: GenerateRequest,
+    request: Request,
+    x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID"),
+):
     """The take on the GPU session (GpuSessions): float32 PCM streamed as it is decoded, or buffered (stream=false, and
     16-bit WAV)."""
     try:
@@ -798,11 +901,13 @@ async def generate(req: GenerateRequest, request: Request,
     if kind != "start":
         raise HTTPException(status_code=400 if kind == "invalid" else 500, detail=payload)
     seed, reading = payload
-    headers = speech_headers(fmt=req.format, seed=seed, control_spans=bool(req.control_spans),
-                             follows_reading=bool(reading))
+    headers = speech_headers(
+        fmt=req.format, seed=seed, control_spans=bool(req.control_spans), follows_reading=bool(reading)
+    )
     if req.stream:  # a failure mid-take ends the stream: the status line is already sent
-        return StreamingResponse((pcm.astype(np.float32).tobytes() async for pcm in audio_of(take)),
-                                 media_type="audio/pcm", headers=headers)
+        return StreamingResponse(
+            (pcm.astype(np.float32).tobytes() async for pcm in audio_of(take)), media_type="audio/pcm", headers=headers
+        )
     pcm = [chunk async for chunk in audio_of(take)]
     kind, payload = take.last
     if kind != "end":
@@ -828,8 +933,9 @@ def page(name: str, request: Request) -> FileResponse:
     response = FileResponse(STUDIO / name, media_type="text/html", headers={"Cache-Control": "no-store, max-age=0"})
     sign = request.query_params.get("__sign", "")
     if JWT.fullmatch(sign):
-        response.headers.append("Set-Cookie",
-                                f"spaces-jwt={sign}; Path=/; Secure; HttpOnly; SameSite=None; Partitioned")
+        response.headers.append(
+            "Set-Cookie", f"spaces-jwt={sign}; Path=/; Secure; HttpOnly; SameSite=None; Partitioned"
+        )
     return response
 
 

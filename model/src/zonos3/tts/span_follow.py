@@ -17,6 +17,7 @@ The readout of a step reaches the host with its sampled tokens, so the frame dec
 two steps back (overlap scheduling); ``lead`` absorbs that and the ramp. A request without probe heads for its
 language keeps the character-rate schedule.
 """
+
 from __future__ import annotations
 
 import bisect
@@ -48,7 +49,9 @@ def map_offsets(original: str, final: str, offsets: Sequence[int], *, end: bool 
     if original == final:
         return [int(o) for o in offsets]
     # the blocks holding original characters partition [0, len(original)); insertions hold none
-    blocks = [op for op in difflib.SequenceMatcher(None, original, final, autojunk=False).get_opcodes() if op[2] > op[1]]
+    blocks = [
+        op for op in difflib.SequenceMatcher(None, original, final, autojunk=False).get_opcodes() if op[2] > op[1]
+    ]
     starts = [op[1] for op in blocks]
     out = []
     for o in offsets:
@@ -96,7 +99,9 @@ def token_char_ranges(text: str, spec: dict | None) -> list[tuple[int, int]]:
     return [(0, 0), *ranges, (len(text), len(text))]
 
 
-def span_token_ranges(text: str, final: str, spans: Sequence[tuple[int, int]], spec: dict | None) -> list[tuple[int, int]]:
+def span_token_ranges(
+    text: str, final: str, spans: Sequence[tuple[int, int]], spec: dict | None
+) -> list[tuple[int, int]]:
     """Text-span positions [a, b) of the tokens spelling each character span [start, end) of ``text``, once the text
     is ``final`` (normalized): the tokens whose characters, outer whitespace trimmed, overlap the span's trimmed
     characters. A span that maps onto no token keeps the token at its start (a zero-width span never steers).
@@ -142,8 +147,13 @@ class SpanFollower:
 
     As a probe observer (``on_step``) it maps step s of the probe to frame ``origin + s``."""
 
-    def __init__(self, ranges: Sequence[tuple[int, int]], deltas: torch.Tensor, cfg: FollowConfig = FollowConfig(),
-                 origin: int = 0):
+    def __init__(
+        self,
+        ranges: Sequence[tuple[int, int]],
+        deltas: torch.Tensor,
+        cfg: FollowConfig = FollowConfig(),
+        origin: int = 0,
+    ):
         if deltas.dim() != 2 or deltas.shape[0] != len(ranges):
             raise ValueError(f"span follower: {len(ranges)} token ranges for deltas of shape {tuple(deltas.shape)}")
         if cfg.smooth < 1 or cfg.ramp < 1:

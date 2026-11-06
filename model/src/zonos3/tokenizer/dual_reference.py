@@ -6,6 +6,7 @@ from the registry entry's generator checkpoint and SSL teacher. Preprocessing mi
 encoding: mono, resample to 44.1 kHz with torchaudio, peak normalize only above 1.0, keep whole codec frames at the
 reference limit (the training selector's rule).
 """
+
 from __future__ import annotations
 
 import math
@@ -126,7 +127,9 @@ def encode_dual_reference(
     return torch.from_numpy(codes.astype(np.int32)).contiguous()
 
 
-def encode_dual_reference_file(path: str | Path, *, max_seconds: float = 30.0, device: str | None = None) -> torch.Tensor:
+def encode_dual_reference_file(
+    path: str | Path, *, max_seconds: float = 30.0, device: str | None = None
+) -> torch.Tensor:
     import soundfile as sf
 
     wav, sr = sf.read(str(path), dtype="float32", always_2d=True)

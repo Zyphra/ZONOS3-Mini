@@ -106,8 +106,7 @@ class FusedMoE(BaseOP):
         self.tp_rank = tp_info.rank if tp_size is None else 0
 
         assert self.intermediate_size % self.tp_size == 0, (
-            f"Intermediate size ({self.intermediate_size}) must be divisible "
-            f"by tp_size ({self.tp_size})"
+            f"Intermediate size ({self.intermediate_size}) must be divisible by tp_size ({self.tp_size})"
         )
 
         self.intermediate_size_per_partition = self.intermediate_size // self.tp_size

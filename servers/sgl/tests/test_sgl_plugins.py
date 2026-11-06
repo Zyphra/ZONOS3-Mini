@@ -1,5 +1,6 @@
 """The sgl server's plugin seam (zonos3.server.plugins): LACI takes on an extended speaking-rate scale, and plugin
 routes mounted ahead of the studio catch-all."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -23,24 +24,30 @@ def _take(bucket: int, scaled: bool = True) -> plugins.LaciTakeRequest:
     request = GenerateRequest(text="Oui.", language="fr_fr", seed=1, max_tokens=90, stream=False, laci=True)
     if not scaled:
         return plugins.LaciTakeRequest(request=request, target_frames=30.0)
-    return plugins.LaciTakeRequest(request=request, target_frames=30.0, rate_edges=EDGES, rate_first=-1,
-                                   rate_bucket=bucket, rate_doses=DOSES)
+    return plugins.LaciTakeRequest(
+        request=request, target_frames=30.0, rate_edges=EDGES, rate_first=-1, rate_bucket=bucket, rate_doses=DOSES
+    )
 
 
 def test_take_on_an_extended_scale_carries_its_bucket_and_deltas(monkeypatch):
     """A take in a steered bucket: the bucket's tempo dose on top of its own steering delta, and the scale with its
     bucket on it (pinned takes too: LACI reports the bucket from it, not the unknown row id)."""
     bundle = SimpleNamespace(rate_extension=SimpleNamespace(direction="d"))
-    monkeypatch.setattr(host, "resolve_controls", lambda bundle, controls, spans, **kw: SimpleNamespace(
-        hidden_delta=torch.full((4,), controls["d"])))
+    monkeypatch.setattr(
+        host,
+        "resolve_controls",
+        lambda bundle, controls, spans, **kw: SimpleNamespace(hidden_delta=torch.full((4,), controls["d"])),
+    )
     base = torch.ones(4)
     scale = host.rate_scale(_take(-1), bundle, text="Oui.", base_delta=base, sources=(0,), hidden_size=4)
     assert (scale.first, scale.bucket, scale.edges) == (-1, -1, EDGES)
     assert torch.allclose(scale.delta, torch.full((4,), 1 - 0.99))
     assert len(scale.deltas) == 13 and scale.deltas[1 + 5] is base  # row buckets: own delta only
     assert torch.allclose(scale.deltas[1 + 11], torch.full((4,), 1 + 1.93))
-    assert host.rate_scale(_take(5, scaled=False), bundle, text="Oui.", base_delta=None, sources=(0,),
-                           hidden_size=4) is None
+    assert (
+        host.rate_scale(_take(5, scaled=False), bundle, text="Oui.", base_delta=None, sources=(0,), hidden_size=4)
+        is None
+    )
 
 
 def test_take_doses_need_a_rate_extension():

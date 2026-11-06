@@ -35,8 +35,15 @@ class RateScale:
         return self.deltas[self.bucket - self.first]
 
 
-def rate_scale(take: LaciTakeRequest, bundle: SteeringBundle | None, *, text: str, base_delta, sources: tuple[int, ...],
-               hidden_size: int) -> RateScale | None:
+def rate_scale(
+    take: LaciTakeRequest,
+    bundle: SteeringBundle | None,
+    *,
+    text: str,
+    base_delta,
+    sources: tuple[int, ...],
+    hidden_size: int,
+) -> RateScale | None:
     """Put a LACI take on an extended speaking-rate scale (take.rate_edges, README "Extended speaking-rate buckets"): in
     a steered bucket the take's steering delta (``base_delta``) gains the bucket's tempo dose; the take carries the
     scale, its bucket on it and its delta in every bucket (LACI reports the bucket on the scale, a steered one's row id
@@ -49,8 +56,15 @@ def rate_scale(take: LaciTakeRequest, bundle: SteeringBundle | None, *, text: st
     def delta(b: int):
         if b not in take.rate_doses:
             return base_delta
-        tempo = resolve_controls(bundle, {bundle.rate_extension.direction: take.rate_doses[b]}, None, text=text,
-                                 speaker_embedding=None, sources=sources, hidden_size=hidden_size).hidden_delta
+        tempo = resolve_controls(
+            bundle,
+            {bundle.rate_extension.direction: take.rate_doses[b]},
+            None,
+            text=text,
+            speaker_embedding=None,
+            sources=sources,
+            hidden_size=hidden_size,
+        ).hidden_delta
         return tempo if base_delta is None else base_delta + tempo
 
     if take.rate_bucket is None:
@@ -65,9 +79,16 @@ def laci_slots(batch: int) -> asyncio.Semaphore:
     return asyncio.Semaphore(max(1, 2 * int(batch or 1)))
 
 
-def host_facts(*, model_path: str, condition_tokens: dict | None, speaker_modes: Iterable[str],
-               bundle: SteeringBundle | None, laci_languages: Iterable[str], text_tokenizer_spec: dict | None,
-               worker_device: str | None = None) -> HostFacts:
+def host_facts(
+    *,
+    model_path: str,
+    condition_tokens: dict | None,
+    speaker_modes: Iterable[str],
+    bundle: SteeringBundle | None,
+    laci_languages: Iterable[str],
+    text_tokenizer_spec: dict | None,
+    worker_device: str | None = None,
+) -> HostFacts:
     """What a plugin may know of the served checkpoint and server."""
     phonemes = None if not text_tokenizer_spec else text_tokenizer_spec.get("phonemes")
     return HostFacts(

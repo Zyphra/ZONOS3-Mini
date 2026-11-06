@@ -22,7 +22,6 @@ class A:
 
 @call_if_main()
 def test_serialize_deserialize():
-
     t = torch.tensor([1, 2, 3], dtype=torch.int32)
     x = A(10, "hello", [A(20, "world", [], t)], t)
     data = serialize_type(x)
@@ -30,9 +29,7 @@ def test_serialize_deserialize():
     y = deserialize_type({"A": A}, data)
     logger.info(y)
 
-    u = BatchTTSBackendMsg(
-        [TTSUserMsg(uid=0, input_ids=t.view(1, -1), sampling_params=TTSSamplingParams())]
-    )
+    u = BatchTTSBackendMsg([TTSUserMsg(uid=0, input_ids=t.view(1, -1), sampling_params=TTSSamplingParams())])
     result = u.decoder(u.encoder())
     logger.info(u)
     logger.info(result)

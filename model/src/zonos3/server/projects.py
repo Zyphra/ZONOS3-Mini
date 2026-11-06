@@ -37,7 +37,7 @@ from zonos3.server.schemas import ProjectPutRequest
 
 MAX_PROJECT_BYTES = 20 * 1024**2
 MAX_MEDIA_BYTES = 2 * 1024**3
-GC_MIN_AGE_SECONDS = 3600.0   # newer unreferenced media may belong to a save in flight (media go up first)
+GC_MIN_AGE_SECONDS = 3600.0  # newer unreferenced media may belong to a save in flight (media go up first)
 _STALE_TMP_SECONDS = 86400.0
 _MEDIA_CACHE = "public, max-age=31536000, immutable"
 
@@ -55,8 +55,9 @@ class ProjectError(Exception):
         self.status, self.detail, self.extra = status, detail, extra
 
     def response(self) -> JSONResponse:
-        return JSONResponse({"detail": self.detail, **self.extra}, status_code=self.status,
-                            headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            {"detail": self.detail, **self.extra}, status_code=self.status, headers={"Cache-Control": "no-store"}
+        )
 
 
 def check_id(project_id: str) -> str:
@@ -94,8 +95,12 @@ def parse_json(body: bytes) -> Any:
 
 
 class ProjectStore:
-    def __init__(self, root: str | os.PathLike, max_project_bytes: int = MAX_PROJECT_BYTES,
-                 max_media_bytes: int = MAX_MEDIA_BYTES):
+    def __init__(
+        self,
+        root: str | os.PathLike,
+        max_project_bytes: int = MAX_PROJECT_BYTES,
+        max_media_bytes: int = MAX_MEDIA_BYTES,
+    ):
         self.root = Path(root)
         self.projects_dir, self.media_dir, self.tmp_dir = (self.root / d for d in ("projects", "media", "tmp"))
         for d in (self.projects_dir, self.media_dir, self.tmp_dir):
@@ -105,7 +110,7 @@ class ProjectStore:
         self._thread_lock = threading.Lock()
         self._list_cache: dict[str, tuple[tuple[int, int], dict]] = {}
         cutoff = time.time() - _STALE_TMP_SECONDS
-        for tmp in self.tmp_dir.iterdir():   # leftovers of a killed server; fresh ones may be another server's
+        for tmp in self.tmp_dir.iterdir():  # leftovers of a killed server; fresh ones may be another server's
             with suppress(OSError):
                 if tmp.stat().st_mtime < cutoff:
                     tmp.unlink()
@@ -161,14 +166,17 @@ class ProjectStore:
                     record = self._read_record(path)
                     data = record.get("data")
                     entry = {
-                        "id": project_id, "name": record.get("name"), "updated_at": record.get("updated_at"),
-                        "revision": record.get("revision"), "bytes": st.st_size,
+                        "id": project_id,
+                        "name": record.get("name"),
+                        "updated_at": record.get("updated_at"),
+                        "revision": record.get("revision"),
+                        "bytes": st.st_size,
                         "media_bytes": record.get("media_bytes", 0),
                         "summary": data.get("summary") if isinstance(data, dict) else None,
                     }
                     cached = self._list_cache[project_id] = (key, entry)
             except (OSError, ValueError):
-                continue   # deleted meanwhile, or not ours
+                continue  # deleted meanwhile, or not ours
             seen.add(project_id)
             entries.append(cached[1])
         for gone in self._list_cache.keys() - seen:
@@ -202,9 +210,15 @@ class ProjectStore:
             except FileNotFoundError:
                 stored = None
             if base_revision != stored:
-                raise ProjectError(409, "the project changed elsewhere" if base_revision is not None and stored
-                                   else "a project with this id exists" if stored
-                                   else "the project does not exist (deleted elsewhere?)", revision=stored)
+                raise ProjectError(
+                    409,
+                    "the project changed elsewhere"
+                    if base_revision is not None and stored
+                    else "a project with this id exists"
+                    if stored
+                    else "the project does not exist (deleted elsewhere?)",
+                    revision=stored,
+                )
             media_bytes, missing = 0, []
             for sha in refs:
                 try:
@@ -212,12 +226,19 @@ class ProjectStore:
                 except FileNotFoundError:
                     missing.append(sha)
             if missing:
-                raise ProjectError(400, f"{len(missing)} media not uploaded (PUT /v2/media/<sha256> first)",
-                                   missing=missing)
+                raise ProjectError(
+                    400, f"{len(missing)} media not uploaded (PUT /v2/media/<sha256> first)", missing=missing
+                )
             revision = (stored or 0) + 1
             updated_at = int(time.time() * 1000)
-            record = {"id": project_id, "name": name, "revision": revision, "updated_at": updated_at,
-                      "media_bytes": media_bytes, "data": data}
+            record = {
+                "id": project_id,
+                "name": name,
+                "revision": revision,
+                "updated_at": updated_at,
+                "media_bytes": media_bytes,
+                "data": data,
+            }
             payload = json.dumps(record, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
             if len(payload) > self.max_project_bytes:
                 raise ProjectError(413, f"project too large ({len(payload)} > {self.max_project_bytes} bytes)")
@@ -239,7 +260,7 @@ class ProjectStore:
         with self._locked():
             referenced: set[str] = set()
             for path in self.projects_dir.glob("*.json"):
-                try:   # an unreadable project could reference anything: keep every blob
+                try:  # an unreadable project could reference anything: keep every blob
                     referenced.update(media_refs(self._read_record(path).get("data")))
                 except (OSError, ValueError, ProjectError) as exc:
                     raise ProjectError(500, f"gc aborted: {path.name} is unreadable ({exc})") from None
@@ -250,7 +271,7 @@ class ProjectStore:
                 if not _SHA256.fullmatch(sha) or sha in referenced:
                     kept += path.name == sha
                     continue
-                if path.name != sha:   # a type file goes with its blob
+                if path.name != sha:  # a type file goes with its blob
                     if not (self.media_dir / sha).exists():
                         path.unlink(missing_ok=True)
                     continue
@@ -291,7 +312,7 @@ class ProjectStore:
         path = self.media_dir / sha256
         if path.is_file():
             with suppress(OSError):
-                os.utime(path)   # restart the GC grace period: a save referencing it follows
+                os.utime(path)  # restart the GC grace period: a save referencing it follows
             await asyncio.to_thread(self._store_type, sha256, mime)
             return {"sha256": sha256, "size": path.stat().st_size, "created": False}
         digest, size = hashlib.sha256(), 0
@@ -309,7 +330,7 @@ class ProjectStore:
             actual = digest.hexdigest()
             if actual != sha256:
                 raise ProjectError(400, "content does not match its hash", sha256=actual)
-            os.replace(tmp, path)   # a concurrent upload of the same blob renames identical bytes
+            os.replace(tmp, path)  # a concurrent upload of the same blob renames identical bytes
         except BaseException:
             with suppress(FileNotFoundError):
                 os.unlink(tmp)

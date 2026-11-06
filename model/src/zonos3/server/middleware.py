@@ -12,13 +12,22 @@ from fastapi.responses import RedirectResponse, Response
 
 # Studio clients on another origin (?server=) read these response headers.
 EXPOSED_HEADERS: tuple[str, ...] = (
-    "X-Audio-Sample-Rate", "X-Audio-Channels", "X-Audio-Format", "X-Control-Span-Follow", "X-Seed",
+    "X-Audio-Sample-Rate",
+    "X-Audio-Channels",
+    "X-Audio-Format",
+    "X-Control-Span-Follow",
+    "X-Seed",
 )
 
 
 def install_cors(app: FastAPI) -> None:
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-                       expose_headers=list(EXPOSED_HEADERS))
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=list(EXPOSED_HEADERS),
+    )
 
 
 def access_log_enabled() -> bool:
@@ -42,12 +51,17 @@ def install_private_access(app: FastAPI) -> None:
             candidate = request.cookies.get("zonos3_access", "")
         if candidate and secrets.compare_digest(candidate, token):
             response = await call_next(request)
-        elif request.method == "GET" and request.url.path == "/" and (
-            candidate := request.query_params.get("access_token", "")
-        ) and secrets.compare_digest(candidate, token):
+        elif (
+            request.method == "GET"
+            and request.url.path == "/"
+            and (candidate := request.query_params.get("access_token", ""))
+            and secrets.compare_digest(candidate, token)
+        ):
             response = RedirectResponse("/", status_code=303)
             response.set_cookie(
-                "zonos3_access", token, httponly=True,
+                "zonos3_access",
+                token,
+                httponly=True,
                 secure=request.headers.get("x-forwarded-proto") == "https",
                 samesite="strict",
             )

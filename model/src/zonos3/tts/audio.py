@@ -108,17 +108,12 @@ def _transcode_audio_bytes_to_wav(audio_bytes: bytes) -> bytes:
             check=False,
         )
     except FileNotFoundError as exc:
-        raise ValueError(
-            "Reference file must contain an audio stream supported by ffmpeg."
-        ) from exc
+        raise ValueError("Reference file must contain an audio stream supported by ffmpeg.") from exc
 
     if proc.returncode != 0 or not proc.stdout:
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
         suffix = f" ffmpeg said: {stderr}" if stderr else ""
-        raise ValueError(
-            "Reference file must contain an audio stream supported by ffmpeg."
-            + suffix
-        )
+        raise ValueError("Reference file must contain an audio stream supported by ffmpeg." + suffix)
 
     logger.debug("Converted reference media to PCM WAV via ffmpeg for speaker embedding.")
     return proc.stdout

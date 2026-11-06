@@ -146,8 +146,9 @@ def _project_store() -> ProjectStore | None:
     if getattr(config, "studio_projects_dir", None) is None:
         return None
     if _PROJECT_STORE is None:
-        _PROJECT_STORE = ProjectStore(config.studio_projects_dir, config.studio_max_project_bytes,
-                                      config.studio_max_media_bytes)
+        _PROJECT_STORE = ProjectStore(
+            config.studio_projects_dir, config.studio_max_project_bytes, config.studio_max_media_bytes
+        )
     return _PROJECT_STORE
 
 
@@ -168,9 +169,7 @@ def _model_supports_speaker_embedding(config: ServerArgs) -> bool:
 
 
 def _model_uses_speaker_reference_prefix(config: ServerArgs) -> bool:
-    return bool(
-        getattr(config.model_config, "speaker_reference_prefix_enabled", False)
-    )
+    return bool(getattr(config.model_config, "speaker_reference_prefix_enabled", False))
 
 
 def _speaker_modes(config: ServerArgs) -> list[str]:
@@ -188,11 +187,16 @@ def _condition_spec(config: ServerArgs) -> dict | None:
     model_config = config.model_config
     if not getattr(model_config, "condition_tokens_enabled", False):
         return None
-    names = [str(item) for item in (getattr(model_config, "condition_names", None) or ("loudness", "fmax", "speaking_rate"))]
+    names = [
+        str(item) for item in (getattr(model_config, "condition_names", None) or ("loudness", "fmax", "speaking_rate"))
+    ]
     return condition_spec(
-        names=names, count=int(getattr(model_config, "condition_count", len(names)) or len(names)),
-        bucket_counts=model_config.condition_bucket_counts, edges=getattr(model_config, "condition_edges", None),
-        flags=getattr(model_config, "condition_flags", None), units=getattr(model_config, "condition_units", None),
+        names=names,
+        count=int(getattr(model_config, "condition_count", len(names)) or len(names)),
+        bucket_counts=model_config.condition_bucket_counts,
+        edges=getattr(model_config, "condition_edges", None),
+        flags=getattr(model_config, "condition_flags", None),
+        units=getattr(model_config, "condition_units", None),
     )
 
 
@@ -237,8 +241,9 @@ def _steer_bundle(config: ServerArgs) -> SteeringBundle | None:
     if path not in _STEER_BUNDLE_CACHE:
         bundle = load_bundle(path)
         _STEER_BUNDLE_CACHE[path] = bundle
-        logger.info("Loaded steering bundle %s: %d directions in sets %s.", path, len(bundle.directions),
-                    ", ".join(bundle.sets))
+        logger.info(
+            "Loaded steering bundle %s: %d directions in sets %s.", path, len(bundle.directions), ", ".join(bundle.sets)
+        )
     return _STEER_BUNDLE_CACHE[path]
 
 
@@ -256,7 +261,13 @@ class _RulesContext:
 
     @functools.cached_property
     def _conditions(self) -> dict:
-        return _condition_spec(self.config) or {"names": [], "bucket_counts": {}, "unknown_ids": {}, "edges": {}, "flags": {}}
+        return _condition_spec(self.config) or {
+            "names": [],
+            "bucket_counts": {},
+            "unknown_ids": {},
+            "edges": {},
+            "flags": {},
+        }
 
     @property
     def n_codebooks(self) -> int:
@@ -339,13 +350,12 @@ def _output_gain(config: ServerArgs, headroom_db: float | None) -> float:
     if headroom_db is None:
         codec = str(getattr(config.model_config, "audio_codec", ""))
         from zonos3.tokenizer.matched_codec import codec_names, decoder_headroom_db
+
         headroom_db = decoder_headroom_db(codec) if codec in codec_names() else 0.0
     return float(10.0 ** (-float(headroom_db) / 20.0))
 
 
-def _apply_fade_out_pcm(
-    audio_bytes: bytes, fade_out_ms: float, sample_rate: int = SAMPLE_RATE
-) -> bytes:
+def _apply_fade_out_pcm(audio_bytes: bytes, fade_out_ms: float, sample_rate: int = SAMPLE_RATE) -> bytes:
     """Apply a cosine fade-out to the tail of float32 PCM bytes."""
     if fade_out_ms <= 0 or not audio_bytes:
         return audio_bytes
@@ -386,13 +396,22 @@ def _speaker_document(config: ServerArgs, entry: CachedSpeakerReference | Defaul
     """A voice of GET /v2/speakers (zonos3.server.voices) with the checkpoint's speaker modes and dimension."""
     modes, disabled = _speaker_modes(config), disabled_controls(_steer_bundle(config), entry.speaker_id)
     if isinstance(entry, DefaultVoice):
-        return serialize_default_voice(entry, modes=voice_speaker_modes(modes, entry.source_type),
-                                       embedding_dim=_model_speaker_dim(config), disabled=disabled)
+        return serialize_default_voice(
+            entry,
+            modes=voice_speaker_modes(modes, entry.source_type),
+            embedding_dim=_model_speaker_dim(config),
+            disabled=disabled,
+        )
     dim = int(entry.embedding.numel())
     return serialize_session_voice(
-        speaker_id=entry.speaker_id, label=entry.label, source_type=entry.source_type,
-        original_name=entry.original_name, created_at=entry.created_at, has_preview=bool(entry.audio_bytes),
-        embedding_dim=dim, modes=voice_speaker_modes(modes, entry.source_type, has_embedding=dim > 0),
+        speaker_id=entry.speaker_id,
+        label=entry.label,
+        source_type=entry.source_type,
+        original_name=entry.original_name,
+        created_at=entry.created_at,
+        has_preview=bool(entry.audio_bytes),
+        embedding_dim=dim,
+        modes=voice_speaker_modes(modes, entry.source_type, has_embedding=dim > 0),
         disabled=disabled,
     )
 
@@ -557,10 +576,7 @@ async def _compute_speaker_embedding_from_waveform(
         output = embedder(wav, sample_rate)
 
     if isinstance(output, tuple):
-        candidates = [
-            tensor.squeeze(0).to(dtype=torch.float32, device="cpu")
-            for tensor in output
-        ]
+        candidates = [tensor.squeeze(0).to(dtype=torch.float32, device="cpu") for tensor in output]
     else:
         candidates = [output.squeeze(0).to(dtype=torch.float32, device="cpu")]
 
@@ -611,7 +627,9 @@ async def _resolve_cached_speaker_embedding(
     expected_dim = _model_speaker_dim(config)
     actual_dim = int(entry.embedding.numel())
     if actual_dim == 0:
-        raise ValueError(f"Cached speaker '{entry.label}' holds a reference clip only; it has no embedding for speaker_mode=embedding.")
+        raise ValueError(
+            f"Cached speaker '{entry.label}' holds a reference clip only; it has no embedding for speaker_mode=embedding."
+        )
     if actual_dim != expected_dim:
         raise ValueError(
             f"Cached speaker '{entry.label}' has {actual_dim} dimensions, but the current model expects {expected_dim}."
@@ -632,13 +650,9 @@ async def _resolve_speaker_embedding(
     speaker_blend_embedding_id_b: str | None = None,
     speaker_blend_t: float | None = None,
 ) -> torch.Tensor | None:
-    direct_source_count = sum(
-        bool(value) for value in (speaker_audio_base64, speaker_embedding_base64)
-    )
+    direct_source_count = sum(bool(value) for value in (speaker_audio_base64, speaker_embedding_base64))
     if direct_source_count > 1:
-        raise ValueError(
-            "Provide either a reference audio file or a saved embedding file, not both."
-        )
+        raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
 
     has_direct_source = direct_source_count == 1
     has_cached_source = bool(speaker_embedding_id)
@@ -681,9 +695,7 @@ async def _resolve_speaker_embedding(
         )
 
     if not _model_supports_speaker_embedding(config):
-        logger.info(
-            "Speaker reference provided, but current model does not support speaker embeddings; ignoring."
-        )
+        logger.info("Speaker reference provided, but current model does not support speaker embeddings; ignoring.")
         return None
 
     expected_dim = _model_speaker_dim(config)
@@ -727,7 +739,7 @@ async def _resolve_speaker_reference_audio(
                 raise ValueError(
                     f"Default voice '{default_entry.label}' is an embedding file; this checkpoint needs reference audio."
                 )
-            audio_bytes, _ = voice_preview(default_entry)   # transcoded WAV, cached on the entry
+            audio_bytes, _ = voice_preview(default_entry)  # transcoded WAV, cached on the entry
             return audio_bytes
         entry = await _get_cached_speaker(require_session_id(session_id), speaker_embedding_id)
         if not entry.audio_bytes:
@@ -823,7 +835,8 @@ class FrontendManager:
                 if ack.audio_data:
                     if first_byte and t_start is not None:
                         logger.info(
-                            "uid=%d TTS TTFB=%.3fms", uid,
+                            "uid=%d TTS TTFB=%.3fms",
+                            uid,
                             (time.perf_counter() - t_start) * 1000,
                         )
                         first_byte = False
@@ -846,7 +859,10 @@ class FrontendManager:
             audio_s = total_audio_bytes / (SAMPLE_RATE * 4)  # float32 PCM
             logger.info(
                 "uid=%d TTS completed: E2E=%.3fms, audio=%.2fs, chunks=%d, RTF=%.2fx",
-                uid, e2e_s * 1000, audio_s, chunk_count,
+                uid,
+                e2e_s * 1000,
+                audio_s,
+                chunk_count,
                 audio_s / e2e_s if e2e_s > 0 else 0,
             )
 
@@ -854,7 +870,9 @@ class FrontendManager:
         """Collect all TTS audio data and return as single bytes object."""
         return (await self.wait_for_tts_reply(uid, fade_out_ms, gain))[0]
 
-    async def wait_for_tts_reply(self, uid: int, fade_out_ms: float = 0.0, gain: float = 1.0) -> tuple[bytes, dict | None]:
+    async def wait_for_tts_reply(
+        self, uid: int, fade_out_ms: float = 0.0, gain: float = 1.0
+    ) -> tuple[bytes, dict | None]:
         """All TTS audio data as one bytes object, and the LACI record of a LACI request (else None)."""
         t_start = self.start_time_map.pop(uid, None)
         audio_data = b""
@@ -875,7 +893,9 @@ class FrontendManager:
             audio_s = len(audio_data) / (SAMPLE_RATE * 4)
             logger.info(
                 "uid=%d TTS completed (non-stream): E2E=%.3fms, audio=%.2fs, RTF=%.2fx",
-                uid, e2e_s * 1000, audio_s,
+                uid,
+                e2e_s * 1000,
+                audio_s,
                 audio_s / e2e_s if e2e_s > 0 else 0,
             )
         return audio_data, laci
@@ -889,8 +909,9 @@ async def _warm_default_speaker_embeddings(config: ServerArgs) -> None:
     """Compute every default voice's speaker embedding once (the studio's Who map places them all)."""
     if not _model_supports_speaker_embedding(config):
         return
-    await warm_voice_embeddings(await _list_default_speakers(config),
-                                lambda entry: _load_default_speaker_embedding(config, entry), logger)
+    await warm_voice_embeddings(
+        await _list_default_speakers(config), lambda entry: _load_default_speaker_embedding(config, entry), logger
+    )
 
 
 @asynccontextmanager
@@ -909,8 +930,9 @@ async def lifespan(_: FastAPI):
 
 
 # The spec of this API is api/openapi.yaml; FastAPI's generated docs would describe a second one.
-app = FastAPI(title="Zonos3 API Server", version="2.0.0", lifespan=lifespan,
-              openapi_url=None, docs_url=None, redoc_url=None)
+app = FastAPI(
+    title="Zonos3 API Server", version="2.0.0", lifespan=lifespan, openapi_url=None, docs_url=None, redoc_url=None
+)
 
 # Innermost, so CORS and the access check wrap its early status line (zonos3.server.keepalive); plugins.mount adds
 # each plugin's paths before serving.
@@ -1023,8 +1045,8 @@ async def _tts_generate_msg(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        speaker_reference_audio, speaker_embedding = (
-            await _resolve_request_speaker_conditioning(state.config, req, session_id, head.mode)
+        speaker_reference_audio, speaker_embedding = await _resolve_request_speaker_conditioning(
+            state.config, req, session_id, head.mode
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1037,14 +1059,19 @@ async def _tts_generate_msg(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        stream_decode = resolve_stream_decode(req.stream_decode, streaming=bool(req.stream),
-                                              prefix_supported=prefix_stream_supported(_audio_codec(state.config)))
+        stream_decode = resolve_stream_decode(
+            req.stream_decode,
+            streaming=bool(req.stream),
+            prefix_supported=prefix_stream_supported(_audio_codec(state.config)),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # sgl's own LACI rule: a retake in another speaking-rate bucket changes the condition rows, which only the naive
     # cache never serves stale from a cached prompt prefix
     if laci_target_frames is not None and laci_adjust_rate and getattr(state.config, "cache_type", "naive") != "naive":
-        raise HTTPException(status_code=400, detail="A LACI duration target that adjusts the speaking rate needs --cache-type naive")
+        raise HTTPException(
+            status_code=400, detail="A LACI duration target that adjusts the speaking rate needs --cache-type naive"
+        )
     accent, accent_strength = rules.accent or (None, 1.0)
     return TTSTokenizeMsg(
         uid=state.new_user(),
@@ -1098,8 +1125,12 @@ async def _generate_response(state: FrontendManager, req: GenerateRequest, sessi
     async def _abort():
         await state.abort_user(uid)
 
-    headers = speech_headers(fmt=req.format, seed=msg.sampling_params.seed, control_spans=bool(req.control_spans),
-                             follows_reading=msg.steer_follow_chars is not None)
+    headers = speech_headers(
+        fmt=req.format,
+        seed=msg.sampling_params.seed,
+        control_spans=bool(req.control_spans),
+        follows_reading=msg.steer_follow_chars is not None,
+    )
     gain = _output_gain(state.config, req.headroom_db)
     if req.stream:
         return StreamingResponse(
@@ -1110,8 +1141,11 @@ async def _generate_response(state: FrontendManager, req: GenerateRequest, sessi
         )
     audio_data = await state.wait_for_tts_audio(uid, fade_out_ms=req.fade_out_ms, gain=gain)
     if req.format == "wav":
-        return Response(content=pcm16_wav_bytes(np.frombuffer(audio_data, np.float32), SAMPLE_RATE),
-                        media_type="audio/wav", headers=headers)
+        return Response(
+            content=pcm16_wav_bytes(np.frombuffer(audio_data, np.float32), SAMPLE_RATE),
+            media_type="audio/wav",
+            headers=headers,
+        )
     return Response(content=audio_data, media_type="audio/pcm", headers=headers)
 
 
@@ -1152,8 +1186,10 @@ async def tts_cache_speaker(
                     label=speaker_label(req.label, embedding_name, fallback="Speaker embedding"),
                     source_type="embedding",
                     embedding=_compute_speaker_embedding_from_file(
-                        req.speaker_embedding_base64, expected_dim=_model_speaker_dim(state.config),
-                        speaker_embedding_name=embedding_name),
+                        req.speaker_embedding_base64,
+                        expected_dim=_model_speaker_dim(state.config),
+                        speaker_embedding_name=embedding_name,
+                    ),
                     original_name=embedding_name,
                 )
                 return _speaker_document(state.config, entry)
@@ -1163,10 +1199,14 @@ async def tts_cache_speaker(
             raw_bytes = decode_base64_blob(raw_audio_base64, "speaker_audio_base64")
             raw_wav_bytes = _transcode_audio_bytes_to_wav(raw_bytes)
             raw_embedding = torch.empty(0)
-            if _model_supports_speaker_embedding(state.config):     # both paths: keep the clip and its embedding
+            if _model_supports_speaker_embedding(state.config):  # both paths: keep the clip and its embedding
                 raw_wav, raw_rate = _decode_wav_bytes(raw_wav_bytes)
                 raw_embedding = await _compute_speaker_embedding_from_waveform(
-                    raw_wav, raw_rate, expected_dim=_model_speaker_dim(state.config), speaker_codec=_model_speaker_codec(state.config))
+                    raw_wav,
+                    raw_rate,
+                    expected_dim=_model_speaker_dim(state.config),
+                    speaker_codec=_model_speaker_codec(state.config),
+                )
             entry = await _cache_speaker_reference(
                 session_id=session_id,
                 label=speaker_label(req.label, raw_name, fallback="Speaker audio"),
@@ -1181,16 +1221,11 @@ async def tts_cache_speaker(
             raise ValueError("Current model does not support speaker embeddings.")
 
         speaker_audio_base64 = req.speaker_audio_base64
-        direct_source_count = sum(
-            bool(value)
-            for value in (speaker_audio_base64, req.speaker_embedding_base64)
-        )
+        direct_source_count = sum(bool(value) for value in (speaker_audio_base64, req.speaker_embedding_base64))
         if direct_source_count == 0:
             raise ValueError("Provide an audio file or saved embedding file to cache.")
         if direct_source_count > 1:
-            raise ValueError(
-                "Provide either a reference audio file or a saved embedding file, not both."
-            )
+            raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
 
         expected_dim = _model_speaker_dim(state.config)
         if speaker_audio_base64:
@@ -1367,8 +1402,9 @@ async def tts_phonemize(request: PhonemizeRequest):
     if lexicon is None:
         raise HTTPException(status_code=404, detail="This server has no pronunciation lexicon.")
     try:
-        return await asyncio.to_thread(lexicon.phonemize_for, request.text, request.language,
-                                       _text_tokenizer_spec(config), guess=request.guess)
+        return await asyncio.to_thread(
+            lexicon.phonemize_for, request.text, request.language, _text_tokenizer_spec(config), guess=request.guess
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1389,9 +1425,7 @@ def _edit_max_spans(config: ServerArgs) -> int:
     """Edit marker rows: the extra text rows not claimed by phoneme tokens (0 without span_end_id: no editing)."""
     if getattr(config.model_config, "span_end_id", None) is None:
         return 0
-    return edit_marker_rows(
-        int(getattr(config.model_config, "text_extra_tokens", 0)), _text_tokenizer_spec(config)
-    )
+    return edit_marker_rows(int(getattr(config.model_config, "text_extra_tokens", 0)), _text_tokenizer_spec(config))
 
 
 async def _backend_reply(state: FrontendManager, make_msg: Callable[[int], BaseTokenizerMsg]):
@@ -1420,8 +1454,9 @@ class _SglEditEngine:
         from zonos3.tokenizer.matched_codec import entry
 
         config = get_global_state().config
-        return EditModel.from_config(config.model_config, hop=int(entry(str(config.tts_audio_codec))["hop"]),
-                                     max_spans=_edit_max_spans(config))
+        return EditModel.from_config(
+            config.model_config, hop=int(entry(str(config.tts_audio_codec))["hop"]), max_spans=_edit_max_spans(config)
+        )
 
     async def decode_audio(self, audio: bytes) -> tuple[np.ndarray, int]:
         waveform, sample_rate = _decode_audio_bytes(audio)
@@ -1432,7 +1467,10 @@ class _SglEditEngine:
         waveform, sample_rate = _decode_audio_bytes(audio)
         try:
             return await _compute_speaker_embedding_from_waveform(
-                waveform, sample_rate, expected_dim=_model_speaker_dim(config), speaker_codec=_model_speaker_codec(config)
+                waveform,
+                sample_rate,
+                expected_dim=_model_speaker_dim(config),
+                speaker_codec=_model_speaker_codec(config),
             )
         except RuntimeError as exc:  # the speaker encoder refused the clip: the request's fault (HTTP 400)
             raise ValueError(str(exc)) from exc
@@ -1445,8 +1483,9 @@ class _SglEditEngine:
             raise ValueError(reply.error)
         return reply.codes.to(torch.int64).numpy()
 
-    async def check(self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets,
-                    condition_values) -> set[str]:
+    async def check(
+        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
+    ) -> set[str]:
         ctx = _RulesContext(get_global_state().config)
         plan.validate_phoneme_groups(ctx.text_tokenizer_spec, target_text)
         raw: set[str] = set()
@@ -1466,13 +1505,21 @@ class _SglEditEngine:
         speaker_embedding, delta = job.speaker_embedding, None
         if job.controls:
             resolved = resolve_controls(
-                ctx.steer_bundle, job.controls, None, text=job.controls_text,
-                speaker_embedding=job.speaker_embedding, sources=ctx.steering_sources, hidden_size=ctx.hidden_size,
+                ctx.steer_bundle,
+                job.controls,
+                None,
+                text=job.controls_text,
+                speaker_embedding=job.speaker_embedding,
+                sources=ctx.steering_sources,
+                hidden_size=ctx.hidden_size,
             )
             speaker_embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
         sampling = TTSSamplingParams(
-            **job.sampling, max_tokens=plan.max_tokens_budget(job.max_tokens, ctx.max_frames), seed=job.seed,
-            end_token="span", min_frames=job.min_frames,
+            **job.sampling,
+            max_tokens=plan.max_tokens_budget(job.max_tokens, ctx.max_frames),
+            seed=job.seed,
+            end_token="span",
+            min_frames=job.min_frames,
         )
         condition_ids = plan.resolve_condition_buckets(ctx, job.condition_buckets, job.condition_values)
         reply = await _backend_reply(
@@ -1523,9 +1570,12 @@ class _SglHost:
     def facts(self) -> plugins.HostFacts:
         config = get_global_state().config
         return host_facts(
-            model_path=config.model_path, condition_tokens=_condition_spec(config),
-            speaker_modes=_speaker_modes(config), bundle=_steer_bundle(config),
-            laci_languages=getattr(config, "laci_heads", None) or {}, text_tokenizer_spec=_text_tokenizer_spec(config),
+            model_path=config.model_path,
+            condition_tokens=_condition_spec(config),
+            speaker_modes=_speaker_modes(config),
+            bundle=_steer_bundle(config),
+            laci_languages=getattr(config, "laci_heads", None) or {},
+            text_tokenizer_spec=_text_tokenizer_spec(config),
         )
 
     async def synthesize_laci(
@@ -1542,17 +1592,28 @@ class _SglHost:
         try:
             for take in takes:
                 msg = await _tts_generate_msg(
-                    state, take.request, session_id,
-                    laci_target_frames=float(take.target_frames), laci_adjust_rate=bool(take.adjust_rate),
+                    state,
+                    take.request,
+                    session_id,
+                    laci_target_frames=float(take.target_frames),
+                    laci_adjust_rate=bool(take.adjust_rate),
                 )
                 msgs.append(msg)
-                scale = rate_scale(take, _steer_bundle(state.config), text=msg.text, base_delta=msg.steering_delta,
-                                   sources=_steering_sources(state.config),
-                                   hidden_size=int(state.config.model_config.hidden_size))
+                scale = rate_scale(
+                    take,
+                    _steer_bundle(state.config),
+                    text=msg.text,
+                    base_delta=msg.steering_delta,
+                    sources=_steering_sources(state.config),
+                    hidden_size=int(state.config.model_config.hidden_size),
+                )
                 if scale is not None:
                     msg.steering_delta = scale.delta
                     msg.laci_rate_edges, msg.laci_rate_first, msg.laci_rate_bucket = (
-                        list(scale.edges), scale.first, scale.bucket)
+                        list(scale.edges),
+                        scale.first,
+                        scale.bucket,
+                    )
                     msg.laci_rate_deltas = scale.deltas
         except BaseException:
             for msg in msgs:

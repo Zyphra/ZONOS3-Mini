@@ -25,8 +25,7 @@ def fused_moe_kernel_triton(
     assert sorted_token_ids.stride(0) == 1
     padded_size = 0
     grid = lambda META: (
-        triton.cdiv(sorted_token_ids.shape[0], META["BLOCK_SIZE_M"])
-        * triton.cdiv(B.shape[1], META["BLOCK_SIZE_N"]),
+        triton.cdiv(sorted_token_ids.shape[0], META["BLOCK_SIZE_M"]) * triton.cdiv(B.shape[1], META["BLOCK_SIZE_N"]),
     )
     K = B.shape[2] - padded_size
     if K % config["BLOCK_SIZE_K"] == 0:

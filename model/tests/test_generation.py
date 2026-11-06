@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 from zonos3 import generation
 
-SCHEMAS = json.loads((Path(__file__).resolve().parents[2] / "api" / "openapi.json").read_text())["components"]["schemas"]
+SCHEMAS = json.loads((Path(__file__).resolve().parents[2] / "api" / "openapi.json").read_text())["components"][
+    "schemas"
+]
 
 
 @pytest.mark.parametrize("schema", ["GenerationOptions", "GenerateRequest", "SpeechRequest", "EditRequest"])

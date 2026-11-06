@@ -61,10 +61,7 @@ class Engine:
         # context on the current device. The scheduler entry point binds this
         # process to its rank's GPU before that import, so an existing context is
         # expected; only one on the wrong device indicates a real ordering bug.
-        if (
-            torch.cuda.is_initialized()
-            and torch.cuda.current_device() != self.device.index
-        ):
+        if torch.cuda.is_initialized() and torch.cuda.current_device() != self.device.index:
             raise RuntimeError(
                 f"CUDA was initialized on cuda:{torch.cuda.current_device()} before "
                 f"the engine could bind TP rank {config.tp_info.rank} to {self.device}; "
@@ -85,7 +82,9 @@ class Engine:
             self.model = create_model(config)
 
         # Log expected shapes before loading (for debugging dimension mismatches)
-        logger.info_rank0(f"Model config: num_kv_heads={config.model_config.num_kv_heads}, head_dim={config.model_config.head_dim}")
+        logger.info_rank0(
+            f"Model config: num_kv_heads={config.model_config.num_kv_heads}, head_dim={config.model_config.head_dim}"
+        )
         expected_kv_dim = config.model_config.num_kv_heads * config.model_config.head_dim
         logger.info_rank0(f"Expected kv_dim per TP rank: {expected_kv_dim}")
 
@@ -99,7 +98,8 @@ class Engine:
             grow_state_dict(state_dict, grown, n_codebooks=self.model_config.n_codebooks)
             logger.info_rank0(
                 "Vocabulary grown by the accent adapters: span_end_id %d, %d extra text rows",
-                grown.span_end_id, grown.text_extra_tokens,
+                grown.span_end_id,
+                grown.text_extra_tokens,
             )
         extra = config.text_extra_rows
         if extra is not None:
@@ -112,13 +112,15 @@ class Engine:
 
         # Debug: Check for temp keys in state_dict
         if logger.isEnabledFor(logging.DEBUG):
-            temp_keys = [k for k in state_dict.keys() if '.temp' in k]
+            temp_keys = [k for k in state_dict.keys() if ".temp" in k]
             logger.debug("Found %d temp keys in state_dict: %s", len(temp_keys), temp_keys[:5])
             if temp_keys:
                 first_temp = state_dict[temp_keys[0]]
                 logger.debug(
                     "First temp tensor: shape=%s, dtype=%s, values=%s",
-                    first_temp.shape, first_temp.dtype, first_temp.flatten()[:4].tolist(),
+                    first_temp.shape,
+                    first_temp.dtype,
+                    first_temp.flatten()[:4].tolist(),
                 )
 
         # Validate wkv weight shapes match config (catch n_kv_heads mismatch early)
@@ -145,10 +147,10 @@ class Engine:
         self._gdn_layers = []
         if self._uses_gdn:
             from zonos3_sgl.models.gdn import OriginalGDN
+
             for layer in self.model.layers.op_list:
                 if isinstance(layer.attention, OriginalGDN):
-                    layer.attention.allocate_cache(
-                        config.max_running_req + 1, self.device, self.dtype)
+                    layer.attention.allocate_cache(config.max_running_req + 1, self.device, self.dtype)
                     self._gdn_layers.append(layer.attention)
             logger.info_rank0("Original GDN: replicated mixer, independent FP32 states, fixed-window decode")
             self._check_head_batch_invariance()
@@ -163,9 +165,7 @@ class Engine:
                 ensure_batch_invariance,
             )
 
-            self.accent_adapters = attach_accent_adapters(
-                self.model, config.accent_adapters, self.device, self.dtype
-            )
+            self.accent_adapters = attach_accent_adapters(self.model, config.accent_adapters, self.device, self.dtype)
             expert_ranks = {
                 group.rank: int(group.first.ge(0).sum())
                 for op in self.accent_adapters.expert_ops.values()
@@ -185,27 +185,33 @@ class Engine:
             blocked = ensure_batch_invariance(self.accent_adapters)
             logger.info_rank0(
                 "Accent side paths batch-invariant; fixed %d-row GEMMs for: %s",
-                BLOCK_ROWS, ", ".join(blocked) or "none",
+                BLOCK_ROWS,
+                ", ".join(blocked) or "none",
             )
 
         # Debug: print attention temp values to verify they loaded correctly
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Model type: %s", type(self.model).__name__)
-            logger.debug("Model has layers: %s", hasattr(self.model, 'layers'))
-            if hasattr(self.model, 'layers'):
+            logger.debug("Model has layers: %s", hasattr(self.model, "layers"))
+            if hasattr(self.model, "layers"):
                 logger.debug("layers type: %s", type(self.model.layers))
-                if hasattr(self.model.layers, 'op_list'):
+                if hasattr(self.model.layers, "op_list"):
                     logger.debug("num layers: %d", len(self.model.layers.op_list))
                     for i, layer in enumerate(self.model.layers.op_list[:2]):
                         logger.debug("Layer %d type: %s", i, type(layer).__name__)
-                        if hasattr(layer, 'attention'):
+                        if hasattr(layer, "attention"):
                             attn = layer.attention
                             logger.debug("Layer %d attention type: %s", i, type(attn).__name__)
-                            logger.debug("Layer %d has_qk_norm: %s", i, getattr(attn, 'has_qk_norm', 'N/A'))
-                            if hasattr(attn, 'temp'):
+                            logger.debug("Layer %d has_qk_norm: %s", i, getattr(attn, "has_qk_norm", "N/A"))
+                            if hasattr(attn, "temp"):
                                 temp = attn.temp
                                 if temp is not None:
-                                    logger.debug("Layer %d attention.temp: shape=%s, values=%s", i, temp.shape, temp.flatten()[:8].tolist())
+                                    logger.debug(
+                                        "Layer %d attention.temp: shape=%s, values=%s",
+                                        i,
+                                        temp.shape,
+                                        temp.flatten()[:8].tolist(),
+                                    )
                                 else:
                                     logger.debug("Layer %d attention.temp is None", i)
 
@@ -358,7 +364,8 @@ class Engine:
         self.model.steer_sources = tuple(sorted({int(d.source_index) for d in steering.values()}))
         self.model.steer_rows = torch.zeros(
             (config.max_running_req + 1, len(self.model.steer_sources), self.model_config.hidden_size),
-            dtype=self.dtype, device=self.device,
+            dtype=self.dtype,
+            device=self.device,
         )
         logger.info_rank0(
             "Hidden-space steering on Full AttnRes bank sources: %s",
@@ -384,7 +391,7 @@ class Engine:
             staged.view(len(deltas), rows.shape[1], rows.shape[2]).to(dtype=rows.dtype).pin_memory(), non_blocking=True
         )
         if len(deltas) < rows.shape[0]:
-            rows[len(deltas):].zero_()
+            rows[len(deltas) :].zero_()
         self._steer_rows_dirty = True
 
     def _check_head_batch_invariance(self) -> None:
@@ -403,7 +410,9 @@ class Engine:
             logger.warning_rank0(
                 "LM head is not batch-invariant on this GPU (max |diff| %g between 1..8-row and 1024-row GEMMs); "
                 "single-request logits will not match batched / training logits bit for bit. Set ZONOS3_HEAD_MIN_ROWS "
-                "to a row count that reproduces the large-batch kernel.", worst)
+                "to a row count that reproduces the large-batch kernel.",
+                worst,
+            )
         else:
             logger.info_rank0("LM head batch invariance verified (padded to %d rows)", head.min_rows)
 
@@ -418,9 +427,7 @@ class Engine:
             )
             tp_cpu_group = torch.distributed.group.WORLD
             assert tp_cpu_group is not None
-            max_bytes = (
-                config.max_forward_len * config.model_config.hidden_size * self.dtype.itemsize
-            )
+            max_bytes = config.max_forward_len * config.model_config.hidden_size * self.dtype.itemsize
             enable_pynccl_distributed(config.tp_info, tp_cpu_group, max_bytes)
         else:
             torch.distributed.init_process_group(
@@ -436,10 +443,7 @@ class Engine:
 
     def _load_weight_state_dict(self, config: EngineConfig) -> Dict[str, torch.Tensor]:
         if config.use_dummy_weight:
-            return {
-                k: torch.randn_like(v, device=self.device)
-                for k, v in self.model.state_dict().items()
-            }
+            return {k: torch.randn_like(v, device=self.device) for k, v in self.model.state_dict().items()}
         else:
             return {
                 # Expert-selection biases are trained and applied in float32.
@@ -498,15 +502,12 @@ class Engine:
         torch.cuda.reset_peak_memory_stats(self.device)
         free_memory = get_free_memory(self.device)
         free_mem_tensor = torch.tensor([free_memory, -free_memory], device="cpu", dtype=torch.int64)
-        torch.distributed.all_reduce(
-            free_mem_tensor, op=torch.distributed.ReduceOp.MIN, group=self.tp_cpu_group
-        )
+        torch.distributed.all_reduce(free_mem_tensor, op=torch.distributed.ReduceOp.MIN, group=self.tp_cpu_group)
         min_free_memory = int(free_mem_tensor[0].item())
         max_free_memory = -int(free_mem_tensor[1].item())
         if max_free_memory - min_free_memory > 2 * 1024 * 1024 * 1024:
             logger.error(
-                f"Memory across TP ranks are imbalanced:"
-                f" min {mem_GB(min_free_memory)}, max {mem_GB(max_free_memory)}"
+                f"Memory across TP ranks are imbalanced: min {mem_GB(min_free_memory)}, max {mem_GB(max_free_memory)}"
             )
             raise RuntimeError("Memory across TP ranks are imbalanced")
 
@@ -535,8 +536,10 @@ class Engine:
                 )
 
                 align_probe.prepare(
-                    batch, self.graph_runner.probe_static if use_graph else None,
-                    self.model_config.num_qo_heads, self.device,
+                    batch,
+                    self.graph_runner.probe_static if use_graph else None,
+                    self.model_config.num_qo_heads,
+                    self.device,
                 )
             if use_graph:
                 logits = self.graph_runner.replay(batch)

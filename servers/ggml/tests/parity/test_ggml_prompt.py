@@ -37,12 +37,17 @@ FIXTURES = REPO / "model" / "tests" / "fixtures" / "prompt_requests.json"
 ERROR_FIXTURES = REPO / "model" / "tests" / "fixtures" / "request_errors.json"
 MODELS = REPO / "servers" / "ggml" / "models"
 BACKBONES = {
-    "release": (Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
-                os.environ.get("ZONOS3_TEST_MODEL",
-                               "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted")),
-    "phonemes": (Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "zonos3-phonemes-f16.gguf")),
-                 os.environ.get("ZONOS3_PHONEME_MODEL",
-                                "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k")),
+    "release": (
+        Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
+        os.environ.get(
+            "ZONOS3_TEST_MODEL",
+            "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted",
+        ),
+    ),
+    "phonemes": (
+        Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "zonos3-phonemes-f16.gguf")),
+        os.environ.get("ZONOS3_PHONEME_MODEL", "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k"),
+    ),
 }
 BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
@@ -98,8 +103,13 @@ def _assert_same(ggml_ids: Path, ref_ids: Path, what: str) -> None:
     assert ca == cb, f"{what}: cond.json differs"
     assert (ea is None) == (eb is None), f"{what}: speaker embedding presence differs"
     if ea is not None:
-        np.testing.assert_allclose(np.asarray(ea, np.float64), np.asarray(eb, np.float64), rtol=0, atol=1e-6,
-                                   err_msg=f"{what}: speaker embedding")
+        np.testing.assert_allclose(
+            np.asarray(ea, np.float64),
+            np.asarray(eb, np.float64),
+            rtol=0,
+            atol=1e-6,
+            err_msg=f"{what}: speaker embedding",
+        )
 
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=[e["name"] for e in ENTRIES])
@@ -119,9 +129,22 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
     ggml_ids = tmp_path / "ggml.npy"
     steer_flags = ["--steer", str(steer)] if steer is not None else []
     run = subprocess.run(
-        [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(ggml_ids), *steer_flags,
-         "--worker-python", sys.executable, "--python-src", str(REPO / "model" / "src")],
-        capture_output=True, text=True)
+        [
+            str(exe),
+            str(gguf),
+            "--request",
+            str(request),
+            "--build-prompt",
+            str(ggml_ids),
+            *steer_flags,
+            "--worker-python",
+            sys.executable,
+            "--python-src",
+            str(REPO / "model" / "src"),
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 0, run.stderr
 
     plan = plan_prompt(lm, entry["request"], assets=assets, device="cpu")
@@ -131,7 +154,8 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
 
     ggml_twin = tmp_path / "ggml.twin.npy"
     assert ggml_twin.exists() == (plan.twin is not None), (
-        f"{entry['name']}: CFG twin {'missing' if plan.twin is not None else 'unexpected'} (reference: {plan.cfg_kind})")
+        f"{entry['name']}: CFG twin {'missing' if plan.twin is not None else 'unexpected'} (reference: {plan.cfg_kind})"
+    )
     if plan.twin is not None:
         ref_twin = tmp_path / "ref.twin.npy"
         _dump(ref_twin, plan.twin.input_ids, plan.cond_json(plan.twin))
@@ -172,8 +196,11 @@ def test_request_refused(entry, backbone_caps, ggml_build, tmp_path):
     exe = ggml_build / "zonos3-cli"
     if not exe.exists():
         pytest.fail(f"{exe} is not built")
-    run = subprocess.run([str(exe), str(gguf), "--request", str(request), "--build-prompt", str(tmp_path / "ids.npy")],
-                         capture_output=True, text=True)
+    run = subprocess.run(
+        [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(tmp_path / "ids.npy")],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode != 0, f"{entry['name']}: accepted"
     # The refusal is the last stderr line: "<status> {"detail": ...}".
     status, _, body = run.stderr.strip().splitlines()[-1].partition(" ")

@@ -13,9 +13,7 @@ def normalize_special_topk_layers(
         layer_idx = int(layer_idx)
         topk = int(topk)
         if topk < 1:
-            raise ValueError(
-                f"special_topk_layers[{layer_idx}] must be >= 1, got {topk}"
-            )
+            raise ValueError(f"special_topk_layers[{layer_idx}] must be >= 1, got {topk}")
         normalized[layer_idx] = topk
     return normalized
 
@@ -27,9 +25,7 @@ def resolve_layer_topk(
 ) -> int:
     topk = default_topk
     if special_topk_layers is not None:
-        topk = special_topk_layers.get(
-            layer_idx, special_topk_layers.get(str(layer_idx), default_topk)
-        )
+        topk = special_topk_layers.get(layer_idx, special_topk_layers.get(str(layer_idx), default_topk))
 
     topk = int(topk)
     if topk < 1:

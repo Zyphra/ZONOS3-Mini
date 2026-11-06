@@ -57,7 +57,9 @@ def needs(cond, reason: str) -> None:
         pytest.skip(reason)
 
 
-def generate(client: httpx.Client, body: dict, headers: dict | None = None, path: str = "/v2/generate") -> httpx.Response:
+def generate(
+    client: httpx.Client, body: dict, headers: dict | None = None, path: str = "/v2/generate"
+) -> httpx.Response:
     """POST a generation with the suite's short defaults (stream false, max_tokens, seed 1) under ``body``."""
     payload = {"max_tokens": MAX_TOKENS, "seed": 1, **body}
     if path == "/v2/generate":

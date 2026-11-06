@@ -29,9 +29,20 @@ def _app(interval: float = 0.02):
 def _post(path: str, keepalive: bool) -> tuple[int, dict, list[bytes]]:
     """One POST through the ASGI app: (status, headers, body chunks)."""
     headers = [(b"content-type", b"application/json")] + ([(b"x-keepalive", b"1")] if keepalive else [])
-    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
-             "path": path, "raw_path": path.encode(), "root_path": "", "query_string": b"", "headers": headers,
-             "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 80)}
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 1),
+        "server": ("127.0.0.1", 80),
+    }
     sent: list[dict] = []
 
     async def receive():

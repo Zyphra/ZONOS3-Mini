@@ -47,7 +47,7 @@ class TTSSequence:
 
     @property
     def completion_token_ids(self) -> List[List[int]]:
-        return self.token_ids[self.num_prompt_tokens:]
+        return self.token_ids[self.num_prompt_tokens :]
 
     @property
     def last_token(self) -> List[int]:

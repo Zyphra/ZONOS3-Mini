@@ -27,8 +27,7 @@ def _shard_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Te
     ]
 
     gdn_prefixes = tuple(
-        key.removesuffix("in_proj.weight")
-        for key in state_dict if key.endswith(".attention.in_proj.weight")
+        key.removesuffix("in_proj.weight") for key in state_dict if key.endswith(".attention.in_proj.weight")
     )
     for key, value in state_dict.items():
         if gdn_prefixes and key.startswith(gdn_prefixes):

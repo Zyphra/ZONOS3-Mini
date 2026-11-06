@@ -17,8 +17,10 @@ import numpy as np
 
 from zonos3.tts.delay import undelay_window
 
-PREFIX_ERROR = ("prefix stream settings: chunk_frames >= 1, first_chunk_frames >= 1, hold_back_frames >= 0, "
-                "context_frames >= chunk_frames")
+PREFIX_ERROR = (
+    "prefix stream settings: chunk_frames >= 1, first_chunk_frames >= 1, hold_back_frames >= 0, "
+    "context_frames >= chunk_frames"
+)
 
 
 @dataclass(frozen=True)
@@ -42,10 +44,12 @@ class StreamSettings:
         default = cls()
         env = os.environ.get
         try:
-            return cls(chunk=int(env("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", default.chunk)),
-                       first_chunk=int(env("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", default.first_chunk)),
-                       hold_back=int(env("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", default.hold_back)),
-                       context=int(env("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", default.context)))
+            return cls(
+                chunk=int(env("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", default.chunk)),
+                first_chunk=int(env("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", default.first_chunk)),
+                hold_back=int(env("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", default.hold_back)),
+                context=int(env("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", default.context)),
+            )
         except (TypeError, ValueError):
             raise ValueError(PREFIX_ERROR) from None
 
@@ -76,16 +80,29 @@ class StreamDecoder:
     """One request's rows as they come -> float32 PCM. ``decode(codes)`` runs the codec on undelayed int64 codes
     [frames, n_codebooks] (the reference tail prepended at the stream start; its samples are dropped here)."""
 
-    def __init__(self, decode: Callable[[np.ndarray], np.ndarray], *, n_codebooks: int, audio_pad_id: int, hop: int,
-                 prefill_rows=None, context_codes=None, mode: str = "whole", overlap_frames: int = 4,
-                 settings: StreamSettings = StreamSettings()):
+    def __init__(
+        self,
+        decode: Callable[[np.ndarray], np.ndarray],
+        *,
+        n_codebooks: int,
+        audio_pad_id: int,
+        hop: int,
+        prefill_rows=None,
+        context_codes=None,
+        mode: str = "whole",
+        overlap_frames: int = 4,
+        settings: StreamSettings = StreamSettings(),
+    ):
         if mode not in ("whole", "prefix"):
             raise ValueError(f"stream decode mode must be whole or prefix, got {mode!r}")
         self.decode = decode
         self.n_codebooks, self.pad, self.eoa, self.hop = n_codebooks, audio_pad_id, audio_pad_id - 1, hop
         self.mode, self.overlap, self.settings = mode, overlap_frames, settings
-        self.buffer: list[list[int]] = [] if prefill_rows is None else [
-            [int(v) for v in row[:n_codebooks]] for row in _host(prefill_rows).tolist()]
+        self.buffer: list[list[int]] = (
+            []
+            if prefill_rows is None
+            else [[int(v) for v in row[:n_codebooks]] for row in _host(prefill_rows).tolist()]
+        )
         self.prefill = len(self.buffer)
         self.context = None
         if context_codes is not None and len(context_codes):
@@ -101,7 +118,7 @@ class StreamDecoder:
         codes = undelay_window(self.buffer, start, frames_end, self.n_codebooks, self.pad).numpy()
         if start == 0 and self.context is not None:
             audio = self.decode(np.concatenate([self.context, codes], axis=0))
-            return np.asarray(audio, dtype=np.float32)[len(self.context) * self.hop:]
+            return np.asarray(audio, dtype=np.float32)[len(self.context) * self.hop :]
         return np.asarray(self.decode(codes), dtype=np.float32)
 
     def _target(self) -> int:
@@ -155,7 +172,7 @@ class StreamDecoder:
             return np.zeros(0, dtype=np.float32)
         start, decodable = window
         audio = self._decode(start, complete)
-        chunk = audio[(self.emitted - start) * self.hop:(decodable - start) * self.hop]
+        chunk = audio[(self.emitted - start) * self.hop : (decodable - start) * self.hop]
         self.emitted = decodable
         return chunk
 
@@ -164,4 +181,4 @@ class StreamDecoder:
         if target <= 0:
             return np.zeros(0, dtype=np.float32)
         emitted = min(self.emitted, target)
-        return self._decode(0, target)[emitted * self.hop:]
+        return self._decode(0, target)[emitted * self.hop :]

@@ -1,6 +1,7 @@
 """The v2 HTTP surface of the sgl server against api/openapi.json, with a stub frontend (no model): request models
 transcribe the spec, routes live under /v1 and /v2 only, and the generate / speech / speaker responses take the
 v2 shapes (format, X-Seed, voice ids)."""
+
 from __future__ import annotations
 
 import io
@@ -20,18 +21,21 @@ SPEC = json.loads((Path(__file__).resolve().parents[3] / "api" / "openapi.json")
 CODEC = "opus_dual_3n_600k_sched600k_r4096_step600000"
 
 
-@pytest.mark.parametrize("name, model", [
-    ("GenerateRequest", schemas.GenerateRequest),
-    ("SpeechRequest", schemas.SpeechRequest),
-    ("ControlSpan", schemas.ControlSpan),
-    ("SpeakerCreateRequest", schemas.SpeakerCreateRequest),
-    ("PhonemizeRequest", schemas.PhonemizeRequest),
-    ("EditTranscribeRequest", schemas.EditTranscribeRequest),
-    ("EditAlignRequest", schemas.EditAlignRequest),
-    ("EditWordIn", schemas.EditWordIn),
-    ("EditRequest", schemas.EditRequest),
-    ("ProjectPutRequest", schemas.ProjectPutRequest),
-])
+@pytest.mark.parametrize(
+    "name, model",
+    [
+        ("GenerateRequest", schemas.GenerateRequest),
+        ("SpeechRequest", schemas.SpeechRequest),
+        ("ControlSpan", schemas.ControlSpan),
+        ("SpeakerCreateRequest", schemas.SpeakerCreateRequest),
+        ("PhonemizeRequest", schemas.PhonemizeRequest),
+        ("EditTranscribeRequest", schemas.EditTranscribeRequest),
+        ("EditAlignRequest", schemas.EditAlignRequest),
+        ("EditWordIn", schemas.EditWordIn),
+        ("EditRequest", schemas.EditRequest),
+        ("ProjectPutRequest", schemas.ProjectPutRequest),
+    ],
+)
 def test_request_models_transcribe_the_spec(name, model):
     schema = SPEC["components"]["schemas"][name]
     assert schema["additionalProperties"] is False
@@ -46,13 +50,29 @@ def test_request_models_transcribe_the_spec(name, model):
 def _config(tmp_path, **extra):
     fields = {
         "model_path": str(tmp_path / "lm"),
-        "model_config": SimpleNamespace(audio_codec=CODEC, speaker_enabled=True, speaker_embedding_dim=3,
-                                     speaker_reference_prefix_enabled=False, condition_tokens_enabled=False,
-                                     span_end_id=None, text_extra_tokens=0, hidden_size=4, n_codebooks=10,
-                                     audio_pad_id=4097, codebook_sizes=(4096,) * 10),
-        "max_seq_len": 4096, "tts_n_codebooks": 10, "tts_audio_pad_id": 4097, "tts_audio_codec": CODEC,
-        "tts_default_voices_dir": None, "studio_projects_dir": None, "studio_dir": str(tmp_path / "studio"),
-        "accent_adapters": None, "steer_bundle": None, "laci_heads": {},
+        "model_config": SimpleNamespace(
+            audio_codec=CODEC,
+            speaker_enabled=True,
+            speaker_embedding_dim=3,
+            speaker_reference_prefix_enabled=False,
+            condition_tokens_enabled=False,
+            span_end_id=None,
+            text_extra_tokens=0,
+            hidden_size=4,
+            n_codebooks=10,
+            audio_pad_id=4097,
+            codebook_sizes=(4096,) * 10,
+        ),
+        "max_seq_len": 4096,
+        "tts_n_codebooks": 10,
+        "tts_audio_pad_id": 4097,
+        "tts_audio_codec": CODEC,
+        "tts_default_voices_dir": None,
+        "studio_projects_dir": None,
+        "studio_dir": str(tmp_path / "studio"),
+        "accent_adapters": None,
+        "steer_bundle": None,
+        "laci_heads": {},
     }
     return SimpleNamespace(**{**fields, **extra})
 
@@ -99,17 +119,29 @@ def client(frontend):
 
 def test_meta_routes(client, frontend):
     assert client.get("/v2/health").json() == {"status": "ok"}
-    assert client.get("/v1/models").json() == {"object": "list", "data": [
-        {"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra", "root": "lm"}]}
+    assert client.get("/v1/models").json() == {
+        "object": "list",
+        "data": [{"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra", "root": "lm"}],
+    }
     exposed = client.get("/v2/health", headers={"Origin": "https://x.example"}).headers["access-control-expose-headers"]
     assert "X-Seed" in exposed
 
 
-@pytest.mark.parametrize("method, path", [
-    ("GET", "/v1"), ("POST", "/v1"), ("POST", "/tts/generate"), ("GET", "/tts/capabilities"),
-    ("GET", "/projects"), ("GET", "/studio/"), ("GET", "/docs"), ("GET", "/redoc"), ("GET", "/openapi.json"),
-    ("GET", "/v2/nope"),
-])
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("GET", "/v1"),
+        ("POST", "/v1"),
+        ("POST", "/tts/generate"),
+        ("GET", "/tts/capabilities"),
+        ("GET", "/projects"),
+        ("GET", "/studio/"),
+        ("GET", "/docs"),
+        ("GET", "/redoc"),
+        ("GET", "/openapi.json"),
+        ("GET", "/v2/nope"),
+    ],
+)
 def test_removed_paths_are_404(client, method, path):
     r = client.request(method, path)
     assert r.status_code == 404 and isinstance(r.json()["detail"], str)
@@ -122,7 +154,13 @@ def test_studio_cache_rule(client, tmp_path):
         (studio / f"{page}.html").write_text(f'<div id="{page}"></div>')
     (studio / "assets" / "index-abc.js").write_text("export {}")
     # / is the chooser; /studio and /lite are their pages, with or without .html
-    for path, page in (("/", "index"), ("/studio", "studio"), ("/studio.html", "studio"), ("/lite", "lite"), ("/lite.html", "lite")):
+    for path, page in (
+        ("/", "index"),
+        ("/studio", "studio"),
+        ("/studio.html", "studio"),
+        ("/lite", "lite"),
+        ("/lite.html", "lite"),
+    ):
         r = client.get(path)
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
         assert r.headers["cache-control"] == "no-store, max-age=0", path
@@ -133,8 +171,12 @@ def test_studio_cache_rule(client, tmp_path):
     (studio / "icons").mkdir()
     for name in ("sw.js", "manifest.webmanifest", "icons/icon.svg", "theme-boot.js"):
         (studio / name).write_text("x")
-    for path, cache in (("/sw.js", "no-store, max-age=0"), ("/manifest.webmanifest", "no-store, max-age=0"),
-                        ("/icons/icon.svg", "no-cache"), ("/theme-boot.js", "no-cache")):
+    for path, cache in (
+        ("/sw.js", "no-store, max-age=0"),
+        ("/manifest.webmanifest", "no-store, max-age=0"),
+        ("/icons/icon.svg", "no-cache"),
+        ("/theme-boot.js", "no-cache"),
+    ):
         assert client.get(path).headers["cache-control"] == cache, path
     for path in ("/nope.html", "/nope", "/assets/index-abc"):
         assert client.get(path).status_code == 404, path
@@ -178,14 +220,31 @@ def test_silence_prefill_in_range_reaches_the_tokenizer(client, frontend, frames
     assert r.status_code == 200 and frontend.sent[0].silence_prefill_frames == frames
 
 
-@pytest.mark.parametrize("fields", [
-    {"no_such_field": 1}, {"speed": 1.0}, {"prepend_silence": True}, {"quality_buckets": {"a": 1}},
-    {"speaking_rate_bucket": 2}, {"clean_speaker_background": True}, {"accurate_mode": True},
-    {"speaker_wav_base64": "AAAA"}, {"seed": -1}, {"seed": 2**32}, {"headroom_db": 25}, {"tag_cfg_scale": 5},
-    {"speaker_mode": "x"}, {"stream_decode": "x"}, {"format": "mp3"}, {"speaker_blend_t": 2},
-    {"speaker_reference_codes": []}, {"control_spans": [{"start": -1, "end": 2, "controls": {}}]},
-    {"emotion_enabled": True}, {"emotion_cfg_scale": 2.0},
-])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"no_such_field": 1},
+        {"speed": 1.0},
+        {"prepend_silence": True},
+        {"quality_buckets": {"a": 1}},
+        {"speaking_rate_bucket": 2},
+        {"clean_speaker_background": True},
+        {"accurate_mode": True},
+        {"speaker_wav_base64": "AAAA"},
+        {"seed": -1},
+        {"seed": 2**32},
+        {"headroom_db": 25},
+        {"tag_cfg_scale": 5},
+        {"speaker_mode": "x"},
+        {"stream_decode": "x"},
+        {"format": "mp3"},
+        {"speaker_blend_t": 2},
+        {"speaker_reference_codes": []},
+        {"control_spans": [{"start": -1, "end": 2, "controls": {}}]},
+        {"emotion_enabled": True},
+        {"emotion_cfg_scale": 2.0},
+    ],
+)
 def test_schema_violations_are_422(client, frontend, fields):
     r = client.post("/v2/generate", json={"text": "hi", **fields})
     assert r.status_code == 422 and r.json()["detail"][0]["loc"][0] == "body"
@@ -200,11 +259,20 @@ def _default_voice(client):
 def test_speakers_take_the_v2_shape(client):
     voice = _default_voice(client)
     assert voice == {
-        "id": voice["id"], "label": "Alice", "source_type": "embedding", "scope": "default", "is_default": True,
-        "original_name": "Alice.npy", "created_at": voice["created_at"], "has_preview": False,
-        "speaker_modes": ["embedding"], "embedding_dim": 3, "transcript": None, "disabled_controls": [],
+        "id": voice["id"],
+        "label": "Alice",
+        "source_type": "embedding",
+        "scope": "default",
+        "is_default": True,
+        "original_name": "Alice.npy",
+        "created_at": voice["created_at"],
+        "has_preview": False,
+        "speaker_modes": ["embedding"],
+        "embedding_dim": 3,
+        "transcript": None,
+        "disabled_controls": [],
     }
-    assert client.post("/v2/speakers", json={"label": "x"}).status_code == 400            # no session header
+    assert client.post("/v2/speakers", json={"label": "x"}).status_code == 400  # no session header
     assert client.post("/v2/speakers", json={"speaker_wav_base64": "AAAA"}).status_code == 422
 
 
@@ -219,19 +287,27 @@ def test_speech_voice_is_a_speaker_id(client, frontend):
 
 
 def test_speech_voice_from_the_session_cache(client, frontend):
-    entry = api_server.CachedSpeakerReference(speaker_id="spk_1", label="s", source_type="embedding",
-                                              embedding=api_server.torch.tensor([1.0, 0.0, 0.0]), created_at=0.0)
+    entry = api_server.CachedSpeakerReference(
+        speaker_id="spk_1",
+        label="s",
+        source_type="embedding",
+        embedding=api_server.torch.tensor([1.0, 0.0, 0.0]),
+        created_at=0.0,
+    )
     api_server._SESSION_SPEAKER_CACHE["sess"] = {"spk_1": entry}
     body = {"model": "m", "input": "hi", "voice": "spk_1"}
-    assert client.post("/v1/audio/speech", json=body).status_code == 400              # another session
+    assert client.post("/v1/audio/speech", json=body).status_code == 400  # another session
     assert client.post("/v1/audio/speech", json=body, headers={"X-TTS-Session-ID": "sess"}).status_code == 200
 
 
-@pytest.mark.parametrize("fields, status", [
-    ({"voice": "alloy"}, 400),
-    ({"voice": "alloy", "speaker_audio_base64": "AAAA"}, 400),
-    ({"speed": 1.0}, 422),
-])
+@pytest.mark.parametrize(
+    "fields, status",
+    [
+        ({"voice": "alloy"}, 400),
+        ({"voice": "alloy", "speaker_audio_base64": "AAAA"}, 400),
+        ({"speed": 1.0}, 422),
+    ],
+)
 def test_speech_refusals(client, frontend, fields, status):
     r = client.post("/v1/audio/speech", json={"model": "m", "input": "hi", **fields})
     assert r.status_code == status

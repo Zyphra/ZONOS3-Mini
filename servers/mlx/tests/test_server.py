@@ -39,8 +39,21 @@ CODES = np.load(FIXTURES / "dummy-zac-codes.npy").astype(np.int32)  # [40, 10]
 @pytest.fixture(scope="module")
 def files(tmp_path_factory):
     root = tmp_path_factory.mktemp("srv")
-    subprocess.run([sys.executable, str(REPO / "servers/ggml/scripts/make-dummy-model.py"), "-o", str(root / "m.gguf"),
-                    "--edit-markers", "3", "--span-end", "--phonemes", PHONES], check=True, capture_output=True)
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "servers/ggml/scripts/make-dummy-model.py"),
+            "-o",
+            str(root / "m.gguf"),
+            "--edit-markers",
+            "3",
+            "--span-end",
+            "--phonemes",
+            PHONES,
+        ],
+        check=True,
+        capture_output=True,
+    )
     (root / "zac-keep2.gguf").write_bytes((FIXTURES / "dummy-zac.gguf").read_bytes())
     lexicon = root / "lexicon.lmdb"
     env = lmdb.open(str(lexicon), map_size=1 << 24, max_dbs=8, subdir=True)
@@ -85,7 +98,13 @@ def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path, monkey
     (tmp_path / "assets" / "index-abc.js").write_text("export {}")
     monkeypatch.setattr(client.app.state.zonos3.options, "studio_dir", tmp_path)
     # / is the chooser; /studio and /lite are their pages, with or without .html
-    for path, page in (("/", "index"), ("/studio", "studio"), ("/studio.html", "studio"), ("/lite", "lite"), ("/lite.html", "lite")):
+    for path, page in (
+        ("/", "index"),
+        ("/studio", "studio"),
+        ("/studio.html", "studio"),
+        ("/lite", "lite"),
+        ("/lite.html", "lite"),
+    ):
         r = client.get(path)
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
         assert r.headers["cache-control"] == "no-store, max-age=0", path
@@ -105,7 +124,7 @@ def test_prefix_stream_is_the_whole_decode_without_the_silence_prefill(client):
         streamed = np.frombuffer(b"".join(r.iter_bytes()), np.float32)
     whole = np.frombuffer(client.post("/v2/generate", json={**body, "stream": False}).content, np.float32)
     assert len(streamed) > 0 and len(whole) == len(streamed) + 3 * HOP
-    np.testing.assert_allclose(whole[3 * HOP:], streamed, atol=1e-5)
+    np.testing.assert_allclose(whole[3 * HOP :], streamed, atol=1e-5)
 
 
 def test_request_limits_follow_the_shared_rules(client):
@@ -127,14 +146,26 @@ def test_edit_keeps_the_unedited_audio_and_reports_the_fill(client, monkeypatch)
         return torch.from_numpy(CODES)
 
     monkeypatch.setattr(speakers, "encode_reference", fixture_codes)
-    r = client.post("/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hello world", "spans": [[1.0, 1.6]],
-                                      "speaker_embedding": False, "seed": 7, "num_takes": 2, "min_fill_ratio": 0.0,
-                                      "max_span_seconds": 2.0})
+    r = client.post(
+        "/v2/edit",
+        json={
+            "audio_base64": wav_b64(),
+            "target_text": "hello world",
+            "spans": [[1.0, 1.6]],
+            "speaker_embedding": False,
+            "seed": 7,
+            "num_takes": 2,
+            "min_fill_ratio": 0.0,
+            "max_span_seconds": 2.0,
+        },
+    )
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["spans"] == [[1.0, 1.6]] and [t["seed"] for t in d["takes"]] == [7, 8]
     client_app = client.app.state.zonos3
-    original = client_app.engine.decoder.decode(CODES.astype(np.int64)) * np.float32(client_app.engine.output_gain(None))
+    original = client_app.engine.decoder.decode(CODES.astype(np.int64)) * np.float32(
+        client_app.engine.output_gain(None)
+    )
     original = pcm16_samples(original)
     for take in d["takes"]:
         fill = round(take["fill_seconds"][0] * 15)
@@ -164,8 +195,10 @@ class FakeAligner:
 
     def align(self, items):
         self.items += items
-        return [[{"word": t, "start": 0.1, "end": 0.9, "presence": 0.5, "placed": True} for t in it["tokens"]]
-                for it in items]
+        return [
+            [{"word": t, "start": 0.1, "end": 0.9, "presence": 0.5, "placed": True} for t in it["tokens"]]
+            for it in items
+        ]
 
     def close(self):
         self.closed = True
@@ -204,7 +237,10 @@ def test_edit_transcribe_and_align_time_words_with_fusealign(client, monkeypatch
     assert r.status_code == 200, r.text
     assert r.json()["text"] == "hello there world" and r.json()["duration"] == pytest.approx(2.0)
     assert [(w["word"], w["tokens"], w["confidence"]) for w in r.json()["words"]] == [
-        ("hello", ["HELLO"], 0.5), ("there", ["THERE"], 0.5), ("world", ["WORLD"], 0.5)]
+        ("hello", ["HELLO"], 0.5),
+        ("there", ["THERE"], 0.5),
+        ("world", ["WORLD"], 0.5),
+    ]
     assert [(it.get("start"), it["language"]) for it in asr.items] == [(None, "French")]  # 2 s: one whole-clip item
     assert aligner.items[0] == {"audio": aligner.items[0]["audio"], "tokens": ["hello", "there", "world"]}
 
@@ -257,8 +293,9 @@ def test_edit_refuses_bad_condition_buckets_before_recognition(client, monkeypat
     monkeypatch.setattr(state, "aligner", FakeAligner())
     monkeypatch.setattr(state, "asr", asr)
     monkeypatch.setattr(state, "edit_runtime", None)
-    r = client.post("/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hello world",
-                                      "condition_buckets": {"nope": 1}})
+    r = client.post(
+        "/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hello world", "condition_buckets": {"nope": 1}}
+    )
     assert r.status_code == 400 and r.json()["detail"]
     assert asr.items == []
 
@@ -296,9 +333,13 @@ def test_plugin_host_shares_the_server_asr_and_fusealign_workers(files, monkeypa
     engine = Engine.load(files / "m.gguf")
     scheduler = Scheduler(engine, batch=1)
     scheduler.start(warmup=False)
-    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=1,
-                                                         studio_dir=files, plugins=("fake",)),
-                        asr=asr, aligner=aligner)
+    state = ServerState(
+        engine,
+        scheduler,
+        ServerOptions(model_path=str(files / "m.gguf"), batch=1, studio_dir=files, plugins=("fake",)),
+        asr=asr,
+        aligner=aligner,
+    )
     state.plugins = plugins.load(state.options.plugins)
     with TestClient(create_app(state)) as c:
         assert c.get("/v2/capabilities").json()["plugins"] == ["fake"]
@@ -327,8 +368,11 @@ def test_phonemize_marks_pronunciations_outside_the_phone_inventory(client):
 def test_session_voices_are_scoped_to_their_session(client):
     buf = io.BytesIO()
     np.save(buf, np.random.default_rng(0).standard_normal(192).astype(np.float32))
-    created = client.post("/v2/speakers", headers={"X-TTS-Session-ID": "a"}, json={
-        "speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode(), "speaker_embedding_name": "v.npy"})
+    created = client.post(
+        "/v2/speakers",
+        headers={"X-TTS-Session-ID": "a"},
+        json={"speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode(), "speaker_embedding_name": "v.npy"},
+    )
     assert created.status_code == 200
     voice = created.json()
     assert voice["source_type"] == "embedding" and voice["speaker_modes"] == ["embedding"]
@@ -337,22 +381,33 @@ def test_session_voices_are_scoped_to_their_session(client):
         return [s["id"] for s in client.get("/v2/speakers", headers={"X-TTS-Session-ID": session}).json()["speakers"]]
 
     assert voice["id"] in ids("a") and voice["id"] not in ids("b")
-    body = {"model": "zonos3", "input": "hi", "voice": voice["id"], "response_format": "wav", "max_tokens": 20,
-            "speaker_mode": "embedding"}
+    body = {
+        "model": "zonos3",
+        "input": "hi",
+        "voice": voice["id"],
+        "response_format": "wav",
+        "max_tokens": 20,
+        "speaker_mode": "embedding",
+    }
     assert client.post("/v1/audio/speech", headers={"X-TTS-Session-ID": "a"}, json=body).status_code == 200
     other = client.post("/v1/audio/speech", headers={"X-TTS-Session-ID": "b"}, json=body)
     assert other.status_code == 400 and "unknown voice" in other.json()["detail"]
     # the default speaker mode is the raw reference prefix, which an embedding voice cannot supply
-    reference = client.post("/v1/audio/speech", headers={"X-TTS-Session-ID": "a"},
-                            json={**body, "speaker_mode": None})
+    reference = client.post("/v1/audio/speech", headers={"X-TTS-Session-ID": "a"}, json={**body, "speaker_mode": None})
     assert reference.status_code == 400 and "no reference audio" in reference.json()["detail"]
 
 
 def test_cfg_needs_two_slots(files):
     buf = io.BytesIO()
     np.save(buf, np.ones(192, np.float32))
-    body = {"text": "hi", "stream": False, "max_tokens": 10, "speaker_mode": "embedding", "speaker_cfg_scale": 1.5,
-            "speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode()}
+    body = {
+        "text": "hi",
+        "stream": False,
+        "max_tokens": 10,
+        "speaker_mode": "embedding",
+        "speaker_cfg_scale": 1.5,
+        "speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode(),
+    }
     with make_client(files, batch=1) as one:
         assert one.get("/v2/capabilities").json()["speaker_cfg_supported"] is False
         r = one.post("/v2/generate", json=body)
@@ -371,13 +426,22 @@ def steered(files, tmp_path_factory):
 
     root = tmp_path_factory.mktemp("steer")
     rng = np.random.default_rng(5)
-    for name, space, dim, direction, extra in (("who", "raw", 192, "gender", {}),
-                                               ("mood", "attnres_source", 32, "valence", {"source_index": 1})):
+    for name, space, dim, direction, extra in (
+        ("who", "raw", 192, "gender", {}),
+        ("mood", "attnres_source", 32, "valence", {"source_index": 1}),
+    ):
         (root / name).mkdir()
         np.save(root / name / f"{direction}.npy", rng.standard_normal(dim).astype(np.float32))
-        (root / name / "manifest.json").write_text(json.dumps(
-            {"dim": dim, "space": space, "directions": {direction: {"file": f"{direction}.npy", "kind": "axis"}},
-             **extra}))
+        (root / name / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "dim": dim,
+                    "space": space,
+                    "directions": {direction: {"file": f"{direction}.npy", "kind": "axis"}},
+                    **extra,
+                }
+            )
+        )
     (root / "mood" / "calibration.json").write_text(json.dumps(CALIBRATION))
     bundle = root / "bundle.json"
     bundle.write_text(json.dumps({"name": "tiny", "sets": {"who": "who", "mood": "mood"}, "ui": {}}))
@@ -387,8 +451,9 @@ def steered(files, tmp_path_factory):
     engine = Engine.load(files / "m.gguf", steer=str(root / "steer.gguf"))
     scheduler = Scheduler(engine, batch=2)
     scheduler.start(warmup=False)
-    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=2,
-                                                         default_voices_dir=root / "voices"))
+    state = ServerState(
+        engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=2, default_voices_dir=root / "voices")
+    )
     with TestClient(create_app(state)) as c:
         yield c, bundle
 
@@ -403,8 +468,11 @@ def test_steer_gguf_serves_the_set_calibrations_in_controls_and_speakers(steered
     assert voices[VOICE_ID]["disabled_controls"] == ["mood.valence-"]
     buf = io.BytesIO()
     np.save(buf, np.ones(192, np.float32))
-    created = client.post("/v2/speakers", headers={"X-TTS-Session-ID": "s"}, json={
-        "speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode(), "speaker_embedding_name": "u.npy"})
+    created = client.post(
+        "/v2/speakers",
+        headers={"X-TTS-Session-ID": "s"},
+        json={"speaker_embedding_base64": base64.b64encode(buf.getvalue()).decode(), "speaker_embedding_name": "u.npy"},
+    )
     assert created.status_code == 200 and created.json()["disabled_controls"] == []
 
 

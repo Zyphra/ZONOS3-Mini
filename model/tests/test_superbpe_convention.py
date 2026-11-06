@@ -1,4 +1,5 @@
 """SuperBPE text ids: BOS 2, payload ids + 4, EOS 3, pinned to the training artifact by SHA-256."""
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,15 @@ def spec(tmp_path):
     tokenizer, size = wordlevel_spec(["hello", "world", "[UNK]"], whitespace=True)
     path = tmp_path / "superbpe.json"
     path.write_text(tokenizer)
-    return {"kind": "superbpe", "path": str(path), "sha256": sha256_file(path), "vocab_size": size, "offset": 4, "bos": 2, "eos": 3}
+    return {
+        "kind": "superbpe",
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "vocab_size": size,
+        "offset": 4,
+        "bos": 2,
+        "eos": 3,
+    }
 
 
 def test_text_ids_follow_the_training_convention(spec):
@@ -48,5 +57,7 @@ def test_load_spec_reads_params_json(spec, tmp_path):
 
     legacy = tmp_path / "legacy"
     legacy.mkdir()
-    (legacy / "params.json").write_text(json.dumps({"model": {"audio_codec": "opus_dual_3n_600k_sched600k_r4096_step600000", "text_vocab": 448}}))
+    (legacy / "params.json").write_text(
+        json.dumps({"model": {"audio_codec": "opus_dual_3n_600k_sched600k_r4096_step600000", "text_vocab": 448}})
+    )
     assert load_spec(legacy) is None  # byte-level text, no spec needed

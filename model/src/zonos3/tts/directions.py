@@ -144,8 +144,9 @@ class DirectionSet:
             source_index = int(manifest["source_index"])
             if source_index < 0:
                 raise ValueError(f"source_index must be >= 0, got {source_index} ({manifest_path})")
-        directions = cls(dim=dim, named=named, axes=axes, space=space, source_index=source_index,
-                         calibration=Calibration.load(root))
+        directions = cls(
+            dim=dim, named=named, axes=axes, space=space, source_index=source_index, calibration=Calibration.load(root)
+        )
         if directions.is_empty():
             logger.warning("Direction set manifest at %s contains no directions.", manifest_path)
         return directions

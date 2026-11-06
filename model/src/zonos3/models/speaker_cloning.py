@@ -106,9 +106,7 @@ class _AttentiveStatisticsPooling(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         weights = self.attention(x.transpose(1, 2)).transpose(1, 2)
         mean = torch.sum(x * weights, dim=1)
-        std = torch.sqrt(
-            (torch.sum(x.square() * weights, dim=1) - mean.square()).clamp(min=1e-5)
-        )
+        std = torch.sqrt((torch.sum(x.square() * weights, dim=1) - mean.square()).clamp(min=1e-5))
         return torch.cat([mean, std], dim=1)
 
 
@@ -180,9 +178,7 @@ class W2VBertSVSpeakerEmbedding(nn.Module):
         try:
             state = checkpoint["modules"]["spk_model"]
         except (KeyError, TypeError) as exc:
-            raise ValueError(
-                "W2V-BERT speaker checkpoint must contain modules.spk_model."
-            ) from exc
+            raise ValueError("W2V-BERT speaker checkpoint must contain modules.spk_model.") from exc
         self.load_state_dict(state, strict=True)
         del checkpoint, state
 
@@ -228,9 +224,7 @@ class W2VBertSVSpeakerEmbedding(nn.Module):
         input_features = self._extract_features(wav)
 
         autocast = (
-            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-            if self.device.type == "cuda"
-            else nullcontext()
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16) if self.device.type == "cuda" else nullcontext()
         )
         with autocast:
             x = self.front.encoder.feature_projection(input_features)[0]
@@ -239,10 +233,7 @@ class W2VBertSVSpeakerEmbedding(nn.Module):
                 x = layer(x)[0]
                 hidden_states.append(x)
 
-            adapted = [
-                adapter(hidden)
-                for adapter, hidden in zip(self.adapter_layers, hidden_states, strict=True)
-            ]
+            adapted = [adapter(hidden) for adapter, hidden in zip(self.adapter_layers, hidden_states, strict=True)]
             x = torch.cat(adapted, dim=-1)
             x = self.pooling(x)
             x = self.bottleneck(x)

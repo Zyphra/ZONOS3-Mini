@@ -14,11 +14,7 @@ from zonos3_sgl.models.weight import _normalize_zonos3_state_dict
 
 
 def test_weight_loader_materializes_effective_zero_mean_balancing_bias():
-    state = {
-        "layers.3.feed_forward.router.parametrizations.balancing_biases.original": (
-            torch.tensor([1.0, 2.0, 6.0])
-        )
-    }
+    state = {"layers.3.feed_forward.router.parametrizations.balancing_biases.original": (torch.tensor([1.0, 2.0, 6.0]))}
 
     normalized = _normalize_zonos3_state_dict(state)
 
@@ -31,9 +27,7 @@ def test_convert_model_state_normalizes_training_and_sonic_keys():
     state = {
         "layers.3.feed_forward.experts.w13": torch.arange(4.0).reshape(1, 4, 1),
         "layers.3.feed_forward.experts.w2": torch.ones(1, 1, 2),
-        "layers.3.feed_forward.router.parametrizations.balancing_biases.original": (
-            torch.tensor([1.0, 2.0, 6.0])
-        ),
+        "layers.3.feed_forward.router.parametrizations.balancing_biases.original": (torch.tensor([1.0, 2.0, 6.0])),
         "layers.3.feed_forward.router.ent_denom": torch.tensor(2.0),
         "out_norm.weight": torch.ones(2),
     }

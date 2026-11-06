@@ -133,8 +133,9 @@ def load_adapter(path: str | Path) -> AccentAdapter:
     grown = None
     if fmt == FORMAT_GROWN:
         g = adapter["grown"]
-        grown = GrownVocabulary(int(g["span_end_id"]), int(g["text_extra_tokens"]),
-                                {name: rows.float() for name, rows in g["rows"].items()})
+        grown = GrownVocabulary(
+            int(g["span_end_id"]), int(g["text_extra_tokens"]), {name: rows.float() for name, rows in g["rows"].items()}
+        )
     router_bias: dict[str, torch.Tensor] = {}
     for target, shift in adapter["exact"].items():
         served, zero_mean = served_exact_name(target)
@@ -142,8 +143,7 @@ def load_adapter(path: str | Path) -> AccentAdapter:
             continue
         if not served.endswith(".router" + BALANCING_BIASES):
             raise ValueError(
-                f"{path}: shifts {target}; accent serving applies only linear "
-                "factors and router balancing biases"
+                f"{path}: shifts {target}; accent serving applies only linear factors and router balancing biases"
             )
         shift = shift.float()
         if zero_mean:
@@ -180,9 +180,7 @@ def load_adapter(path: str | Path) -> AccentAdapter:
             raise ValueError(f"accent adapter factor {target!r} is not a weight")
         module = target.removesuffix(".weight")
         if lora_target(module) is None:
-            raise ValueError(
-                f"accent adapter shifts {module!r}, outside the LoRA targets {', '.join(TARGETS)}"
-            )
+            raise ValueError(f"accent adapter shifts {module!r}, outside the LoRA targets {', '.join(TARGETS)}")
         linear[module] = (pair["down"].float(), pair["up"].float().T)
         shapes[module] = tuple(pair["shape"])
     return AccentAdapter(path.stem, fmt, linear, shapes, experts, router_bias, grown)
@@ -199,8 +197,11 @@ def fit_head(adapter: AccentAdapter, head_rows: int) -> AccentAdapter:
     down, up = adapter.linear["multi_output"]
     k = up.shape[0]
     up = torch.cat((up.view(k, n_codebooks, -1), up.new_zeros(k, n_codebooks, 1)), 2).reshape(k, head_rows)
-    return replace(adapter, linear={**adapter.linear, "multi_output": (down, up)},
-                   shapes={**adapter.shapes, "multi_output": (head_rows, *shape[1:])})
+    return replace(
+        adapter,
+        linear={**adapter.linear, "multi_output": (down, up)},
+        shapes={**adapter.shapes, "multi_output": (head_rows, *shape[1:])},
+    )
 
 
 def adapter_format(path: str | Path) -> str | None:
@@ -211,8 +212,11 @@ def adapter_format(path: str | Path) -> str | None:
 def edit_adapter(directory: str | Path | None) -> str | None:
     """The speech-edit adapter of a directory: its one ``/3`` adapter (edit fills run on it at strength 1, and it is not
     offered as an accent); None without one."""
-    names = [n for n in (list_accent_adapters(directory) if directory else ())
-             if adapter_format(Path(directory) / f"{n}.pt") == FORMAT_GROWN]
+    names = [
+        n
+        for n in (list_accent_adapters(directory) if directory else ())
+        if adapter_format(Path(directory) / f"{n}.pt") == FORMAT_GROWN
+    ]
     if len(names) > 1:
         raise ValueError(f"{directory}: more than one {FORMAT_GROWN} adapter ({', '.join(names)}); edit takes one")
     return names[0] if names else None
@@ -224,8 +228,9 @@ def grown_vocabulary(directory: str | Path | None) -> GrownVocabulary | None:
     if name is None:
         return None
     g = torch.load(Path(directory) / f"{name}.pt", map_location="cpu", weights_only=True, mmap=True)["grown"]
-    return GrownVocabulary(int(g["span_end_id"]), int(g["text_extra_tokens"]),
-                           {key: rows.float() for key, rows in g["rows"].items()})
+    return GrownVocabulary(
+        int(g["span_end_id"]), int(g["text_extra_tokens"]), {key: rows.float() for key, rows in g["rows"].items()}
+    )
 
 
 def grow_state_dict(state: dict[str, torch.Tensor], grown: GrownVocabulary, *, n_codebooks: int) -> dict:
@@ -271,6 +276,13 @@ def grow_adapter(adapter: dict, rows_before: dict[str, int], grown: dict) -> dic
         if new.shape != rows[name].shape:
             raise ValueError(f"grow_adapter: {name} new-row shift {tuple(new.shape)} != rows {tuple(rows[name].shape)}")
         rows[name] += new
-    return {**adapter, "format": FORMAT_GROWN, "exact": exact,
-            "grown": {"span_end_id": int(grown["span_end_id"]), "text_extra_tokens": int(grown["text_extra_tokens"]),
-                      "rows": {name: value.contiguous() for name, value in rows.items()}}}
+    return {
+        **adapter,
+        "format": FORMAT_GROWN,
+        "exact": exact,
+        "grown": {
+            "span_end_id": int(grown["span_end_id"]),
+            "text_extra_tokens": int(grown["text_extra_tokens"]),
+            "rows": {name: value.contiguous() for name, value in rows.items()},
+        },
+    }

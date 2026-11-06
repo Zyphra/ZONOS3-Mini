@@ -11,6 +11,7 @@ tests/readme-commands.sh sees disabled_controls ["style.whisper", "mood.valence-
 Usage:  PYTHONPATH=model/src:tools python servers/ggml/scripts/make-dummy-steer.py \
             -o servers/ggml/tests/fixtures/dummy-steer.gguf
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,22 +30,67 @@ CALIBRATIONS = {
 }
 
 UI = {
-    "groups": [{"id": "who", "label": "Who", "hue": "c1"}, {"id": "delivery", "label": "Delivery", "hue": "c5"},
-               {"id": "mood", "label": "Mood", "hue": "c6"}],
+    "groups": [
+        {"id": "who", "label": "Who", "hue": "c1"},
+        {"id": "delivery", "label": "Delivery", "hue": "c5"},
+        {"id": "mood", "label": "Mood", "hue": "c6"},
+    ],
     "controls": [
-        {"id": "gender", "label": "Gender", "type": "bipolar", "group": "who", "poles": ["masculine", "feminine"],
-         "map": {"-": {"who.gender": -1}, "+": {"who.gender": 1}}, "range": [-3, 3], "safe": [-2, 2],
-         "collapse": None, "spannable": False, "identity": [[0, 0.95], [2, 0.6]],
-         "effect": "Shifts perceived speaker gender."},
-        {"id": "pace", "label": "Pace", "type": "bipolar", "group": "delivery", "poles": ["slower", "faster"],
-         "map": {"-": {"style.tempo": -1}, "+": {"style.tempo": 1}}, "range": [-3, 3], "safe": [-2, 2],
-         "collapse": [-3, None], "spannable": True, "identity": None, "effect": "Speaking rate."},
-        {"id": "whisper", "label": "Whisper", "type": "unipolar", "group": "delivery",
-         "map": {"+": {"style.whisper": 1}}, "range": [0, 4], "safe": [0, 2], "collapse": None,
-         "spannable": True, "identity": None, "effect": "Breathy, unvoiced delivery."},
-        {"id": "valence", "label": "Valence", "type": "bipolar", "group": "mood", "poles": ["negative", "positive"],
-         "map": {"-": {"mood.valence": -1}, "+": {"mood.valence": 1}}, "range": [-6, 6], "safe": [-4, 4],
-         "collapse": None, "spannable": True, "identity": None, "effect": "Emotional valence."},
+        {
+            "id": "gender",
+            "label": "Gender",
+            "type": "bipolar",
+            "group": "who",
+            "poles": ["masculine", "feminine"],
+            "map": {"-": {"who.gender": -1}, "+": {"who.gender": 1}},
+            "range": [-3, 3],
+            "safe": [-2, 2],
+            "collapse": None,
+            "spannable": False,
+            "identity": [[0, 0.95], [2, 0.6]],
+            "effect": "Shifts perceived speaker gender.",
+        },
+        {
+            "id": "pace",
+            "label": "Pace",
+            "type": "bipolar",
+            "group": "delivery",
+            "poles": ["slower", "faster"],
+            "map": {"-": {"style.tempo": -1}, "+": {"style.tempo": 1}},
+            "range": [-3, 3],
+            "safe": [-2, 2],
+            "collapse": [-3, None],
+            "spannable": True,
+            "identity": None,
+            "effect": "Speaking rate.",
+        },
+        {
+            "id": "whisper",
+            "label": "Whisper",
+            "type": "unipolar",
+            "group": "delivery",
+            "map": {"+": {"style.whisper": 1}},
+            "range": [0, 4],
+            "safe": [0, 2],
+            "collapse": None,
+            "spannable": True,
+            "identity": None,
+            "effect": "Breathy, unvoiced delivery.",
+        },
+        {
+            "id": "valence",
+            "label": "Valence",
+            "type": "bipolar",
+            "group": "mood",
+            "poles": ["negative", "positive"],
+            "map": {"-": {"mood.valence": -1}, "+": {"mood.valence": 1}},
+            "range": [-6, 6],
+            "safe": [-4, 4],
+            "collapse": None,
+            "spannable": True,
+            "identity": None,
+            "effect": "Emotional valence.",
+        },
     ],
     "accents": [],
     "presets": {"Test persona": {"gender": 1, "pace": -1}},
@@ -84,8 +130,16 @@ def main():
         make_set("style", "attnres_source", 32, 2.0, [("whisper", None), ("tempo", "axis")], source=3)
         make_set("mood", "attnres_source", 32, 2.0, [("valence", "axis")], source=5)
         bundle = tmp / "bundle.json"
-        bundle.write_text(json.dumps({"name": "dummy-steer", "sets": sets,
-                                      "timing": {"style.tempo": [[-2, 2.0], [0, 1.0], [2, 0.5]]}, "ui": UI}))
+        bundle.write_text(
+            json.dumps(
+                {
+                    "name": "dummy-steer",
+                    "sets": sets,
+                    "timing": {"style.tempo": [[-2, 2.0], [0, 1.0], [2, 0.5]]},
+                    "ui": UI,
+                }
+            )
+        )
         convert_gguf.main(["steer", str(bundle), "-o", str(args.out)])
 
 

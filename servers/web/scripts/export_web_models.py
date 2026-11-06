@@ -12,6 +12,7 @@ The speech-edit adapter edit/ (the edit vocabulary's grown rows and the edit/acc
 applies at runtime on top of backbone/, see "speech-edit adapter" below) is checked against the MLX server's runtime
 adapter by scripts/check_edit_export.py.
 """
+
 import argparse
 import hashlib
 import json
@@ -31,8 +32,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --------------------------------------------------------------------------- GGUF reader
 
-FLOAT_DTYPES = {GGMLQuantizationType.F32: np.float32, GGMLQuantizationType.F16: np.float16,
-                GGMLQuantizationType.F64: np.float64}
+FLOAT_DTYPES = {
+    GGMLQuantizationType.F32: np.float32,
+    GGMLQuantizationType.F16: np.float16,
+    GGMLQuantizationType.F64: np.float64,
+}
 EXPORT_TYPES = (*FLOAT_DTYPES, GGMLQuantizationType.Q4_0, GGMLQuantizationType.Q8_0)
 
 
@@ -52,7 +56,7 @@ class Gguf:
 
     def raw(self, name):
         t = self.tensors[name]
-        return self.reader.data[t.data_offset:t.data_offset + t.n_bytes]
+        return self.reader.data[t.data_offset : t.data_offset + t.n_bytes]
 
     def arr(self, name):
         """Tensor as numpy array in C order shape = reversed(ne) (f32/f16/f64 only)."""
@@ -72,12 +76,13 @@ class Gguf:
         for k, v in self.kv.items():
             if k == "general.alignment":
                 continue
-            key = k[len(arch) + 1:] if arch and k.startswith(arch + ".") else k
+            key = k[len(arch) + 1 :] if arch and k.startswith(arch + ".") else k
             out[key] = v
         return out
 
 
 # --------------------------------------------------------------------------- bf16 conversion
+
 
 def bf16_bits(a):
     """ggml_fp32_to_bf16 (round to nearest, ties to even) of finite float32 values, as uint16 bits."""
@@ -91,6 +96,7 @@ def bf16_round(a):
 
 
 # --------------------------------------------------------------------------- shard writer
+
 
 class Writer:
     def __init__(self, out_dir, model, meta, shard_prefix="shard-"):
@@ -164,8 +170,15 @@ class Writer:
         off, nb = self._write(qs)
         self._pad()
         soff, snb = self._write(d)
-        self.tensors[name] = {"dtype": dtype, "shape": list(shape), "shard": len(self.shards) - 1,
-                              "offset": off, "nbytes": nb, "scales_offset": soff, "scales_nbytes": snb}
+        self.tensors[name] = {
+            "dtype": dtype,
+            "shape": list(shape),
+            "shard": len(self.shards) - 1,
+            "offset": off,
+            "nbytes": nb,
+            "scales_offset": soff,
+            "scales_nbytes": snb,
+        }
 
     def add_q8(self, name, raw, shape):
         self._add_blocks(name, raw, shape, "q8", 34)
@@ -185,12 +198,16 @@ class Writer:
     def finish(self):
         if self.f:
             self.f.close()
-        man = {"format": "zonos3-web-v1", "model": self.model, "meta": self.meta,
-               "shards": self.shards, "tensors": self.tensors}
+        man = {
+            "format": "zonos3-web-v1",
+            "model": self.model,
+            "meta": self.meta,
+            "shards": self.shards,
+            "tensors": self.tensors,
+        }
         with open(os.path.join(self.dir, "manifest.json"), "w") as f:
             json.dump(man, f, indent=1)
-        print(f"{self.model}: {len(self.tensors)} tensors, {len(self.shards)} shards, "
-              f"{self.total / 1e9:.3f} GB")
+        print(f"{self.model}: {len(self.tensors)} tensors, {len(self.shards)} shards, {self.total / 1e9:.3f} GB")
 
 
 def copy_plain(w, g, name):
@@ -208,6 +225,7 @@ def copy_plain(w, g, name):
 # --------------------------------------------------------------------------- backbone
 #
 # backbone/ is the release LM (zonos3-ptq.gguf).
+
 
 def check_tokenizer(meta, path):
     """Pops tokenizer.json from a backbone meta; it must be src/superbpe8192.json."""
@@ -286,6 +304,7 @@ def export_backbone(path, out):
 # The manifest meta is the edit GGUF's (its vocabulary) plus text_extra_tokens and adapter.{base,name,rank}; adapter.base
 # is backbone/'s general.name, which the runtime requires.
 
+
 def edit_adapter(path, ncb, head_rows):
     """The zonos-accent-lora/3 slot of an accents.gguf: (name, rank, {base: (down, up)} f32 factors, {layer: shift})."""
     a = Gguf(path)
@@ -301,7 +320,7 @@ def edit_adapter(path, ncb, head_rows):
     for name in a.tensors:
         if not name.startswith(prefix):
             continue
-        rest = name[len(prefix):]
+        rest = name[len(prefix) :]
         if rest.endswith(".router_bias"):
             shifts[int(rest.split(".")[1])] = a.arr(name).astype(np.float32)
             continue
@@ -312,7 +331,9 @@ def edit_adapter(path, ncb, head_rows):
         down, up = p["lora_down"], p["lora_up"]
         if base == "output" and up.shape[0] == head_rows - ncb:
             k = up.shape[1]
-            up = np.concatenate([up.reshape(ncb, -1, k), np.zeros((ncb, 1, k), np.float32)], axis=1).reshape(head_rows, k)
+            up = np.concatenate([up.reshape(ncb, -1, k), np.zeros((ncb, 1, k), np.float32)], axis=1).reshape(
+                head_rows, k
+            )
         factors[base] = (down, up)
     return names[edits[0]], int(a.kv["zonos3_accents.rank"][edits[0]]), factors, shifts
 
@@ -393,7 +414,7 @@ def export_edit(release, edit, adapter, out):
             for b, nr in zip(qkvg, rows):
                 if b in factors:
                     d, u = factors[b]
-                    up[r0:r0 + nr, k0:k0 + d.shape[0]] = u
+                    up[r0 : r0 + nr, k0 : k0 + d.shape[0]] = u
                     k0 += d.shape[0]
                 r0 += nr
             add(f"blk.{L}.attn_qkvg.lora_down", np.concatenate(downs, axis=0))
@@ -425,8 +446,13 @@ ZAC_HOST = {"resample.kernel", "head.mixer.weight", "head.window.0", "head.windo
 
 def is_zac_mat(n):
     """quantize.cpp is_zac_mat: the MOSS transformer, semantic-head and iSTFT-head matrices."""
-    return (n.startswith("stage.") or n.startswith("sem_head.") or n.startswith("head.")) and \
-        n.endswith(".weight") and ".dw." not in n and "norm" not in n and n != "head.mixer.weight"
+    return (
+        (n.startswith("stage.") or n.startswith("sem_head.") or n.startswith("head."))
+        and n.endswith(".weight")
+        and ".dw." not in n
+        and "norm" not in n
+        and n != "head.mixer.weight"
+    )
 
 
 def export_zac(path, out):
@@ -471,12 +497,14 @@ def export_zac(path, out):
 # every matrix a BF16 GEMM reads is stored as bf16 (round to nearest even of the F32 checkpoint, exactly
 # ggml_fp32_to_bf16), and the remaining tensors keep the values the native loaders give them.
 
+
 def is_encoder_linear(n, ne):
     """zac_encoder_load linear_matrix: converted to a BF16 tensor (2-D stage matrices, the semantic projections and
     the ConvNeXt pointwise matrices)."""
     stage_matrix = n.startswith("stage.") and ".weight" in n and "norm" not in n
-    return len(ne) == 2 and (stage_matrix or n in ("sem_enc.in.weight", "sem_head.out.weight") or
-                             ".pw1.weight" in n or ".pw2.weight" in n)
+    return len(ne) == 2 and (
+        stage_matrix or n in ("sem_enc.in.weight", "sem_head.out.weight") or ".pw1.weight" in n or ".pw2.weight" in n
+    )
 
 
 def is_encoder_autocast(n):
@@ -507,7 +535,7 @@ def export_encoder(path, out):
             # K=7 causal conv on 1 channel as a 2-tap gemm over 16-sample rows:
             # y[16t+r][c] = sum_k W[k][c] x[16t+r+k-6]; tap 0 reads row t-1, tap 1 row t.
             a = g.arr(name).astype(np.float32).reshape(7, 64)  # W[k][c]
-            rep = np.zeros((2, 16, 64, 16), np.float32)        # [tap][r][c][i]
+            rep = np.zeros((2, 16, 64, 16), np.float32)  # [tap][r][c][i]
             for r in range(16):
                 for i in range(16):
                     k0, k1 = i - 10 - r, i - r + 6
@@ -595,20 +623,21 @@ def export_spk(path, out):
                     raise SystemExit(f"{sj}: expected a [3,3,1,OC] grouped-conv slot")
                 slots.append(g.arr(sj).astype(np.float32))  # (OC, 1, 3, 3)
                 done.add(sj)
-            cat = np.concatenate(slots, axis=1)            # (OC, a, 3, 3)
+            cat = np.concatenate(slots, axis=1)  # (OC, a, 3, 3)
             w.add(stem + ".weight", cat, "f32", [3, 3, a, ne[3]])
             continue
         if name.endswith(".pos.dw.weight"):
-            p = name[:-len("dw.weight")]
-            K, C = ne                                       # a: (C, K)
+            p = name[: -len("dw.weight")]
+            K, C = ne  # a: (C, K)
             scale = g.arr(p + "bn.scale").astype(np.float32)
             wt = (g.arr(name).astype(np.float32) * scale[:, None]).T  # (K, C)
             w.add(name, np.ascontiguousarray(wt), "f32", [C, K])
             continue
         if name.endswith(".pos.dw.bias"):
-            p = name[:-len("dw.bias")]
-            b = g.arr(name).astype(np.float32) * g.arr(p + "bn.scale").astype(np.float32) + \
-                g.arr(p + "bn.shift").astype(np.float32)
+            p = name[: -len("dw.bias")]
+            b = g.arr(name).astype(np.float32) * g.arr(p + "bn.scale").astype(np.float32) + g.arr(
+                p + "bn.shift"
+            ).astype(np.float32)
             w.add(name, b.astype(np.float32), "f32", ne)
             continue
         if ".pos.bn." in name:  # folded into pos.dw
@@ -640,7 +669,7 @@ def export_voices(voices, out):
         stem, ext = os.path.splitext(fn)
         if ext.lower() not in AUDIO_EXTS:
             continue
-        prefix = rel[:len(rel) - len(fn)] + stem
+        prefix = rel[: len(rel) - len(fn)] + stem
         codes_rel, emb_rel = prefix + ".codes.npy", prefix + ".embedding.npy"
         src_codes, src_emb = os.path.join(root, codes_rel), os.path.join(root, emb_rel)
         missing = [n for n, p in ((codes_rel, src_codes), (emb_rel, src_emb)) if not os.path.isfile(p)]
@@ -652,7 +681,9 @@ def export_voices(voices, out):
             raise SystemExit(f"voice {rel}: reference codes have shape {codes.shape}, expected [T,10]")
         emb = np.load(src_emb, allow_pickle=False)
         if emb.dtype != np.float32 or emb.shape != (192,) or not np.isfinite(emb).all():
-            raise SystemExit(f"voice {rel}: speaker embedding is {emb.dtype} {emb.shape}, expected finite float32 [192]")
+            raise SystemExit(
+                f"voice {rel}: speaker embedding is {emb.dtype} {emb.shape}, expected finite float32 [192]"
+            )
         os.makedirs(os.path.dirname(os.path.join(vdir, rel)), exist_ok=True)
         for r in (rel, codes_rel, emb_rel):
             shutil.copyfile(os.path.join(root, r), os.path.join(vdir, r))
@@ -705,26 +736,34 @@ def export_laci(laci, out):
 # --------------------------------------------------------------------------- main
 
 EDIT_FILES = ("zonos3-ptq-edit.gguf", "edit/accents.gguf")
-MODEL_FILES = ("zonos3-ptq.gguf", "zac-keep2.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf") + \
-    COMPANIONS + EDIT_FILES
+MODEL_FILES = (
+    ("zonos3-ptq.gguf", "zac-keep2.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf")
+    + COMPANIONS
+    + EDIT_FILES
+)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", required=True, help="directory with the ZONOS3 Mini GGUFs")
-    ap.add_argument("--voices", required=True,
-                    help="default voice directory (clips + <stem>.codes.npy + <stem>.embedding.npy)")
+    ap.add_argument(
+        "--voices", required=True, help="default voice directory (clips + <stem>.codes.npy + <stem>.embedding.npy)"
+    )
     ap.add_argument("--laci", required=True, help="LACI alignment head directory")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     for fn in MODEL_FILES:
         path = os.path.join(a.models, fn)
         if not os.path.isfile(path):
-            raise SystemExit(f"missing {path}: hf download Zyphra/ZONOS3_Mini_GGUF {fn} --local-dir servers/ggml/models")
+            raise SystemExit(
+                f"missing {path}: hf download Zyphra/ZONOS3_Mini_GGUF {fn} --local-dir servers/ggml/models"
+            )
     m = a.models
     os.makedirs(a.out, exist_ok=True)
     export_backbone(os.path.join(m, "zonos3-ptq.gguf"), a.out)
-    export_edit(os.path.join(m, "zonos3-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out)
+    export_edit(
+        os.path.join(m, "zonos3-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out
+    )
     export_zac(os.path.join(m, "zac-keep2.gguf"), a.out)
     export_encoder(os.path.join(m, "zac-encoder.gguf"), a.out)
     export_teacher(os.path.join(m, "ssl-teacher.gguf"), a.out)

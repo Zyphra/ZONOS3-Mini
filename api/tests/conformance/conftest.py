@@ -21,7 +21,9 @@ from .support import REPO, check, needs
 
 def pytest_addoption(parser):
     parser.addoption("--base-url", default=os.environ.get("ZONOS3_API_URL"), help="server under test")
-    parser.addoption("--api-token", default=os.environ.get("ZONOS3_API_TOKEN"), help="ZONOS3_ACCESS_TOKEN of the server")
+    parser.addoption(
+        "--api-token", default=os.environ.get("ZONOS3_API_TOKEN"), help="ZONOS3_ACCESS_TOKEN of the server"
+    )
 
 
 def pytest_collection_modifyitems(config, items):

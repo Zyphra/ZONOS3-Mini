@@ -64,7 +64,11 @@ class CodecEncoder:
             raise ValueError(f"{enc_path}: invalid mossdual_encoder GGUF (architecture {f.arch!r})")
         k = lambda key: f.meta(f"{ARCH}.{key}")  # noqa: E731
         if (int(k("lane_frames")), int(k("context_frames")), int(k("hop")), int(k("internal_hop"))) != (
-                LANE, CONTEXT, HOP, INTERNAL_HOP):
+            LANE,
+            CONTEXT,
+            HOP,
+            INTERNAL_HOP,
+        ):
             raise ValueError(f"{enc_path}: unexpected encoder recipe dimensions")
         self.path = str(enc_path)
         self.ssl = ssl
@@ -90,8 +94,9 @@ class CodecEncoder:
         for name in [n for n in self.P.t if n.endswith(".dw.weight")]:
             self.P.t[name] = self.P.t[name].T
         # Acoustic convs are stored tap-major numpy [K, OC, IC] -> MLX conv1d [OC, K, IC], BF16 values.
-        self.conv = {n.removesuffix(".weight"): bf16_round(mx.array(self.P.host.pop(n).transpose(1, 0, 2)))
-                     for n in conv_weights}
+        self.conv = {
+            n.removesuffix(".weight"): bf16_round(mx.array(self.P.host.pop(n).transpose(1, 0, 2))) for n in conv_weights
+        }
         mx.eval(list(self.conv.values()) + list(self.P.t.values()) + [W.w for W in self.P.w.values()])
 
     @classmethod
@@ -143,6 +148,7 @@ class CodecEncoder:
     def _semantic(self, x: mx.array, encode: bool) -> mx.array:
         """Semantic encoder (pooled SSL -> 768) or semantic head (q1 -> 1024 prediction): zac-encoder.cpp
         ``semantic_module``; the WNConv / output projections round before and after their bias."""
+
         def projection(name: str, h: mx.array) -> mx.array:
             return bf16_round(bf16_round(self.P.lin(name + ".weight", bf16_round(h))) + self.P.t[name + ".bias"])
 
@@ -196,7 +202,9 @@ class CodecEncoder:
             count = min(frames - start, LANE - context)
             left = start - context
             lane = np.zeros(LANE * INTERNAL_HOP, dtype=np.float32)
-            lane[: (context + count) * INTERNAL_HOP] = internal[left * INTERNAL_HOP : (left + context + count) * INTERNAL_HOP]
+            lane[: (context + count) * INTERNAL_HOP] = internal[
+                left * INTERNAL_HOP : (left + context + count) * INTERNAL_HOP
+            ]
             teacher = np.zeros(LANE * HOP, dtype=np.float32)
             t0 = left * HOP
             tn = min(n - t0, (context + count) * HOP)

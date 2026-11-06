@@ -10,6 +10,7 @@ Which encoder serves which training codec comes from the speaker encoder registr
 ZONOS3_SPEAKER_ENCODER_REGISTRY, default `zonos3/registries/speaker_encoder_registry.json`): `{codec: {type: "mect_fbank",
 checkpoint, sha256, backbone_type, backbone_config, pooling, embed_dim, sample_rate, max_seconds, fbank}}`.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,7 +62,9 @@ class MECTFbankSpeakerEmbedding(nn.Module):
     def __init__(self, entry: dict, device: str | torch.device = "cuda"):
         super().__init__()
         if entry.get("type") != self.TYPE:
-            raise ValueError(f"speaker encoder entry {entry.get('codec')!r} is of type {entry.get('type')!r}, not {self.TYPE!r}")
+            raise ValueError(
+                f"speaker encoder entry {entry.get('codec')!r} is of type {entry.get('type')!r}, not {self.TYPE!r}"
+            )
         self.codec = str(entry.get("codec", ""))
         self.device = torch.device(device)
         self.sample_rate = int(entry.get("sample_rate", 16_000))
@@ -85,7 +88,10 @@ class MECTFbankSpeakerEmbedding(nn.Module):
         cfg = {
             "type": "VPR",
             "config": {
-                "backbone": {"type": str(entry.get("backbone_type", "MECT_B2")), "config": dict(entry.get("backbone_config") or {})},
+                "backbone": {
+                    "type": str(entry.get("backbone_type", "MECT_B2")),
+                    "config": dict(entry.get("backbone_config") or {}),
+                },
                 "pooling": {"type": str(entry.get("pooling", "ASTP"))},
                 "embed_dim": self.embedding_dim,
             },
@@ -107,7 +113,9 @@ class MECTFbankSpeakerEmbedding(nn.Module):
             state = torch.load(path, map_location="cpu", weights_only=True)
             if isinstance(state, dict) and "modules" in state:
                 state = state["modules"]["spk_model"]
-            state = {k: v for k, v in state.items() if not k.startswith("bfbank.")}  # training-only batched fbank buffers
+            state = {
+                k: v for k, v in state.items() if not k.startswith("bfbank.")
+            }  # training-only batched fbank buffers
             self.load_state_dict(state, strict=True)
             del state
         self.checkpoint = str(checkpoint or "")

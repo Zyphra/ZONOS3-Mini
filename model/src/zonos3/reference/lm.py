@@ -171,14 +171,20 @@ class Zonos3LMConfig:
             _unsupported("text_extra_tokens", extra)
         spec = p.get("text_tokenizer_spec")
         if spec is not None:
-            if (spec.get("kind"), spec.get("offset"), spec.get("bos"), spec.get("eos")) != ("superbpe", 4, 2, 3) \
-                    or int(spec.get("vocab_size", -1)) + 4 != text_vocab:
-                _unsupported("text_tokenizer_spec", {k: spec.get(k) for k in ("kind", "offset", "bos", "eos", "vocab_size")})
+            if (spec.get("kind"), spec.get("offset"), spec.get("bos"), spec.get("eos")) != ("superbpe", 4, 2, 3) or int(
+                spec.get("vocab_size", -1)
+            ) + 4 != text_vocab:
+                _unsupported(
+                    "text_tokenizer_spec", {k: spec.get(k) for k in ("kind", "offset", "bos", "eos", "vocab_size")}
+                )
             phonemes = spec.get("phonemes")
             if phonemes is not None:
                 from zonos3.tts.superbpe import phoneme_token_count, rows_before_phonemes
 
-                if int(phonemes["open_id"]) < text_vocab + 1 or int(phonemes["close_id"]) != int(phonemes["open_id"]) + 1:
+                if (
+                    int(phonemes["open_id"]) < text_vocab + 1
+                    or int(phonemes["close_id"]) != int(phonemes["open_id"]) + 1
+                ):
                     _unsupported("text_tokenizer_spec.phonemes ids", (phonemes["open_id"], phonemes["close_id"]))
                 if rows_before_phonemes(spec, text_vocab) + phoneme_token_count(spec) != extra:
                     _unsupported("text_tokenizer_spec.phonemes vs text_extra_tokens", extra)
@@ -202,23 +208,45 @@ class Zonos3LMConfig:
             _unsupported("condition_bucket_counts", p.get("condition_bucket_counts"))
         edges = {str(k): tuple(float(v) for v in vs) for k, vs in (p.get("condition_edges") or {}).items()}
         for name, values in edges.items():
-            if name not in names or len(values) != counts[names.index(name)] - 1 \
-                    or not all(math.isfinite(v) for v in values) or any(b <= a for a, b in zip(values, values[1:])):
+            if (
+                name not in names
+                or len(values) != counts[names.index(name)] - 1
+                or not all(math.isfinite(v) for v in values)
+                or any(b <= a for a, b in zip(values, values[1:]))
+            ):
                 _unsupported(f"condition_edges.{name}", values)
         return cls(
-            n_layers=n_layers, dim=dim, head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads,
-            norm_eps=float(p["norm_eps"]), rope_theta=float(p["rope_theta"]), max_seqlen=int(p["max_seqlen"]),
-            loss_softcap=float(p["loss_softcap"]), gdn_period=int(pattern.group(1)) + 1,
-            ffn_hidden=_round_up(ffn_mult * dim, multiple_of), moe_hidden=_round_up(moe_mult * dim, moe_multiple_of),
-            moe_routed_dim=max(1, int(round(dim * alpha))), n_experts=n_experts, moe_topk=int(p["moe_router_topk"]),
-            n_codebooks=n_codebooks, codebook_size=codebook_size, eoa_id=int(p["eoa_id"]),
-            audio_pad_id=int(p["audio_pad_id"]), span_end_id=None if span_end_id is None else int(span_end_id),
-            text_vocab=text_vocab, text_extra_tokens=extra, text_tokenizer_spec=spec,
+            n_layers=n_layers,
+            dim=dim,
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            norm_eps=float(p["norm_eps"]),
+            rope_theta=float(p["rope_theta"]),
+            max_seqlen=int(p["max_seqlen"]),
+            loss_softcap=float(p["loss_softcap"]),
+            gdn_period=int(pattern.group(1)) + 1,
+            ffn_hidden=_round_up(ffn_mult * dim, multiple_of),
+            moe_hidden=_round_up(moe_mult * dim, moe_multiple_of),
+            moe_routed_dim=max(1, int(round(dim * alpha))),
+            n_experts=n_experts,
+            moe_topk=int(p["moe_router_topk"]),
+            n_codebooks=n_codebooks,
+            codebook_size=codebook_size,
+            eoa_id=int(p["eoa_id"]),
+            audio_pad_id=int(p["audio_pad_id"]),
+            span_end_id=None if span_end_id is None else int(span_end_id),
+            text_vocab=text_vocab,
+            text_extra_tokens=extra,
+            text_tokenizer_spec=spec,
             speaker_embedding_dim=int(p["speaker_embedding_dim"]),
             speaker_embedding_codec=p.get("speaker_embedding_codec"),
             speaker_reference_prefix_enabled=bool(p.get("speaker_reference_prefix_enabled", False)),
             speaker_reference_max_seconds=float(p.get("speaker_reference_max_seconds", 30.0)),
-            condition_count=count, condition_bucket_counts=counts, condition_names=names, condition_edges=edges,
+            condition_count=count,
+            condition_bucket_counts=counts,
+            condition_names=names,
+            condition_edges=edges,
             condition_units={str(k): str(v) for k, v in (p.get("condition_units") or {}).items()},
             audio_codec=str(p.get("audio_codec", "")),
         )
@@ -414,8 +442,10 @@ class Zonos3LM(nn.Module):
         if (c.span_end_id, c.text_extra_tokens) == (grown.span_end_id, grown.text_extra_tokens):
             return self
         if c.span_end_id is not None or c.text_extra_tokens:
-            raise ValueError(f"grow: the model already has span_end_id {c.span_end_id} and {c.text_extra_tokens} extra "
-                             f"text rows; the adapter wants {grown.span_end_id} and {grown.text_extra_tokens}")
+            raise ValueError(
+                f"grow: the model already has span_end_id {c.span_end_id} and {c.text_extra_tokens} extra "
+                f"text rows; the adapter wants {grown.span_end_id} and {grown.text_extra_tokens}"
+            )
         new = replace(c, span_end_id=int(grown.span_end_id), text_extra_tokens=int(grown.text_extra_tokens))
         if new.audio_vocab != c.audio_vocab + 1 or new.span_end_id != c.codebook_size + 2:
             raise ValueError("grow: the span-end id must be the one row after the audio pad id")
@@ -432,8 +462,9 @@ class Zonos3LM(nn.Module):
         if tuple(extra.shape) != (c.n_codebooks, c.dim):
             raise ValueError(f"grow: multi_output.weight new rows {tuple(extra.shape)} != {(c.n_codebooks, c.dim)}")
         blocks = head.view(c.n_codebooks, c.audio_vocab, c.dim)
-        self.multi_output.weight = nn.Parameter(torch.cat((blocks, extra[:, None]), 1).reshape(-1, c.dim),
-                                                requires_grad=False)
+        self.multi_output.weight = nn.Parameter(
+            torch.cat((blocks, extra[:, None]), 1).reshape(-1, c.dim), requires_grad=False
+        )
         self.config = new
         return self
 
@@ -496,8 +527,9 @@ class Zonos3LM(nn.Module):
         key = k.to(q.dtype).repeat_interleave(rep, 1).transpose(0, 1)
         value = v.to(q.dtype).repeat_interleave(rep, 1).transpose(0, 1)
         mask = torch.arange(len(k), device=x.device)[None, :] <= positions[:, None]
-        out = F.scaled_dot_product_attention(q.transpose(0, 1), key, value,
-                                             attn_mask=mask, scale=hd ** -0.5).transpose(0, 1)
+        out = F.scaled_dot_product_attention(q.transpose(0, 1), key, value, attn_mask=mask, scale=hd**-0.5).transpose(
+            0, 1
+        )
         if probe is not None:
             queries[layer] = q
             if probe.windows:
@@ -516,7 +548,7 @@ class Zonos3LM(nn.Module):
                 continue
             lo, hi = clip_window(window, probe.text_len)
             outside = in_text & ((tidx < lo) | (tidx > hi))
-            logits = (q[:, head].float() @ k[:, head // rep].float().T) * self.config.head_dim ** -0.5
+            logits = (q[:, head].float() @ k[:, head // rep].float().T) * self.config.head_dim**-0.5
             weights = torch.softmax(logits.masked_fill(outside[None, :] | ~causal, float("-inf")), dim=-1)
             out[:, head] = (weights @ v[:, head // rep].float()).to(out.dtype)
         return out
@@ -533,7 +565,7 @@ class Zonos3LM(nn.Module):
         # Depthwise causal cross-correlation: weight[0] is oldest, weight[-1] current.
         conv = F.conv1d(sequence.unsqueeze(0), a.conv.weight, groups=channels)
         conv = F.silu(conv.squeeze(0).T)
-        cache.conv_state[layer] = sequence[:, -(kernel - 1):].clone()
+        cache.conv_state[layer] = sequence[:, -(kernel - 1) :].clone()
         q, k, v = [part.reshape(len(x), heads, hd).float() for part in conv.split(inner, -1)]
         q = q * torch.rsqrt(q.square().sum(-1, keepdim=True) + 1e-6)
         k = k * torch.rsqrt(k.square().sum(-1, keepdim=True) + 1e-6)
@@ -547,17 +579,25 @@ class Zonos3LM(nn.Module):
             prediction = (state * k[token, :, None, :]).sum(-1)
             delta = beta[token, :, None] * (v[token] - prediction)
             state = state + delta[:, :, None] * k[token, :, None, :]
-            outputs.append((state * (q[token] * hd ** -0.5)[:, None, :]).sum(-1))
+            outputs.append((state * (q[token] * hd**-0.5)[:, None, :]).sum(-1))
         cache.gdn_state[layer] = state
         recurrent = torch.stack(outputs).to(x.dtype)
         # FLA's rms_norm_gated has fixed eps=1e-5 and swish gate, per head.
         normalized = self._rms(recurrent, a.out_weight, eps=1e-5)
         gated = (normalized.float() * F.silu(z.reshape(len(x), heads, hd).float())).to(x.dtype).reshape(len(x), inner)
         if self._capture is not None:
-            for name, tensor in (("gdn_conv", conv), ("gdn_q", q), ("gdn_k", k), ("gdn_v", v),
-                                 ("gdn_decay", decay), ("gdn_beta", beta), ("gdn_recurrent", recurrent),
-                                 ("gdn_gated", gated), ("gdn_state", state),
-                                 ("gdn_conv_state", cache.conv_state[layer])):
+            for name, tensor in (
+                ("gdn_conv", conv),
+                ("gdn_q", q),
+                ("gdn_k", k),
+                ("gdn_v", v),
+                ("gdn_decay", decay),
+                ("gdn_beta", beta),
+                ("gdn_recurrent", recurrent),
+                ("gdn_gated", gated),
+                ("gdn_state", state),
+                ("gdn_conv_state", cache.conv_state[layer]),
+            ):
                 self._save(f"{name}_{layer}", tensor)
         return self._lin(p + "wo", gated, a.wo.weight)
 
@@ -683,8 +723,9 @@ class Zonos3LM(nn.Module):
             self._save("attnres_final", mixed)
             normalized = self._rms(mixed, self.out_norm.weight)
             self._save("out_norm", normalized)
-            logits = self._lin("multi_output", normalized, self.multi_output.weight).view(len(ids), c.n_codebooks,
-                                                                                          c.audio_vocab)
+            logits = self._lin("multi_output", normalized, self.multi_output.weight).view(
+                len(ids), c.n_codebooks, c.audio_vocab
+            )
             logits = c.loss_softcap * torch.tanh(logits / c.loss_softcap)
             self._save("logits", logits)
             cache.position = lo + len(ids)
@@ -700,7 +741,13 @@ class Zonos3LM(nn.Module):
         keys = torch.stack([cache.kv[layer][0][text] for layer in layers])
         rows = len(probe_queries[layers[0]])
         return [
-            readout(torch.stack([probe_queries[layer][r] for layer in layers]), keys, layers, weights, probe.windows,
-                    self.config.head_dim ** -0.5)
+            readout(
+                torch.stack([probe_queries[layer][r] for layer in layers]),
+                keys,
+                layers,
+                weights,
+                probe.windows,
+                self.config.head_dim**-0.5,
+            )
             for r in range(rows)
         ]

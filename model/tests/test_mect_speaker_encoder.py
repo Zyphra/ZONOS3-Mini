@@ -1,4 +1,5 @@
 """The speaker encoder registry + the vendored MECT-B2 encoder (ownmect_s2) behind speaker_mode=embedding."""
+
 import json
 from pathlib import Path
 
@@ -10,12 +11,29 @@ ms = pytest.importorskip("zonos3.models.mect_speaker")
 from zonos3.utils.release import resolve_file  # noqa: E402
 
 ENTRY = {
-    "type": "mect_fbank", "backbone_type": "MECT_B2",
-    "backbone_config": {"moe_type": "token", "num_experts_shard": 2, "num_experts_token": 4, "top_k_shard": None,
-                        "top_k_token": None, "shard_scale": 1.0},
-    "pooling": "ASTP", "embed_dim": 192, "sample_rate": 16000, "max_seconds": 60,
-    "fbank": {"num_mel_bins": 80, "frame_length": 25, "frame_shift": 10, "dither": 0.0, "energy_floor": 0.0,
-              "window_type": "hamming", "scale": 32768},
+    "type": "mect_fbank",
+    "backbone_type": "MECT_B2",
+    "backbone_config": {
+        "moe_type": "token",
+        "num_experts_shard": 2,
+        "num_experts_token": 4,
+        "top_k_shard": None,
+        "top_k_token": None,
+        "shard_scale": 1.0,
+    },
+    "pooling": "ASTP",
+    "embed_dim": 192,
+    "sample_rate": 16000,
+    "max_seconds": 60,
+    "fbank": {
+        "num_mel_bins": 80,
+        "frame_length": 25,
+        "frame_shift": 10,
+        "dither": 0.0,
+        "energy_floor": 0.0,
+        "window_type": "hamming",
+        "scale": 32768,
+    },
 }
 
 

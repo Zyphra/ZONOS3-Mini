@@ -26,8 +26,11 @@ def test_models(client):
 def test_cors_preflight_and_exposed_headers(client):
     r = client.options(
         "/v2/generate",
-        headers={"Origin": "https://studio.example", "Access-Control-Request-Method": "POST",
-                 "Access-Control-Request-Headers": "content-type"},
+        headers={
+            "Origin": "https://studio.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
     )
     assert r.status_code in (200, 204), r.text
     assert r.headers.get("access-control-allow-origin") in ("*", "https://studio.example")
@@ -91,8 +94,15 @@ def test_studio_page_holds_the_app(client, index):
 
 @pytest.mark.parametrize(
     ("method", "path"),
-    [("GET", "/studio/"), ("GET", "/v1"), ("POST", "/tts/generate"), ("GET", "/tts/capabilities"),
-     ("GET", "/v2/nope"), ("GET", "/v2/"), ("POST", "/v2/nope")],
+    [
+        ("GET", "/studio/"),
+        ("GET", "/v1"),
+        ("POST", "/tts/generate"),
+        ("GET", "/tts/capabilities"),
+        ("GET", "/v2/nope"),
+        ("GET", "/v2/"),
+        ("POST", "/v2/nope"),
+    ],
 )
 def test_unknown_paths_are_404(client, method, path):
     r = client.request(method, path, json={"text": "x"} if method == "POST" else None)

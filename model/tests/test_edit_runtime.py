@@ -15,8 +15,9 @@ from zonos3.tts.edit_runtime import EditModel, EditRuntime, edit_capabilities
 K = 4
 FRAME_RATE = 10.0
 FRAMES = 30  # a 3 s clip
-MODEL = EditModel(frame_rate=FRAME_RATE, n_codebooks=K, audio_pad_id=1024, codebook_sizes=(1024,) * K, max_spans=4,
-                  speaker_row=True)
+MODEL = EditModel(
+    frame_rate=FRAME_RATE, n_codebooks=K, audio_pad_id=1024, codebook_sizes=(1024,) * K, max_spans=4, speaker_row=True
+)
 CLIP = base64.b64encode(b"an upload").decode("ascii")
 
 
@@ -81,13 +82,19 @@ class FakeAligner:
     def align(self, items):
         assert self.enabled, "the edit aligned words"
         self.aligned.extend(items)
-        return [[{"word": t, "start": 0.2 * i, "end": 0.2 * i + 0.15, "presence": 0.9, "placed": True}
-                 for i, t in enumerate(item["tokens"])] for item in items]
+        return [
+            [
+                {"word": t, "start": 0.2 * i, "end": 0.2 * i + 0.15, "presence": 0.9, "placed": True}
+                for i, t in enumerate(item["tokens"])
+            ]
+            for item in items
+        ]
 
 
 def edit(runtime: EditRuntime, **body) -> dict:
-    return asyncio.run(runtime.edit(EditRequest(audio_base64=CLIP, target_text="hello brave new world", seed=5,
-                                                **body)))
+    return asyncio.run(
+        runtime.edit(EditRequest(audio_base64=CLIP, target_text="hello brave new world", seed=5, **body))
+    )
 
 
 def test_unedited_frames_survive_the_splice_and_spans_skip_transcription():
@@ -131,8 +138,13 @@ def test_region_controls():
         edit(runtime, spans=[[0.5, 1.0], [2.0, 2.5]], region_controls=[{"a.b": 1.0}])
 
     engine = FakeEngine()
-    edit(EditRuntime(engine, FakeAsr(), FakeAligner()), spans=[[0.5, 1.0], [2.0, 2.5]], min_fill_ratio=0.0,
-         controls={"a.b": 1.0}, region_controls=[{"a.b": -1.0}, {"c.d": 0.5}])
+    edit(
+        EditRuntime(engine, FakeAsr(), FakeAligner()),
+        spans=[[0.5, 1.0], [2.0, 2.5]],
+        min_fill_ratio=0.0,
+        controls={"a.b": 1.0},
+        region_controls=[{"a.b": -1.0}, {"c.d": 0.5}],
+    )
     assert engine.checked == [[{}, {"a.b": 1.0, "c.d": 0.5}]]
     assert [job.controls for job in engine.jobs] == [{}, {"a.b": 1.0, "c.d": 0.5}]
     assert [len(job.fills) for job in engine.jobs] == [0, 1]  # region 1 sees region 0's fill
@@ -140,8 +152,12 @@ def test_region_controls():
 
 def test_verify_reports_the_take_transcript_and_words():
     aligner = FakeAligner(enabled=True)
-    out = edit(EditRuntime(FakeEngine(), FakeAsr(heard="hello brave new world"), aligner), spans=[[1.0, 1.5]],
-               min_fill_ratio=0.0, verify=True)
+    out = edit(
+        EditRuntime(FakeEngine(), FakeAsr(heard="hello brave new world"), aligner),
+        spans=[[1.0, 1.5]],
+        min_fill_ratio=0.0,
+        verify=True,
+    )
     (take,) = out["takes"]
     assert take["verify"] == {"asr_text": "hello brave new world", "wer": 0.0, "cer": 0.0}
     assert [w["word"] for w in take["words"]] == ["hello", "brave", "new", "world"]
@@ -155,8 +171,14 @@ NO_ASR = [None, AsrWorker(python="/nonexistent/.venv-asr/bin/python")]  # no wor
 
 def test_edit_capabilities():
     on = edit_capabilities(MODEL, True, True)
-    assert on == {"speech_editing": True, "edit_transcribe": True, "edit_max_spans": 4, "edit_frame_rate": FRAME_RATE,
-                  "edit_max_seconds": on["edit_max_seconds"], "edit_align_max_seconds": on["edit_align_max_seconds"]}
+    assert on == {
+        "speech_editing": True,
+        "edit_transcribe": True,
+        "edit_max_spans": 4,
+        "edit_frame_rate": FRAME_RATE,
+        "edit_max_seconds": on["edit_max_seconds"],
+        "edit_align_max_seconds": on["edit_align_max_seconds"],
+    }
     assert edit_capabilities(MODEL, True, False)["edit_transcribe"] is False
     assert edit_capabilities(MODEL, True, False)["speech_editing"] is True
     off = edit_capabilities(MODEL, False, True)
@@ -195,8 +217,12 @@ def test_without_asr_align_and_edit_with_the_transcript(asr):
     out = edit(EditRuntime(engine, asr, aligner), original_text="hello brave old world")
     assert out["original_text"] == "hello brave old world" and [w["word"] for w in out["words"]][2] == "old"
     assert len(engine.jobs) == 1 and len(out["spans"]) == 1
-    assert edit(EditRuntime(FakeEngine(), asr, FakeAligner()), spans=[[1.0, 1.5]],
-                min_fill_ratio=0.0)["takes"][0]["verify"] is None  # explicit spans need neither worker's words
+    assert (
+        edit(EditRuntime(FakeEngine(), asr, FakeAligner()), spans=[[1.0, 1.5]], min_fill_ratio=0.0)["takes"][0][
+            "verify"
+        ]
+        is None
+    )  # explicit spans need neither worker's words
 
 
 def test_language_is_checked_without_asr():

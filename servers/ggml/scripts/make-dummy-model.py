@@ -19,6 +19,7 @@ The GGUF carries zonos3.text_tokenizer_spec like `tools/convert_gguf.py lm`. --e
 marker rows after the text padding row, --phonemes adds a phoneme block (U+E000 / U+E001 groups over the code points
 of SYMBOLS) as the last extra text rows, and --span-end writes zonos3.span_end_id (= audio_pad_id + 1, audio_vocab + 1).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,30 +35,30 @@ ARCH = "zonos3"
 TOKENIZER_SHA256 = "90322f910600027dee7fe63d400d1d9dc1035c167d560aadf0871e3661d08bf3"
 
 # --- shrunk compute dims (free to change) ---
-DIM       = 32          # n_embd
-HEAD_DIM  = 16
-N_HEAD    = 2           # N_HEAD*HEAD_DIM == DIM
-N_KV      = 1           # GQA: divides N_HEAD
-INTER     = 128         # dense feed_forward_length
-N_EXPERT  = 4
-LATENT    = 32          # block-aligned for quantized expert matmuls
-EXP_FF    = 32          # per-expert hidden width
+DIM = 32  # n_embd
+HEAD_DIM = 16
+N_HEAD = 2  # N_HEAD*HEAD_DIM == DIM
+N_KV = 1  # GQA: divides N_HEAD
+INTER = 128  # dense feed_forward_length
+N_EXPERT = 4
+LATENT = 32  # block-aligned for quantized expert matmuls
+EXP_FF = 32  # per-expert hidden width
 # First three layers exercise GDN; layer 3 exercises global GQA. Every sublayer
 # contributes an independent FullAttnRes source, including dense and MoE outputs.
 EXPERT_USED = [0, 2, 2, 2]
 GDN_HEADS = 1
-GDN_HEAD_DIM = 128      # native recurrence kernel width
+GDN_HEAD_DIM = 128  # native recurrence kernel width
 GDN_KERNEL = 4
-N_LAYER   = len(EXPERT_USED)
-N_CTX     = 512
+N_LAYER = len(EXPERT_USED)
+N_CTX = 512
 
 # --- real dims the runtime indexes into (must match the reference) ---
 N_CODEBOOKS = 10
-CODEBOOK    = 4096
+CODEBOOK = 4096
 AUDIO_VOCAB = CODEBOOK + 2
-EOA_ID      = CODEBOOK
-PAD_ID      = CODEBOOK + 1
-TEXT_VOCAB  = 8196
+EOA_ID = CODEBOOK
+PAD_ID = CODEBOOK + 1
+TEXT_VOCAB = 8196
 
 # --- speaker / condition tokens (real names, edges, units and silence frame of the release LMs; per-table bucket
 # counts and speaking-rate edges of zonos3-rate30-20k-r2grpo) ---
@@ -67,9 +68,37 @@ COND_UNITS = ["LUFS", "Hz", "utf-8 bytes per second"]
 COND_EDGES = {
     "loudness": [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
     "fmax": [7578.125, 8000.0, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
-    "speaking_rate": [6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196,
-                      14.53, 14.887, 15.193, 15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069,
-                      19.818, 20.816, 22.286, 24.722, 29.25],
+    "speaking_rate": [
+        6.546,
+        8.182,
+        9.273,
+        10.31,
+        11.054,
+        11.667,
+        12.193,
+        12.656,
+        13.083,
+        13.476,
+        13.846,
+        14.196,
+        14.53,
+        14.887,
+        15.193,
+        15.517,
+        15.865,
+        16.208,
+        16.579,
+        16.972,
+        17.411,
+        17.898,
+        18.434,
+        19.069,
+        19.818,
+        20.816,
+        22.286,
+        24.722,
+        29.25,
+    ],
 }
 SILENCE_FRAME = [1918, 746, 3544, 234, 1267, 2914, 3944, 2849, 326, 1337]
 
@@ -87,13 +116,25 @@ def main():
 
     cond_names = convert_gguf.CONDITION_NAMES
     tspec = convert_gguf.TOKENIZER_SPEC
-    spec = {"kind": tspec["kind"], "path": "tokenizer/superbpe8192.json", "sha256": TOKENIZER_SHA256,
-            "vocab_size": TEXT_VOCAB - 4, "offset": tspec["offset"], "bos": tspec["bos"], "eos": tspec["eos"]}
+    spec = {
+        "kind": tspec["kind"],
+        "path": "tokenizer/superbpe8192.json",
+        "sha256": TOKENIZER_SHA256,
+        "vocab_size": TEXT_VOCAB - 4,
+        "offset": tspec["offset"],
+        "bos": tspec["bos"],
+        "eos": tspec["eos"],
+    }
     extra = max(0, args.edit_markers)
     if args.phonemes:
         symbols = list(dict.fromkeys(args.phonemes))
-        spec["phonemes"] = {"open_marker": "\ue000", "close_marker": "\ue001", "open_id": TEXT_VOCAB + 1 + extra,
-                            "close_id": TEXT_VOCAB + 2 + extra, "symbols": symbols}
+        spec["phonemes"] = {
+            "open_marker": "\ue000",
+            "close_marker": "\ue001",
+            "open_id": TEXT_VOCAB + 1 + extra,
+            "close_id": TEXT_VOCAB + 2 + extra,
+            "symbols": symbols,
+        }
         extra += 2 + len(symbols)
     audio_vocab = AUDIO_VOCAB + (1 if args.span_end else 0)
     if args.tokenizer:
@@ -116,7 +157,7 @@ def main():
         # through the RMS norms and the tanh logit softcap). 1-D tensors (norms,
         # biases, temp, router bias) keep f32; matrices store f16 to halve the
         # committed fixture, mirroring the real converter's storage scheme.
-        x = ((gen or rng).standard_normal(shape) * 0.02)
+        x = (gen or rng).standard_normal(shape) * 0.02
         return x.astype(np.float32 if len(shape) == 1 else np.float16)
 
     w = GGUFWriter(args.out, ARCH)
@@ -170,10 +211,10 @@ def main():
         w.add_tensor(f"audio_embd.{i}.weight", rnd(audio_vocab, DIM))
     w.add_tensor("text_embd.weight", rnd(TEXT_VOCAB + 1 + extra, DIM))
     w.add_tensor("output_norm.weight", rnd(DIM))
-    w.add_tensor("output.weight",      rnd(N_CODEBOOKS * audio_vocab, DIM))
-    w.add_tensor("attnres_q.weight",   rnd(2 * N_LAYER + 1, DIM))
+    w.add_tensor("output.weight", rnd(N_CODEBOOKS * audio_vocab, DIM))
+    w.add_tensor("attnres_q.weight", rnd(2 * N_LAYER + 1, DIM))
     w.add_tensor("speaker_proj.weight", rnd(DIM, SPEAKER_DIM))
-    w.add_tensor("speaker_proj.bias",   rnd(DIM))
+    w.add_tensor("speaker_proj.bias", rnd(DIM))
     # The first 11 rows of each table come from the main stream and rows beyond them from their own, so every other
     # weight is independent of the bucket counts.
     extra_rng = np.random.default_rng(1)
@@ -186,7 +227,7 @@ def main():
     for L in range(N_LAYER):
         b = f"blk.{L}."
         w.add_tensor(b + "attn_norm.weight", rnd(DIM))
-        w.add_tensor(b + "ffn_norm.weight",  rnd(DIM))
+        w.add_tensor(b + "ffn_norm.weight", rnd(DIM))
         if (L + 1) % 4 != 0:
             inner = GDN_HEADS * GDN_HEAD_DIM
             w.add_tensor(b + "gdn_in.weight", rnd(4 * inner + 2 * GDN_HEADS, DIM))
@@ -196,26 +237,26 @@ def main():
             w.add_tensor(b + "gdn_dt_bias", np.zeros(GDN_HEADS, dtype=np.float32))
             w.add_tensor(b + "attn_output.weight", rnd(DIM, inner))
         else:
-            w.add_tensor(b + "attn_q.weight",      rnd(N_HEAD * HEAD_DIM, DIM))
-            w.add_tensor(b + "attn_k.weight",      rnd(N_KV   * HEAD_DIM, DIM))
-            w.add_tensor(b + "attn_v.weight",      rnd(N_KV   * HEAD_DIM, DIM))
+            w.add_tensor(b + "attn_q.weight", rnd(N_HEAD * HEAD_DIM, DIM))
+            w.add_tensor(b + "attn_k.weight", rnd(N_KV * HEAD_DIM, DIM))
+            w.add_tensor(b + "attn_v.weight", rnd(N_KV * HEAD_DIM, DIM))
             w.add_tensor(b + "attn_output.weight", rnd(DIM, N_HEAD * HEAD_DIM))
-            w.add_tensor(b + "attn_temp",          rnd(N_HEAD))
-            w.add_tensor(b + "attn_gate.weight",   rnd(N_HEAD, DIM))
+            w.add_tensor(b + "attn_temp", rnd(N_HEAD))
+            w.add_tensor(b + "attn_gate.weight", rnd(N_HEAD, DIM))
 
         if EXPERT_USED[L] == 0:  # dense FFN
-            w.add_tensor(b + "ffn_up.weight",   rnd(INTER, DIM))
+            w.add_tensor(b + "ffn_up.weight", rnd(INTER, DIM))
             w.add_tensor(b + "ffn_gate.weight", rnd(INTER, DIM))
             w.add_tensor(b + "ffn_down.weight", rnd(DIM, INTER))
-        else:                    # MoE
-            w.add_tensor(b + "ffn_gate_exps.weight",   rnd(N_EXPERT, EXP_FF, LATENT))
-            w.add_tensor(b + "ffn_up_exps.weight",     rnd(N_EXPERT, EXP_FF, LATENT))
-            w.add_tensor(b + "ffn_down_exps.weight",   rnd(N_EXPERT, LATENT, EXP_FF))
+        else:  # MoE
+            w.add_tensor(b + "ffn_gate_exps.weight", rnd(N_EXPERT, EXP_FF, LATENT))
+            w.add_tensor(b + "ffn_up_exps.weight", rnd(N_EXPERT, EXP_FF, LATENT))
+            w.add_tensor(b + "ffn_down_exps.weight", rnd(N_EXPERT, LATENT, EXP_FF))
             w.add_tensor(b + "ffn_latent_down.weight", rnd(LATENT, DIM))
-            w.add_tensor(b + "ffn_latent_up.weight",   rnd(DIM, LATENT))
-            w.add_tensor(b + "router.weight",          rnd(N_EXPERT, DIM))
-            w.add_tensor(b + "router_norm.weight",     rnd(DIM))
-            w.add_tensor(b + "router_bias",            rnd(N_EXPERT))
+            w.add_tensor(b + "ffn_latent_up.weight", rnd(DIM, LATENT))
+            w.add_tensor(b + "router.weight", rnd(N_EXPERT, DIM))
+            w.add_tensor(b + "router_norm.weight", rnd(DIM))
+            w.add_tensor(b + "router_bias", rnd(N_EXPERT))
 
     convert_gguf.write_gguf(w)
     print(f"wrote {args.out}")

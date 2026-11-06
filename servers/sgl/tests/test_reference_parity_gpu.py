@@ -61,15 +61,17 @@ def _sgl_prefill_logits(tts, plan) -> torch.Tensor:
     # the offline path's prompts carry no speaker slot: the scheduler prepends it and shifts the condition rows
     cond = plan.cond
     lead = 1 if cond.speaker_embedding is not None else 0
-    tts.pending_requests.append(PendingRequest(
-        input_ids=cond.input_ids[lead:].clone(),
-        sampling_params=TTSSamplingParams(max_tokens=1, seed=plan.seed),
-        speaker_embedding=cond.speaker_embedding,
-        speaker_reference_prefix_length=plan.reference_prefix_length,
-        condition_values=cond.condition_values,
-        condition_token_start=cond.condition_token_start - lead,
-        prefill_rows=plan.prefill_rows,
-    ))
+    tts.pending_requests.append(
+        PendingRequest(
+            input_ids=cond.input_ids[lead:].clone(),
+            sampling_params=TTSSamplingParams(max_tokens=1, seed=plan.seed),
+            speaker_embedding=cond.speaker_embedding,
+            speaker_reference_prefix_length=plan.reference_prefix_length,
+            condition_values=cond.condition_values,
+            condition_token_start=cond.condition_token_start - lead,
+            prefill_rows=plan.prefill_rows,
+        )
+    )
     model.compute_logits = capture
     try:
         tts.run_forever()
@@ -89,8 +91,9 @@ def test_prefill_logits_match_sgl(tts, reference, name):
     request = next(e["request"] for e in json.loads(FIXTURES.read_text()) if e["name"] == name)
     plan = plan_prompt(lm, request, assets=assets)
     cond = plan.cond
-    ours = lm(cond.input_ids, LMCache(), speaker_rows=cond.speaker_rows(),
-              condition_rows=cond.condition_rows()).logits.float()
+    ours = lm(
+        cond.input_ids, LMCache(), speaker_rows=cond.speaker_rows(), condition_rows=cond.condition_rows()
+    ).logits.float()
     theirs = _sgl_prefill_logits(tts, plan).to(ours.device)
     assert theirs.shape == ours.shape
     cosine = torch.nn.functional.cosine_similarity(ours.reshape(len(ours), -1), theirs.reshape(len(theirs), -1), dim=-1)

@@ -105,8 +105,16 @@ class ProbeInputs:
 class ProbeStatic:
     """Static probe buffers for CUDA-graph decode (allocated by the graph runner when ``max_text > 0``)."""
 
-    def __init__(self, max_bs: int, max_text: int, max_masked: int, max_keys: int, n_layers: int, n_heads: int,
-                 device: torch.device):
+    def __init__(
+        self,
+        max_bs: int,
+        max_text: int,
+        max_masked: int,
+        max_keys: int,
+        n_layers: int,
+        n_heads: int,
+        device: torch.device,
+    ):
         self.max_text, self.max_masked, self.max_keys = int(max_text), int(max_masked), int(max_keys)
         self.packed = torch.from_numpy(_default_rows(max_bs, 2, n_layers, n_heads)).to(device)
         self.masked = torch.from_numpy(_default_rows(max(1, self.max_masked), 4, n_layers, n_heads)).to(device)
@@ -114,8 +122,14 @@ class ProbeStatic:
 
     def inputs(self, n: int, rows: list[int], masked: bool) -> ProbeInputs:
         """Inputs of an n-row graph; ``masked`` selects the graph variant that also recomputes masked heads."""
-        return ProbeInputs(self.packed[:n], self.max_text, self.out[:n], rows,
-                           self.masked if masked and self.max_masked > 0 else None, self.max_keys)
+        return ProbeInputs(
+            self.packed[:n],
+            self.max_text,
+            self.out[:n],
+            rows,
+            self.masked if masked and self.max_masked > 0 else None,
+            self.max_keys,
+        )
 
 
 def _probe_weight(probe: AlignProbe, layers: tuple[int, ...], n_heads: int) -> np.ndarray:
@@ -178,8 +192,12 @@ def prepare(batch: "TTSBatch", static: ProbeStatic | None, n_heads: int, device:
         packed[i, 0], packed[i, 1] = p.text_start, p.text_len
         packed[i, 2 : 2 + nh] = _probe_weight(p, layers, n_heads).reshape(-1)
         if p.mask:
-            _windows(p, packed[i, 2 + nh : 2 + 2 * nh].reshape(nl, n_heads), packed[i, 2 + 2 * nh :].reshape(nl, n_heads),
-                     layers)
+            _windows(
+                p,
+                packed[i, 2 + nh : 2 + 2 * nh].reshape(nl, n_heads),
+                packed[i, 2 + 2 * nh :].reshape(nl, n_heads),
+                layers,
+            )
     mrows = None
     if masked:
         mrows = _default_rows(static.max_masked if static is not None else len(masked), 4, nl, n_heads)
@@ -188,8 +206,13 @@ def prepare(batch: "TTSBatch", static: ProbeStatic | None, n_heads: int, device:
             p = r.align_probe
             mrows[slot, :4] = (i, r.device_len, p.text_start, p.text_len)
             row = mrows[slot, 4:]
-            _windows(p, row[nh : 2 * nh].reshape(nl, n_heads), row[2 * nh :].reshape(nl, n_heads), layers,
-                     flag=row[:nh].reshape(nl, n_heads))
+            _windows(
+                p,
+                row[nh : 2 * nh].reshape(nl, n_heads),
+                row[2 * nh :].reshape(nl, n_heads),
+                layers,
+                flag=row[:nh].reshape(nl, n_heads),
+            )
     pin = torch.device(device).type == "cuda"
     host = torch.from_numpy(packed)
     hmask = None if mrows is None else torch.from_numpy(mrows)
@@ -205,8 +228,12 @@ def prepare(batch: "TTSBatch", static: ProbeStatic | None, n_heads: int, device:
         lmax = max(batch.reqs[i].align_probe.text_len for i in reduced)
         kmax = max((batch.reqs[i].device_len for i in masked), default=0)
         batch.probe = ProbeInputs(
-            host.to(device, non_blocking=True), lmax, torch.empty((n, 2), dtype=torch.float32, device=device), reduced,
-            None if not masked else hmask.to(device, non_blocking=True), kmax,
+            host.to(device, non_blocking=True),
+            lmax,
+            torch.empty((n, 2), dtype=torch.float32, device=device),
+            reduced,
+            None if not masked else hmask.to(device, non_blocking=True),
+            kmax,
         )
 
 
@@ -239,9 +266,9 @@ def _readout(layer_id: int, q: torch.Tensor, batch: "TTSBatch", backend: "BaseAt
         )
     keys = k_pool[d["slots"]].float()  # [n, lmax, kv heads, head_dim]
     kv = keys.shape[2]
-    logits = torch.einsum(
-        "nkgd,nlkd->nkgl", q[:n].float().view(n, kv, n_heads // kv, head_dim), keys
-    ).reshape(n, n_heads, -1) * float(backend.scale)
+    logits = torch.einsum("nkgd,nlkd->nkgl", q[:n].float().view(n, kv, n_heads // kv, head_dim), keys).reshape(
+        n, n_heads, -1
+    ) * float(backend.scale)
     pos = d["ar"].view(1, 1, -1)
     allowed = d["valid"][:, None, :] & (pos >= d["lo"][:, slot, :, None]) & (pos <= d["hi"][:, slot, :, None])
     p = torch.softmax(logits.masked_fill(~allowed, float("-inf")), dim=-1)
@@ -253,7 +280,9 @@ def _readout(layer_id: int, q: torch.Tensor, batch: "TTSBatch", backend: "BaseAt
         pb.out.copy_(torch.stack((acc.argmax(-1).to(torch.float32), m), dim=-1))
 
 
-def _masked(layer_id: int, q: torch.Tensor, o: torch.Tensor, batch: "TTSBatch", backend: "BaseAttnBackend") -> torch.Tensor:
+def _masked(
+    layer_id: int, q: torch.Tensor, o: torch.Tensor, batch: "TTSBatch", backend: "BaseAttnBackend"
+) -> torch.Tensor:
     """Recompute the masked heads of the masked requests over all their keys (ACI hard mask on the text keys) and
     return ``o`` with those head outputs replaced; capture-safe."""
     pb = batch.probe
@@ -285,9 +314,9 @@ def _masked(layer_id: int, q: torch.Tensor, o: torch.Tensor, batch: "TTSBatch", 
     values = v_pool[d["m_slots"]].float()
     n_slots, kv = keys.shape[0], keys.shape[2]
     group = n_heads // kv
-    logits = torch.einsum(
-        "mkgd,mlkd->mkgl", q[d["m_safe"]].float().view(n_slots, kv, group, head_dim), keys
-    ).reshape(n_slots, n_heads, -1) * float(backend.scale)
+    logits = torch.einsum("mkgd,mlkd->mkgl", q[d["m_safe"]].float().view(n_slots, kv, group, head_dim), keys).reshape(
+        n_slots, n_heads, -1
+    ) * float(backend.scale)
     tidx = d["m_tidx"][:, None, :]
     in_text = (tidx >= 0) & (tidx < d["m_tlen"][:, None, None])
     outside = in_text & ((tidx < d["m_lo"][:, slot, :, None]) | (tidx > d["m_hi"][:, slot, :, None]))
@@ -326,7 +355,9 @@ def _legacy(layer_id: int, q: torch.Tensor, batch: "TTSBatch", backend: "BaseAtt
                 req.max_device_len = min(req.max_device_len, req.device_len + 1)
 
 
-def apply(layer_id: int, q: torch.Tensor, o: torch.Tensor, batch: "TTSBatch", backend: "BaseAttnBackend") -> torch.Tensor:
+def apply(
+    layer_id: int, q: torch.Tensor, o: torch.Tensor, batch: "TTSBatch", backend: "BaseAttnBackend"
+) -> torch.Tensor:
     """Hook called by ``Attention.forward`` after the backend attention of a decode batch. Returns ``o`` (masked heads
     replaced)."""
     if batch.probe is not None:

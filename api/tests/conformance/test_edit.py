@@ -20,8 +20,10 @@ def editing(caps):
 @pytest.fixture(scope="module")
 def known(client, caps, editing) -> dict:
     """A clip the server speaks (``TEXT``, a WAV) and its transcript: what a caller without speech recognition sends."""
-    r = client.post("/v2/generate", json={"text": TEXT, "language": "en_us", "stream": False, "format": "wav",
-                                          "max_tokens": 150, "seed": 3})
+    r = client.post(
+        "/v2/generate",
+        json={"text": TEXT, "language": "en_us", "stream": False, "format": "wav", "max_tokens": 150, "seed": 3},
+    )
     assert r.status_code == 200, r.text[:500]
     return {"audio_base64": base64.b64encode(r.content).decode("ascii"), "text": TEXT}
 
@@ -43,8 +45,9 @@ def _edit_body(text: str, audio_base64: str) -> dict:
 
 
 def test_align_known_transcript(client, known):
-    r = client.post("/v2/edit/align", json={"audio_base64": known["audio_base64"], "text": known["text"],
-                                            "language": "en_us"})
+    r = client.post(
+        "/v2/edit/align", json={"audio_base64": known["audio_base64"], "text": known["text"], "language": "en_us"}
+    )
     assert r.status_code == 200, r.text[:500]
     check(r.json(), "#/components/schemas/EditTranscript")
     assert r.json()["text"] == known["text"] and r.json()["words"]
@@ -92,8 +95,9 @@ def test_verify(client, caps, known):
 
 
 def test_keepalive(client, known):
-    with client.stream("POST", "/v2/edit", json=_edit_body(known["text"], known["audio_base64"]),
-                       headers={"X-Keepalive": "1"}) as r:
+    with client.stream(
+        "POST", "/v2/edit", json=_edit_body(known["text"], known["audio_base64"]), headers={"X-Keepalive": "1"}
+    ) as r:
         assert r.status_code == 200
         assert r.headers.get("x-keepalive") == "1"
         raw = b"".join(r.iter_bytes())
@@ -104,8 +108,9 @@ def test_keepalive(client, known):
 
 
 def test_keepalive_error_is_in_the_body(client, editing):
-    r = client.post("/v2/edit/align", json={"audio_base64": "AAAA", "text": "", "language": "en_us"},
-                    headers={"X-Keepalive": "1"})
+    r = client.post(
+        "/v2/edit/align", json={"audio_base64": "AAAA", "text": "", "language": "en_us"}, headers={"X-Keepalive": "1"}
+    )
     assert r.status_code == 200
     body = json.loads(r.content)
     assert body["status_code"] == 400 and body["detail"]

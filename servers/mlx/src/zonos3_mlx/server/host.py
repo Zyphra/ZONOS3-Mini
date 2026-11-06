@@ -35,10 +35,15 @@ class MlxHost:
 
     def facts(self) -> HostFacts:
         state = self.state
-        return host_facts(model_path=state.options.model_path, condition_tokens=caps.condition_tokens(state),
-                          speaker_modes=state.engine.speaker_modes, bundle=state.engine.steer_bundle,
-                          laci_languages=state.engine.laci_languages,
-                          text_tokenizer_spec=state.config.text_tokenizer_spec, worker_device=asr_device())
+        return host_facts(
+            model_path=state.options.model_path,
+            condition_tokens=caps.condition_tokens(state),
+            speaker_modes=state.engine.speaker_modes,
+            bundle=state.engine.steer_bundle,
+            laci_languages=state.engine.laci_languages,
+            text_tokenizer_spec=state.config.text_tokenizer_spec,
+            worker_device=asr_device(),
+        )
 
     async def synthesize_laci(self, takes: Sequence[LaciTakeRequest], session_id: str | None) -> list[TakeResult]:
         """Every take through the scheduler, at most twice --batch in flight so studio requests interleave. All
@@ -50,13 +55,26 @@ class MlxHost:
         engine = state.engine
         plans = []
         for take in takes:
-            plan = await plan_generate(state, take.request, session_id,
-                                       laci_take=LaciTake(float(take.target_frames), bool(take.adjust_rate)))
-            scale = rate_scale(take, engine.steer_bundle, text=plan.text, base_delta=plan.hidden_delta,
-                               sources=engine.steering_sources, hidden_size=engine.hidden_size)
+            plan = await plan_generate(
+                state, take.request, session_id, laci_take=LaciTake(float(take.target_frames), bool(take.adjust_rate))
+            )
+            scale = rate_scale(
+                take,
+                engine.steer_bundle,
+                text=plan.text,
+                base_delta=plan.hidden_delta,
+                sources=engine.steering_sources,
+                hidden_size=engine.hidden_size,
+            )
             if scale is not None:
-                plan.laci_take = LaciTake(float(take.target_frames), bool(take.adjust_rate), scale.edges, scale.first,
-                                          scale.bucket, scale.deltas)
+                plan.laci_take = LaciTake(
+                    float(take.target_frames),
+                    bool(take.adjust_rate),
+                    scale.edges,
+                    scale.first,
+                    scale.bucket,
+                    scale.deltas,
+                )
                 plan.hidden_delta = scale.delta
             plans.append(plan)
 

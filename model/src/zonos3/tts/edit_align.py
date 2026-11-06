@@ -17,6 +17,7 @@ Whisper anchoring never runs. A transcript Qwen3-ASR makes of a recording over `
 Without speech recognition a long-form item goes to FuseAlign without utterances: FuseAlign routes it by its own VAD
 character map.
 """
+
 import difflib
 import importlib.util
 import json
@@ -36,8 +37,8 @@ from .align_text import align_tokens
 from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
 
 MODEL_SRC = Path(__file__).resolve().parents[2]  # model/src: PYTHONPATH of both workers
-ASR_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'asr.py'
-FUSEALIGN_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'fusealign.py'
+ASR_WORKER = MODEL_SRC / "zonos3" / "workers" / "asr.py"
+FUSEALIGN_WORKER = MODEL_SRC / "zonos3" / "workers" / "fusealign.py"
 LONG_FORM_SECONDS = 30.0  # fusealign_hub.aligner.MAX_SECONDS: one FuseAlign forward
 MAX_TEXT_BYTES = 1022  # fusealign_hub.longform.MAX_TEXT_BYTES
 # Qwen3-ASR language name -> spoken code (zonos3.languages.UNSPACED: the chunk texts of ja, zh and yue join with "").
@@ -77,7 +78,7 @@ class AsrUnavailable(WorkerError):
     """The request needs speech recognition and the server has none (``asr_available``): HTTP 503 with
     ``Speech recognition is not available on this server: <fix>`` (``fix``: what the caller can send instead)."""
 
-    PREFIX = 'Speech recognition is not available on this server: '
+    PREFIX = "Speech recognition is not available on this server: "
 
     def __init__(self, fix: str):
         super().__init__(self.PREFIX + fix)
@@ -87,18 +88,18 @@ class AsrUnavailable(WorkerError):
 def asr_available(asr) -> bool:
     """Whether ``asr`` (an ``AsrWorker``, an object with its ``transcribe`` / ``languages``, or None) can recognize
     speech: not None and, when it reports ``installed`` (the worker's interpreter exists), installed."""
-    return asr is not None and getattr(asr, 'installed', True)
+    return asr is not None and getattr(asr, "installed", True)
 
 
 def fusealign_installed() -> bool:
     """Whether this interpreter, the FuseAlign worker's, has ``fusealign_hub`` (third_party/fusealign-multilingual)."""
-    return importlib.util.find_spec('fusealign_hub') is not None
+    return importlib.util.find_spec("fusealign_hub") is not None
 
 
 def asr_python() -> str:
     """The interpreter of the ASR worker and of plugin helper workers: ``ZONOS3_ASR_PYTHON``, else the repo's
     .venv-asr (the checkout's root, three levels above model/src; a package installed elsewhere has none)."""
-    return os.environ.get('ZONOS3_ASR_PYTHON') or str(MODEL_SRC.parents[1] / '.venv-asr' / 'bin' / 'python')
+    return os.environ.get("ZONOS3_ASR_PYTHON") or str(MODEL_SRC.parents[1] / ".venv-asr" / "bin" / "python")
 
 
 class _JsonLinesWorker:
@@ -109,9 +110,9 @@ class _JsonLinesWorker:
     (``<unavailable>: <detail>``) otherwise."""
 
     error: type[WorkerError] = WorkerError
-    name = 'worker'
-    unavailable = 'worker is unavailable'
-    failed = 'worker failed'
+    name = "worker"
+    unavailable = "worker is unavailable"
+    failed = "worker failed"
 
     def __init__(self, command: list[str]):
         self._command = command
@@ -124,20 +125,21 @@ class _JsonLinesWorker:
         return self._process is not None and self._process.poll() is None
 
     def _start(self) -> subprocess.Popen:
-        env = {k: v for k, v in os.environ.items() if k not in ('PYTHONPATH', 'VIRTUAL_ENV')}
-        env['PYTHONPATH'] = str(MODEL_SRC)
-        env['PYTHONDONTWRITEBYTECODE'] = '1'
-        env.setdefault('HF_HUB_OFFLINE', '1')
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}
+        env["PYTHONPATH"] = str(MODEL_SRC)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env.setdefault("HF_HUB_OFFLINE", "1")
         try:
-            return subprocess.Popen(self._command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-                                    encoding='utf-8')
+            return subprocess.Popen(
+                self._command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8"
+            )
         except OSError as exc:
-            raise self.error(f'{self.unavailable}: cannot start the {self.name}: {exc}') from exc
+            raise self.error(f"{self.unavailable}: cannot start the {self.name}: {exc}") from exc
 
     def call(self, op: str, **payload) -> dict:
         with self._lock:
             self._next_id += 1
-            line = json.dumps({'id': self._next_id, 'op': op, **payload}, ensure_ascii=False) + '\n'
+            line = json.dumps({"id": self._next_id, "op": op, **payload}, ensure_ascii=False) + "\n"
             for _ in range(2):
                 if not self.alive:
                     self._process = self._start()
@@ -146,15 +148,15 @@ class _JsonLinesWorker:
                     self._process.stdin.flush()
                     reply = self._process.stdout.readline()
                 except (BrokenPipeError, OSError):
-                    reply = ''
+                    reply = ""
                 if reply:
                     break
                 code = self._process.wait()
             else:
-                raise self.error(f'{self.unavailable}: the {self.name} exited with code {code}')
+                raise self.error(f"{self.unavailable}: the {self.name} exited with code {code}")
         response = json.loads(reply)
-        if response.get('status') != 'ok':
-            if response.get('invalid'):
+        if response.get("status") != "ok":
+            if response.get("invalid"):
                 raise ValueError(f"{self.failed}: {response.get('message') or response.get('error')}")
             raise self.error(f"{self.unavailable}: {response.get('error', 'unknown error')}")
         return response
@@ -171,7 +173,7 @@ class _JsonLinesWorker:
 def asr_device() -> str | None:
     """The device of the Qwen3-ASR worker and of the plugins' helper workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on
     macOS, else None (the workers' own default)."""
-    return os.environ.get('ZONOS3_ASR_DEVICE') or ('mps' if sys.platform == 'darwin' else None)
+    return os.environ.get("ZONOS3_ASR_DEVICE") or ("mps" if sys.platform == "darwin" else None)
 
 
 class AsrWorker(_JsonLinesWorker):
@@ -179,15 +181,18 @@ class AsrWorker(_JsonLinesWorker):
     ``device`` defaults to :func:`asr_device`, ``model`` to the worker's."""
 
     error = AsrError
-    name = 'ASR worker'
-    unavailable = 'ASR is unavailable'
-    failed = 'ASR failed'
+    name = "ASR worker"
+    unavailable = "ASR is unavailable"
+    failed = "ASR failed"
 
     def __init__(self, python: str | None = None, device: str | None = None, model: str | None = None):
         self.python = python or asr_python()
         device = device or asr_device()
-        super().__init__([self.python, str(ASR_WORKER)] + (['--device', device] if device else [])
-                         + (['--model', model] if model else []))
+        super().__init__(
+            [self.python, str(ASR_WORKER)]
+            + (["--device", device] if device else [])
+            + (["--model", model] if model else [])
+        )
         self._ping: dict | None = None
 
     @property
@@ -197,58 +202,61 @@ class AsrWorker(_JsonLinesWorker):
 
     def _start(self) -> subprocess.Popen:
         if not self.installed:
-            raise AsrError(f'{self.unavailable}: interpreter not found: {self.python} (run tools/setup_asr_env.sh)')
+            raise AsrError(f"{self.unavailable}: interpreter not found: {self.python} (run tools/setup_asr_env.sh)")
         return super()._start()
 
     def ping(self) -> dict:
         """``{"model", "languages"}`` of the worker (cached)."""
         if self._ping is None:
-            response = self.call('ping')
-            self._ping = {'model': response['model'], 'languages': list(response['languages'])}
+            response = self.call("ping")
+            self._ping = {"model": response["model"], "languages": list(response["languages"])}
         return self._ping
 
     def model(self) -> str:
-        return self.ping()['model']
+        return self.ping()["model"]
 
     def languages(self) -> list[str]:
         """The Qwen3-ASR language names the worker transcribes."""
-        return self.ping()['languages']
+        return self.ping()["languages"]
 
     def transcribe(self, items: list[dict]) -> list[dict]:
         """``[{audio, start?, end?, language}]`` -> per item ``{text, language}`` (workers/asr.py)."""
-        return self.call('transcribe', items=items)['results']
+        return self.call("transcribe", items=items)["results"]
 
 
 class FuseAlignWorker(_JsonLinesWorker):
     """The workers/fusealign.py process (this interpreter): one per server, shared by speech editing and plugins."""
 
     error = FuseAlignError
-    name = 'FuseAlign worker'
-    unavailable = 'FuseAlign alignment is unavailable'
-    failed = 'FuseAlign alignment failed'
+    name = "FuseAlign worker"
+    unavailable = "FuseAlign alignment is unavailable"
+    failed = "FuseAlign alignment failed"
 
     def __init__(self, device: str | None = None, checkpoint: str | None = None, python: str = sys.executable):
-        super().__init__([python, str(FUSEALIGN_WORKER)] + (['--device', device] if device else [])
-                         + (['--checkpoint', checkpoint] if checkpoint else []))
+        super().__init__(
+            [python, str(FUSEALIGN_WORKER)]
+            + (["--device", device] if device else [])
+            + (["--checkpoint", checkpoint] if checkpoint else [])
+        )
         self._model: str | None = None
 
     def model(self) -> str:
         """The checkpoint id the worker aligns with (its ``ping``)."""
         if self._model is None:
-            self._model = self.call('ping')['model']
+            self._model = self.call("ping")["model"]
         return self._model
 
     def speech(self, audios: list[str]) -> list[list[list[float]]]:
         """Per audio path its Silero VAD speech regions ``[[start, end], ...]`` (seconds, in time order)."""
-        return [r['regions'] for r in self.call('speech', items=[{'audio': a} for a in audios])['results']]
+        return [r["regions"] for r in self.call("speech", items=[{"audio": a} for a in audios])["results"]]
 
     def segments(self, audios: list[str]) -> list[list[list[float]]]:
         """Per audio path its speech chunks ``[[start, end], ...]`` (seconds, each at most 25 s) for recognition."""
-        return [r['chunks'] for r in self.call('segments', items=[{'audio': a} for a in audios])['results']]
+        return [r["chunks"] for r in self.call("segments", items=[{"audio": a} for a in audios])["results"]]
 
     def align(self, items: list[dict]) -> list[list[dict]]:
         """``[{audio, tokens, utterances?}]`` -> per item one ``{word, start, end, presence, placed}`` per token."""
-        return [r['words'] for r in self.call('align', items=items)['results']]
+        return [r["words"] for r in self.call("align", items=items)["results"]]
 
 
 def audio_seconds(path: str) -> float:
@@ -261,27 +269,31 @@ def audio_seconds(path: str) -> float:
 
 def needs_anchors(seconds: float, tokens: list[str]) -> bool:
     """Whether FuseAlign aligns an item long-form: audio over ``LONG_FORM_SECONDS`` or tokens over ``MAX_TEXT_BYTES``."""
-    return seconds > LONG_FORM_SECONDS or len(' '.join(tokens).encode('utf-8')) > MAX_TEXT_BYTES
+    return seconds > LONG_FORM_SECONDS or len(" ".join(tokens).encode("utf-8")) > MAX_TEXT_BYTES
 
 
-def chunk_utterances(asr: AsrWorker, aligner: FuseAlignWorker, audios: list[str],
-                     languages: list[str | None]) -> list[list[dict]]:
+def chunk_utterances(
+    asr: AsrWorker, aligner: FuseAlignWorker, audios: list[str], languages: list[str | None]
+) -> list[list[dict]]:
     """Per audio the Qwen3-ASR transcripts of its ``segments`` chunks (forced to its language, a Qwen3-ASR name, or
     detected for None) as utterances ``{text, start, end, language}`` in time order, empty texts dropped. One
     ``segments`` and one ``transcribe`` call for all of them."""
     if not audios:
         return []
     chunks = aligner.segments(audios)
-    items = [{'audio': audio, 'start': start, 'end': end, 'language': language}
-             for audio, language, cs in zip(audios, languages, chunks, strict=True) for start, end in cs]
+    items = [
+        {"audio": audio, "start": start, "end": end, "language": language}
+        for audio, language, cs in zip(audios, languages, chunks, strict=True)
+        for start, end in cs
+    ]
     results = iter(asr.transcribe(items) if items else [])
     out = []
     for cs in chunks:
         utterances = []
         for start, end in cs:
             r = next(results)
-            if r['text']:
-                utterances.append({'text': r['text'], 'start': start, 'end': end, 'language': r['language']})
+            if r["text"]:
+                utterances.append({"text": r["text"], "start": start, "end": end, "language": r["language"]})
         out.append(utterances)
     return out
 
@@ -302,14 +314,17 @@ def transcribe_audio(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, langu
     the first spoken chunk's ("" without speech), and the utterances are returned to anchor later alignments of the
     file (``align_words``)."""
     if audio_seconds(audio) <= LONG_FORM_SECONDS:
-        r = asr.transcribe([{'audio': audio, 'language': language}])[0]
-        return Transcript(r['text'], r['language'], None)
+        r = asr.transcribe([{"audio": audio, "language": language}])[0]
+        return Transcript(r["text"], r["language"], None)
     utterances = chunk_utterances(asr, aligner, [audio], [language])[0]
-    reported = utterances[0]['language'] if utterances else ''
-    name = language or reported.split(',')[0].strip()
-    joiner = '' if _SPOKEN_CODES.get(name) in languages.UNSPACED else ' '
-    return Transcript(joiner.join(u['text'] for u in utterances), reported,
-                      [{k: u[k] for k in ('text', 'start', 'end')} for u in utterances])
+    reported = utterances[0]["language"] if utterances else ""
+    name = language or reported.split(",")[0].strip()
+    joiner = "" if _SPOKEN_CODES.get(name) in languages.UNSPACED else " "
+    return Transcript(
+        joiner.join(u["text"] for u in utterances),
+        reported,
+        [{k: u[k] for k in ("text", "start", "end")} for u in utterances],
+    )
 
 
 def align_words(asr: AsrWorker | None, aligner: FuseAlignWorker, items: list[dict]) -> list[list[dict]]:
@@ -320,16 +335,22 @@ def align_words(asr: AsrWorker | None, aligner: FuseAlignWorker, items: list[dic
     An item that ``needs_anchors`` carries ``utterances``: its own, else ``chunk_utterances`` of its audio (one batch
     for every such item), else, without speech recognition (``asr_available``), none (FuseAlign's VAD map); the other
     items carry none."""
-    long = [k for k, it in enumerate(items) if it['tokens'] and needs_anchors(audio_seconds(it['audio']), it['tokens'])]
-    missing = [k for k in long if items[k].get('utterances') is None] if asr_available(asr) else []
-    made = dict(zip(missing, chunk_utterances(asr, aligner, [items[k]['audio'] for k in missing],
-                                              [items[k].get('language') for k in missing])))
+    long = [k for k, it in enumerate(items) if it["tokens"] and needs_anchors(audio_seconds(it["audio"]), it["tokens"])]
+    missing = [k for k in long if items[k].get("utterances") is None] if asr_available(asr) else []
+    made = dict(
+        zip(
+            missing,
+            chunk_utterances(
+                asr, aligner, [items[k]["audio"] for k in missing], [items[k].get("language") for k in missing]
+            ),
+        )
+    )
     requests = []
     for k, it in enumerate(items):
-        request = {'audio': it['audio'], 'tokens': list(it['tokens'])}
-        utterances = made[k] if k in made else it.get('utterances')
+        request = {"audio": it["audio"], "tokens": list(it["tokens"])}
+        utterances = made[k] if k in made else it.get("utterances")
         if k in long and utterances is not None:
-            request['utterances'] = [{'text': u['text'], 'start': u['start'], 'end': u['end']} for u in utterances]
+            request["utterances"] = [{"text": u["text"], "start": u["start"], "end": u["end"]} for u in utterances]
         requests.append(request)
     return aligner.align(requests)
 
@@ -380,9 +401,14 @@ def target_tokens(target_text: str) -> list[list[str]]:
     if GROUP_OPEN not in target_text and not has_nonverbal_markup(target_text):
         return [textmatch.tokens(target_text)] + [textmatch.tokens(word) for word in words]
     pieces = [[piece for piece in _PIECE_RE.split(word) if piece] for word in words]
-    word_tokens = [[t for piece in word for t in (
-        [piece] if is_group_token(piece) else [] if is_marker_token(piece) else textmatch.tokens(piece))]
-        for word in pieces]
+    word_tokens = [
+        [
+            t
+            for piece in word
+            for t in ([piece] if is_group_token(piece) else [] if is_marker_token(piece) else textmatch.tokens(piece))
+        ]
+        for word in pieces
+    ]
     return [[t for ts in word_tokens for t in ts]] + word_tokens
 
 
@@ -403,22 +429,34 @@ def aligned_words(words: list[dict], word_tokens: list[list[str]]) -> list[Align
     few ms: an overlap is split at its midpoint, which keeps the words valid ``original_words`` (``edit_words``)."""
     if len(words) != len(word_tokens):
         raise ValueError("One token list is needed per aligned word.")
-    out = [AlignedWord(w['word'], float(w['start']), float(w['end']), float(w['presence']), list(tokens))
-           for w, tokens in zip(words, word_tokens) if tokens]
+    out = [
+        AlignedWord(w["word"], float(w["start"]), float(w["end"]), float(w["presence"]), list(tokens))
+        for w, tokens in zip(words, word_tokens)
+        if tokens
+    ]
     for previous, word in zip(out, out[1:]):
         if word.start < previous.end:
             previous.end = word.start = (previous.end + word.start) / 2
     return out
 
 
-def edit_aligned_words(asr: AsrWorker | None, aligner: FuseAlignWorker, audio: str, text: str,
-                       language: tuple[str, str], utterances: list[dict] | None = None) -> list[AlignedWord]:
+def edit_aligned_words(
+    asr: AsrWorker | None,
+    aligner: FuseAlignWorker,
+    audio: str,
+    text: str,
+    language: tuple[str, str],
+    utterances: list[dict] | None = None,
+) -> list[AlignedWord]:
     """The words of ``text`` in a sound file with their edit tokens: FuseAlign over ``align_tokens(text, code)``
     (``align_words``; ``language`` is the ``edit_language`` pair, ``utterances`` anchors already made for the file)."""
     code, name = language
     words = align_tokens(text, code)
-    aligned = align_words(asr, aligner, [{'audio': audio, 'tokens': words, 'language': name,
-                                          'utterances': utterances}])[0] if words else []
+    aligned = (
+        align_words(asr, aligner, [{"audio": audio, "tokens": words, "language": name, "utterances": utterances}])[0]
+        if words
+        else []
+    )
     return aligned_words(aligned, [textmatch.tokens(w) for w in words])
 
 
@@ -437,12 +475,14 @@ def seconds_to_spans(pairs, total_frames: int, frame_rate: float = 15.0) -> list
     return spans
 
 
-def diff_spans(words, target_tokens, *, total_frames, frame_rate=15.0, margin_seconds=0.08, min_gap_frames=5, max_spans=3):
+def diff_spans(
+    words, target_tokens, *, total_frames, frame_rate=15.0, margin_seconds=0.08, min_gap_frames=5, max_spans=3
+):
     expanded = [(token, w) for w in words for token in w.tokens]
     original = [token for token, _ in expanded]
     spans, new_tokens = [], []
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, target_tokens, autojunk=False).get_opcodes():
-        if op == 'equal':
+        if op == "equal":
             continue
         if i1 != i2:
             t0, t1 = expanded[i1][1].start, expanded[i2 - 1][1].end
@@ -458,9 +498,9 @@ def diff_spans(words, target_tokens, *, total_frames, frame_rate=15.0, margin_se
             spans.append((start, end - start))
         new_tokens.extend(range(j1, j2))
     if not spans:
-        raise ValueError('target text equals the original transcript')
+        raise ValueError("target text equals the original transcript")
     if len(spans) > max_spans:
-        raise ValueError(f'edit touches {len(spans)} regions; at most {max_spans} are supported')
+        raise ValueError(f"edit touches {len(spans)} regions; at most {max_spans} are supported")
     return EditDiff(spans, new_tokens)
 
 
@@ -489,14 +529,19 @@ def edit_words(words, word_tokens, original_tokens, *, duration) -> list[Aligned
         previous_end = end
     spelled = [t for tokens in word_tokens for t in tokens]
     if spelled != list(original_tokens):
-        k = next((i for i, (a, b) in enumerate(zip(spelled, original_tokens)) if a != b), min(len(spelled), len(original_tokens)))
+        k = next(
+            (i for i, (a, b) in enumerate(zip(spelled, original_tokens)) if a != b),
+            min(len(spelled), len(original_tokens)),
+        )
         raise ValueError(
             "original_words do not spell original_text: they read "
-            f"{' '.join(spelled[max(0, k - 2):k + 3]) or '(nothing)'!r} where the text reads "
-            f"{' '.join(original_tokens[max(0, k - 2):k + 3]) or '(nothing)'!r} (normalized)."
+            f"{' '.join(spelled[max(0, k - 2) : k + 3]) or '(nothing)'!r} where the text reads "
+            f"{' '.join(original_tokens[max(0, k - 2) : k + 3]) or '(nothing)'!r} (normalized)."
         )
-    return [AlignedWord(w["word"], float(w["start"]), float(w["end"]), w.get("confidence"), list(tokens))
-            for w, tokens in zip(words, word_tokens)]
+    return [
+        AlignedWord(w["word"], float(w["start"]), float(w["end"]), w.get("confidence"), list(tokens))
+        for w, tokens in zip(words, word_tokens)
+    ]
 
 
 def new_word_confidence(words, token_indices) -> float | None:
@@ -513,6 +558,7 @@ def new_word_confidence(words, token_indices) -> float | None:
 class EditWindow:
     """The audio frames ``[start, end)`` of the clip the model sees for some regions (indices into
     the edit's spans) and the target text of that stretch."""
+
     start: int
     end: int
     regions: list[int]
@@ -547,7 +593,7 @@ class WordDiff:
     def _target_cut(self, i, left):
         """Target token position of a cut before original token ``i`` (an insertion at the cut
         joins the range), or None inside a changed block."""
-        for tag, i1, i2, j1, j2 in (self.opcodes if left else reversed(self.opcodes)):
+        for tag, i1, i2, j1, j2 in self.opcodes if left else reversed(self.opcodes):
             if i1 < i < i2:
                 return j1 + i - i1 if tag == "equal" else None
             if (i1 if left else i2) == i:
@@ -574,8 +620,17 @@ class WordDiff:
         return self.target_word(a, True), self.target_word(b, False)
 
 
-def plan_edit_windows(spans, words, target_words, target_word_tokens, *, total_frames, frame_rate=15.0,
-                      context_seconds=4.0, target_text=None) -> list[EditWindow]:
+def plan_edit_windows(
+    spans,
+    words,
+    target_words,
+    target_word_tokens,
+    *,
+    total_frames,
+    frame_rate=15.0,
+    context_seconds=4.0,
+    target_text=None,
+) -> list[EditWindow]:
     """Word-snapped context windows around edit regions of a long clip.
 
     ``words`` are the aligned words of the original (with edit ``tokens``); ``target_words`` the
@@ -682,7 +737,7 @@ def wildcard_verify(reference_tokens, hypothesis_tokens) -> dict:
     n, m = len(ref), len(hyp)
     wild = [is_group_token(t) for t in ref]
 
-    def sub(i, j):   # (word errors, character edits) of aligning ref[i] with hyp[j]
+    def sub(i, j):  # (word errors, character edits) of aligning ref[i] with hyp[j]
         if wild[i]:
             return (0, 0)
         return (int(ref[i] != hyp[j]), _levenshtein(ref[i], hyp[j]))
@@ -697,9 +752,11 @@ def wildcard_verify(reference_tokens, hypothesis_tokens) -> dict:
         cost[0][j] = add(cost[0][j - 1], (1, len(hyp[j - 1])))
     for i in range(1, n + 1):
         for j in range(1, m + 1):
-            cost[i][j] = min(add(cost[i - 1][j - 1], sub(i - 1, j - 1)),
-                             add(cost[i - 1][j], (1, 0 if wild[i - 1] else len(ref[i - 1]))),
-                             add(cost[i][j - 1], (1, len(hyp[j - 1]))))
+            cost[i][j] = min(
+                add(cost[i - 1][j - 1], sub(i - 1, j - 1)),
+                add(cost[i - 1][j], (1, 0 if wild[i - 1] else len(ref[i - 1]))),
+                add(cost[i][j - 1], (1, len(hyp[j - 1]))),
+            )
     heard, i, j = {}, n, m
     while i > 0:
         if j > 0 and cost[i][j] == add(cost[i - 1][j - 1], sub(i - 1, j - 1)):
@@ -713,8 +770,12 @@ def wildcard_verify(reference_tokens, hypothesis_tokens) -> dict:
     filled = "".join(heard.get(k, "") if wild[k] else t for k, t in enumerate(ref))
     said = "".join(hyp)
     cer = 0.0 if not filled else 1.0 if not said else _levenshtein(filled, said) / len(filled)
-    return {"word_errors": cost[n][m][0], "ref_words": n, "cer": cer,
-            "groups": [{"ipa": t[1:-1], "heard": heard.get(k)} for k, t in enumerate(ref) if wild[k]]}
+    return {
+        "word_errors": cost[n][m][0],
+        "ref_words": n,
+        "cer": cer,
+        "groups": [{"ipa": t[1:-1], "heard": heard.get(k)} for k, t in enumerate(ref) if wild[k]],
+    }
 
 
 def fill_groups(text: str, heard) -> str:

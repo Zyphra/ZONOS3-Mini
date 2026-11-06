@@ -43,10 +43,14 @@ from zonos3_mlx.audio_io import decode_pcm
 from zonos3_mlx.server.state import ServerState
 
 REFERENCE_CACHE = 64
-NO_SPEAKER_ENCODER = ("This server has no speaker encoder (spk-encoder.gguf); send speaker_embedding_base64 or use "
-                      "speaker_mode=reference.")
-NO_REFERENCE_ENCODER = ("This server has no reference encoder (zac-encoder.gguf + ssl-teacher.gguf); send "
-                        "speaker_reference_codes or use speaker_mode=embedding.")
+NO_SPEAKER_ENCODER = (
+    "This server has no speaker encoder (spk-encoder.gguf); send speaker_embedding_base64 or use "
+    "speaker_mode=reference."
+)
+NO_REFERENCE_ENCODER = (
+    "This server has no reference encoder (zac-encoder.gguf + ssl-teacher.gguf); send "
+    "speaker_reference_codes or use speaker_mode=embedding."
+)
 
 logger = logging.getLogger("zonos3_mlx.server")
 
@@ -64,9 +68,14 @@ def voice_modes(state: ServerState, voice: Voice) -> list[str]:
     has_embedding = has_reference = True
     if voice.source_type == "audio":
         default = isinstance(voice, DefaultVoice)
-        has_embedding = (engine.speaker_encoder is not None or voice.embedding is not None
-                         or (default and voice_sidecar(voice.path, ".embedding.npy") is not None))
-        has_reference = engine.has_reference_encoder or (default and voice_sidecar(voice.path, ".codes.npy") is not None)
+        has_embedding = (
+            engine.speaker_encoder is not None
+            or voice.embedding is not None
+            or (default and voice_sidecar(voice.path, ".embedding.npy") is not None)
+        )
+        has_reference = engine.has_reference_encoder or (
+            default and voice_sidecar(voice.path, ".codes.npy") is not None
+        )
     modes = voice_speaker_modes(engine.speaker_modes, voice.source_type, has_embedding)
     return [m for m in modes if m != "reference" or has_reference]
 
@@ -76,10 +85,17 @@ def serialize(state: ServerState, voice: Voice) -> dict:
     disabled = disabled_controls(state.engine.steer_bundle, voice.speaker_id)
     if isinstance(voice, DefaultVoice):
         return serialize_default_voice(voice, modes=modes, embedding_dim=dim, disabled=disabled)
-    return serialize_session_voice(speaker_id=voice.speaker_id, label=voice.label, source_type=voice.source_type,
-                                   original_name=voice.original_name, created_at=voice.created_at,
-                                   has_preview=bool(voice.audio_bytes), embedding_dim=dim, modes=modes,
-                                   disabled=disabled)
+    return serialize_session_voice(
+        speaker_id=voice.speaker_id,
+        label=voice.label,
+        source_type=voice.source_type,
+        original_name=voice.original_name,
+        created_at=voice.created_at,
+        has_preview=bool(voice.audio_bytes),
+        embedding_dim=dim,
+        modes=modes,
+        disabled=disabled,
+    )
 
 
 # ----------------------------------------------------------------------------------------------------- defaults
@@ -127,20 +143,24 @@ async def voice_embedding(state: ServerState, voice: Voice) -> torch.Tensor:
     dim = state.config.speaker_embedding_dim
     if voice.embedding is None:
         if voice.source_type == "embedding":
-            voice.embedding = load_embedding_vector(read_voice_file(voice), expected_dim=dim,
-                                                    file_name=voice.original_name)
+            voice.embedding = load_embedding_vector(
+                read_voice_file(voice), expected_dim=dim, file_name=voice.original_name
+            )
         else:
             shipped = voice_sidecar(voice.path, ".embedding.npy") if isinstance(voice, DefaultVoice) else None
             if shipped is not None:
                 try:
-                    voice.embedding = load_embedding_vector(shipped.read_bytes(), expected_dim=dim,
-                                                            file_name=shipped.name)
+                    voice.embedding = load_embedding_vector(
+                        shipped.read_bytes(), expected_dim=dim, file_name=shipped.name
+                    )
                 except (OSError, ValueError) as exc:
                     logger.warning("cannot load shipped embedding %s (%s); embedding %s", shipped, exc, voice.path)
             if voice.embedding is None:
                 voice.embedding = await embed_audio(state, voice_audio(voice))
     if int(voice.embedding.numel()) != dim:
-        raise ValueError(f"Speaker '{voice.label}' has {int(voice.embedding.numel())} dimensions, the model expects {dim}.")
+        raise ValueError(
+            f"Speaker '{voice.label}' has {int(voice.embedding.numel())} dimensions, the model expects {dim}."
+        )
     return voice.embedding.detach().to(torch.float32).clone()
 
 
@@ -160,8 +180,12 @@ async def find_voice(state: ServerState, session_id: str | None, speaker_id: str
 
 def needs_encoder(state: ServerState, voice: Voice) -> bool:
     """An audio voice whose embedding only the (missing) speaker encoder could compute."""
-    return (voice.source_type == "audio" and voice.embedding is None and state.engine.speaker_encoder is None
-            and not (isinstance(voice, DefaultVoice) and voice_sidecar(voice.path, ".embedding.npy") is not None))
+    return (
+        voice.source_type == "audio"
+        and voice.embedding is None
+        and state.engine.speaker_encoder is None
+        and not (isinstance(voice, DefaultVoice) and voice_sidecar(voice.path, ".embedding.npy") is not None)
+    )
 
 
 async def resolve_embedding(state: ServerState, session_id: str | None, req) -> torch.Tensor | None:
@@ -169,12 +193,17 @@ async def resolve_embedding(state: ServerState, session_id: str | None, req) -> 
     direct = sum(bool(v) for v in (req.speaker_audio_base64, req.speaker_embedding_base64))
     if direct > 1:
         raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
-    cached, blended = bool(req.speaker_embedding_id), bool(req.speaker_blend_embedding_id_a or req.speaker_blend_embedding_id_b)
+    cached, blended = (
+        bool(req.speaker_embedding_id),
+        bool(req.speaker_blend_embedding_id_a or req.speaker_blend_embedding_id_b),
+    )
     selected = sum((direct == 1, cached, blended))
     if selected == 0:
         return None
     if selected > 1:
-        raise ValueError("Provide speaker conditioning via upload, one cached speaker id, or two cached ids for blending.")
+        raise ValueError(
+            "Provide speaker conditioning via upload, one cached speaker id, or two cached ids for blending."
+        )
     if blended:
         if not req.speaker_blend_embedding_id_a or not req.speaker_blend_embedding_id_b:
             raise ValueError("Provide both cached speaker ids to blend between two speakers.")
@@ -188,16 +217,20 @@ async def resolve_embedding(state: ServerState, session_id: str | None, req) -> 
         return await voice_embedding(state, voice)
     dim = state.config.speaker_embedding_dim
     if req.speaker_embedding_base64:
-        return load_embedding_vector(decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
-                                     expected_dim=dim, file_name=req.speaker_embedding_name)
+        return load_embedding_vector(
+            decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
+            expected_dim=dim,
+            file_name=req.speaker_embedding_name,
+        )
     return await embed_audio(state, decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
 
 
 # ----------------------------------------------------------------------------------------------------- reference
 
 
-async def encode_reference(state: ServerState, audio_bytes: bytes,
-                           max_seconds: float = REFERENCE_AUDIO_MAX_SECONDS) -> torch.Tensor:
+async def encode_reference(
+    state: ServerState, audio_bytes: bytes, max_seconds: float = REFERENCE_AUDIO_MAX_SECONDS
+) -> torch.Tensor:
     """Reference prefix codes of a clip (the MLX reference encoder), cached per sha1 of the bytes (LRU of 64)."""
     if not state.engine.has_reference_encoder:
         raise ValueError(NO_REFERENCE_ENCODER)
@@ -222,8 +255,10 @@ async def resolve_reference(state: ServerState, session_id: str | None, req) -> 
     """speaker_mode=reference: inline codes, a default voice's codes or clip, a session clip, or an upload
     (sgl _resolve_speaker_reference_audio + the tokenizer's reference encode)."""
     if any((req.speaker_embedding_base64, req.speaker_blend_embedding_id_a, req.speaker_blend_embedding_id_b)):
-        raise ValueError("This checkpoint conditions on raw reference audio and does not accept speaker embedding "
-                         "files or embedding blends.")
+        raise ValueError(
+            "This checkpoint conditions on raw reference audio and does not accept speaker embedding "
+            "files or embedding blends."
+        )
     codes = reference_codes(state.engine, req.speaker_reference_codes)
     if codes is not None:
         if req.speaker_audio_base64 or req.speaker_embedding_id:
@@ -235,12 +270,14 @@ async def resolve_reference(state: ServerState, session_id: str | None, req) -> 
         voice = get_default_voice(state, req.speaker_embedding_id)
         if voice is not None:
             if voice.source_type != "audio":
-                raise ValueError(f"Default voice '{voice.label}' is an embedding file; speaker_mode=reference needs "
-                                 "reference audio.")
+                raise ValueError(
+                    f"Default voice '{voice.label}' is an embedding file; speaker_mode=reference needs reference audio."
+                )
             codes = voice_sidecar(voice.path, ".codes.npy")
             if codes is not None:
-                return truncate_reference(torch.from_numpy(np.load(codes).astype(np.int32)),
-                                          state.engine.reference_max_frames)
+                return truncate_reference(
+                    torch.from_numpy(np.load(codes).astype(np.int32)), state.engine.reference_max_frames
+                )
             return await encode_reference(state, read_voice_file(voice))
         voice = await session_voice(state, session_id, req.speaker_embedding_id)
         if not voice.audio_bytes:
@@ -265,7 +302,9 @@ def router(state: ServerState) -> APIRouter:
     r = APIRouter()
 
     @r.post("/v2/speakers")
-    async def create_speaker(req: SpeakerCreateRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
+    async def create_speaker(
+        req: SpeakerCreateRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")
+    ):
         try:
             session_id = require_session_id(x_tts_session_id)
             if req.speaker_audio_base64 and req.speaker_embedding_base64:
@@ -274,17 +313,31 @@ def router(state: ServerState) -> APIRouter:
                 name = req.speaker_embedding_name
                 embedding = load_embedding_vector(
                     decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
-                    expected_dim=state.config.speaker_embedding_dim, file_name=name)
-                voice = SessionVoice(new_speaker_id(), speaker_label(req.label, name, fallback="Speaker embedding"),
-                                     "embedding", time.time(), name, embedding=embedding)
+                    expected_dim=state.config.speaker_embedding_dim,
+                    file_name=name,
+                )
+                voice = SessionVoice(
+                    new_speaker_id(),
+                    speaker_label(req.label, name, fallback="Speaker embedding"),
+                    "embedding",
+                    time.time(),
+                    name,
+                    embedding=embedding,
+                )
             elif req.speaker_audio_base64:
                 if state.engine.speaker_encoder is None and not state.engine.has_reference_encoder:
                     raise ValueError("This server has no speaker encoder or reference encoder for uploaded audio.")
                 name = req.speaker_audio_name
                 raw = decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64")
-                voice = SessionVoice(new_speaker_id(), speaker_label(req.label, name, fallback="Speaker audio"),
-                                     "audio", time.time(), name, audio_bytes=raw,
-                                     preview_wav=_transcode_audio_bytes_to_wav(raw))
+                voice = SessionVoice(
+                    new_speaker_id(),
+                    speaker_label(req.label, name, fallback="Speaker audio"),
+                    "audio",
+                    time.time(),
+                    name,
+                    audio_bytes=raw,
+                    preview_wav=_transcode_audio_bytes_to_wav(raw),
+                )
                 if state.engine.speaker_encoder is not None:  # computed at upload, as the sgl server does
                     voice.embedding = await embed_audio(state, raw)
             else:

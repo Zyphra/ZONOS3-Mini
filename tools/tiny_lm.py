@@ -1,6 +1,7 @@
 """Test helpers for tiny random LM checkpoints and tokenizers (tools/tests, servers/mlx/tests, servers/ggml/tests/parity,
 model/tests): the checkpoint directory layout `convert_gguf.py lm` and `Zonos3LM.load` read, the pinned tokenizer of a
 GGUF fixture, and WordLevel stand-ins for the SuperBPE tokenizer."""
+
 from __future__ import annotations
 
 import json
@@ -11,8 +12,14 @@ import torch
 TINY_TOKENIZER_JSON = '{"model": {"type": "BPE"}}'
 
 
-def write_lm_dir(path: Path, params: dict, state: dict[str, torch.Tensor], *, tokenizer: str = TINY_TOKENIZER_JSON,
-                 silence: list[int] | None = None) -> Path:
+def write_lm_dir(
+    path: Path,
+    params: dict,
+    state: dict[str, torch.Tensor],
+    *,
+    tokenizer: str = TINY_TOKENIZER_JSON,
+    silence: list[int] | None = None,
+) -> Path:
     """Write ``model.pth``, ``params.json`` (``{"model": params}``), ``tokenizer.json`` and, with ``silence``, the
     silence-frame JSON ``silence.json`` (codec ``params["audio_codec"]``) into ``path``; returns ``path``."""
     path.mkdir(parents=True, exist_ok=True)

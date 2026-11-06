@@ -120,9 +120,7 @@ class FlashAttentionBackend(BaseAttnBackend):
             page_table=new_page_table,
         )
 
-    def init_capture_graph(
-        self, max_seq_len: int, bs_list: List[int], frame_width: int = 1
-    ) -> None:
+    def init_capture_graph(self, max_seq_len: int, bs_list: List[int], frame_width: int = 1) -> None:
         assert self.capture is None, "Capture already initialized."
         max_bs = max(bs_list)
         capture = FACaptureData.create(max_bs, max_seq_len, self.kvcache.device, frame_width)

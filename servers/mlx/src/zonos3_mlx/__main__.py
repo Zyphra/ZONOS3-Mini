@@ -22,45 +22,80 @@ from zonos3_mlx import paths
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="python -m zonos3_mlx", description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        prog="python -m zonos3_mlx", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("model", help="backbone GGUF (zonos3-ptq.gguf / zonos3-f16.gguf)")
-    for flag, help_ in (("--zac", "codec decoder (default zac-keep2.gguf next to the model; zac.gguf = full-size)"),
-                        ("--spk-encoder", "speaker encoder for speaker-embedding cloning of audio voices"),
-                        ("--zac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),
-                        ("--ssl-teacher", "SSL teacher of the reference encoder"),
-                        ("--steer", "steering bundle (steer.gguf): request controls and /v2/controls"),
-                        ("--accent-adapters", "accent adapters (accents.gguf): request accent")):
+    for flag, help_ in (
+        ("--zac", "codec decoder (default zac-keep2.gguf next to the model; zac.gguf = full-size)"),
+        ("--spk-encoder", "speaker encoder for speaker-embedding cloning of audio voices"),
+        ("--zac-encoder", "reference encoder (raw-reference cloning, speech editing; with --ssl-teacher)"),
+        ("--ssl-teacher", "SSL teacher of the reference encoder"),
+        ("--steer", "steering bundle (steer.gguf): request controls and /v2/controls"),
+        ("--accent-adapters", "accent adapters (accents.gguf): request accent"),
+    ):
         p.add_argument(flag, default=None, help=help_)
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=1919, help="port (default 1919)")
-    p.add_argument("--max", type=int, default=MAX_FRAMES,
-                   help=f"max frames per request (default {MAX_FRAMES}, ~{MAX_FRAMES // 15} s at 15 frames/s)")
-    p.add_argument("--batch", type=int, default=4,
-                   help="concurrent generation slots (default 4); a CFG request takes two")
-    p.add_argument("--reference-idle-unload", type=float, default=60.0,
-                   help="free the reference encoder + SSL teacher after N idle seconds (default 60; 0 keeps them)")
-    p.add_argument("--tts-default-voices-dir", default=str(paths.DEFAULT_VOICES),
-                   help="default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy "
-                        "speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)")
-    p.add_argument("--python-src", default=str(paths.PYTHON_SRC),
-                   help="directory holding the zonos3 package for the text-normalization worker (default model/src)")
-    p.add_argument("--worker-python", default=None, metavar="PY",
-                   help="interpreter of the helper workers of model/src/zonos3/workers, each one persistent process: "
-                        "text normalization (textnorm.py under <python-src>: NeMo grammars, needs pynini; off without "
-                        "this flag) and the FuseAlign forced aligner of speech editing and plugins (fusealign.py: needs "
-                        "fusealign-hub; default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) "
-                        "runs in .venv-asr (tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)")
-    p.add_argument("--laci-heads", nargs="+", default=None, metavar="LANG=PATH",
-                   help="LACI alignment heads of a language (repeatable)")
-    p.add_argument("--plugins", nargs="+", default=[], metavar="NAME",
-                   help="server plugins: import zonos3_<NAME> and mount its routes (e.g. dub, from Zyphra/ZONOS3-dub)")
+    p.add_argument(
+        "--max",
+        type=int,
+        default=MAX_FRAMES,
+        help=f"max frames per request (default {MAX_FRAMES}, ~{MAX_FRAMES // 15} s at 15 frames/s)",
+    )
+    p.add_argument(
+        "--batch", type=int, default=4, help="concurrent generation slots (default 4); a CFG request takes two"
+    )
+    p.add_argument(
+        "--reference-idle-unload",
+        type=float,
+        default=60.0,
+        help="free the reference encoder + SSL teacher after N idle seconds (default 60; 0 keeps them)",
+    )
+    p.add_argument(
+        "--tts-default-voices-dir",
+        default=str(paths.DEFAULT_VOICES),
+        help="default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy "
+        "speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)",
+    )
+    p.add_argument(
+        "--python-src",
+        default=str(paths.PYTHON_SRC),
+        help="directory holding the zonos3 package for the text-normalization worker (default model/src)",
+    )
+    p.add_argument(
+        "--worker-python",
+        default=None,
+        metavar="PY",
+        help="interpreter of the helper workers of model/src/zonos3/workers, each one persistent process: "
+        "text normalization (textnorm.py under <python-src>: NeMo grammars, needs pynini; off without "
+        "this flag) and the FuseAlign forced aligner of speech editing and plugins (fusealign.py: needs "
+        "fusealign-hub; default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) "
+        "runs in .venv-asr (tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)",
+    )
+    p.add_argument(
+        "--laci-heads",
+        nargs="+",
+        default=None,
+        metavar="LANG=PATH",
+        help="LACI alignment heads of a language (repeatable)",
+    )
+    p.add_argument(
+        "--plugins",
+        nargs="+",
+        default=[],
+        metavar="NAME",
+        help="server plugins: import zonos3_<NAME> and mount its routes (e.g. dub, from Zyphra/ZONOS3-dub)",
+    )
     p.add_argument("--tts-phoneme-lexicon", default=None, help="gold pronunciation lexicon (LMDB) for /v2/phonemize")
-    p.add_argument("--studio-projects-dir", default=None,
-                   help="server-side studio projects and media (/v2/projects, /v2/media)")
+    p.add_argument(
+        "--studio-projects-dir", default=None, help="server-side studio projects and media (/v2/projects, /v2/media)"
+    )
     p.add_argument("--studio-max-project-bytes", type=int, default=20 * 1024**2)
     p.add_argument("--studio-max-media-bytes", type=int, default=2 * 1024**3)
-    p.add_argument("--studio-dir", default=str(paths.STUDIO_DIR), help="studio production build (/ chooser, /studio, /lite)")
+    p.add_argument(
+        "--studio-dir", default=str(paths.STUDIO_DIR), help="studio production build (/ chooser, /studio, /lite)"
+    )
     p.add_argument("--log-level", default="info")
     return p
 
@@ -73,9 +108,12 @@ def fusealign_available(python: str) -> bool:
         return fusealign_installed()
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}  # as FuseAlignWorker runs it
     try:
-        probe = subprocess.run([python, "-c", "import importlib.util, sys; "
-                                "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"],
-                               env=env, capture_output=True, timeout=60)
+        probe = subprocess.run(
+            [python, "-c", "import importlib.util, sys; sys.exit(importlib.util.find_spec('fusealign_hub') is None)"],
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return False
     return probe.returncode == 0
@@ -108,29 +146,46 @@ def main(argv=None) -> int:
     normalizer = None
     if args.worker_python:
         normalizer = TextNormalizerClient(args.worker_python, Path(args.python_src))
-    engine = Engine.load(args.model, zac=args.zac, spk_encoder=args.spk_encoder, zac_encoder=args.zac_encoder,
-                         ssl_teacher=args.ssl_teacher, steer=args.steer, accent_adapters=args.accent_adapters,
-                         laci_heads=laci, max_frames=args.max, normalizer=normalizer,
-                         reference_idle_unload=args.reference_idle_unload)
+    engine = Engine.load(
+        args.model,
+        zac=args.zac,
+        spk_encoder=args.spk_encoder,
+        zac_encoder=args.zac_encoder,
+        ssl_teacher=args.ssl_teacher,
+        steer=args.steer,
+        accent_adapters=args.accent_adapters,
+        laci_heads=laci,
+        max_frames=args.max,
+        normalizer=normalizer,
+        reference_idle_unload=args.reference_idle_unload,
+    )
     voices = Path(args.tts_default_voices_dir) if args.tts_default_voices_dir else None
-    options = ServerOptions(model_path=args.model, batch=args.batch, default_voices_dir=voices,
-                            studio_dir=Path(args.studio_dir) if args.studio_dir else None,
-                            phoneme_lexicon=args.tts_phoneme_lexicon, prefix=prefix,
-                            fusealign=fusealign_available(worker_python), plugins=tuple(args.plugins))
+    options = ServerOptions(
+        model_path=args.model,
+        batch=args.batch,
+        default_voices_dir=voices,
+        studio_dir=Path(args.studio_dir) if args.studio_dir else None,
+        phoneme_lexicon=args.tts_phoneme_lexicon,
+        prefix=prefix,
+        fusealign=fusealign_available(worker_python),
+        plugins=tuple(args.plugins),
+    )
     scheduler = Scheduler(engine, batch=args.batch)
     state = ServerState(engine, scheduler, options, aligner=FuseAlignWorker(python=worker_python))
     if args.studio_projects_dir:
         from zonos3.server.projects import ProjectStore
 
-        state.projects = ProjectStore(args.studio_projects_dir, args.studio_max_project_bytes,
-                                      args.studio_max_media_bytes)
+        state.projects = ProjectStore(
+            args.studio_projects_dir, args.studio_max_project_bytes, args.studio_max_media_bytes
+        )
     if args.tts_phoneme_lexicon:
         from zonos3.tts.phonemes import PhonemeLexicon
 
         state.lexicon = PhonemeLexicon(args.tts_phoneme_lexicon)
     found = {k: Path(v).name for k, v in engine.paths.items() if v}
-    logging.getLogger("zonos3_mlx").info("model %s; companions %s; batch %d; LACI %s", Path(args.model).name, found,
-                                         args.batch, sorted(laci) or "off")
+    logging.getLogger("zonos3_mlx").info(
+        "model %s; companions %s; batch %d; LACI %s", Path(args.model).name, found, args.batch, sorted(laci) or "off"
+    )
     try:
         state.plugins = plugins.load(options.plugins)
     except ValueError as exc:

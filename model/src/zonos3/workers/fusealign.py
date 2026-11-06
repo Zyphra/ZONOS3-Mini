@@ -28,6 +28,7 @@ token, in order, with times in seconds; an unplaced word keeps FuseAlign's fallb
 recording over 30 s or a transcript over ``fusealign_hub`` MAX_TEXT_BYTES is routed by (``guide_words``); without
 them such an item falls back to FuseAlign's VAD character-time map. FuseAlign's built-in Whisper anchoring never runs.
 """
+
 import argparse
 import json
 import math
@@ -111,10 +112,18 @@ def align(aligner, items, guide_words: Callable) -> list[dict]:
         tokens, utterances = item.get("tokens"), item.get("utterances")
         if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
             raise ValueError(f"align: items[{k}].tokens must be a list of strings")
-        if utterances is not None and not (isinstance(utterances, list) and all(
-                isinstance(u, dict) and isinstance(u.get("text"), str)
-                and all(isinstance(u.get(key), (int, float)) and not isinstance(u.get(key), bool)
-                        for key in ("start", "end")) for u in utterances)):
+        if utterances is not None and not (
+            isinstance(utterances, list)
+            and all(
+                isinstance(u, dict)
+                and isinstance(u.get("text"), str)
+                and all(
+                    isinstance(u.get(key), (int, float)) and not isinstance(u.get(key), bool)
+                    for key in ("start", "end")
+                )
+                for u in utterances
+            )
+        ):
             raise ValueError(f"align: items[{k}].utterances must be a list of {{text, start, end}}")
         # Never None: FuseAlign runs Whisper for a long-form item without approximate word times.
         anchors = guide_words(utterances) if utterances is not None else []
@@ -124,11 +133,22 @@ def align(aligner, items, guide_words: Callable) -> list[dict]:
         groups.setdefault(sr, []).append(k)
     results: list[dict] = [{"words": []} for _ in clips]
     for sr, ks in groups.items():
-        out = aligner.align_batch([clips[k][0] for k in ks], sr, [clips[k][2] for k in ks],
-                                  asr_words=[clips[k][3] for k in ks], language=None)
+        out = aligner.align_batch(
+            [clips[k][0] for k in ks], sr, [clips[k][2] for k in ks], asr_words=[clips[k][3] for k in ks], language=None
+        )
         for k, words in zip(ks, out):
-            results[k] = {"words": [{"word": w.word, "start": float(w.start), "end": float(w.end),
-                                     "presence": float(w.presence), "placed": bool(w.placed)} for w in words]}
+            results[k] = {
+                "words": [
+                    {
+                        "word": w.word,
+                        "start": float(w.start),
+                        "end": float(w.end),
+                        "presence": float(w.presence),
+                        "placed": bool(w.placed),
+                    }
+                    for w in words
+                ]
+            }
     return results
 
 
@@ -136,8 +156,14 @@ def no_whisper(*_args, **_kwargs):
     raise RuntimeError("FuseAlign's Whisper anchoring is disabled: long-form anchors come from Qwen3-ASR utterances")
 
 
-def serve(lines: Iterable[str], out: TextIO, model_id: str, load: Callable[[], object],
-          speech_regions: Callable, guide_words: Callable) -> None:
+def serve(
+    lines: Iterable[str],
+    out: TextIO,
+    model_id: str,
+    load: Callable[[], object],
+    speech_regions: Callable,
+    guide_words: Callable,
+) -> None:
     """Answer the requests of ``lines`` on ``out``; ``load()`` builds the aligner on the first ``align``."""
     aligner = None
     for line in lines:
@@ -163,18 +189,29 @@ def serve(lines: Iterable[str], out: TextIO, model_id: str, load: Callable[[], o
                 raise ValueError(f"unknown op {op!r}")
             response.update(id=rid, status="ok")
         except Exception as exc:  # noqa: BLE001 - one bad request must not kill the worker
-            response = {"id": rid, "status": "error", "error": repr(exc), "message": str(exc),
-                        "invalid": isinstance(exc, ValueError)}
+            response = {
+                "id": rid,
+                "status": "error",
+                "error": repr(exc),
+                "message": str(exc),
+                "invalid": isinstance(exc, ValueError),
+            }
         out.write(json.dumps(response, ensure_ascii=False) + "\n")
         out.flush()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--device", default=os.environ.get("ZONOS3_FUSEALIGN_DEVICE"),
-                        help="torch device (default: $ZONOS3_FUSEALIGN_DEVICE, else cuda:0 when available, else cpu)")
-    parser.add_argument("--checkpoint", default=None,
-                        help="a local fusealign-hub/1 safetensors file (default: the Zyphra/fusealign checkpoint)")
+    parser.add_argument(
+        "--device",
+        default=os.environ.get("ZONOS3_FUSEALIGN_DEVICE"),
+        help="torch device (default: $ZONOS3_FUSEALIGN_DEVICE, else cuda:0 when available, else cpu)",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="a local fusealign-hub/1 safetensors file (default: the Zyphra/fusealign checkpoint)",
+    )
     args = parser.parse_args()
     # Keep stdout for responses only: library prints go to stderr.
     protocol = os.fdopen(os.dup(1), "w", buffering=1, encoding="utf-8")
@@ -189,8 +226,9 @@ def main() -> None:
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
     model_id = args.checkpoint or f"{HF_REPO}/{CHECKPOINT_FILE}"
-    serve(sys.stdin, protocol, model_id, lambda: load_aligner(args.checkpoint, device=device),
-          speech_regions, guide_words)
+    serve(
+        sys.stdin, protocol, model_id, lambda: load_aligner(args.checkpoint, device=device), speech_regions, guide_words
+    )
 
 
 if __name__ == "__main__":

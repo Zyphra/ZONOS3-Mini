@@ -19,9 +19,7 @@ def unpad1d(x: torch.Tensor, paddings: tp.Tuple[int, int]):
     return x[..., padding_left:end]
 
 
-def get_extra_padding_for_conv1d(
-    x: torch.Tensor, kernel_size: int, stride: int, padding_total: int = 0
-) -> int:
+def get_extra_padding_for_conv1d(x: torch.Tensor, kernel_size: int, stride: int, padding_total: int = 0) -> int:
     """See `pad_for_conv1d`."""
     length = x.shape[-1]
     n_frames = (length - kernel_size + padding_total) / stride + 1
@@ -82,9 +80,7 @@ class CausalConvNet(nn.Module):
 
     def forward(self, x):
         pad = self.padding
-        extra_padding = get_extra_padding_for_conv1d(
-            x, self.kernel_size, self.stride, pad
-        )
+        extra_padding = get_extra_padding_for_conv1d(x, self.kernel_size, self.stride, pad)
         x = pad1d(x, (pad, extra_padding), mode="constant", value=0)
         return self.conv(x).contiguous()
 
@@ -98,13 +94,9 @@ class CausalConvNet(nn.Module):
 
 
 class CausalTransConvNet(nn.Module):
-    def __init__(
-        self, in_channels, out_channels, kernel_size, dilation=1, stride=1, padding=None
-    ):
+    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, stride=1, padding=None):
         super(CausalTransConvNet, self).__init__()
-        self.conv = nn.ConvTranspose1d(
-            in_channels, out_channels, kernel_size, stride=stride, dilation=dilation
-        )
+        self.conv = nn.ConvTranspose1d(in_channels, out_channels, kernel_size, stride=stride, dilation=dilation)
         self.stride = stride
         self.kernel_size = kernel_size
 
@@ -159,9 +151,7 @@ class ConvNeXtBlock(nn.Module):
             dilation=dilation,
         )  # depthwise conv
         self.norm = nn.LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(
-            dim, int(mlp_ratio * dim)
-        )  # pointwise/1x1 convs, implemented with linear layers
+        self.pwconv1 = nn.Linear(dim, int(mlp_ratio * dim))  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(int(mlp_ratio * dim), dim)
         self.gamma = (
@@ -280,9 +270,7 @@ class DownsampleResidualVectorQuantize(nn.Module):
         )  # leave for transformer, LSTM or Mamba or something else
         self.post_module = post_module if post_module is not None else nn.Identity()
         self.semantic_predictor_module = (
-            semantic_predictor_module
-            if semantic_predictor_module is not None
-            else nn.Identity()
+            semantic_predictor_module if semantic_predictor_module is not None else nn.Identity()
         )
 
     def _init_weights(self, m):
@@ -290,9 +278,7 @@ class DownsampleResidualVectorQuantize(nn.Module):
             nn.init.trunc_normal_(m.weight, std=0.02)
             nn.init.constant_(m.bias, 0)
 
-    def forward(
-        self, z, n_quantizers: int = None, semantic_len: torch.Tensor = None, **kwargs
-    ):
+    def forward(self, z, n_quantizers: int = None, semantic_len: torch.Tensor = None, **kwargs):
         # z: (B, D, T)
         original_shape = z.shape
         if semantic_len is None:
@@ -355,12 +341,8 @@ class DownsampleResidualVectorQuantize(nn.Module):
     #
     def decode(self, indices: torch.Tensor):
         # indices = rearrange(indices, "b (g r) l -> g b l r", g=self.residual_fsq.groups)
-        indices[:, 0] = torch.clamp(
-            indices[:, 0], max=self.semantic_quantizer.codebook_size - 1
-        )
-        indices[:, 1:] = torch.clamp(
-            indices[:, 1:], max=self.quantizer.codebook_size - 1
-        )
+        indices[:, 0] = torch.clamp(indices[:, 0], max=self.semantic_quantizer.codebook_size - 1)
+        indices[:, 1:] = torch.clamp(indices[:, 1:], max=self.quantizer.codebook_size - 1)
 
         z_q_semantic = self.semantic_quantizer.from_codes(indices[:, :1])[0]
         z_q_residual = self.quantizer.from_codes(indices[:, 1:])[0]

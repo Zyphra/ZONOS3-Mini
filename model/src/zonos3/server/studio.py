@@ -53,5 +53,6 @@ def install_studio(app: FastAPI, root: Callable[[], Path | None]) -> None:
         target = None if directory is None else resolve_studio_file(directory, path)
         if target is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        return FileResponse(target, headers={"Cache-Control": studio_cache_control(target.relative_to(directory)
-                                                                                   .as_posix())})
+        return FileResponse(
+            target, headers={"Cache-Control": studio_cache_control(target.relative_to(directory).as_posix())}
+        )

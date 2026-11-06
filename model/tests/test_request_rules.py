@@ -22,9 +22,37 @@ N_CB, CODEBOOK = 10, 4096
 EDGES = {
     "loudness": [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
     "fmax": [7578.125, 8000.0, 8000.01, 11062.5, 12445.94, 15328.125, 15773.438, 16623.633, 18758.496],
-    "speaking_rate": [6.546, 8.182, 9.273, 10.31, 11.054, 11.667, 12.193, 12.656, 13.083, 13.476, 13.846, 14.196,
-                      14.53, 14.887, 15.193, 15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069,
-                      19.818, 20.816, 22.286, 24.722, 29.25],
+    "speaking_rate": [
+        6.546,
+        8.182,
+        9.273,
+        10.31,
+        11.054,
+        11.667,
+        12.193,
+        12.656,
+        13.083,
+        13.476,
+        13.846,
+        14.196,
+        14.53,
+        14.887,
+        15.193,
+        15.517,
+        15.865,
+        16.208,
+        16.579,
+        16.972,
+        17.411,
+        17.898,
+        18.434,
+        19.069,
+        19.818,
+        20.816,
+        22.286,
+        24.722,
+        29.25,
+    ],
 }
 
 
@@ -48,8 +76,14 @@ class Context:
     def __init__(self, max_seqlen: int = 32768, flags: dict | None = None):
         self.max_seqlen = self.max_frames = max_seqlen
         self.condition_flags = flags or {}
-        self._builder = TTSPromptBuilder(TTSPromptConfig(n_codebooks=N_CB, codebook_sizes=(CODEBOOK,) * N_CB,
-                                                         audio_pad_id=self.audio_pad_id, text_vocab=self.text_vocab))
+        self._builder = TTSPromptBuilder(
+            TTSPromptConfig(
+                n_codebooks=N_CB,
+                codebook_sizes=(CODEBOOK,) * N_CB,
+                audio_pad_id=self.audio_pad_id,
+                text_vocab=self.text_vocab,
+            )
+        )
 
     def prompt_builder(self):
         return self._builder
@@ -124,7 +158,8 @@ def test_long_reference_keeps_its_first_frames_and_decodes_the_default_context()
     codes = torch.randint(0, CODEBOOK, (950, N_CB), dtype=torch.int32)
     kept = plan.reference_codes(Context(), codes.tolist())
     assert torch.equal(kept, codes[:REFERENCE_MAX_FRAMES])
-    p = run({"text": "Hi.", "speaker_mode": "reference", "decode_context": True, "decode_context_frames": 0},
-            codes=kept)
-    assert torch.equal(p.context_codes, codes[REFERENCE_MAX_FRAMES - DECODE_CONTEXT_FRAMES:REFERENCE_MAX_FRAMES])
+    p = run(
+        {"text": "Hi.", "speaker_mode": "reference", "decode_context": True, "decode_context_frames": 0}, codes=kept
+    )
+    assert torch.equal(p.context_codes, codes[REFERENCE_MAX_FRAMES - DECODE_CONTEXT_FRAMES : REFERENCE_MAX_FRAMES])
     assert p.reference_prefix_length == REFERENCE_MAX_FRAMES + N_CB - 1

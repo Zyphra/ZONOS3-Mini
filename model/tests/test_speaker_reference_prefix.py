@@ -1,4 +1,5 @@
 """The runtime's raw-reference prefix equals the training loader's encode_reference (apps.zonos.reference_packing)."""
+
 from __future__ import annotations
 
 import numpy as np

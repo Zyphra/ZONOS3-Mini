@@ -13,9 +13,12 @@ class RMSNorm(BaseOP):
 
         self.eps = eps
         self._size = size
-        self._use_training_rmsnorm = os.environ.get(
-            "ZONOS3_USE_TRAINING_RMSNORM", "0"
-        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._use_training_rmsnorm = os.environ.get("ZONOS3_USE_TRAINING_RMSNORM", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.weight = torch.empty(size)
         self.rmsnorm = rmsnorm
 
@@ -33,9 +36,12 @@ class RMSNormFused(BaseOP):
         from flashinfer import fused_add_rmsnorm, rmsnorm
 
         self.eps = eps
-        self._use_training_rmsnorm = os.environ.get(
-            "ZONOS3_USE_TRAINING_RMSNORM", "0"
-        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._use_training_rmsnorm = os.environ.get("ZONOS3_USE_TRAINING_RMSNORM", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.elementwise_affine = elementwise_affine
         self._size = size
 
@@ -56,9 +62,7 @@ class RMSNormFused(BaseOP):
             self._ones_buffer = torch.ones(self._size, device=x.device, dtype=x.dtype)
         return self._ones_buffer
 
-    def forward(
-        self, x: torch.Tensor, residual: torch.Tensor | None = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None) -> Tuple[torch.Tensor, torch.Tensor]:
         weight = self._get_weight(x)
         if self._use_training_rmsnorm:
             combined = x if residual is None else x + residual

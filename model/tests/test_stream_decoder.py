@@ -24,20 +24,27 @@ class CausalFakeDecoder:
         out = np.zeros(frames * HOP, dtype=np.float64)
         ramp = np.linspace(0.5, 1.0, HOP)
         for f in range(frames):
-            out[f * HOP:(f + 1) * HOP] = codes[max(0, f - self.memory):f + 1].sum() * 1e-5 * ramp
+            out[f * HOP : (f + 1) * HOP] = codes[max(0, f - self.memory) : f + 1].sum() * 1e-5 * ramp
         return out.astype(np.float32)
 
 
 def stream(decode, mode: str = "whole", prefill_rows=None, **settings) -> StreamDecoder:
-    return StreamDecoder(decode, n_codebooks=N_CB, audio_pad_id=PAD, hop=HOP, prefill_rows=prefill_rows, mode=mode,
-                         settings=StreamSettings(**settings))
+    return StreamDecoder(
+        decode,
+        n_codebooks=N_CB,
+        audio_pad_id=PAD,
+        hop=HOP,
+        prefill_rows=prefill_rows,
+        mode=mode,
+        settings=StreamSettings(**settings),
+    )
 
 
 def delayed_rows(frames: np.ndarray) -> np.ndarray:
     n, cb = frames.shape
     rows = np.full((n + cb - 1, cb), PAD, dtype=np.int64)
     for j in range(cb):
-        rows[j:j + n, j] = frames[:, j]
+        rows[j : j + n, j] = frames[:, j]
     return rows
 
 
@@ -92,10 +99,10 @@ def test_first_prefix_chunk_lands_at_the_first_chunk_boundary_after_the_prefill(
     # decodable = (3 + i + 1) - (N_CB - 1) - 3 must reach prefill + 4: 4 + 3 + (N_CB - 1) generated rows
     assert first + 1 == 4 + 3 + (N_CB - 1)
     assert len(chunks[first]) == 4 * HOP * 4
-    live = [c for c in chunks[first + 1:-1] if c]
+    live = [c for c in chunks[first + 1 : -1] if c]
     assert live and all(len(c) == 15 * HOP * 4 for c in live)
     full = np.frombuffer(whole(frames), dtype=np.float32)
-    np.testing.assert_array_equal(np.frombuffer(b"".join(chunks), dtype=np.float32), full[3 * HOP:])
+    np.testing.assert_array_equal(np.frombuffer(b"".join(chunks), dtype=np.float32), full[3 * HOP :])
 
 
 def test_prefix_mode_respects_eos():
@@ -120,7 +127,7 @@ def test_prefill_rows_are_decoded_but_never_streamed(mode):
     audio = np.frombuffer(b"".join(chunks), dtype=np.float32)
     full = np.frombuffer(whole(frames), dtype=np.float32)
     if mode == "prefix":
-        np.testing.assert_array_equal(audio, full[3 * HOP:])
+        np.testing.assert_array_equal(audio, full[3 * HOP :])
     else:
         np.testing.assert_array_equal(audio, full)
 

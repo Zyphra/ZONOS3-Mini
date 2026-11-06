@@ -42,8 +42,11 @@ def test_media_hash_mismatch_is_400(client, caps):
 def test_project_lifecycle(client, media):
     sha, data = media
     pid = f"conf-{uuid.uuid4().hex[:12]}"
-    doc = {"name": "conformance", "data": {"media": {sha: {"type": "application/octet-stream", "size": len(data)}},
-                                           "summary": {"lines": 1}}, "base_revision": None}
+    doc = {
+        "name": "conformance",
+        "data": {"media": {sha: {"type": "application/octet-stream", "size": len(data)}}, "summary": {"lines": 1}},
+        "base_revision": None,
+    }
     r = client.put(f"/v2/projects/{pid}", json=doc)
     assert r.status_code == 200, r.text[:300]
     check(r.json(), "#/components/schemas/ProjectSaved")
@@ -58,8 +61,13 @@ def test_project_lifecycle(client, media):
 
     stale = error(client.put(f"/v2/projects/{pid}", json={**doc, "base_revision": 7}), 409)
     assert stale["revision"] == 1
-    missing = error(client.put(f"/v2/projects/{pid}", json={**doc, "base_revision": 1,
-                                                            "data": {"media": {"f" * 64: {"type": "x/y", "size": 1}}}}), 400)
+    missing = error(
+        client.put(
+            f"/v2/projects/{pid}",
+            json={**doc, "base_revision": 1, "data": {"media": {"f" * 64: {"type": "x/y", "size": 1}}}},
+        ),
+        400,
+    )
     assert missing["missing"] == ["f" * 64]
     error(client.put(f"/v2/projects/{pid}", json={**doc, "base_revision": 1, "extra": 1}), 422)
 

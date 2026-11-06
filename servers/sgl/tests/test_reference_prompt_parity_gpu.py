@@ -76,11 +76,16 @@ def _sgl_reqs(tts, request: dict):
     from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
 
     model_config = tts.engine.model_config
-    config = SimpleNamespace(model_config=model_config, model_path=str(resolve_dir_or_local(MODEL)),
-                             max_seq_len=tts.engine.max_seq_len,
-                             steer_bundle=str(STEER_BUNDLE) if STEER_BUNDLE.is_file() else None,
-                             accent_adapters=None, laci_heads={}, tts_audio_codec=model_config.audio_codec,
-                             tts_speaker_reference_max_seconds=float(model_config.speaker_reference_max_seconds))
+    config = SimpleNamespace(
+        model_config=model_config,
+        model_path=str(resolve_dir_or_local(MODEL)),
+        max_seq_len=tts.engine.max_seq_len,
+        steer_bundle=str(STEER_BUNDLE) if STEER_BUNDLE.is_file() else None,
+        accent_adapters=None,
+        laci_heads={},
+        tts_audio_codec=model_config.audio_codec,
+        tts_speaker_reference_max_seconds=float(model_config.speaker_reference_max_seconds),
+    )
     # api_server: the request rules on the server's context, with the speaker embedding of the request's file
     ctx = api._RulesContext(config)
     r = plan.parse_request(request)
@@ -88,31 +93,49 @@ def _sgl_reqs(tts, request: dict):
     embedding = None
     if head.mode == "embedding" and r.speaker_embedding_base64:
         embedding = api._compute_speaker_embedding_from_file(
-            r.speaker_embedding_base64, int(model_config.speaker_embedding_dim), r.speaker_embedding_name)
+            r.speaker_embedding_base64, int(model_config.speaker_embedding_dim), r.speaker_embedding_name
+        )
     codes = plan.reference_codes(ctx, r.speaker_reference_codes)
     rules = plan.request_rules(ctx, r, head, plan.Speaker(head.mode, embedding, codes))
     # tokenizer worker
-    sampling = TTSSamplingParams(seed=rules.seed, speaker_cfg_scale=r.speaker_cfg_scale,
-                                 controls_cfg_scale=r.controls_cfg_scale, tag_cfg_scale=r.tag_cfg_scale)
+    sampling = TTSSamplingParams(
+        seed=rules.seed,
+        speaker_cfg_scale=r.speaker_cfg_scale,
+        controls_cfg_scale=r.controls_cfg_scale,
+        tag_cfg_scale=r.tag_cfg_scale,
+    )
     msg = SimpleNamespace(sampling_params=sampling, edit_codes=None, silence_prefill_frames=r.silence_prefill_frames)
-    vocoder = TTSVocoderManager(n_codebooks=tts.n_codebooks, audio_pad_id=tts.audio_pad_id,
-                                audio_codec=model_config.audio_codec)
+    vocoder = TTSVocoderManager(
+        n_codebooks=tts.n_codebooks, audio_pad_id=tts.audio_pad_id, audio_codec=model_config.audio_codec
+    )
     builder = tts._prompt_builder
     text = tts._text_normalizer.normalize(collapse_line_breaks(r.text), rules.language)
     prefill = _silence_rows(msg, builder=builder, vocoder_manager=vocoder)
     text_rows = plan.text_rows(builder, text, silence=prefill)
-    rows = plan.prompt_rows(builder, text_rows, condition_count=len(rules.condition_ids or ()), reference_codes=codes,
-                            speaker_row=rules.embedding is not None)
+    rows = plan.prompt_rows(
+        builder,
+        text_rows,
+        condition_count=len(rules.condition_ids or ()),
+        reference_codes=codes,
+        speaker_row=rules.embedding is not None,
+    )
     plain_text = _tag_cfg_plain_text(msg, text)
     prefill = None if prefill is None else prefill.to(torch.int32)
     user = TTSUserMsg(
-        uid=10_000 + len(tts.waiting_reqs), input_ids=rows.input_ids,
-        plain_input_ids=None if plain_text is None else rows.with_text(
-            text_rows, plan.text_rows(builder, plain_text, silence=prefill)),
-        speaker_reference_prefix_length=rows.reference_prefix_length, sampling_params=sampling,
-        speaker_embedding=rules.embedding, speaker_token_position=rows.speaker_row, steering_delta=rules.hidden_delta,
-        steer_schedule=rules.schedule, condition_values=rules.condition_ids,
-        condition_token_start=rows.condition_token_start, prefill_rows=prefill,
+        uid=10_000 + len(tts.waiting_reqs),
+        input_ids=rows.input_ids,
+        plain_input_ids=None
+        if plain_text is None
+        else rows.with_text(text_rows, plan.text_rows(builder, plain_text, silence=prefill)),
+        speaker_reference_prefix_length=rows.reference_prefix_length,
+        sampling_params=sampling,
+        speaker_embedding=rules.embedding,
+        speaker_token_position=rows.speaker_row,
+        steering_delta=rules.hidden_delta,
+        steer_schedule=rules.schedule,
+        condition_values=rules.condition_ids,
+        condition_token_start=rows.condition_token_start,
+        prefill_rows=prefill,
     )
     tts.waiting_reqs.append(user)
     batch = tts._schedule_prefill()

@@ -62,9 +62,7 @@ class ModelArgs:
 
 
 class KVCache(nn.Module):
-    def __init__(
-        self, max_batch_size, max_seq_length, n_heads, head_dim, dtype=torch.bfloat16
-    ):
+    def __init__(self, max_batch_size, max_seq_length, n_heads, head_dim, dtype=torch.bfloat16):
         super().__init__()
         cache_shape = (max_batch_size, n_heads, max_seq_length, head_dim)
         self.register_buffer("k_cache", torch.zeros(cache_shape, dtype=dtype))
@@ -85,12 +83,8 @@ class KVCache(nn.Module):
         )
 
     def clear_cache(self, prompt_len):
-        self.k_cache[:, :, prompt_len:, :] = torch.zeros_like(
-            self.k_cache[:, :, prompt_len:, :]
-        )
-        self.v_cache[:, :, prompt_len:, :] = torch.zeros_like(
-            self.v_cache[:, :, prompt_len:, :]
-        )
+        self.k_cache[:, :, prompt_len:, :] = torch.zeros_like(self.k_cache[:, :, prompt_len:, :])
+        self.v_cache[:, :, prompt_len:, :] = torch.zeros_like(self.v_cache[:, :, prompt_len:, :])
 
 
 class Transformer(nn.Module):
@@ -98,16 +92,12 @@ class Transformer(nn.Module):
         super().__init__()
         self.config = config
 
-        self.layers = nn.ModuleList(
-            TransformerBlock(config) for _ in range(config.n_layer)
-        )
+        self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer))
         self.norm = RMSNorm(config.dim, eps=config.norm_eps)
 
         # Only compute RoPE frequencies if using RoPE
         if config.pos_embed_type == "rope":
-            freqs_cis = precompute_freqs_cis(
-                self.config.block_size, self.config.head_dim, self.config.rope_base
-            )
+            freqs_cis = precompute_freqs_cis(self.config.block_size, self.config.head_dim, self.config.rope_base)
             self.register_buffer("freqs_cis", freqs_cis, persistent=False)
         else:
             self.register_buffer("freqs_cis", None)
@@ -148,14 +138,12 @@ class Transformer(nn.Module):
         mask: Optional[Tensor] = None,
     ) -> Tensor:
         if self.config.pos_embed_type == "rope":
-            assert (
-                self.freqs_cis is not None
-            ), "RoPE frequencies must be initialized for RoPE positional embedding"
+            assert self.freqs_cis is not None, "RoPE frequencies must be initialized for RoPE positional embedding"
             # print("MAX", input_pos.max())
             if x.shape[1] > self.freqs_cis.shape[0]:
-                self.freqs_cis = precompute_freqs_cis(
-                    x.shape[1], self.config.head_dim, self.config.rope_base
-                ).to(x.device)
+                self.freqs_cis = precompute_freqs_cis(x.shape[1], self.config.head_dim, self.config.rope_base).to(
+                    x.device
+                )
             freqs_cis = self.freqs_cis[input_pos]
         else:
             freqs_cis = None
@@ -171,6 +159,7 @@ class Transformer(nn.Module):
         for i, layer in enumerate(self.layers):
             if getattr(self, "checkpoint_layers", False) and self.training and torch.is_grad_enabled():
                 from torch.utils.checkpoint import checkpoint
+
                 x = checkpoint(layer, x, input_pos, freqs_cis, mask, use_reentrant=False)
             else:
                 x = layer(x, input_pos, freqs_cis, mask)
@@ -195,9 +184,7 @@ class TransformerBlock(nn.Module):
         freqs_cis: Tensor,
         mask: Tensor,
     ) -> Tensor:
-        h = x + self.attention_layer_scale(
-            self.attention(self.attention_norm(x), freqs_cis, mask, input_pos)
-        )
+        h = x + self.attention_layer_scale(self.attention(self.attention_norm(x), freqs_cis, mask, input_pos))
         out = h + self.ffn_layer_scale(self.feed_forward(self.ffn_norm(h)))
         return out
 
@@ -224,9 +211,7 @@ class Attention(nn.Module):
         if self.pos_embed_type == "conformer":
             self.max_relative_position = config.max_relative_position
             num_pos_embeddings = 2 * config.max_relative_position + 1
-            self.rel_pos_embeddings = nn.Parameter(
-                torch.zeros(num_pos_embeddings, self.head_dim)
-            )
+            self.rel_pos_embeddings = nn.Parameter(torch.zeros(num_pos_embeddings, self.head_dim))
             nn.init.normal_(self.rel_pos_embeddings, mean=0.0, std=0.02)
 
     def _compute_conformer_pos_scores(self, q: Tensor, seqlen: int) -> Tensor:
@@ -303,11 +288,7 @@ class Attention(nn.Module):
                 attn_mask=mask,
             )
             # is_causal=True)
-        y = (
-            y.transpose(1, 2)
-            .contiguous()
-            .view(bsz, seqlen, self.head_dim * self.n_head)
-        )
+        y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.head_dim * self.n_head)
         y = self.wo(y)
         return y
 
@@ -370,19 +351,9 @@ class WindowLimitedTransformer(Transformer):
         self.window_size = window_size
         self.causal = causal
         self.channels_first = config.channels_first
-        self.look_ahead_conv = (
-            look_ahead_conv if look_ahead_conv is not None else nn.Identity()
-        )
-        self.input_proj = (
-            nn.Linear(input_dim, config.dim)
-            if input_dim != config.dim
-            else nn.Identity()
-        )
-        self.output_proj = (
-            nn.Linear(config.dim, input_dim)
-            if input_dim != config.dim
-            else nn.Identity()
-        )
+        self.look_ahead_conv = look_ahead_conv if look_ahead_conv is not None else nn.Identity()
+        self.input_proj = nn.Linear(input_dim, config.dim) if input_dim != config.dim else nn.Identity()
+        self.output_proj = nn.Linear(config.dim, input_dim) if input_dim != config.dim else nn.Identity()
 
     def make_window_limited_mask(
         self,
@@ -451,12 +422,8 @@ class WindowLimitedTransformer(Transformer):
         return x
 
 
-def precompute_freqs_cis(
-    seq_len: int, n_elem: int, base: int = 10000, dtype: torch.dtype = torch.bfloat16
-) -> Tensor:
-    freqs = 1.0 / (
-        base ** (torch.arange(0, n_elem, 2)[: (n_elem // 2)].float() / n_elem)
-    )
+def precompute_freqs_cis(seq_len: int, n_elem: int, base: int = 10000, dtype: torch.dtype = torch.bfloat16) -> Tensor:
+    freqs = 1.0 / (base ** (torch.arange(0, n_elem, 2)[: (n_elem // 2)].float() / n_elem))
     t = torch.arange(seq_len, device=freqs.device)
     freqs = torch.outer(t, freqs)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
@@ -494,9 +461,7 @@ def unpad1d(x: torch.Tensor, paddings: tp.Tuple[int, int]):
     return x[..., padding_left:end]
 
 
-def get_extra_padding_for_conv1d(
-    x: torch.Tensor, kernel_size: int, stride: int, padding_total: int = 0
-) -> int:
+def get_extra_padding_for_conv1d(x: torch.Tensor, kernel_size: int, stride: int, padding_total: int = 0) -> int:
     """See `pad_for_conv1d`."""
     length = x.shape[-1]
     n_frames = (length - kernel_size + padding_total) / stride + 1
@@ -557,9 +522,7 @@ class CausalConvNet(nn.Module):
 
     def forward(self, x):
         pad = self.padding
-        extra_padding = get_extra_padding_for_conv1d(
-            x, self.kernel_size, self.stride, pad
-        )
+        extra_padding = get_extra_padding_for_conv1d(x, self.kernel_size, self.stride, pad)
         x = pad1d(x, (pad, extra_padding), mode="constant", value=0)
         return self.conv(x).contiguous()
 
@@ -573,13 +536,9 @@ class CausalConvNet(nn.Module):
 
 
 class CausalTransConvNet(nn.Module):
-    def __init__(
-        self, in_channels, out_channels, kernel_size, dilation=1, stride=1, padding=None
-    ):
+    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, stride=1, padding=None):
         super(CausalTransConvNet, self).__init__()
-        self.conv = nn.ConvTranspose1d(
-            in_channels, out_channels, kernel_size, stride=stride, dilation=dilation
-        )
+        self.conv = nn.ConvTranspose1d(in_channels, out_channels, kernel_size, stride=stride, dilation=dilation)
         self.stride = stride
         self.kernel_size = kernel_size
 

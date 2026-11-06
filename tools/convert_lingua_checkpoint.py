@@ -115,15 +115,9 @@ def resolve_checkpoint(path: Path) -> Path:
     if not checkpoint_root.is_dir():
         raise FileNotFoundError(f"Checkpoint path does not exist: {path}")
 
-    complete = [
-        child
-        for child in checkpoint_root.iterdir()
-        if child.is_dir() and (child / ".metadata").is_file()
-    ]
+    complete = [child for child in checkpoint_root.iterdir() if child.is_dir() and (child / ".metadata").is_file()]
     if not complete:
-        raise FileNotFoundError(
-            f"No complete distributed checkpoints found under {checkpoint_root}"
-        )
+        raise FileNotFoundError(f"No complete distributed checkpoints found under {checkpoint_root}")
     return max(complete, key=_checkpoint_sort_key)
 
 
@@ -143,9 +137,7 @@ def resolve_training_config(checkpoint: Path, explicit_config: Path | None) -> P
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
-    raise FileNotFoundError(
-        "Could not infer config.yaml from the checkpoint. Pass it explicitly with --config."
-    )
+    raise FileNotFoundError("Could not infer config.yaml from the checkpoint. Pass it explicitly with --config.")
 
 
 def default_checkpoint_name(checkpoint: Path) -> str:
@@ -157,8 +149,7 @@ def default_checkpoint_name(checkpoint: Path) -> str:
 def validate_checkpoint_name(name: str) -> str:
     if not CHECKPOINT_NAME_PATTERN.fullmatch(name):
         raise ValueError(
-            "Checkpoint name must be one path component containing only letters, "
-            f"numbers, '.', '_', or '-': {name!r}"
+            f"Checkpoint name must be one path component containing only letters, numbers, '.', '_', or '-': {name!r}"
         )
     return name
 
@@ -174,9 +165,7 @@ def load_training_config(config_path: Path) -> dict[str, Any]:
     return config
 
 
-def merge_checkpoint_model_params(
-    training_config: dict[str, Any], checkpoint: Path
-) -> dict[str, Any]:
+def merge_checkpoint_model_params(training_config: dict[str, Any], checkpoint: Path) -> dict[str, Any]:
     """Overlay the resolved model defaults persisted by the training job.
 
     YAML configs commonly omit dataclass defaults such as ``text_vocab``.
@@ -197,11 +186,7 @@ def merge_checkpoint_model_params(
         raise ValueError("Expected a model mapping in the training config")
     merged_model = dict(yaml_model)
     merged_model.update(
-        {
-            key: value
-            for key, value in resolved_model.items()
-            if key in MODEL_CONFIG_FIELDS and value is not None
-        }
+        {key: value for key, value in resolved_model.items() if key in MODEL_CONFIG_FIELDS and value is not None}
     )
     merged_config["model"] = merged_model
     return merged_config
@@ -229,7 +214,9 @@ def check_runtime_assumptions(model_config: dict[str, Any]) -> None:
             )
     if model_config.get("codebook_sizes") is not None:
         sizes = [int(v) for v in model_config["codebook_sizes"]]
-        if len(sizes) != int(model_config.get("n_codebooks", 0)) or max(sizes) != int(model_config.get("codebook_size", 0)):
+        if len(sizes) != int(model_config.get("n_codebooks", 0)) or max(sizes) != int(
+            model_config.get("codebook_size", 0)
+        ):
             raise ValueError("codebook_sizes must have one entry per codebook with the largest equal to codebook_size")
 
 
@@ -238,18 +225,14 @@ def build_params(training_config: dict[str, Any], dtype_name: str) -> dict[str, 
     check_runtime_assumptions(model_config)
     v = model_config.get("text_conditioning")
     if v is not None and v != "bytes":
-        raise ValueError(f"ZONOS3 converts byte / SuperBPE text checkpoints only; this run uses text_conditioning={v!r}")
-    params = {
-        key: value
-        for key, value in model_config.items()
-        if key in MODEL_CONFIG_FIELDS and value is not None
-    }
+        raise ValueError(
+            f"ZONOS3 converts byte / SuperBPE text checkpoints only; this run uses text_conditioning={v!r}"
+        )
+    params = {key: value for key, value in model_config.items() if key in MODEL_CONFIG_FIELDS and value is not None}
     if "moe_router_use_eda" not in params and "use_eda" in model_config:
         params["moe_router_use_eda"] = bool(model_config["use_eda"])
 
-    raw_balancing_strategy = str(
-        model_config.get("moe_balancing_strategy", "legacy")
-    ).strip().lower().replace("-", "_")
+    raw_balancing_strategy = str(model_config.get("moe_balancing_strategy", "legacy")).strip().lower().replace("-", "_")
     strategy_aliases = {
         "current": "quantile",
         "quantile": "quantile",
@@ -264,16 +247,20 @@ def build_params(training_config: dict[str, Any], dtype_name: str) -> dict[str, 
         "aux_loss": "legacy",
     }
     if raw_balancing_strategy not in strategy_aliases:
-        raise ValueError(
-            "Unsupported model.moe_balancing_strategy="
-            f"{raw_balancing_strategy!r}."
-        )
+        raise ValueError(f"Unsupported model.moe_balancing_strategy={raw_balancing_strategy!r}.")
     data_config = training_config.get("data", {})
     if data_config.get("text_tokenizer") == "superbpe":
-        spec = {"kind": "superbpe", "path": data_config["text_tokenizer_path"],
-                    "sha256": data_config["text_tokenizer_sha256"],
-                    "vocab_size": data_config["text_tokenizer_vocab_size"], "offset": 4, "bos": 2, "eos": 3}
+        spec = {
+            "kind": "superbpe",
+            "path": data_config["text_tokenizer_path"],
+            "sha256": data_config["text_tokenizer_sha256"],
+            "vocab_size": data_config["text_tokenizer_vocab_size"],
+            "offset": 4,
+            "bos": 2,
+            "eos": 3,
+        }
         from zonos3.tts.superbpe import validate_spec
+
         validate_spec(spec, int(params["text_vocab"]))
         params["text_tokenizer_spec"] = spec
     if isinstance(data_config, dict):
@@ -297,19 +284,22 @@ def build_params(training_config: dict[str, Any], dtype_name: str) -> dict[str, 
         ):
             # Reference prefixes may be configured per compiled source (the GDN / Full-AttnRes family).
             params["speaker_reference_prefix_enabled"] = True
-            params["speaker_reference_max_seconds"] = float(
-                data_config.get("speaker_reference_max_seconds", 30.0)
-            )
+            params["speaker_reference_max_seconds"] = float(data_config.get("speaker_reference_max_seconds", 30.0))
         if params.get("condition_tokens_enabled"):
             # The cond3 finetunes: the runtime needs the bucket edges to map raw values (LUFS / Hz / bytes per
             # second) to the ids the tables were trained with; the loader's CONDITION_NAMES order is fixed.
             names = ["loudness", "fmax", "speaking_rate"]
             edges_path = data_config.get("condition_edges_path")
             if not edges_path or not Path(edges_path).is_file():
-                raise ValueError("model.condition_tokens_enabled needs data.condition_edges_path (the bucket edges file)")
+                raise ValueError(
+                    "model.condition_tokens_enabled needs data.condition_edges_path (the bucket edges file)"
+                )
             spec = json.loads(Path(edges_path).read_text())
             n_buckets = int(params.get("condition_n_buckets", 10))
-            if int(data_config.get("condition_n_buckets", n_buckets)) != n_buckets or int(spec.get("n_buckets", n_buckets)) != n_buckets:
+            if (
+                int(data_config.get("condition_n_buckets", n_buckets)) != n_buckets
+                or int(spec.get("n_buckets", n_buckets)) != n_buckets
+            ):
                 raise ValueError("condition_n_buckets differs between model, data and the edges file")
             count = int(params.get("condition_count", len(names)))
             # The encode-start twin (2026-10-16): a fourth row, a flag (0 = mid-file crop, 1 = genuine encode start,
@@ -323,10 +313,12 @@ def build_params(training_config: dict[str, Any], dtype_name: str) -> dict[str, 
                     "labels": {"0": "mid-file crop", "1": "genuine encode start"},
                     "max_frames": int(data_config.get("condition_encode_start_max_frames") or 0),
                     "note": "1 = the generation starts at frame 0 of a file's encode (the codec's cold start), "
-                            "0 = a mid-file continuation, unknown = the model decides (20% of training draws)",
+                    "0 = a mid-file continuation, unknown = the model decides (20% of training draws)",
                 }
             if count != len(names):
-                raise ValueError(f"condition_count={count} is not implemented by the runtime (expected {len(names)}: {names})")
+                raise ValueError(
+                    f"condition_count={count} is not implemented by the runtime (expected {len(names)}: {names})"
+                )
             edges = {}
             for name in names:
                 if name in flags:
@@ -483,18 +475,14 @@ def convert_checkpoint(
     output_path = output_root / checkpoint_name
     if output_path.exists():
         raise FileExistsError(
-            f"Output checkpoint already exists: {output_path}. "
-            "Choose a different --name or remove it explicitly."
+            f"Output checkpoint already exists: {output_path}. Choose a different --name or remove it explicitly."
         )
 
     staging = Path(tempfile.mkdtemp(prefix=f".{checkpoint_name}.", dir=output_root))
     try:
         print(f"Loading model tensors from {checkpoint}")
         model_state, source_bytes = load_model_state(checkpoint)
-        print(
-            f"Loaded {len(model_state)} model tensors "
-            f"({source_bytes / 2**30:.2f} GiB); converting to {dtype_name}"
-        )
+        print(f"Loaded {len(model_state)} model tensors ({source_bytes / 2**30:.2f} GiB); converting to {dtype_name}")
 
         converted, stats = convert_model_state(model_state, OUTPUT_DTYPES[dtype_name])
         del model_state

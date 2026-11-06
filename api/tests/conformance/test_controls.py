@@ -40,8 +40,17 @@ def test_controls_cfg(client, caps, controls, default_voice):
     needs("embedding" in caps["speaker_modes"], "controls CFG needs speaker_mode=embedding")
     hidden = [d for d, v in controls["directions"].items() if "vector" not in v]
     needs(hidden, "the bundle has no hidden-space direction")
-    pcm(generate(client, {"speaker_mode": "embedding", "speaker_embedding_id": default_voice["id"],
-                          "controls": {hidden[0]: 0.5}, "controls_cfg_scale": 1.5}))
+    pcm(
+        generate(
+            client,
+            {
+                "speaker_mode": "embedding",
+                "speaker_embedding_id": default_voice["id"],
+                "controls": {hidden[0]: 0.5},
+                "controls_cfg_scale": 1.5,
+            },
+        )
+    )
 
 
 def test_disabled_controls_are_calibrated_directions(client, controls):

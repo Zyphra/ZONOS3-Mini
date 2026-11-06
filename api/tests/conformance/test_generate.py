@@ -74,8 +74,17 @@ def test_removed_legacy_field_is_422(client, field):
 
 @pytest.mark.parametrize(
     "fields",
-    [{"headroom_db": 25}, {"speaker_mode": "x"}, {"seed": -1}, {"seed": 2**32}, {"stream_decode": "x"},
-     {"format": "mp3"}, {"control_span_follow": "x"}, {"text": 5}, {"speaker_blend_t": 2}],
+    [
+        {"headroom_db": 25},
+        {"speaker_mode": "x"},
+        {"seed": -1},
+        {"seed": 2**32},
+        {"stream_decode": "x"},
+        {"format": "mp3"},
+        {"control_span_follow": "x"},
+        {"text": 5},
+        {"speaker_blend_t": 2},
+    ],
 )
 def test_schema_violations_are_422(client, fields):
     error(generate(client, fields), 422)

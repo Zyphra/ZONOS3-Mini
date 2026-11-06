@@ -20,8 +20,9 @@ class Ref:
 
     def __init__(self, path):
         r = GGUFReader(str(path))
-        self.t = {t.name: np.asarray(t.data, dtype=np.float64).reshape(tuple(reversed(t.shape.tolist())))
-                  for t in r.tensors}
+        self.t = {
+            t.name: np.asarray(t.data, dtype=np.float64).reshape(tuple(reversed(t.shape.tolist()))) for t in r.tensors
+        }
         self.meta = {}
         for key, f in r.fields.items():
             if key.startswith("mossdual_istft."):
@@ -52,7 +53,7 @@ def convnext(R, x, p, eps):
     w = R.t[p + ".dw.weight"]  # [C, K]
     K = w.shape[1]
     xf = np.concatenate([np.zeros((K - 1, C)), x])
-    h = sum(xf[k:k + T] * w[:, k] for k in range(K)) + R.t[p + ".dw.bias"]
+    h = sum(xf[k : k + T] * w[:, k] for k in range(K)) + R.t[p + ".dw.bias"]
     h = layer_norm(h, R.t[p + ".norm.weight"], R.t[p + ".norm.bias"], eps)
     h = gelu(R.lin(p + ".pw1.weight", h, p + ".pw1.bias"))
     return x + R.lin(p + ".pw2.weight", h, p + ".pw2.bias")
@@ -80,9 +81,9 @@ def moss(R, x, p, n_head, context, eps):
     for t in range(T):
         lo = max(0, t - context + 1)
         for hh in range(n_head):
-            s = k[lo:t + 1, hh] @ q[t, hh] / math.sqrt(hd)
+            s = k[lo : t + 1, hh] @ q[t, hh] / math.sqrt(hd)
             w = np.exp(s - s.max())
-            o[t, hh] = (w / w.sum()) @ v[lo:t + 1, hh]
+            o[t, hh] = (w / w.sum()) @ v[lo : t + 1, hh]
     x = x + R.lin(p + ".wo.weight", o.reshape(T, d)) * R.t[p + ".attn_scale"]
     h = layer_norm(x, R.t[p + ".norm2.weight"], R.t[p + ".norm2.bias"], eps)
     return x + R.lin(p + ".ffn2.weight", gelu(R.lin(p + ".ffn1.weight", h))) * R.t[p + ".ffn_scale"]
@@ -126,12 +127,12 @@ def reference_decode(R, codes):
         ola, env = np.zeros(len(x) * hop + n), np.zeros(len(x) * hop + n)
         for t, f in enumerate(spec):
             mag = np.exp(np.minimum(f[:bins], m["head.max_log_magnitude"]))
-            X = mag * np.exp(1j * f[bins:2 * bins])
+            X = mag * np.exp(1j * f[bins : 2 * bins])
             X[0], X[-1] = X[0].real, X[-1].real
             frame = np.fft.irfft(X, n=n)
-            ola[t * hop:t * hop + n] += win * frame
-            env[t * hop:t * hop + n] += win * win
-        branches.append((ola / np.where(env > 0, env, 1.0))[n // 2:n // 2 + L])
+            ola[t * hop : t * hop + n] += win * frame
+            env[t * hop : t * hop + n] += win * win
+        branches.append((ola / np.where(env > 0, env, 1.0))[n // 2 : n // 2 + L])
     mixer = R.t["head.mixer.weight"]  # [2, K]
     K = mixer.shape[1]
     hk = (K - 1) // 2
@@ -139,7 +140,7 @@ def reference_decode(R, codes):
     for c in range(2):
         padded = np.concatenate([np.zeros(hk), branches[c], np.zeros(hk)])
         for k in range(K):
-            mixed += mixer[c, k] * padded[k:k + L]
+            mixed += mixer[c, k] * padded[k : k + L]
     O, N, W = m["resample.orig"], m["resample.new"], m["resample.width"]
     kernel = R.t["resample.kernel"]  # [N, 2W + O]
     total = -(-N * L // O)
@@ -148,8 +149,8 @@ def reference_decode(R, codes):
         x0 = n * O - W
         idx = np.arange(x0, x0 + 2 * W + O)
         xw = np.where((idx >= 0) & (idx < L), mixed[np.clip(idx, 0, L - 1)], 0.0)
-        out.extend((kernel @ xw)[:min(N, total - n * N)])
-    return np.asarray(out[:F * m["hop"]])
+        out.extend((kernel @ xw)[: min(N, total - n * N)])
+    return np.asarray(out[: F * m["hop"]])
 
 
 def unshear(stream, eos):
@@ -182,7 +183,7 @@ def test_decode_rows_overlaps_short_prefills(codes):
     dec = CodecDecoder.load(GGUF)
     rows = np.full((len(codes) + 9, 11), 4097, dtype=np.int64)
     for c in range(10):
-        rows[c:c + len(codes), c] = codes[:, c]
+        rows[c : c + len(codes), c] = codes[:, c]
     prefill, gen = rows[:3], rows[3:]
     audio = dec.decode_rows(list(gen), prefill=prefill, eos_frame=None)
     full = dec.decode(codes)
