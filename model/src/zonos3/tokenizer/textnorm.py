@@ -303,3 +303,21 @@ class TTSTextNormalizer:
             result = ("" if lang in _CJK_LANGS else " ").join(pieces)
         logger.debug("TTS norm [%s]: %r -> %r", language, text, result)
         return result
+
+
+def load_normalizer(*, warmup: bool) -> TTSTextNormalizer | None:
+    """The server's normalizer (None with ZONOS3_TTS_NORM=0); ``warmup`` compiles the English grammars on a daemon
+    thread so the first request does not pay the one-time WFST construction."""
+    if not normalization_enabled():
+        return None
+    normalizer = TTSTextNormalizer()
+    if warmup:
+        threading.Thread(target=normalizer.warmup, args=(["en"],), daemon=True).start()
+    return normalizer
+
+
+def normalize_request_text(text: str, language: str, normalizer) -> str:
+    """A request's text as the prompt builder gets it: line breaks collapsed (also when normalization is off), then
+    ``normalizer.normalize`` (anything with that method; None skips it)."""
+    text = collapse_line_breaks(text)
+    return text if normalizer is None else normalizer.normalize(text, language)

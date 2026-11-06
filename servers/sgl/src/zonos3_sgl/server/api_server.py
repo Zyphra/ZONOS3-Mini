@@ -79,7 +79,6 @@ logger = init_logger(__name__, "FrontendAPI")
 _GLOBAL_STATE = None
 _SPEAKER_EMBEDDERS = {}
 _SPEAKER_EMBEDDER_LOCK = asyncio.Lock()
-_SPEAKER_EMBEDDER_DEVICE = os.getenv("ZONOS3_SPEAKER_EMBEDDER_DEVICE", "cpu")
 _SESSION_SPEAKER_CACHE: Dict[str, Dict[str, "CachedSpeakerReference"]] = {}
 _SESSION_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, "DefaultSpeakerReference"]] = {}
@@ -842,12 +841,12 @@ async def _get_speaker_embedder(expected_dim: int, speaker_codec: str | None = N
         if backend_key in _SPEAKER_EMBEDDERS:
             return _SPEAKER_EMBEDDERS[backend_key]
         try:
-            from zonos3.models.speaker_cloning import create_speaker_embedder
+            from zonos3.models.speaker_cloning import create_speaker_embedder, speaker_embedder_device
 
             embedder = create_speaker_embedder(
                 speaker_codec,
                 expected_dim,
-                device=_SPEAKER_EMBEDDER_DEVICE,
+                device=speaker_embedder_device(),
             )
         except Exception as exc:  # pragma: no cover - depends on environment deps
             raise RuntimeError(

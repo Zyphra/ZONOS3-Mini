@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, replace
 from typing import Dict, List
 
@@ -21,6 +20,7 @@ from zonos3_sgl.scheduler.scheduler import TTSScheduler
 from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
 from zonos3.condition_buckets import check_ids
 from zonos3.generation import SAMPLE_RATE
+from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
 from zonos3.tts import plan
 from zonos3.tts.conditioning import default_quality_buckets
 from zonos3.tts.delay import shear_up
@@ -152,14 +152,7 @@ class TTSLLM(TTSScheduler):
 
         # Text normalization, gated exactly like the server tokenizer worker so the
         # offline path produces the same tokens (e.g. "123" -> "one hundred ...").
-        from zonos3.tokenizer.textnorm import TTSTextNormalizer, normalization_enabled
-
-        self._text_normalizer = TTSTextNormalizer() if normalization_enabled() else None
-        if self._text_normalizer is not None:
-            # Compile the English grammars off the hot path, matching the server.
-            threading.Thread(
-                target=self._text_normalizer.warmup, args=(["en"],), daemon=True
-            ).start()
+        self._text_normalizer = load_normalizer(warmup=True)
 
         # Speaker encoder is loaded lazily on first embed_speaker* call.
         self._speaker_embedder = None
@@ -219,17 +212,12 @@ class TTSLLM(TTSScheduler):
             raise ValueError("Current model does not support speaker conditioning.")
 
         if self._speaker_embedder is None:
-            import os
+            from zonos3.models.speaker_cloning import create_speaker_embedder, speaker_embedder_device
 
-            from zonos3.models.speaker_cloning import create_speaker_embedder
-
-            # Load the encoder on CPU by default (same env var the server uses) so
-            # it does not permanently occupy GPU memory next to the TTS model.
-            device = os.getenv("ZONOS3_SPEAKER_EMBEDDER_DEVICE", "cpu")
             self._speaker_embedder = create_speaker_embedder(
                 self.speaker_embedding_codec,
                 self.speaker_embedding_dim,
-                device=device,
+                device=speaker_embedder_device(),
             )
 
         with torch.inference_mode():
@@ -288,9 +276,7 @@ class TTSLLM(TTSScheduler):
             2D tensor of shape (seq_len, frame_width)
         """
         if isinstance(prompt, str):
-            text = prompt
-            if text_normalization and self._text_normalizer is not None:
-                text = self._text_normalizer.normalize(text, language)
+            text = normalize_request_text(prompt, language, self._text_normalizer if text_normalization else None)
             # legacy quality-conditioned checkpoints get the server's default quality tokens
             return self._prompt_builder.build(
                 text, quality_buckets=default_quality_buckets(self.quality_features, self.quality_bucket_counts)

@@ -169,9 +169,15 @@ class _JsonLinesWorker:
                 self._process = None
 
 
+def asr_device() -> str | None:
+    """The device of the Qwen3-ASR worker and of the plugins' helper workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on
+    macOS, else None (the workers' own default)."""
+    return os.environ.get('ZONOS3_ASR_DEVICE') or ('mps' if sys.platform == 'darwin' else None)
+
+
 class AsrWorker(_JsonLinesWorker):
     """The workers/asr.py process (Qwen3-ASR) in .venv-asr: one per server, shared by speech editing and plugins.
-    ``device`` defaults to ``ZONOS3_ASR_DEVICE`` (else the worker's own default), ``model`` to the worker's."""
+    ``device`` defaults to :func:`asr_device`, ``model`` to the worker's."""
 
     error = AsrError
     name = 'ASR worker'
@@ -180,7 +186,7 @@ class AsrWorker(_JsonLinesWorker):
 
     def __init__(self, python: str | None = None, device: str | None = None, model: str | None = None):
         self.python = python or asr_python()
-        device = device or os.environ.get('ZONOS3_ASR_DEVICE')
+        device = device or asr_device()
         super().__init__([self.python, str(ASR_WORKER)] + (['--device', device] if device else [])
                          + (['--model', model] if model else []))
         self._ping: dict | None = None

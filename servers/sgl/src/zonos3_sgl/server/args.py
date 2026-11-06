@@ -10,6 +10,7 @@ import torch
 from zonos3_sgl.distributed import DistributedInfo
 from zonos3_sgl.scheduler import SchedulerConfig
 from zonos3.generation import SAMPLE_RATE
+from zonos3.tts.laci import parse_laci_heads
 from zonos3.utils.hf import cached_load_checkpoint_config
 from zonos3_sgl.utils.logger import init_logger
 
@@ -475,15 +476,10 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
 
     # LACI: alignment-head specs per language; the probe needs the FA backend, every head on one rank, and a text
     # capacity for the decode graphs (zonos3.tts.laci).
-    laci_heads = {}
-    for entry in kwargs.pop("laci_heads") or ():
-        lang, sep, path = entry.partition("=")
-        if not sep or not lang or not path:
-            parser.error(f"--laci-heads takes LANG=PATH entries, got {entry!r}")
-        path = os.path.expanduser(path)
-        if not os.path.isfile(path):
-            parser.error(f"--laci-heads {lang}: no file {path}")
-        laci_heads[lang.strip().lower().replace("-", "_")] = path
+    try:
+        laci_heads = parse_laci_heads(kwargs.pop("laci_heads"))
+    except ValueError as exc:
+        parser.error(str(exc))
     kwargs["laci_heads"] = laci_heads
     if laci_heads:
         if kwargs["attention_backend"] == "auto":

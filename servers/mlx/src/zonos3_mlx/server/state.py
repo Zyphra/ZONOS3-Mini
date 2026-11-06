@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -16,12 +14,6 @@ from zonos3.tts.stream import StreamSettings
 
 from zonos3_mlx.engine import Engine
 from zonos3_mlx.scheduler import Scheduler
-
-
-def asr_device() -> str | None:
-    """The device of the Qwen3-ASR worker and of the plugins' helper workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on
-    macOS (else the workers' default)."""
-    return os.environ.get("ZONOS3_ASR_DEVICE") or ("mps" if sys.platform == "darwin" else None)
 
 
 @dataclass
@@ -57,7 +49,7 @@ class ServerState:
     # speech editing and plugins: the server's ASR worker (zonos3/workers/asr.py, Qwen3-ASR in .venv-asr; every speech
     # recognition; optional: editing without it needs the clip's transcript) and FuseAlign worker
     # (zonos3/workers/fusealign.py; every forced alignment); each starts on its first call
-    asr: AsrWorker = field(default_factory=lambda: AsrWorker(device=asr_device()))
+    asr: AsrWorker = field(default_factory=AsrWorker)
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     edit_runtime: object | None = None  # zonos3.tts.edit_runtime.EditRuntime (zonos3_mlx.server.edit.runtime)
     laci_slots: asyncio.Semaphore | None = None  # LACI takes in flight (zonos3_mlx.server.host)

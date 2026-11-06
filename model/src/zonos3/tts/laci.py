@@ -28,6 +28,7 @@ from __future__ import annotations
 import bisect
 import json
 import math
+import os
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -736,3 +737,63 @@ class LaciSession:
                     final_eos_row=None if eos is None else int(eos), generated_total=self.generated_total,
                     pace_tok=det.pace_tok() if det else None, heads=[list(h) for h in self.heads.heads],
                     failures=list(self.failures), pace_retries=self.pace_retries, rate_bucket=self.rate_bucket)
+
+
+# ----------------------------------------------------------------------------------------------------- head files
+
+
+def parse_laci_heads(entries) -> dict[str, str]:
+    """``--laci-heads LANG=PATH ...`` -> {request code: path}: the code lowercased with ``-`` as ``_``, the path
+    user-expanded and an existing file; ValueError otherwise."""
+    heads = {}
+    for entry in entries or ():
+        lang, sep, path = entry.partition("=")
+        if not sep or not lang or not path:
+            raise ValueError(f"--laci-heads takes LANG=PATH entries, got {entry!r}")
+        path = os.path.expanduser(path)
+        if not os.path.isfile(path):
+            raise ValueError(f"--laci-heads {lang}: no file {path}")
+        heads[lang.strip().lower().replace("-", "_")] = path
+    return heads
+
+
+def discover_laci_heads(directory: str | Path) -> dict[str, str]:
+    """The head files of a directory for every server language (in ``zonos3.languages.CODES`` order): exactly one
+    ``*_heads.json`` is the default; a ``*_heads_<code>.json`` serves the server languages whose speech code is
+    ``<code>``. ValueError for zero or several default files, or a ``<code>`` no server language speaks."""
+    from zonos3 import languages
+
+    root = Path(directory).expanduser().resolve()
+    defaults = sorted(root.glob("*_heads.json"))
+    if len(defaults) != 1:
+        raise ValueError(f"{root}: needs exactly one *_heads.json default head file, found {len(defaults)}")
+    spoken = {lang.speech for lang in languages.SERVER}
+    by_speech: dict[str, Path] = {}
+    for path in sorted(root.glob("*_heads_*.json")):
+        code = path.stem.rpartition("_heads_")[2]
+        if code not in spoken:
+            raise ValueError(f"{path}: no server language speaks {code!r}")
+        by_speech[code] = path
+    return {lang.code: str(by_speech.get(lang.speech, defaults[0])) for lang in languages.SERVER}
+
+
+def main(argv=None) -> int:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m zonos3.tts.laci",
+                                     description="LANG=PATH --laci-heads arguments of a head directory")
+    parser.add_argument("--all", required=True, metavar="DIR",
+                        help="every server language: the directory's *_heads.json, or its *_heads_<speech code>.json")
+    args = parser.parse_args(argv)
+    try:
+        heads = discover_laci_heads(args.all)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(" ".join(f"{lang}={path}" for lang, path in heads.items()))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

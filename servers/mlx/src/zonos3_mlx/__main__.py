@@ -70,19 +70,6 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def parse_laci_heads(parser: argparse.ArgumentParser, entries) -> dict[str, str]:
-    heads = {}
-    for entry in entries or ():
-        lang, sep, path = entry.partition("=")
-        if not sep or not lang or not path:
-            parser.error(f"--laci-heads takes LANG=PATH entries, got {entry!r}")
-        path = os.path.expanduser(path)
-        if not os.path.isfile(path):
-            parser.error(f"--laci-heads {lang}: no file {path}")
-        heads[lang.strip().lower().replace("-", "_")] = path
-    return heads
-
-
 def fusealign_available(python: str) -> bool:
     """Whether the FuseAlign worker's interpreter can import ``fusealign_hub`` (third_party/fusealign-multilingual)."""
     from zonos3.tts.edit_align import fusealign_installed
@@ -107,22 +94,24 @@ def main(argv=None) -> int:
     import uvicorn
     from zonos3.server import plugins
     from zonos3.tts.edit_align import FuseAlignWorker
+    from zonos3.tts.laci import parse_laci_heads
     from zonos3.tts.stream import StreamSettings
+    from zonos3.workers.textnorm import TextNormalizerClient
 
-    from zonos3_mlx.engine import Engine, TextNormalizer
+    from zonos3_mlx.engine import Engine
     from zonos3_mlx.scheduler import Scheduler
     from zonos3_mlx.server.app import create_app
     from zonos3_mlx.server.state import ServerOptions, ServerState
 
     try:
         prefix = StreamSettings.from_env()
+        laci = parse_laci_heads(args.laci_heads)
     except ValueError as exc:
         parser.error(str(exc))
-    laci = parse_laci_heads(parser, args.laci_heads)
     worker_python = args.worker_python or sys.executable
     normalizer = None
     if args.worker_python:
-        normalizer = TextNormalizer(args.worker_python, Path(args.python_src))
+        normalizer = TextNormalizerClient(args.worker_python, Path(args.python_src))
     engine = Engine.load(args.model, zac=args.zac, spk_encoder=args.spk_encoder, zac_encoder=args.zac_encoder,
                          ssl_teacher=args.ssl_teacher, steer=args.steer, accent_adapters=args.accent_adapters,
                          laci_heads=laci, max_frames=args.max, normalizer=normalizer,

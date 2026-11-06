@@ -1,3 +1,4 @@
+import os
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
@@ -246,6 +247,12 @@ class W2VBertSVSpeakerEmbedding(nn.Module):
             x = self.pooling(x)
             x = self.bottleneck(x)
         return x.to(torch.float32)
+
+
+def speaker_embedder_device() -> str:
+    """The servers' speaker-encoder device: ``ZONOS3_SPEAKER_EMBEDDER_DEVICE``, else the CPU (it does not occupy GPU
+    memory next to the TTS model)."""
+    return os.environ.get("ZONOS3_SPEAKER_EMBEDDER_DEVICE", "cpu")
 
 
 def resolve_speaker_embedding_backend(codec: str | None, expected_dim: int) -> str:

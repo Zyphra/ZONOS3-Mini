@@ -9,9 +9,6 @@ fields (a LACI take's duration target, a speech-edit layout).
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import threading
 import time
 from collections.abc import Mapping
@@ -21,10 +18,12 @@ from types import MappingProxyType
 
 import torch
 from zonos3.generation import MAX_FRAMES, REFERENCE_MAX_FRAMES
+from zonos3.tokenizer.textnorm import normalize_request_text
 from zonos3.tts.laci import LaciHeads
 from zonos3.tts.plan import PromptPlan, Speaker, plan_prompt
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 from zonos3.tts.steering import SteeringBundle
+from zonos3.workers.textnorm import TextNormalizerClient
 
 from zonos3_mlx import companions
 from zonos3_mlx.models.codec_decoder import CodecDecoder
@@ -34,65 +33,6 @@ COMPANIONS = {  # zac: the default decoder (keep2_plain head); --zac zac.gguf se
     "zac": "zac-keep2.gguf", "spk_encoder": "spk-encoder.gguf", "zac_encoder": "zac-encoder.gguf",
     "ssl_teacher": "ssl-teacher.gguf", "steer": "steer.gguf", "accent_adapters": "accents.gguf",
 }
-
-
-# ----------------------------------------------------------------------------------------------------- text norm
-
-
-class TextNormalizer:
-    """JSON-lines client of model/src/zonos3/workers/textnorm.py in its own interpreter (servers/ggml textnorm.cpp):
-    one request per line, answered in order; restarted once after the worker died."""
-
-    def __init__(self, python: str, python_src: Path):
-        self.python, self.python_src = str(python), Path(python_src)
-        self.script = self.python_src / "zonos3" / "workers" / "textnorm.py"
-        if not self.script.is_file():
-            raise FileNotFoundError(f"{self.script} does not exist (--python-src)")
-        self._lock = threading.Lock()
-        self._proc: subprocess.Popen | None = None
-        self._next_id = 0
-
-    def _start(self) -> subprocess.Popen:
-        env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-        env["PYTHONPATH"] = str(self.python_src)
-        return subprocess.Popen([self.python, str(self.script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=None, env=env, text=True, encoding="utf-8", bufsize=1)
-
-    def _call(self, request: dict) -> dict:
-        if self._proc is None or self._proc.poll() is not None:
-            self._proc = self._start()
-        self._proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
-        self._proc.stdin.flush()
-        line = self._proc.stdout.readline()
-        if not line:
-            raise BrokenPipeError("text normalization worker exited")
-        return json.loads(line)
-
-    def normalize(self, text: str, language: str) -> str:
-        with self._lock:
-            self._next_id += 1
-            request = {"id": self._next_id, "text": text, "language": language}
-            for attempt in range(2):
-                try:
-                    response = self._call(request)
-                    break
-                except (OSError, ValueError) as exc:
-                    if self._proc is not None:
-                        self._proc.kill()
-                    self._proc = None
-                    if attempt:
-                        raise RuntimeError(f"text normalization failed: {exc}") from exc
-        if "error" in response:
-            raise ValueError(f"text normalization failed: {response['error']}")
-        if not isinstance(response.get("text"), str):
-            raise RuntimeError("text normalization failed: the worker sent no text")
-        return response["text"]
-
-    def close(self) -> None:
-        with self._lock:
-            if self._proc is not None:
-                self._proc.kill()
-                self._proc = None
 
 
 # ----------------------------------------------------------------------------------------------------- engine
@@ -129,7 +69,7 @@ class Engine:
         self.decoder = decoder
         self.paths = paths
         self.max_frames = int(max_frames)  # --max: the frame budget of a request (R5)
-        self.normalizer: TextNormalizer | None = normalizer
+        self.normalizer: TextNormalizerClient | None = normalizer
         self.speaker_encoder = None
         if paths.get("spk_encoder"):
             from zonos3_mlx.models.speaker_encoder import SpeakerEncoder
@@ -223,12 +163,7 @@ class Engine:
     # -- text ---------------------------------------------------------------------------------------------------------
 
     def normalize_text(self, text: str, language: str, enabled: bool) -> str:
-        from zonos3.tokenizer.textnorm import collapse_line_breaks
-
-        text = collapse_line_breaks(text)
-        if self.normalizer is not None and enabled:
-            text = self.normalizer.normalize(text, language)
-        return text
+        return normalize_request_text(text, language, self.normalizer if enabled else None)
 
 
 # ----------------------------------------------------------------------------------------------------- planning

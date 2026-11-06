@@ -17,13 +17,14 @@ import numpy as np
 import soundfile as sf
 from zonos3.server.plugins import HostFacts, LaciTakeRequest, TakeResult
 from zonos3.tts.directions import RAW_SPACE
+from zonos3.tts.edit_align import asr_device
 from zonos3.tts.steering import resolve_controls
 
 from zonos3_mlx.engine import LaciTake
 from zonos3_mlx.server import capabilities as caps
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.generate import JobRun, plan_generate
-from zonos3_mlx.server.state import ServerState, asr_device
+from zonos3_mlx.server.state import ServerState
 
 
 def rate_scale(state: ServerState, take: LaciTakeRequest, text: str, base_delta) -> LaciTake | None:

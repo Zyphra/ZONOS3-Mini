@@ -27,6 +27,7 @@ from zonos3.models.accent_format import AccentAdapter, list_accent_adapters, loa
 from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM
 from zonos3.speaker_cfg import guided_logits
+from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
 from zonos3.tts import plan as P
 from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import LaciConfig, LaciHeads, LaciSession, RateBuckets
@@ -40,6 +41,8 @@ from zonos3.tts.stream import StreamDecoder, StreamSettings
 
 # ----------------------------------------------------------------------------------------------------- assets
 
+_UNLOADED = object()
+
 
 @dataclass
 class ReferenceAssets:
@@ -51,7 +54,7 @@ class ReferenceAssets:
     laci_heads: dict[str, LaciHeads] = field(default_factory=dict)
     _decoders: dict = field(default_factory=dict, repr=False)
     _speaker_encoders: dict = field(default_factory=dict, repr=False)
-    _normalizer: object | None = field(default=None, repr=False)
+    _normalizer: object = field(default=_UNLOADED, repr=False)
 
     @classmethod
     def load(cls, *, steer_bundle=None, accent_adapters=None, laci_heads: dict | None = None) -> "ReferenceAssets":
@@ -80,10 +83,9 @@ class ReferenceAssets:
         return list(self.accent_adapters)
 
     def normalizer(self):
-        if self._normalizer is None:
-            from zonos3.tokenizer.textnorm import TTSTextNormalizer
-
-            self._normalizer = TTSTextNormalizer()
+        """The text normalizer (None with ZONOS3_TTS_NORM=0), loaded on first use."""
+        if self._normalizer is _UNLOADED:
+            self._normalizer = load_normalizer(warmup=False)
         return self._normalizer
 
     def decoder(self, codec: str, device: torch.device):
@@ -226,12 +228,7 @@ class ReferenceContext:
         return self._builder
 
     def normalize_text(self, text: str, language: str, enabled: bool) -> str:
-        from zonos3.tokenizer.textnorm import collapse_line_breaks, normalization_enabled
-
-        text = collapse_line_breaks(text)
-        if enabled and normalization_enabled():
-            text = self.assets.normalizer().normalize(text, language)
-        return text
+        return normalize_request_text(text, language, self.assets.normalizer() if enabled else None)
 
     def silence_frame(self) -> torch.Tensor:
         return silence_frame(self.config.audio_codec, self.device)

@@ -18,6 +18,7 @@ import torch
 
 from zonos3.generation import SAMPLE_RATE
 from zonos3.tts.audio import write_pcm16_wav
+from zonos3.tts.laci import parse_laci_heads
 
 
 def _cond_path(ids_path: Path) -> Path:
@@ -48,12 +49,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if not args.out and not args.dump_prompt:
         parser.error("-o/--out is required unless --dump-prompt is given")
-    heads = {}
-    for item in args.laci_heads:
-        lang, sep, path = item.partition("=")
-        if not sep or not lang or not path:
-            parser.error(f"--laci-heads needs LANG=PATH, got {item!r}")
-        heads[lang] = path
+    try:
+        heads = parse_laci_heads(args.laci_heads)
+    except ValueError as exc:
+        parser.error(str(exc))
     request = {"text": args.text} if args.text is not None else json.loads(Path(args.request).read_text())
 
     from zonos3.reference.lm import Zonos3LM

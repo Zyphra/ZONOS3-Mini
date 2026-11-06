@@ -4,7 +4,6 @@ import collections
 
 import multiprocessing as mp
 import os
-import threading
 from types import SimpleNamespace
 from typing import List, Sequence
 
@@ -120,23 +119,12 @@ def tokenize_worker(
     assert local_bs > 0
     logger = init_logger(__name__, f"tokenizer_{tokenizer_id}")
 
-    from zonos3.tokenizer.textnorm import (
-        TTSTextNormalizer,
-        collapse_line_breaks,
-        normalization_enabled,
-    )
+    from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
     from .vocoder import TTSVocoderManager
 
     if text_vocab is None:
         raise ValueError("TTS mode requires text_vocab from the model config.")
-    textnorm_enabled = normalization_enabled()
-    text_normalizer = TTSTextNormalizer() if textnorm_enabled else None
-    if text_normalizer is not None:
-        # Compile/load the English grammars up front so the first request does
-        # not pay the one-time WFST construction cost.
-        threading.Thread(
-            target=text_normalizer.warmup, args=(["en"],), daemon=True
-        ).start()
+    text_normalizer = load_normalizer(warmup=True)
     tts_prompt_builder = TTSPromptBuilder(
         TTSPromptConfig(
             n_codebooks=n_codebooks,
@@ -200,12 +188,10 @@ def tokenize_worker(
 
             # Process TTS tokenize messages
             if len(tts_tokenize_msg) > 0:
-                normalized_texts = []
-                for msg in tts_tokenize_msg:
-                    text = collapse_line_breaks(msg.text)  # LINE_BREAKS_20261019: also when normalization is off
-                    if text_normalizer is not None and msg.text_normalization:
-                        text = text_normalizer.normalize(text, msg.language)
-                    normalized_texts.append(text)
+                normalized_texts = [
+                    normalize_request_text(msg.text, msg.language, text_normalizer if msg.text_normalization else None)
+                    for msg in tts_tokenize_msg
+                ]
                 user_msgs = []
                 for msg, text in zip(tts_tokenize_msg, normalized_texts, strict=True):
                     # The byte / SuperBPE text rows and what follows them (zonos3.tts.plan.text_rows): the edit layout
