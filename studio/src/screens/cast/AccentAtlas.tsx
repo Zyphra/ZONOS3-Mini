@@ -10,7 +10,8 @@ import { ATLAS_H, ATLAS_W } from '../../state/geo';
 
 const TAB_LABEL: Record<string, string> = { english: 'English accents', world: 'L1 accents' };
 
-export function AccentAtlas() {
+/** `large`: the phone dialog's atlas, as tall as its width allows instead of the bench's `--map-h`. */
+export function AccentAtlas({ large }: { large?: boolean }) {
   const s = spec.value;
   const accents = s.ui.accents;
   const tabs = tabsOf(accents);
@@ -52,7 +53,7 @@ export function AccentAtlas() {
   const labelLeft = pin.x > ATLAS_W - 300;
 
   return (
-    <div class="atlas" style={{ '--fam': color }}>
+    <div class={`atlas${large ? ' is-large' : ''}`} style={{ '--fam': color }}>
       <div class="atlas-tabs" role="tablist" aria-label="Accent maps">
         {tabs.map((t) => (
           <button role="tab" aria-selected={t === tab} class={`tab${t === tab ? ' is-on' : ''}`} onClick={() => setTab(t)}>

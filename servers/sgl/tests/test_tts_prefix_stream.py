@@ -98,7 +98,7 @@ def test_prefix_mode_streams_and_matches_the_whole_decode(fake):
     frames = make_frames(60, seed=1)
     manager = vocoder.TTSVocoderManager(
         n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC,
-        prefix_chunk_frames=5, prefix_hold_back_frames=2, prefix_context_frames=12,
+        prefix_chunk_frames=5, prefix_hold_back_frames=2, prefix_context_frames=12, prefix_first_chunk_frames=5,
     )
     rows = delayed_rows(frames)
     chunks = run(manager, rows, stream_decode="prefix")
@@ -118,6 +118,24 @@ def test_prefix_mode_streams_and_matches_the_whole_decode(fake):
     assert receipt[0]["live_vs_whole_max_abs"] == 0.0 and receipt[0]["live_vs_whole_rms_db"] < -200
     assert manager.pop_prefix_receipts() == []
     assert not manager._prefix_mode and not manager._prefix_live
+
+
+def test_prefix_mode_first_chunk_is_shorter(fake):
+    frames = make_frames(60, seed=3)
+    manager = vocoder.TTSVocoderManager(
+        n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC,
+        prefix_chunk_frames=5, prefix_hold_back_frames=2, prefix_context_frames=12, prefix_first_chunk_frames=2,
+    )
+    chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
+    live = [c for c in chunks[:-1] if c]
+    # the first chunk arrives once first_chunk + hold_back frames are complete, and holds first_chunk frames
+    assert next(i for i, c in enumerate(chunks) if c) == 2 + 2 + (N_CB - 1) - 1
+    assert len(live[0]) == 2 * HOP * 4
+    assert all(len(c) == 5 * HOP * 4 for c in live[1:])
+    assert b"".join(chunks) == whole_decode(frames)
+    receipt = manager.pop_prefix_receipts()
+    assert receipt[0]["emitted_frames"] == 2 + 5 * (len(live) - 1)
+    assert receipt[0]["live_vs_whole_max_abs"] == 0.0
 
 
 def test_prefix_mode_respects_eos(fake):
@@ -150,6 +168,8 @@ def test_prefix_settings_validation():
     with pytest.raises(ValueError):
         vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_chunk_frames=0)
     with pytest.raises(ValueError):
+        vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_first_chunk_frames=0)
+    with pytest.raises(ValueError):
         vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_chunk_frames=20, prefix_context_frames=10)
     m = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
-    assert (m.prefix_chunk_frames, m.prefix_hold_back_frames, m.prefix_context_frames) == (15, 3, 450)
+    assert (m.prefix_first_chunk_frames, m.prefix_chunk_frames, m.prefix_hold_back_frames, m.prefix_context_frames) == (4, 15, 3, 450)

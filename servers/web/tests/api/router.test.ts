@@ -8,20 +8,16 @@ type SpeakerList = { speakers: { id: string }[] };
 const b64 = (s: string) => Buffer.from(s).toString('base64');
 
 describe.skipIf(!haveModels)('engine api', () => {
-  it('capabilities and dub capabilities validate against the spec', async () => {
+  it('capabilities validate against the spec', async () => {
     const { api } = stubApi();
     const caps = await call(api, 'GET', '/v2/capabilities');
     expect(caps.status).toBe(200);
     expect(validate('Capabilities', caps.json())).toEqual([]);
     expect(caps.json()).toMatchObject({
-      speaker_modes: ['reference', 'embedding'], speaker_cfg_supported: true, dub: false, speech_editing: false,
+      speaker_modes: ['reference', 'embedding'], speaker_cfg_supported: true, plugins: [], speech_editing: false,
       projects: { enabled: false }, laci_languages: ['cmn', 'de', 'en_gb', 'en_us', 'es', 'fr_fr', 'it', 'ja', 'ko', 'pt_br'],
       accents: [],
     });
-    const dub = await call(api, 'GET', '/v2/dub/capabilities');
-    expect(dub.status).toBe(200);
-    expect(validate('DubCapabilities', dub.json())).toEqual([]);
-    expect(dub.json()).toMatchObject({ enabled: false, available: false });
   });
 
   it('controls document validates and carries set calibrations', async () => {
@@ -140,7 +136,8 @@ describe.skipIf(!haveModels)('engine api', () => {
     const emb = await call(api, 'GET', `/v2/speakers/${engine.voices[0].id}/embedding`);
     expect(emb.status).toBe(200);
     expect(validate('SpeakerEmbedding', emb.json())).toEqual([]);
-    expect(emb.json<{ embedding: number[] }>().embedding).toHaveLength(192);
+    // a default voice answers its shipped embedding (0.2), not the speaker encoder's (the clip's first sample, 0.1)
+    expect(emb.json<{ embedding: number[] }>().embedding).toEqual(new Array(192).fill(0.2));
     expect((await call(api, 'GET', '/v2/speakers/nope/embedding')).status).toBe(400);
     const gen = await call(api, 'POST', '/v2/generate', { text: 'Hi.', stream: false, speaker_embedding_id: sp.id }, SESSION);
     expect(gen.status).toBe(200);

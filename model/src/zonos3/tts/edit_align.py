@@ -1,5 +1,5 @@
 """Speech-editing helpers: the speech-recognition (Qwen3-ASR) and forced-alignment (FuseAlign) worker clients shared by
-speech editing and dubbing, their long-form orchestration, and transcript-diff edit regions.
+speech editing and plugins, their long-form orchestration, and transcript-diff edit regions.
 
 Both workers are JSON-lines processes, one of each per server, started on first use and again after they exited:
 ``AsrWorker`` runs zonos3/workers/asr.py in .venv-asr (``ZONOS3_ASR_PYTHON``; tools/setup_asr_env.sh) and
@@ -37,7 +37,8 @@ ASR_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'asr.py'
 FUSEALIGN_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'fusealign.py'
 LONG_FORM_SECONDS = 30.0  # fusealign_hub.aligner.MAX_SECONDS: one FuseAlign forward
 MAX_TEXT_BYTES = 1022  # fusealign_hub.longform.MAX_TEXT_BYTES
-# Qwen3-ASR names of the unspaced languages (zonos3.dub.plan.UNSPACED: ja, zh, yue): their chunk texts join with "".
+# Qwen3-ASR names of the unspaced languages (zonos3.tts.align_text.UNSPACED: ja, zh, yue): their chunk texts join
+# with "".
 UNSPACED_LANGUAGES = frozenset(lang.name for lang in languages.SPOKEN if lang.unspaced)
 
 
@@ -75,8 +76,8 @@ def fusealign_installed() -> bool:
 
 
 def asr_python() -> str:
-    """The interpreter of the ASR worker and of the dubbing worker: ``ZONOS3_ASR_PYTHON``, else the repo's .venv-asr
-    (the checkout's root, three levels above model/src; a package installed elsewhere has none)."""
+    """The interpreter of the ASR worker and of plugin helper workers: ``ZONOS3_ASR_PYTHON``, else the repo's
+    .venv-asr (the checkout's root, three levels above model/src; a package installed elsewhere has none)."""
     return os.environ.get('ZONOS3_ASR_PYTHON') or str(MODEL_SRC.parents[1] / '.venv-asr' / 'bin' / 'python')
 
 
@@ -148,7 +149,7 @@ class _JsonLinesWorker:
 
 
 class AsrWorker(_JsonLinesWorker):
-    """The workers/asr.py process (Qwen3-ASR) in .venv-asr: one per server, shared by speech editing and dubbing.
+    """The workers/asr.py process (Qwen3-ASR) in .venv-asr: one per server, shared by speech editing and plugins.
     ``device`` defaults to ``ZONOS3_ASR_DEVICE`` (else the worker's own default), ``model`` to the worker's."""
 
     error = AsrError
@@ -193,7 +194,7 @@ class AsrWorker(_JsonLinesWorker):
 
 
 class FuseAlignWorker(_JsonLinesWorker):
-    """The workers/fusealign.py process (this interpreter): one per server, shared by speech editing and dubbing."""
+    """The workers/fusealign.py process (this interpreter): one per server, shared by speech editing and plugins."""
 
     error = FuseAlignError
     name = 'FuseAlign worker'

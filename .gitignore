@@ -26,8 +26,6 @@ dist/
 # virtual environment
 .venv*/
 venv/
-# AV-sync checkout of the dubbing lip-sync step (tools/setup_dub_align_env.sh)
-/.avsync/
 env/
 
 # clangd config
@@ -51,4 +49,5 @@ default_voices/*
 !default_voices/AmericanMale.mp3
 !default_voices/BritishFemale.mp3
 !default_voices/*.codes.npy
+!default_voices/*.embedding.npy
 steering/**/pooled.npz

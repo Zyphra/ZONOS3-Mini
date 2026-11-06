@@ -50,16 +50,16 @@ struct GenReq {
     bool wav = false;
     bool prefix = false;                    // streaming with stream_decode=prefix
     zonos3_steering steering;
-    // Speech-edit infill (edit_dub.cpp): the stop id (-1 = EOA; span-end for an infill), masked until min_frames frames
+    // Speech-edit infill (pyhost.cpp): the stop id (-1 = EOA; span-end for an infill), masked until min_frames frames
     // are generated (sgl min_frames); a codes-only job finishes with its generated rows in ReqJob::codes and decodes
     // nothing.
     int stop_id = -1;
     int min_frames = 0;
     bool codes_only = false;
-    // LACI (laci=true; zonos3-laci.h): the language's alignment heads (null = off) and, for a dub take, its duration
-    // target and extended speaking-rate scale (nullopt: the checkpoint's speaking-rate row) with the take's bucket on it
-    // and its hidden steering delta in every bucket of the scale (rates.first..rates.last, steering layout; empty
-    // vector = none). A rollback re-prefills the prompt plus the kept rows (zonos3_laci::Continuation).
+    // LACI (laci=true; zonos3-laci.h): the language's alignment heads (null = off) and, for a duration-target take, its
+    // duration target and extended speaking-rate scale (nullopt: the checkpoint's speaking-rate row) with the take's
+    // bucket on it and its hidden steering delta in every bucket of the scale (rates.first..rates.last, steering
+    // layout; empty vector = none). A rollback re-prefills the prompt plus the kept rows (zonos3_laci::Continuation).
     const zonos3_laci::LaciHeads * laci = nullptr;
     std::optional<zonos3_laci::DurationTarget> laci_duration;
     std::optional<zonos3_laci::RateBuckets> laci_rates;
@@ -144,9 +144,11 @@ struct ReqJob {
 };
 
 // Prefix streaming (sgl TTSVocoderManager): a chunk once ZONOS3_PREFIX_STREAM_CHUNK_FRAMES new frames are decodable
-// beyond ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES held-back frames.
+// beyond ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES held-back frames; a job's first chunk (nothing past the silence prefill
+// emitted yet) waits for ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES instead (earlier first audio).
 struct PrefixStreamSettings {
     int chunk_frames = 15;
+    int first_chunk_frames = 4;
     int hold_back_frames = 3;
     int context_frames = 450;
 };

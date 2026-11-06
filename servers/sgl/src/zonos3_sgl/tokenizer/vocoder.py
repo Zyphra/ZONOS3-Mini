@@ -40,6 +40,7 @@ class TTSVocoderManager:
         prefix_chunk_frames: int | None = None,
         prefix_hold_back_frames: int | None = None,
         prefix_context_frames: int | None = None,
+        prefix_first_chunk_frames: int | None = None,
     ):
         """Initialize the vocoder manager.
 
@@ -67,14 +68,18 @@ class TTSVocoderManager:
         # prefix holding back the last frames, and the exact whole decode at EOS
         # supplies the tail. Off unless a request asks for it: the default output
         # is unchanged. Defaults = the arena's measured settings (1 s chunks, 3
-        # frames held back, 450 frames = 30 s of left context, -48 dB vs whole).
+        # frames held back, 450 frames = 30 s of left context, -48 dB vs whole); the
+        # first chunk of a request is shorter (4 frames) for an earlier first audio.
         self.prefix_stream_supported = True
         env = os.environ.get
         self.prefix_chunk_frames = int(prefix_chunk_frames if prefix_chunk_frames is not None else env("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", 15))
         self.prefix_hold_back_frames = int(prefix_hold_back_frames if prefix_hold_back_frames is not None else env("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", 3))
         self.prefix_context_frames = int(prefix_context_frames if prefix_context_frames is not None else env("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", 450))
-        if self.prefix_chunk_frames < 1 or self.prefix_hold_back_frames < 0 or self.prefix_context_frames < self.prefix_chunk_frames:
-            raise ValueError("prefix stream settings: chunk_frames >= 1, hold_back_frames >= 0, context_frames >= chunk_frames")
+        self.prefix_first_chunk_frames = int(prefix_first_chunk_frames if prefix_first_chunk_frames is not None else env("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", 4))
+        if (self.prefix_chunk_frames < 1 or self.prefix_first_chunk_frames < 1 or self.prefix_hold_back_frames < 0
+                or self.prefix_context_frames < self.prefix_chunk_frames):
+            raise ValueError("prefix stream settings: chunk_frames >= 1, first_chunk_frames >= 1, hold_back_frames >= 0, "
+                             "context_frames >= chunk_frames")
         self._prefix_mode: Dict[int, bool] = {}
         self._prefix_emitted: Dict[int, int] = {}
         self._prefix_live: Dict[int, List[np.ndarray]] = {}
@@ -314,11 +319,14 @@ class TTSVocoderManager:
 
         decodable = complete frames minus the held-back tail: the held-back frames are decoded as right context
         but not emitted (the last decoded frame of the iSTFT head sits ~-22 dB from the whole decode; one frame of
-        right context already reaches the bf16 floor near -48 dB). Once the history is longer than the context
-        window only the last context_frames of left context are re-decoded, so the cost per chunk stays bounded."""
+        right context already reaches the bf16 floor near -48 dB). The first chunk of a request (nothing past the
+        silence prefill emitted yet) waits for first_chunk_frames, every later one for chunk_frames. Once the
+        history is longer than the context window only the last context_frames of left context are re-decoded, so
+        the cost per chunk stays bounded."""
         decodable = complete_frames - self.prefix_hold_back_frames
         emitted = self._prefix_emitted[uid]
-        if decodable - emitted < self.prefix_chunk_frames:
+        first = emitted == self._prefill_len.get(uid, 0)
+        if decodable - emitted < (self.prefix_first_chunk_frames if first else self.prefix_chunk_frames):
             return b""
         windowed = decodable > self.prefix_context_frames + self.prefix_chunk_frames
         start = max(0, emitted - self.prefix_context_frames) if windowed else 0

@@ -25,10 +25,41 @@ export function defaultSampling(): Sampling {
 
 const f = Math.fround;
 
+/** The k-th largest value of `a` (1 ≤ k ≤ a.length): exactly `Float32Array.from(a).sort()[a.length - k]`, ties and
+ *  ±Infinity included (NaN-free input). Quickselect (Hoare partition, middle pivot) in `scratch` (length ≥ a.length). */
+export function kthLargest(a: Float32Array, k: number, scratch: Float32Array): number {
+  const n = a.length;
+  if (!(k >= 1 && k <= n)) throw new RangeError(`kthLargest: k=${k} outside 1..${n}`);
+  const s = scratch;
+  s.set(a);
+  const target = n - k;
+  let lo = 0, hi = n - 1;
+  while (lo < hi) {
+    const pivot = s[(lo + hi) >>> 1];
+    let i = lo, j = hi;
+    while (i <= j) {
+      while (s[i] < pivot) i++;
+      while (s[j] > pivot) j--;
+      if (i <= j) {
+        const t = s[i]; s[i] = s[j]; s[j] = t;
+        i++; j--;
+      }
+    }
+    // now [lo, j] <= pivot <= [i, hi], and every index strictly between j and i holds the pivot
+    if (target <= j) hi = j;
+    else if (target >= i) lo = i;
+    else return s[target];
+  }
+  return s[target];
+}
+
 export class Sampler {
   private rng: MT19937;
   private hist: number[][];
   private logit: Float32Array;
+  private kthBuf: Float32Array;
+  private seen: Uint32Array;     // repetition penalty: seen[t] === seenGen marks t penalized in this call
+  private seenGen = 0;
   private codebookSize: number;
   stopId = 4096;
   minFrames = 0;
@@ -38,6 +69,8 @@ export class Sampler {
     this.rng = new MT19937(sp.seed >>> 0);
     this.hist = Array.from({ length: ncb }, () => []);
     this.logit = new Float32Array(vocab);
+    this.kthBuf = new Float32Array(vocab);
+    this.seen = new Uint32Array(vocab);
     this.codebookSize = vocab - 2;
   }
 
@@ -63,10 +96,10 @@ export class Sampler {
 
     if (sp.rep_penalty !== 1 && cb < sp.rep_codebooks) {
       const pen = f(sp.rep_penalty);
-      const seen = new Uint8Array(V);
+      const seen = this.seen, gen = ++this.seenGen;
       for (const t of this.hist[cb]) {
-        if (t >= 0 && t < this.codebookSize && !seen[t]) {
-          seen[t] = 1;
+        if (t >= 0 && t < this.codebookSize && seen[t] !== gen) {
+          seen[t] = gen;
           logit[t] = logit[t] > 0 ? f(logit[t] / pen) : f(logit[t] * pen);
         }
       }
@@ -86,7 +119,7 @@ export class Sampler {
     // candidate set: every logit >= the k-th largest (ties at the threshold are kept)
     const idx: number[] = [];
     if (sp.top_k > 0 && sp.top_k < V) {
-      const kth = Float32Array.from(logit).sort()[V - sp.top_k];
+      const kth = kthLargest(logit, sp.top_k, this.kthBuf);
       for (let i = 0; i < V; i++) if (logit[i] >= kth) idx.push(i);
     } else {
       for (let i = 0; i < V; i++) idx.push(i);

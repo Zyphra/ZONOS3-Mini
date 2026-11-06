@@ -1,8 +1,11 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { CardModal } from '../../components/CardModal';
 import { togglePreview } from '../../audio/preview';
 import { Icon } from '../../components/Icon';
 import { Panel } from '../../components/Panel';
+import { Rail, RailBar, RailToggle } from '../../components/Rail';
+import { phone } from '../../lib/media';
 import { activeHistory, primaryAction, spec } from '../../state/app';
 import { baseSpeaker, canClone, design, designs, identity, resetDesign, rollDesign, setMode, setValue } from '../../state/design';
 import type { History } from '../../state/history';
@@ -11,6 +14,7 @@ import { LibraryRail } from './LibraryRail';
 import { Personas, PreviewSettings, PreviewStrip, SavePanel, SpeakPanel, Variations } from './Monitor';
 import { MoodControls, RoomAxis, SliderGroup, type Binding } from './QuickControls';
 import { TextureRadar } from './TextureRadar';
+import { AccentTile, DeliveryTile, MoodTile, RoomTile, WhoTile } from './Tiles';
 import { WhoMap } from './WhoMap';
 
 export const designBinding = (): Binding => ({
@@ -72,8 +76,10 @@ function BenchHeader() {
   );
 }
 
-type CardId = 'texture' | 'room' | 'delivery' | 'mood';
-const CARD_TITLE: Record<CardId, string> = { texture: 'Texture', room: 'Room', delivery: 'Delivery', mood: 'Mood' };
+type CardId = 'who' | 'accent' | 'texture' | 'room' | 'delivery' | 'mood';
+const CARD_TITLE: Record<CardId, string> = { who: 'Who', accent: 'Accent', texture: 'Texture', room: 'Room', delivery: 'Delivery', mood: 'Mood' };
+/** The cards Exact clone locks (their controls live in the speaker embedding). */
+const EMBEDDING_CARDS: CardId[] = ['who', 'accent', 'texture', 'room'];
 
 const CLONE_LOCK = (
   <>
@@ -84,6 +90,8 @@ const CLONE_LOCK = (
     </button>
   </>
 );
+/** A phone tile has no room for the explanation; the header's mode switch is right below. */
+const TILE_LOCK = <b>Exact clone</b>;
 
 export function CastScreen() {
   useEffect(() => {
@@ -95,50 +103,84 @@ export function CastScreen() {
     };
   }, []);
   const b = designBinding();
+  const onPhone = phone.value;
   const locked = design.value.mode === 'reference' ? CLONE_LOCK : undefined;
   const [open, setOpen] = useState<{ id: CardId; card: HTMLElement; returnTo: HTMLElement } | null>(null);
   const expand = (id: CardId) => (card: HTMLElement, returnTo: HTMLElement) => setOpen({ id, card, returnTo });
   // A card that locks (Exact clone) closes its dialog.
   useEffect(() => {
-    if (open && locked && (open.id === 'texture' || open.id === 'room')) setOpen(null);
+    if (open && locked && EMBEDDING_CARDS.includes(open.id)) setOpen(null);
   }, [!!locked]);
+  // Phone: every control is a tile (a read-only summary) that opens its full control in the dialog.
+  const tile = (id: CardId, children: ComponentChildren, lockable = true) => {
+    const lock = lockable && locked ? TILE_LOCK : undefined;
+    return (
+      <Panel family={id} title={CARD_TITLE[id]} class="cast-tile" locked={lock} onExpand={lock ? undefined : expand(id)} whole>
+        {children}
+      </Panel>
+    );
+  };
   return (
     <div class="cast">
-      <LibraryRail />
+      <Rail id="cast-library" side="left" title="Voices">
+        <LibraryRail />
+      </Rail>
       <section class="bench" aria-label="Voice bench">
+        <RailBar>
+          <RailToggle id="cast-library" title="Voices" icon="mic" />
+          <RailToggle id="cast-monitor" title="More" icon="sliders" />
+        </RailBar>
         <SpeakPanel />
-        <BenchHeader />
-        <div class="hero">
-          <Panel family="who" title="Who" locked={locked} aside={<span class="hint" title="Drag the dot to move gender / age, scroll for pitch, click a voice to start from it">drag · scroll = pitch</span>}>
-            <WhoMap />
-          </Panel>
-          <Panel family="accent" title="Accent" locked={locked}>
-            <AccentAtlas />
-          </Panel>
-        </div>
-        <div class="strip">
-          <Panel family="texture" title="Texture" locked={locked} onExpand={locked ? undefined : expand('texture')} whole>
-            <TextureRadar />
-          </Panel>
-          <Panel family="room" title="Room" locked={locked} onExpand={locked ? undefined : expand('room')}>
-            <RoomAxis b={b} />
-          </Panel>
-          <Panel family="delivery" title="Delivery" onExpand={expand('delivery')}>
-            <SliderGroup group="delivery" b={b} compact />
-          </Panel>
-          <Panel family="mood" title="Mood" onExpand={expand('mood')}>
-            <MoodControls b={b} compact padOpens />
-          </Panel>
-        </div>
+        {onPhone ? (
+          <>
+            <div class="cast-tiles">
+              {tile('who', <WhoTile />)}
+              {tile('accent', <AccentTile />)}
+              {tile('texture', <TextureRadar />)}
+              {tile('room', <RoomTile />)}
+              {tile('delivery', <DeliveryTile />, false)}
+              {tile('mood', <MoodTile />, false)}
+            </div>
+            <BenchHeader />
+          </>
+        ) : (
+          <>
+            <BenchHeader />
+            <div class="hero">
+              <Panel family="who" title="Who" locked={locked} aside={<span class="hint" title="Drag the dot to move gender / age, scroll for pitch, click a voice to start from it">drag · scroll = pitch</span>}>
+                <WhoMap />
+              </Panel>
+              <Panel family="accent" title="Accent" locked={locked}>
+                <AccentAtlas />
+              </Panel>
+            </div>
+            <div class="strip">
+              <Panel family="texture" title="Texture" locked={locked} onExpand={locked ? undefined : expand('texture')} whole>
+                <TextureRadar />
+              </Panel>
+              <Panel family="room" title="Room" locked={locked} onExpand={locked ? undefined : expand('room')}>
+                <RoomAxis b={b} />
+              </Panel>
+              <Panel family="delivery" title="Delivery" onExpand={expand('delivery')}>
+                <SliderGroup group="delivery" b={b} compact />
+              </Panel>
+              <Panel family="mood" title="Mood" onExpand={expand('mood')}>
+                <MoodControls b={b} compact padOpens />
+              </Panel>
+            </div>
+          </>
+        )}
       </section>
-      <aside class="monitor" aria-label="Monitor">
-        <div class="monitor-scroll">
-          <PreviewSettings />
-          <Personas />
-          <Variations />
-          <SavePanel />
-        </div>
-      </aside>
+      <Rail id="cast-monitor" side="right" title="More">
+        <aside class="monitor" aria-label="Monitor">
+          <div class="monitor-scroll">
+            <PreviewSettings />
+            <Personas />
+            <Variations />
+            <SavePanel />
+          </div>
+        </aside>
+      </Rail>
       {open && (
         <CardModal
           key={open.id}
@@ -150,7 +192,11 @@ export function CastScreen() {
           aside={<IdentityMeter />}
           strip={<PreviewStrip />}
         >
-          {open.id === 'texture' ? (
+          {open.id === 'who' ? (
+            <WhoMap large />
+          ) : open.id === 'accent' ? (
+            <AccentAtlas large />
+          ) : open.id === 'texture' ? (
             <TextureRadar large />
           ) : open.id === 'room' ? (
             <RoomAxis b={b} large />

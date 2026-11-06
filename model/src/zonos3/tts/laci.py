@@ -284,25 +284,25 @@ class LaciHeads:
 
 # ------------------------------------------------------------------------------------------------- duration targets
 #
-# A LACI request may also carry a ``DurationTarget``: the take's length is then held to it (the dubbing tool,
-# zonos3.dub, uses it to fit a segment). The reading position reaches the last text token ~0.2 s before the speech
-# ends, so (row of that moment - first generated row) / target estimates the take's duration ratio; mid-text it is too
-# uneven per token to judge (calibrated on 124 en->fr dub takes, 2026-10-28). A take that reads the text too early, or
-# has not read it PACE_TOLERANCE * target + PACE_SLACK_FRAMES frames after its target, is rolled back to its first row
-# and regenerated in the speaking-rate bucket the ratio asks for (the continuation's condition rows), at most
-# PACE_MAX_RETRIES times; with ``adjust_rate`` off a miss is only recorded.
+# A LACI request may also carry a ``DurationTarget``: the take's length is then held to it (a duration-target take,
+# zonos3.server.plugins.LaciTakeRequest, fits a segment this way). The reading position reaches the last text token
+# ~0.2 s before the speech ends, so (row of that moment - first generated row) / target estimates the take's duration
+# ratio; mid-text it is too uneven per token to judge (calibrated on 124 en->fr duration-target takes, 2026-10-28). A
+# take that reads the text too early, or has not read it PACE_TOLERANCE * target + PACE_SLACK_FRAMES frames after its
+# target, is rolled back to its first row and regenerated in the speaking-rate bucket the ratio asks for (the
+# continuation's condition rows), at most PACE_MAX_RETRIES times; with ``adjust_rate`` off a miss is only recorded.
 #
 # Two content checks also follow the target. A truncation (EOS with text unread) of a rate-adjustable take regenerates
 # one speaking-rate bucket slower: in the fastest bucket the model often ends a short text within a few frames, and
-# reseeding in the same bucket repeated that up to the retry cap (2026-10-29 dub log: 511 of 575 truncations in the
+# reseeding in the same bucket repeated that up to the retry cap (2026-10-29 take log: 511 of 575 truncations in the
 # first text bin; bucket 9 looped on 22 of 40 seeded takes where buckets 5-8 never did). And the PaceMonitor flags a
 # stall once the reading has not advanced for stall_factor text bins at the target pace (at least
 # DURATION_MIN_STALL_FRAMES): the detector's limit (stall_factor bins at the observed pace, at least min_stall_frames
-# = 3 s) outlasts most dub segments, so a stall inside one only surfaced as a late pace_slow retake in a faster bucket
-# instead of a rollback to its onset. It watches the smoothed position itself, not the detector's bins: until two bins
-# are read (all of a short text) the detector's bins follow the heads' average pace, which dub takes read ~2x faster,
-# so a shorter bin-based limit fired on clean takes (40 of 40 stalls in a test run), and a target-pace prior for the
-# bins moved LACI's text-done stop early enough to cut last words.
+# = 3 s) outlasts most duration-target segments, so a stall inside one only surfaced as a late pace_slow retake in a
+# faster bucket instead of a rollback to its onset. It watches the smoothed position itself, not the detector's bins:
+# until two bins are read (all of a short text) the detector's bins follow the heads' average pace, which
+# duration-target takes read ~2x faster, so a shorter bin-based limit fired on clean takes (40 of 40 stalls in a test
+# run), and a target-pace prior for the bins moved LACI's text-done stop early enough to cut last words.
 PACE_TOLERANCE = 0.10
 PACE_SLACK_FRAMES = 3
 PACE_SMOOTH_STEPS = 5
@@ -323,7 +323,7 @@ class RateBuckets:
     """A speaking-rate scale: the checkpoint's speaking-rate condition (its condition-row index and ``n_buckets`` row
     buckets; id ``n_buckets`` is "unknown") and the scale's bucket edges (UTF-8 bytes / s): bucket i, ``first`` <= i <=
     ``last``, is [edges[i - first - 1], edges[i - first]). The row's own scale is first = 0, last = n_buckets - 1; an
-    extended scale (a dub take's, README "Extended speaking-rate buckets") adds buckets below 0 / above n_buckets - 1
+    extended scale (a duration-target take's, LaciTakeRequest.rate_edges) adds buckets below 0 / above n_buckets - 1
     that are the rate row unknown plus a pace-steering dose (the take's per-bucket steering delta)."""
 
     index: int

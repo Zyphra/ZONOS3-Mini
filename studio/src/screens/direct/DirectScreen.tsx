@@ -4,35 +4,43 @@ import { exportWav, sequence } from '../../audio/mix';
 import * as player from '../../audio/player';
 import { nowPlaying, playhead } from '../../audio/player';
 import { Icon } from '../../components/Icon';
+import { Rail, RailBar, RailToggle } from '../../components/Rail';
+import { phone } from '../../lib/media';
 import { guessed, isPronError, langLabel, lookupLanguage, openPronEditor, phonemizeOn, phonemizeRange, phonemizing, PronHelp, PronMarks, PronounceButton } from '../../components/Pron';
 import { parsePron } from '../../lib/pron';
 import { Slider } from '../../components/Slider';
 import { Waveform } from '../../components/Waveform';
-import { clamp } from '../../lib/math';
-import { activeHistory, backend, controlById, hue, notify, primaryAction, pronTokens, spec } from '../../state/app';
-import { dubTake } from '../../state/dub';
+import { clamp, uid } from '../../lib/math';
+import { activeHistory, controlById, hue, notify, primaryAction, pronTokens, spec } from '../../state/app';
 import { design } from '../../state/design';
 import type { History } from '../../state/history';
-import { cast, speakers } from '../../state/library';
+import { cast, savePersona, speakers, type Persona } from '../../state/library';
 import {
   addLine,
   deleteTake,
   keepers,
   lineBusy,
   lineError,
+  lineVoiceId,
+  mixdown,
   moveLine,
   paint,
+  regenerateStale,
   removeLine,
   renderLine,
   replaceScript,
   script,
   scripts,
   setBaseline,
+  setGap,
   setLineText,
+  setLineVoice,
   setVoice,
+  staleLines,
   starTake,
   takeIsStale,
   takes,
+  timeline,
   valuesAt,
   voiceDesign,
   type Line,
@@ -44,12 +52,21 @@ import { guidanceNote, openTagPaletteAt, TagButton, TagMarks, tagsOn, TagStrengt
 import { parseTags, TAG_INFO } from '../../lib/tags';
 import type { SpanFollow } from '../../api';
 
-const GAP = 0.35;
 const SCRIPT_ID = 'script';
 
 /** Baseline performance controls (whole script). */
 const BASELINE = ['chatty', 'arousal', 'pace'];
 const BASELINE_LABEL: Record<string, string> = { chatty: 'Read ↔ chatty', arousal: 'Energy', pace: 'Pace' };
+
+/** Cast voices tell apart by the data hues (theme-aware tokens); the bench voice is neutral. */
+const VOICE_COLORS = ['var(--c1)', 'var(--c2)', 'var(--c6)', 'var(--c3)', 'var(--c5)', 'var(--c4)', 'var(--o-hi)', 'var(--o)'];
+function voiceColor(id: string | null): string {
+  const i = id ? cast.value.findIndex((p) => p.id === id) : -1;
+  return i < 0 ? 'var(--text-3)' : VOICE_COLORS[i % VOICE_COLORS.length];
+}
+/** A voice's display name: the cast persona, or the voice on the Cast bench (null). */
+const voiceName = (id: string | null) =>
+  id ? (cast.value.find((p) => p.id === id)?.name ?? '(removed voice)') : `${speakers.value.find((s) => s.id === design.value.baseId)?.label ?? 'Voice'} (bench)`;
 
 interface Brush {
   lineId: string;
@@ -61,39 +78,37 @@ interface Brush {
 const brush = signal<Brush | null>(null);
 
 function playScript() {
-  const ready = keepers.value.filter((k) => k.take);
-  if (!ready.length) return notify('Render some lines first: each line’s starred take plays in order.');
-  const { pcm, sr } = sequence(
-    ready.map((k) => k.take!.audio),
-    GAP,
-  );
-  player.play(SCRIPT_ID, pcm, sr);
+  const mix = mixdown();
+  if (!mix) return notify('Render some lines first: each line’s starred take plays in order.');
+  player.play(SCRIPT_ID, mix.pcm, mix.sr);
 }
 
 function exportScript() {
-  const ready = keepers.value.filter((k) => k.take);
-  if (!ready.length) return notify('Nothing rendered yet.');
-  const missing = keepers.value.length - ready.length;
-  const { pcm, sr } = sequence(
-    ready.map((k) => k.take!.audio),
-    GAP,
-  );
-  exportWav(pcm, sr, 'script');
-  if (missing) notify(`Exported ${ready.length} lines; ${missing} without a take were skipped.`);
+  const mix = mixdown();
+  if (!mix) return notify('Nothing rendered yet.');
+  exportWav(mix.pcm, mix.sr, 'script');
+  const missing = keepers.value.filter((k) => !k.take).length;
+  if (missing) notify(`Exported ${keepers.value.length - missing} lines; ${missing} without a take were skipped.`);
 }
 
-/** Which line is under the playhead while the script plays. */
-function playingLine(): string | null {
+/** Where the playing script is: the line under the playhead and its time on the timeline (lines without a take aren't played). */
+function playPosition(): { lineId: string; t: number } | null {
   if (nowPlaying.value?.id !== SCRIPT_ID) return null;
-  let t = 0;
   const at = playhead.value;
-  for (const k of keepers.value) {
-    if (!k.take) continue;
-    const dur = k.take.audio.pcm.length / k.take.audio.sr;
-    if (at < t + dur + GAP) return k.line.id;
-    t += dur + GAP;
+  const gap = script.value.gap;
+  let m = 0;
+  for (const c of timeline.value.clips) {
+    if (!c.take) continue;
+    if (at < m + c.duration + gap) return { lineId: c.line.id, t: c.start + at - m };
+    m += c.duration + gap;
   }
   return null;
+}
+
+function addBench() {
+  const p: Persona = { id: uid(), name: voiceName(null), design: structuredClone(design.value), signature: '', createdAt: Date.now() };
+  savePersona(p);
+  notify(`Added ${p.name} to the cast`, 'ok');
 }
 
 function underline(values: Record<string, number>): string | undefined {
@@ -148,16 +163,15 @@ function LineText({ line }: { line: Line }) {
   const open = (start: number, end: number, rect: DOMRect) => {
     brush.value = { lineId: line.id, start, end: Math.min(end, line.text.length), x: rect.left + rect.width / 2, y: rect.top };
   };
+  const pick = (touch?: boolean) => {
+    const s = selectionIn(el.current!);
+    if (s && s.end > s.start) open(s.start, s.end, s.rect);
+    else if (!touch) brush.value = null;
+  };
   return (
-    <div
-      ref={el}
-      class="line-text"
-      onMouseUp={() => {
-        const s = selectionIn(el.current!);
-        if (s && s.end > s.start) open(s.start, s.end, s.rect);
-        else brush.value = null;
-      }}
-    >
+    // Touch: a long-press selection fires no mouseup; read it once the finger lifts and the selection has settled
+    // (only to open: a tap on painted words opens the brushes through its click).
+    <div ref={el} class="line-text" onMouseUp={() => pick()} onTouchEnd={() => setTimeout(() => pick(true), 50)}>
       {marks.slice(0, -1).map((from, i) => {
         const to = marks[i + 1];
         const tag = tagged?.tokens.find((t) => t.start === from);
@@ -240,7 +254,7 @@ function BrushBar() {
   const left = clamp(b.x - w / 2, 12, window.innerWidth - w - 12);
   const top = b.y > 420 ? b.y - 12 : b.y + 40;
   return (
-    <div ref={bar} class={`brushbar${b.y > 420 ? ' is-above' : ''}`} style={{ left: `${left}px`, top: `${top}px`, width: `${w}px` }} role="dialog" aria-label="Delivery brushes">
+    <div ref={bar} class={`brushbar${b.y > 420 ? ' is-above' : ''}`} style={phone.value ? undefined : { left: `${left}px`, top: `${top}px`, width: `${w}px` }} role="dialog" aria-label="Delivery brushes">
       <header>
         <span class="eyebrow">Paint “{line.text.slice(b.start, b.end)}”</span>
         {phonemizeOn.value && (
@@ -325,16 +339,6 @@ function TakeStrip({ line }: { line: Line }) {
                 <Icon name="edit" size={12} />
               </button>
             )}
-            {backend.value?.dub && (
-              <button
-                class="icon-btn sm"
-                onClick={() => void dubTake(t, `Line ${script.value.lines.indexOf(line) + 1} · take ${i + 1}`)}
-                aria-label={`Dub take ${i + 1}`}
-                title="Dub this take into another language (Dub screen)"
-              >
-                <Icon name="globe" size={12} />
-              </button>
-            )}
             <button class="icon-btn sm" onClick={() => deleteTake(line.id, t.id)} aria-label={`Delete take ${i + 1}`}>
               <Icon name="x" size={12} />
             </button>
@@ -388,13 +392,16 @@ function CompareButton({ lineId }: { lineId: string }) {
 
 function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean }) {
   const editEl = useRef<HTMLInputElement>(null);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(() => editNew.peek() === line.id);
   const [draft, setDraft] = useState(line.text);
   const busy = lineBusy.value[line.id];
   const err = lineError.value[line.id];
-  const count = (takes.value[line.id] ?? []).length;
+  const list = takes.value[line.id] ?? [];
+  const keeper = list.find((t) => t.starred) ?? list[list.length - 1];
+  const stale = !!keeper && takeIsStale(line, keeper);
+  const voice = lineVoiceId(line);
   return (
-    <li class={`line${playing ? ' is-playing' : ''}`}>
+    <li class={`line${playing ? ' is-playing' : ''}`} style={{ '--voice': voiceColor(voice) }}>
       <span class="line-n">{n}</span>
       <div class="line-main">
         {editing ? (
@@ -406,6 +413,7 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
             value={draft}
             data-tags
             autoFocus
+            placeholder="What do they say?"
             aria-label={`Line ${n} text`}
             onInput={(e) => setDraft((e.currentTarget as HTMLInputElement).value)}
             onKeyDown={(e) => {
@@ -423,6 +431,7 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
               const v = (e.currentTarget as HTMLInputElement).value;
               if (v.trim() && v !== line.text) setLineText(line.id, v);
               setEditing(false);
+              if (editNew.peek() === line.id) editNew.value = null;
             }}
           />
           <PronounceButton input={() => editEl.current} />
@@ -446,8 +455,30 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
         )}
       </div>
       <div class="line-actions">
-        <button class={`btn sm${busy ? ' is-busy' : ''}`} onClick={() => void renderLine(line.id)} disabled={busy || !line.text.trim()} title={count ? 'Render another take (new seed)' : 'Render this line'}>
-          {busy ? 'Rendering…' : count ? 'New take' : 'Render'}
+        <select
+          class="input line-voice"
+          value={line.voice ?? ''}
+          onChange={(e) => setLineVoice(line.id, (e.currentTarget as HTMLSelectElement).value || null)}
+          aria-label={`Voice for line ${n}`}
+          title={`Speaks as ${voiceName(voice)}`}
+        >
+          <option value="">Script voice ({voiceName(script.value.voice)})</option>
+          {line.voice && !cast.value.some((p) => p.id === line.voice) && <option value={line.voice}>(removed voice)</option>}
+          {cast.value.map((p) => (
+            <option value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <button
+          class={`btn sm${busy ? ' is-busy' : ''}${stale ? ' is-stale' : ''}`}
+          onClick={() => void renderLine(line.id)}
+          disabled={busy || !line.text.trim()}
+          title={stale ? 'Settings or voice changed since this take' : list.length ? 'Render another take (new seed)' : 'Render this line'}
+        >
+          {busy ? 'Rendering…' : stale ? (
+            <>
+              <Icon name="refresh" size={13} /> Regenerate
+            </>
+          ) : list.length ? 'New take' : 'Render'}
         </button>
         <div class="line-tools">
           <button class="icon-btn sm" onClick={() => (setDraft(line.text), setEditing(true))} aria-label={`Edit line ${n}`} title="Edit text (paint stays on its words)">
@@ -482,6 +513,8 @@ function ScriptText() {
 }
 
 const editAll = signal(false);
+/** A line added from a "says…" button opens with its text field. */
+const editNew = signal<string | null>(null);
 
 function Sidebar() {
   const s = script.value;
@@ -496,22 +529,33 @@ function Sidebar() {
     },
     end: () => scripts.end(),
   };
-  const ready = keepers.value.filter((k) => k.take).length;
-  const total = s.lines.length;
-  const rendering = Object.values(lineBusy.value).some(Boolean);
+  const people = cast.value;
   return (
-    <aside class="rail direct-rail" aria-label="Script settings">
+    <aside class="rail direct-rail" aria-label="Voices and performance">
       <div class="rail-section">
-        <h4>Voice</h4>
-        <select class="input" value={s.voice ?? ''} onChange={(e) => setVoice((e.currentTarget as HTMLSelectElement).value || null)} aria-label="Voice for this script">
+        <h4>Default voice</h4>
+        <select class="input" value={s.voice ?? ''} onChange={(e) => setVoice((e.currentTarget as HTMLSelectElement).value || null)} aria-label="Default voice for this script">
           <option value="">Bench: {speakers.value.find((x) => x.id === design.value.baseId)?.label ?? '—'} (as designed in Cast)</option>
-          {cast.value.map((p) => (
+          {people.map((p) => (
             <option value={p.id}>{p.name}</option>
           ))}
         </select>
         <p class="hint">
-          {base?.label ?? 'No voice'} · {d.mode === 'reference' ? 'exact clone' : 'designable'}. Identity is set per character in Cast; only delivery and mood paint onto words.
+          {base?.label ?? 'No voice'} · {d.mode === 'reference' ? 'exact clone' : 'designable'}. Lines speak in this voice unless they pick their own; identity is set per voice in Cast, only delivery and mood paint onto words.
         </p>
+        {people.length ? (
+          <div class="voice-adds">
+            {people.map((p) => (
+              <button class="btn ghost sm" style={{ '--voice': voiceColor(p.id) }} onClick={() => (editNew.value = addLine(s.lines[s.lines.length - 1]?.id ?? null, '', p.id))} title={`Add a line spoken by ${p.name}`}>
+                <span class="voice-dot" /> {p.name} says…
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button class="btn sm voice-bench" onClick={addBench} disabled={!design.value.baseId} title="Save the Cast bench voice as a cast member, so lines can pick it">
+            <Icon name="plus" size={13} /> Add the bench voice to the cast
+          </button>
+        )}
         <LanguageSelect />
         <TagStrength />
       </div>
@@ -541,12 +585,30 @@ function Sidebar() {
             ))}
         </div>
       </div>
+    </aside>
+  );
+}
+
+/** The right sidebar: the script as a whole (renders, playback, export, the gap between lines). */
+function ScriptSide() {
+  const s = script.value;
+  const ready = keepers.value.filter((k) => k.take).length;
+  const stale = staleLines.value.length;
+  const rendering = Object.values(lineBusy.value).some(Boolean);
+  const playing = nowPlaying.value?.id === SCRIPT_ID;
+  return (
+    <aside class="rail direct-side" aria-label="Script">
       <div class="rail-section">
         <h4>Script</h4>
         <p class="hint">
-          {ready}/{total} lines have a take. Play and export use each line’s starred take.
+          {ready}/{s.lines.length} lines have a take. Play and export use each line’s starred take.
         </p>
         <div class="col gap-s">
+          {stale > 0 && (
+            <button class="btn primary" disabled={rendering} onClick={() => void regenerateStale()} title="Settings or voice changed since these lines’ starred takes: render a new take of each">
+              <Icon name="refresh" size={14} /> Regenerate {stale} changed line{stale === 1 ? '' : 's'}
+            </button>
+          )}
           <button
             class="btn"
             disabled={rendering}
@@ -556,15 +618,69 @@ function Sidebar() {
           >
             <Icon name="wand" size={14} /> Render missing lines
           </button>
-          <button class="btn primary" onClick={() => (nowPlaying.value?.id === SCRIPT_ID ? player.stop() : playScript())}>
-            <Icon name={nowPlaying.value?.id === SCRIPT_ID ? 'stop' : 'play'} size={14} /> {nowPlaying.value?.id === SCRIPT_ID ? 'Stop' : 'Play script'}
+          <button class={`btn${stale ? '' : ' primary'}`} onClick={() => (playing ? player.stop() : playScript())}>
+            <Icon name={playing ? 'stop' : 'play'} size={14} /> {playing ? 'Stop' : 'Play script'}
           </button>
           <button class="btn" onClick={exportScript}>
             <Icon name="download" size={14} /> Export WAV
           </button>
         </div>
       </div>
+      <div class="rail-section">
+        <h4>Timing</h4>
+        <label class="gap">
+          Gap between lines
+          <input type="range" min={0} max={1.5} step={0.05} value={s.gap} onChange={(e) => setGap(Number((e.currentTarget as HTMLInputElement).value))} aria-label="Gap between lines (s)" />
+          <b>{s.gap.toFixed(2)} s</b>
+        </label>
+      </div>
     </aside>
+  );
+}
+
+/** One lane per voice; each line's keeper take placed where the script plays it. */
+function Timeline({ at }: { at: number | null }) {
+  const { clips, total } = timeline.value;
+  if (!clips.length) return null;
+  const lanes = [...new Set(clips.map((c) => lineVoiceId(c.line)))];
+  const pct = (t: number) => `${(t / (total || 1)) * 100}%`;
+  return (
+    <section class="timeline" aria-label="Timeline">
+      <div class="timeline-head">
+        <span class="eyebrow">Timeline</span>
+        <span class="muted small">
+          {total.toFixed(1)} s{clips.some((c) => !c.take) && ' (estimated until rendered)'}
+        </span>
+      </div>
+      <div class="lanes">
+        {lanes.map((vid) => {
+          const color = voiceColor(vid);
+          return (
+            <div key={vid ?? ''} class="lane" style={{ '--voice': color }}>
+              <span class="lane-name" title={voiceName(vid)}>
+                {voiceName(vid)}
+              </span>
+              <div class="lane-track">
+                {clips
+                  .filter((c) => lineVoiceId(c.line) === vid)
+                  .map((c) => (
+                    <button
+                      key={c.line.id}
+                      class={`clip${c.take ? '' : ' is-pending'}`}
+                      style={{ left: pct(c.start), width: pct(c.duration) }}
+                      title={c.line.text}
+                      onClick={() => c.take && player.toggle(`take:${c.take.id}`, c.take.audio.pcm, c.take.audio.sr)}
+                    >
+                      {c.take ? <Waveform pcm={c.take.audio.pcm} color={color} height={28} /> : <span>{c.line.text}</span>}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          );
+        })}
+        {at !== null && <div class="timeline-head-line" style={{ left: `calc(var(--lane-name) + (100% - var(--lane-name)) * ${at / (total || 1)})` }} />}
+      </div>
+    </section>
   );
 }
 
@@ -579,11 +695,17 @@ export function DirectScreen() {
     };
   }, []);
   const lines = script.value.lines;
-  const now = playingLine();
+  const now = playPosition();
   return (
     <div class="direct">
-      <Sidebar />
-      <section class="script" aria-label="Script">
+      <Rail id="direct-voices" side="left" title="Voices">
+        <Sidebar />
+      </Rail>
+      <section class="script" aria-label="Lines">
+        <RailBar>
+          <RailToggle id="direct-voices" title="Voices" icon="mic" />
+          <RailToggle id="direct-script" title="Script" icon="play" />
+        </RailBar>
         <header class="screen-head">
           <div>
             <span class="eyebrow">Direct</span>
@@ -598,25 +720,31 @@ export function DirectScreen() {
         ) : lines.length ? (
           <ol class="lines">
             {lines.map((l, i) => (
-              <LineRow key={l.id} line={l} n={i + 1} playing={now === l.id} />
+              <LineRow key={l.id} line={l} n={i + 1} playing={now?.lineId === l.id} />
             ))}
           </ol>
         ) : (
           <div class="empty">
             <Icon name="edit" size={26} />
             <h3>No lines yet</h3>
-            <p>Paste a script, or add lines one by one; each line is rendered and directed on its own.</p>
+            <p>Paste a script, or add lines one by one; each line is rendered and directed on its own, in its own voice.</p>
             <button class="btn" onClick={() => (editAll.value = true)}>
               Paste a script
             </button>
           </div>
         )}
         {!editAll.value && (
-          <button class="btn ghost add-line" onClick={() => addLine(null, 'A new line.')}>
-            <Icon name="plus" size={14} /> Add line
-          </button>
+          <>
+            <button class="btn ghost add-line" onClick={() => addLine(null, 'A new line.')}>
+              <Icon name="plus" size={14} /> Add line
+            </button>
+            <Timeline at={now?.t ?? null} />
+          </>
         )}
       </section>
+      <Rail id="direct-script" side="right" title="Script">
+        <ScriptSide />
+      </Rail>
       <BrushBar />
     </div>
   );

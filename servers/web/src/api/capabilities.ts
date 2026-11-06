@@ -1,6 +1,6 @@
-// GET /v2/capabilities and GET /v2/dub/capabilities of the in-browser server (servers/ggml/src/server/capabilities.cpp,
-// edit.cpp edit_capabilities, phonemize.cpp phoneme_capabilities, dub.cpp DubRuntime::capabilities) with this server's
-// feature set: no text normalization, speech editing, dubbing, phonemizer or server projects.
+// GET /v2/capabilities of the in-browser server (servers/ggml/src/server/capabilities.cpp, edit.cpp edit_capabilities,
+// phonemize.cpp phoneme_capabilities) with this server's feature set: no text normalization, speech editing,
+// phonemizer, server projects or plugins.
 import languages from '../../../../model/src/zonos3/registries/languages.json';
 import {
   DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES, TAG_CFG_MAX_SCALE,
@@ -104,7 +104,7 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     speaker_cfg_unconditional: 'remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_generated_history',
     speaker_cfg_formula: 'uncond + scale * (cond - uncond)',
     laci_languages: laciLanguages(e),
-    dub: false,
+    plugins: [],
     speaker_embedding_upload: embedding,
     speaker_embedding_cache: speakerModes.length > 0,
     speaker_embedding_blend: embedding,
@@ -119,42 +119,5 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     phonemize_enabled: false,
     phonemize_languages: [],
     phonemize_guess_languages: [],
-  };
-}
-
-/** Dub reference languages (zonos3.languages SPOKEN): code → name. */
-const REF_LANGUAGES = languages.spoken.map(({ code, name }) => ({ code, name }));
-
-/** /v2/dub/capabilities with the dub routes off (DubRuntime::capabilities; no alignment worker in a browser). */
-export function dubCapabilities(e: Engine): Record<string, unknown> {
-  const hp = e.hp;
-  const rate = hp.condNames.indexOf('speaking_rate');
-  return {
-    available: false,
-    ref_languages: REF_LANGUAGES,
-    target_languages: [],
-    max_ref_seconds: 180.0,
-    max_video_bytes: 2 ** 30,
-    max_segments: 120,
-    default_min_pause_s: 0.30,
-    min_pause_range: [0.10, 2.00],
-    sample_rate: SAMPLE_RATE,
-    frame_rate: 15.0,
-    rate_edges: rate >= 0 ? (hp.condEdges[rate] ?? []).map(floatDecimal) : [],
-    n_buckets: rate >= 0 ? hp.condBucketCounts[rate] : 0,
-    buckets: [],
-    candidate_bucket_offsets: [0, -1, 1, -2, 2],
-    candidate_seeds: 2,
-    model: e.modelFile,
-    asr_model: 'Qwen/Qwen3-ASR-1.7B',
-    aligner_model: '',   // FuseAlign's checkpoint; empty when its worker cannot start (no worker in a browser)
-    word_aligner: 'google-bert/bert-base-multilingual-cased',
-    align_worker: { installed: false, running: false },
-    lipsync: false,
-    voice_modes: [],
-    segment_controls: true,
-    phoneme_groups: false,
-    ref_words: true,
-    enabled: false,
   };
 }

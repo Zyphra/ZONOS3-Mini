@@ -3,8 +3,8 @@
 Both servers — the CUDA server (`servers/sgl/scripts/serve.sh`, `python -m zonos3_sgl`) and the ggml server
 (`servers/ggml`, `zonos3-server`) — implement one HTTP API. The schema of every request and response is
 [api/openapi.yaml](../api/openapi.yaml) (bundled into `api/openapi.json`); this page is the overview. Feature-specific
-behavior (speech editing, steering, studio projects, dubbing) is described in [guide.md](guide.md) and
-[laci_dub.md](laci_dub.md). `api/tests/conformance` checks a running server against the spec:
+behavior (speech editing, steering, studio projects, plugins) is described in [guide.md](guide.md).
+`api/tests/conformance` checks a running server against the spec:
 `uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919`.
 
 ## Routes
@@ -24,7 +24,7 @@ Voice Studio.
 | `GET /v2/speakers/{id}/preview`, `/embedding` | A voice's audio; its speaker embedding |
 | `POST /v2/phonemize` | Gold-lexicon IPA for the words of a text (404 without a lexicon) |
 | `POST /v2/edit/transcribe`, `/v2/edit/align`, `/v2/edit` | Speech editing ([guide](guide.md#speech-editing)) |
-| `GET /v2/dub/capabilities`, `POST /v2/dub/*` | Dubbing ([laci_dub.md](laci_dub.md)) |
+| `/v2/<plugin>/*`, `/<plugin>` | Server plugins mounted with `--plugins` (listed in `plugins` of the capabilities; [guide](guide.md#plugins)) |
 | `GET /v2/projects`, `POST /v2/projects/gc`, `GET\|PUT\|DELETE /v2/projects/{id}` | Studio projects ([guide](guide.md#projects-on-the-server)) |
 | `GET\|HEAD\|PUT /v2/media/{sha256}` | Content-addressed studio media |
 
@@ -49,7 +49,7 @@ dir. Without a build, `GET /` is a 404 that names `pnpm --dir studio build`.
 | Header | Direction | Meaning |
 | --- | --- | --- |
 | `X-TTS-Session-ID` | request | Scopes the speaker cache: `POST /v2/speakers` writes into the session (required there), reads see the session's voices plus the defaults |
-| `X-Keepalive: 1` | request | On `/v2/edit*`, `/v2/dub/ref`, `/v2/dub/lips/*` and `/v2/dub/{transcribe,analyze,generate,regenerate}`: 200 at once, a space byte every 10 s, then the JSON body; errors arrive in the body as `{detail, status_code}` |
+| `X-Keepalive: 1` | request | On `/v2/edit*` and the POST paths a plugin lists: 200 at once, a space byte every 10 s, then the JSON body; errors arrive in the body as `{detail, status_code}` |
 | `Authorization: Bearer <token>` | request | Needed when the server runs with `ZONOS3_ACCESS_TOKEN` (alternatives: the `zonos3_access` cookie, set once by `GET /?access_token=<token>`); a failure is 403 `Access denied` |
 | `X-Audio-Sample-Rate`, `X-Audio-Channels`, `X-Audio-Format` | response | `44100`, `1`, `float32` on PCM audio |
 | `X-Seed` | response | The seed used (drawn uniformly in 0..2³¹−1 when `seed` is null) |

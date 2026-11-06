@@ -1,6 +1,6 @@
 // Helper processes of the server (model/src/zonos3/workers/*.py): ChildProcess, a child with its stdin and stdout on
 // pipes, and JsonLinesWorker, a persistent one speaking one JSON request per stdin line and one response per stdout
-// line, in order (text normalization). The edit/dub worker (server/edit_dub.h) multiplexes its own ChildProcess.
+// line, in order (text normalization). The Python host (server/pyhost.h) multiplexes its own ChildProcess.
 #pragma once
 
 #include "json.hpp"
@@ -71,5 +71,8 @@ private:
 // Runs argv[0] (searched on PATH) with argv, stdin and stdout on the null device, and waits for it. Returns the exit
 // code (-1 when it could not start or did not exit normally) with the child's stderr in `stderr_text`.
 int run_process(const std::vector<std::string> & argv, std::string & stderr_text);
+// The same with the server environment plus `env` (a nullopt value removes the variable), as ChildProcess.
+int run_process(const std::vector<std::string> & argv, const std::map<std::string, std::optional<std::string>> & env,
+                std::string & stderr_text);
 
 }  // namespace zs

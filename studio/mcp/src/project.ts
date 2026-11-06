@@ -32,10 +32,8 @@ export function newProjectDoc(id: string, name: string, language: string): Proje
     settings: { ...DEFAULT_SETTINGS, language },
     voices: [],
     cast: { design: { baseId: '', mode: 'embedding', values: {}, pin: homePin() }, personas: [], origins: {}, previewText: '' },
-    direct: { script: { lines: [], baseline: {}, voice: null }, takes: {} },
-    scene: { scene: { lines: [], gap: 0.35 }, renders: {} },
+    direct: { script: { lines: [], baseline: {}, voice: null, gap: 0.35 }, takes: {} },
     edit: { doc: null, clipLanguages: {} },
-    dub: { refLang: 'en', refText: '', refWords: null, targetLang: 'fr', targetText: '', segments: [], voice: { kind: 'source' }, source: null, trackId: null, tracks: [] },
     media: {},
   };
 }

@@ -266,6 +266,9 @@ class CodecDecoder:
         audio = sinc_resample(mixed, self.rs_kernel, *self.rs)
         mx.eval(audio)
         out = np.array(audio, dtype=np.float32)
+        # every prefix length is a new set of buffer sizes: without this the MLX buffer cache grows past 9 GiB over one
+        # long stream, and the memory pressure slows the next decodes and stalls the backbone's next prefill for seconds
+        mx.clear_cache()
         want = frames * self.hop
         if len(out) >= want:
             return out[:want]

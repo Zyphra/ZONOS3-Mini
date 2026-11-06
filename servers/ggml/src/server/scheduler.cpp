@@ -125,15 +125,16 @@ static void zac_lane_loop(ServerState & s, ZacLane & lane) {
     }
 }
 
-// Prefix streaming (sgl _decode_prefix_chunk): once chunk_frames new frames are decodable beyond the hold-back,
-// stream-decode up to there on the job's lane.
+// Prefix streaming (sgl _decode_prefix_chunk): once chunk_frames new frames (first_chunk_frames for the job's first
+// chunk) are decodable beyond the hold-back, stream-decode up to there on the job's lane.
 static void prefix_submit_ready(ServerState & s, const std::shared_ptr<ReqJob> & job) {
     const int ncb = (int) s.model.hp.n_codebooks;
     const int H = (int) job->codes.size() / ncb;
     int complete = H - (ncb - 1);
     if (job->eos_frame >= 0) complete = std::min(complete, job->eos_frame);
     const int decodable = complete - s.prefix.hold_back_frames;
-    if (decodable - job->emitted < s.prefix.chunk_frames) return;
+    const int need = job->emitted == job->prompt.prefill_frames ? s.prefix.first_chunk_frames : s.prefix.chunk_frames;
+    if (decodable - job->emitted < need) return;
     ZacTask t;
     t.job = job;
     t.kind = ZacTask::WINDOW;

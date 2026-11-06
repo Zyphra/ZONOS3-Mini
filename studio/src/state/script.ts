@@ -1,7 +1,8 @@
-/** Direct: a script split into lines, delivery painted onto character spans, takes per line. */
+/** Direct: a script split into lines, each with its own voice, delivery painted onto character spans, takes per line. */
 import { computed, signal } from '@preact/signals';
 import { parseTags } from '../lib/tags';
 import type { GenerateRequest, Rendered } from '../api';
+import { sequence } from '../audio/mix';
 import { errorText, isAbort, render } from '../audio/render';
 import { uid } from '../lib/math';
 import { projectSettings, pronTokens, requestContext, spec } from './app';
@@ -19,14 +20,18 @@ export interface Line {
   id: string;
   text: string;
   spans: Span[];
+  /** Persona id; absent / null: the script's voice. */
+  voice?: string | null;
 }
 
 export interface Script {
   lines: Line[];
   /** Whole-script performance: UI values added to every line. */
   baseline: Values;
-  /** Persona id, or null for the voice currently on the Cast bench. */
+  /** Default voice: persona id, or null for the voice currently on the Cast bench. */
   voice: string | null;
+  /** Silence between lines when the script plays / exports (s). */
+  gap: number;
 }
 
 export interface Take {
@@ -56,10 +61,10 @@ export function splitScript(text: string): string[] {
     .filter(Boolean);
 }
 
-const newLine = (text: string): Line => ({ id: uid(), text, spans: [] });
+const newLine = (text: string, voice?: string | null): Line => ({ id: uid(), text, spans: [], ...(voice ? { voice } : {}) });
 
 /** A new project's script: the demo lines. */
-export const newScript = (): Script => ({ lines: DEMO.map(newLine), baseline: {}, voice: null });
+export const newScript = (): Script => ({ lines: DEMO.map((t) => newLine(t)), baseline: {}, voice: null, gap: 0.35 });
 
 export const scripts = new History<Script>(newScript());
 export const script = scripts.state;
@@ -69,10 +74,22 @@ export const takes = signal<Record<string, Take[]>>({});
 export const lineBusy = signal<Record<string, boolean>>({});
 export const lineError = signal<Record<string, string | null>>({});
 
+/** The script's default voice. */
 export const voiceDesign = computed<Design>(() => {
   const id = script.value.voice;
   return (id && cast.value.find((p) => p.id === id)?.design) || design.value;
 });
+
+/** A line's persona id: its own, else the script's (null: the Cast bench). */
+export function lineVoiceId(line: Line): string | null {
+  return line.voice ?? script.value.voice;
+}
+
+/** The design a line renders with (the bench when its persona is gone). */
+export function lineDesign(line: Line): Design {
+  const id = lineVoiceId(line);
+  return (id && cast.value.find((p) => p.id === id)?.design) || design.value;
+}
 
 const update = (fn: (s: Script) => Script) => scripts.set(fn(script.value));
 const commit = (fn: (s: Script) => Script) => scripts.apply(fn(script.value));
@@ -86,18 +103,22 @@ export function setLineText(id: string, text: string) {
   }));
 }
 
+/** Lines whose text is unchanged keep their id, painting and voice (and so their takes). */
 export function replaceScript(text: string) {
   const old = new Map(script.value.lines.map((l) => [l.text, l]));
   commit((s) => ({ ...s, lines: splitScript(text).map((t) => old.get(t) ?? newLine(t)) }));
 }
 
-export function addLine(afterId: string | null, text = '') {
+/** Insert a line after `afterId` (null: at the end); returns its id. */
+export function addLine(afterId: string | null, text = '', voice?: string | null): string {
+  const line = newLine(text, voice);
   commit((s) => {
     const lines = [...s.lines];
     const i = afterId ? lines.findIndex((l) => l.id === afterId) + 1 : lines.length;
-    lines.splice(i, 0, newLine(text));
+    lines.splice(i, 0, line);
     return { ...s, lines };
   });
+  return line.id;
 }
 
 export function removeLine(id: string) {
@@ -117,6 +138,15 @@ export function moveLine(id: string, delta: number) {
 
 export function setVoice(voice: string | null) {
   commit((s) => ({ ...s, voice }));
+}
+
+/** One line's voice; null follows the script's voice. */
+export function setLineVoice(id: string, voice: string | null) {
+  commit((s) => ({ ...s, lines: s.lines.map((l) => (l.id === id ? { ...l, voice } : l)) }));
+}
+
+export function setGap(gap: number) {
+  commit((s) => ({ ...s, gap: Math.max(0, Math.round(gap * 100) / 100) }));
 }
 
 export function setBaseline(id: string, v: number) {
@@ -217,7 +247,7 @@ export function lineRequest(line: Line, seed: number): GenerateRequest {
   // this language (it has alignment heads for it), sent as the fallback otherwise.
   const reading = last?.audio.spanFollow === 'reading' && (last.request.language ?? 'en_us') === language;
   const spanRate = last && !reading ? measuredRate(last) : undefined;
-  return buildRequest(spec.value, requestContext.value, voiceDesign.value, line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language });
+  return buildRequest(spec.value, requestContext.value, lineDesign(line), line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language });
 }
 
 export async function renderLine(lineId: string) {
@@ -235,9 +265,12 @@ export async function renderLine(lineId: string) {
   try {
     const request = lineRequest(line, seed);
     const audio = await render(request);
-    const take: Take = { id: uid(), text: line.text, seed, request, audio, createdAt: Date.now(), starred: false };
-    const list = [...(takes.value[lineId] ?? []), take];
-    if (!list.some((t) => t.starred)) take.starred = true;
+    const prior = takes.value[lineId] ?? [];
+    const keeper = prior.find((t) => t.starred) ?? prior[prior.length - 1];
+    // The new take becomes the keeper when there is none or the keeper no longer matches the line (Regenerate).
+    const starred = !keeper || takeIsStale(line, keeper);
+    const take: Take = { id: uid(), text: line.text, seed, request, audio, createdAt: Date.now(), starred };
+    const list = [...prior.map((t) => (starred && t.starred ? { ...t, starred: false } : t)), take];
     takes.value = { ...takes.value, [lineId]: list };
   } catch (e) {
     if (!isAbort(e)) lineError.value = { ...lineError.value, [lineId]: errorText(e) };
@@ -270,5 +303,42 @@ export function takeIsStale(line: Line, t: Take): boolean {
   const req = lineRequest(line, t.seed);
   const strip = (r: GenerateRequest) => JSON.stringify({ ...r, control_span_rate: undefined, control_span_follow: undefined });
   return strip(req) !== strip(t.request);
+}
+
+/** Lines whose keeper take no longer matches them (a changed voice, text, painting or baseline). */
+export const staleLines = computed(() => keepers.value.flatMap(({ line, take }) => (take && takeIsStale(line, take) ? [line] : [])));
+
+/** A new take of every stale line (render.ts limits how many run at once). */
+export async function regenerateStale(): Promise<void> {
+  await Promise.all(staleLines.value.map((l) => renderLine(l.id)));
+}
+
+// ── Timeline ──────────────────────────────────────────────────────────────────────────────────────
+
+export interface Clip {
+  line: Line;
+  take: Take | null;
+  start: number;
+  duration: number;
+}
+
+/** The keepers laid end to end with the gap; lines without a take get an estimated slot (≈15 characters per second). */
+export const timeline = computed(() => {
+  const gap = script.value.gap;
+  const clips: Clip[] = [];
+  let end = 0;
+  for (const [i, { line, take }] of keepers.value.entries()) {
+    const duration = take ? take.audio.pcm.length / take.audio.sr : Math.max(0.8, line.text.length / 15);
+    const start = i ? end + gap : 0;
+    clips.push({ line, take, start, duration });
+    end = start + duration;
+  }
+  return { clips, total: end };
+});
+
+/** The keepers' takes in script order with the gap between them; null when no line has a take. */
+export function mixdown(): { pcm: Float32Array; sr: number } | null {
+  const audio = keepers.value.flatMap(({ take }) => (take ? [take.audio] : []));
+  return audio.length ? sequence(audio, script.value.gap) : null;
 }
 

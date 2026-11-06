@@ -230,15 +230,50 @@ def test_edit_refuses_bad_condition_buckets_before_recognition(client, monkeypat
     assert asr.items == []
 
 
-def test_dub_shares_the_server_asr_and_fusealign_workers(client, monkeypatch):
-    state = client.app.state.zonos3
+def test_plugin_host_shares_the_server_asr_and_fusealign_workers(files, monkeypatch):
+    import types
+
+    from fastapi import APIRouter
+    from zonos3.server import plugins
+
+    seen, closed = {}, []
+
+    class FakePlugin:
+        name, host_api, keepalive_paths = "fake", plugins.HOST_API, ("/v2/fake/run",)
+
+        def router(self, host):
+            seen["host"] = host
+            r = APIRouter()
+
+            @r.get("/v2/fake/facts")
+            def facts():
+                return {"model_name": host.facts().model_name}
+
+            @r.get("/fake")
+            def page():
+                return {"page": "fake"}
+
+            return r
+
+        def close(self):
+            closed.append(self.name)
+
+    monkeypatch.setitem(sys.modules, "zonos3_fake", types.SimpleNamespace(plugin=FakePlugin))
     aligner, asr = FakeAligner(), FakeAsr()
-    monkeypatch.setattr(state, "aligner", aligner)
-    monkeypatch.setattr(state, "asr", asr)
-    monkeypatch.setattr(state, "dub_runtime", None)
-    caps = client.get("/v2/dub/capabilities").json()
-    assert caps["aligner_model"] == "Zyphra/fusealign/fake.safetensors" and caps["asr_model"] == "Qwen/fake-asr"
-    assert state.dub_runtime.aligner is aligner and state.dub_runtime.asr is asr
+    engine = Engine.load(files / "m.gguf")
+    scheduler = Scheduler(engine, batch=1)
+    scheduler.start(warmup=False)
+    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=1, max_frames=60,
+                                                         studio_dir=files, plugins=("fake",)),
+                        asr=asr, aligner=aligner)
+    state.plugins = plugins.load(state.options.plugins)
+    with TestClient(create_app(state)) as c:
+        assert c.get("/v2/capabilities").json()["plugins"] == ["fake"]
+        assert c.get("/v2/fake/facts").json() == {"model_name": "m.gguf"}
+        # the studio catch-all (studio_dir set) answers only after the plugin routes
+        assert c.get("/fake").json() == {"page": "fake"}
+    assert seen["host"].asr is asr and seen["host"].aligner is aligner
+    assert closed == ["fake"]
 
 
 def test_shutdown_closes_the_asr_and_fusealign_workers(files):

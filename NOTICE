@@ -45,7 +45,7 @@ text of each third-party license is reproduced in the licenses/ directory.
    SPDX-License-Identifier: Apache-2.0
    Full license: licenses/fusealign-multilingual-Apache-2.0.txt
 
-   The forced aligner of speech editing and dubbing: the git submodule
+   The forced aligner of speech editing: the git submodule
    third_party/fusealign-multilingual (Python package fusealign_hub), shipped
    unmodified as python/fusealign_hub/ in the ggml server's release packages.
 ================================================================================

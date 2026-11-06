@@ -16,14 +16,12 @@ import { download, slug } from '../lib/files';
 import { uid } from '../lib/math';
 import { backend, notify, projectSettings } from './app';
 import { baseSpeaker, design, designs, setMode } from './design';
-import * as dub from './dub';
 import * as edit from './edit';
 import { cast, ownVoices, refreshSpeakers, speakers, uploading, type OwnVoice } from './library';
 import { EMBEDDING_TYPE, MediaSink } from './media';
 import { emptyDoc, LEGACY_KEYS, legacyDoc, restore, snapshot, speakerUses } from './projectDoc';
 import { remapIds, SCHEMA, summaryOf, type ProjectDoc, type ProjectSettings } from './projectSchema';
 import { BrowserStore, matchesHash, metaOf, readdress, ServerStore, type ProjectMeta, type Store } from './projectStore';
-import { renders, scene } from './scene';
 import { script, takes } from './script';
 import { voiceOrigins } from './who';
 
@@ -195,7 +193,7 @@ function schedule() {
 }
 
 effect(() => {
-  void [design.value, cast.value, voiceOrigins.value, previewText.value, script.value, takes.value, scene.value, renders.value, edit.doc.value, edit.clipLanguages.value, dub.doc.value, projectSettings.value, ownVoices.value];
+  void [design.value, cast.value, voiceOrigins.value, previewText.value, script.value, takes.value, edit.doc.value, edit.clipLanguages.value, projectSettings.value, ownVoices.value];
   untracked(schedule);
 });
 
@@ -359,7 +357,6 @@ export async function openLastProject(b: Backend) {
 
 function busyWith(): string | null {
   if (edit.busy.value) return 'the Edit screen';
-  if (dub.busy.value) return 'the Dub screen';
   if (uploading.value) return 'the voice upload';
   return null;
 }

@@ -8,7 +8,7 @@ import { computed, effect, signal, untracked } from '@preact/signals';
 import * as api from '../api';
 import type { ControlSpec, Dose, EditRequest, EditTake } from '../api';
 import * as player from '../audio/player';
-import { errorText, isAbort, requestKey } from '../audio/render';
+import { errorText, isAbort } from '../audio/render';
 import { MIN_GAP_FRAMES, contextWindows, isTagToken, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
 import { bytesToBase64, base64ToBytes, encodeWav, parseWav } from '../lib/files';
 import { clamp, uid } from '../lib/math';
@@ -18,11 +18,9 @@ import { act, backend, notify, projectSettings, pronTokens, spec } from './app';
 import { controlDose, type Values } from './engine';
 import { History } from './history';
 import { load, persist } from './persist';
-import { renders, scene, sceneRequest, updateSceneLine } from './scene';
-import { receiveEdit as receiveDubEdit } from './dub';
 import { script, setLineText, takes as scriptTakes } from './script';
 
-export type SourceKind = 'take' | 'scene' | 'voice' | 'upload' | 'recording' | 'dub';
+export type SourceKind = 'take' | 'voice' | 'upload' | 'recording';
 
 export interface Source {
   kind: SourceKind;
@@ -879,20 +877,15 @@ export async function saveFix(corrected: string) {
 
 export const canSendBack = computed(() => {
   const d = doc.value;
-  return !!d && d.current > 0 && (d.source.kind === 'take' || d.source.kind === 'scene' || d.source.kind === 'dub');
+  return !!d && d.current > 0 && d.source.kind === 'take';
 });
 
-/** Put the current version where the clip came from: the Direct take or the Scene line. */
+/** Put the current version where the clip came from: the Direct take. */
 export function sendBack() {
   const d = doc.value;
   const v = version.value;
   if (!d || !v || !canSendBack.value) return;
   const audio = { pcm: v.pcm, sr: v.sr, ttfbMs: 0, totalMs: 0 };
-  if (d.source.kind === 'dub') {
-    if (receiveDubEdit(v.pcm, v.sr)) notify('The edited dub track is back in Dub (one undo step there)', 'ok');
-    else notify('That dub has no track any more.', 'error');
-    return;
-  }
   if (d.source.kind === 'take' && d.source.lineId && d.source.takeId) {
     const { lineId, takeId } = d.source;
     const line = script.value.lines.find((l) => l.id === lineId);
@@ -903,15 +896,6 @@ export function sendBack() {
     scriptTakes.value = { ...scriptTakes.value, [lineId]: list.map((t) => (t.id === takeId ? { ...t, audio, text: said, edited: true } : t)) };
     if (line.text !== said) setLineText(lineId, said);
     notify('The edited take replaced the original in Direct', 'ok');
-  } else if (d.source.kind === 'scene' && d.source.lineId) {
-    const id = d.source.lineId;
-    const line = scene.value.lines.find((l) => l.id === id);
-    if (!line) return notify('That line no longer exists in the Scene.', 'error');
-    const said = v.display ?? v.transcript;
-    if (line.text !== said) updateSceneLine(id, { text: said });
-    const req = sceneRequest({ ...line, text: said });
-    if (req) renders.value = { ...renders.value, [id]: { key: requestKey(req), audio, busy: false, error: null } };
-    notify('The edited clip replaced the line in the Scene', 'ok');
   }
 }
 

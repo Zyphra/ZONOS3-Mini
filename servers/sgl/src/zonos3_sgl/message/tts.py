@@ -127,7 +127,7 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     # whether a miss is retaken in the speaking-rate bucket the measured ratio asks for (else only recorded).
     laci_target_frames: float | None = None
     laci_adjust_rate: bool = True
-    # LACI over an extended speaking-rate scale (zonos3.tts.laci.RateBuckets; a dub take whose scale has tempo-steered
+    # LACI over an extended speaking-rate scale (zonos3.tts.laci.RateBuckets; a LACI take whose scale has tempo-steered
     # buckets, README "Extended speaking-rate buckets"): the scale's edges and first bucket, the take's bucket on it,
     # and the request's steering_delta in every bucket of the scale (the take's own steering, plus the bucket's
     # tempo dose in a steered one), which a retake in another bucket switches to. None: the checkpoint's row buckets.

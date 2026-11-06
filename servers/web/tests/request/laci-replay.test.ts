@@ -130,7 +130,7 @@ function same(want: unknown, got: unknown, path = '$'): void {
   expect(got, path).toEqual(want);
 }
 
-// pace_miss carries a duration target (dub takes): PaceMonitor is not ported (plan step 6).
+// pace_miss carries a duration target (duration-target takes): PaceMonitor is not ported (plan step 6).
 const cases = readdirSync(DIR).filter((f) => f.endsWith('.trace.json')).map((f) => f.slice(0, -'.trace.json'.length));
 
 describe('laci-replay fixtures', () => {

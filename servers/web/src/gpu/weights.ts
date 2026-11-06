@@ -23,7 +23,8 @@ export interface Manifest {
 export interface GpuTensor {
   buf: GPUBuffer;
   scales?: GPUBuffer;
-  dtype: TensorInfo['dtype'];
+  /** 'h8': a codec matrix repacked to k-major f16 for the gemm_h8 kernels (src/gpu/h8.ts). */
+  dtype: TensorInfo['dtype'] | 'h8';
   shape: number[];
 }
 
@@ -47,7 +48,7 @@ export interface LoadProgress {
   fetched: number;
 }
 
-export const CACHE_NAME = 'zonos3-web-models-v3';
+export const CACHE_NAME = 'zonos3-web-models-v4';
 
 /** Deletes stale model caches (older exports, and web-zonos3's `zonos3-models-*`, reuse the same shard URLs) once
  *  per context. */

@@ -11,8 +11,9 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 | Reference encoder | `zac-encoder.gguf` + `ssl-teacher.gguf` | raw-reference cloning and speech editing; the BF16 autocast recipe of the release; loaded on first use, freed after `--reference-idle-unload` idle seconds |
 | Companions | `steer.gguf`, `accents.gguf` | the steering bundle (request `controls` / `control_spans` / `controls_cfg_scale`; `/v2/controls` with each set's calibration), accent adapters (request `accent`) |
 
-Every file is auto-detected next to the backbone. Generation runs on one worker thread that owns every MLX call; up to
-`--batch` requests (default 4; a CFG request takes two slots) advance one row per tick.
+Every file is auto-detected next to the backbone. Generation runs on one worker thread that owns the LM; up to
+`--batch` requests (default 4; a CFG request takes two slots) advance one row per tick, a CFG request's two forwards in
+one MLX evaluation. Streamed audio decodes on a second (codec) thread while the backbone steps on.
 
 ## Install and run
 
@@ -23,8 +24,8 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
 ```
 
 `serve.sh` takes the same variables as the sgl launcher (`SERVE_MODEL`, `SERVE_VOICES`, `PHONEME_LEXICON`,
-`ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `DUB=1`) plus `MODELS_DIR` and `WORKER_PYTHON` (`--worker-python`); extra
-flags are appended. `python -m zonos3_mlx --help` lists the flags.
+`ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `LACI_ALL=1`, `PLUGINS`) plus `MODELS_DIR` and `WORKER_PYTHON`
+(`--worker-python`); extra flags are appended. `python -m zonos3_mlx --help` lists the flags.
 
 - **Helper workers** (`--worker-python PY`, as on the ggml server): text normalization
   (`model/src/zonos3/workers/textnorm.py`) and the FuseAlign forced aligner (`model/src/zonos3/workers/fusealign.py`)
@@ -33,16 +34,19 @@ flags are appended. `python -m zonos3_mlx --help` lists the flags.
 - **Text normalization** (NeMo grammars) needs pynini, which has no macOS wheel on PyPI: point `--worker-python` at
   an interpreter that has it (e.g. a conda env with `pynini==2.1.6`; FuseAlign then runs there too, so it also needs
   the workspace's `fusealign-hub`). Without it requests are served unnormalized.
-- **Forced alignment** (every word timing of speech editing and dubbing) is FuseAlign (`fusealign-hub`, the
+- **Forced alignment** (every word timing of speech editing and plugins) is FuseAlign (`fusealign-hub`, the
   `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`
   before `uv sync`; the checkpoint downloads from [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) on
   first use): one worker per server, started on the first alignment. `ZONOS3_FUSEALIGN_DEVICE` picks its torch
   device; without it the worker takes `cuda:0` when available, else the CPU, so it runs on the CPU on macOS.
   Recordings over 30 s are aligned long-form on Qwen3-ASR transcripts of their speech chunks (never Whisper).
-- **Speech recognition** (speech editing and dubbing) is Qwen3-ASR in `.venv-asr` (`bash tools/setup_asr_env.sh`
+- **Speech recognition** (speech editing and plugins) is Qwen3-ASR in `.venv-asr` (`bash tools/setup_asr_env.sh`
   once): one worker per server (`ZONOS3_ASR_PYTHON` overrides the interpreter; `ZONOS3_ASR_DEVICE`, default `mps` on
-  macOS). **Speech editing** needs an edit checkpoint, FuseAlign and `.venv-asr`; **dubbing** FuseAlign and `.venv-asr`
-  (its SimAlign word aligner and AV-sync lip-sync run in a second worker on the same device).
+  macOS). **Speech editing** needs an edit checkpoint, FuseAlign and `.venv-asr`.
+- **Plugins** (`--plugins NAME...`, `PLUGINS="..."` in `serve.sh`) import `zonos3_<NAME>` from the server's
+  interpreter and mount its routes under `/v2/<NAME>/` and `/<NAME>`; they share the server's ASR and FuseAlign
+  workers. Dubbing is the `dub` plugin of [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) (its README
+  covers install, `LACI_ALL=1` and its workers).
 
 ## Tools
 
@@ -56,9 +60,12 @@ uv run --package zonos3-mlx pytest servers/mlx/tests                       # tin
 uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919
 ```
 
-Against the release goldens of `tools/dump_golden.py`: the F16 backbone matches the reference logits at cosine 1.000000
-with 100 % argmax agreement; on the CPU device (`--cpu`) the SSL teacher matches at cosine 1.000000 (a few dozen of
-~800k elements in three late layers sit just outside atol 1e-4 / rtol 1e-3) and the speaker encoder at cosine
-1.000000. Reference codes of the release voices agree with the committed `<stem>.codes.npy` on 97–98 % of the first
-codebook and 67–96 % of the residual ones (RVQ residuals amplify the BF16 rounding differences); the decoded clips
-transcribe identically.
+Against the release goldens of `tools/dump_golden.py`: the F16 backbone (`zonos3-f16.gguf`) matches the reference
+logits at cosine 1.000000 with 100 % argmax agreement. The quantized backbones (`zonos3-ptq.gguf`, `zonos3-qat.gguf`)
+run their F16 logits head as Q8_0 (quantized at load, the quants the web server ships; about 43 % faster decode steps
+on an M-series GPU): against the same model with its F16 head, the logits on the web goldens' `full_ids.npy` agree at
+cosine ≥ 0.99996 (prefill) / 0.999999 (decode) with 98.4 % / 100 % argmax agreement. On the CPU device (`--cpu`) the
+SSL teacher matches at cosine 1.000000 (a few dozen of ~800k elements in three late layers sit just outside atol 1e-4 /
+rtol 1e-3) and the speaker encoder at cosine 1.000000. Reference codes of the release voices agree with the committed
+`<stem>.codes.npy` on 97–98 % of the first codebook and 67–96 % of the residual ones (RVQ residuals amplify the BF16
+rounding differences); the decoded clips transcribe identically.

@@ -39,9 +39,9 @@ std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan);
 // {capacity}"; otherwise the budget shrinks to min(budget, capacity - prompt_rows).
 int fit_frame_budget(const ServerState & s, int64_t prompt_rows, int budget);
 
-// A LACI take of the dub (the edit/dub worker's synthesize call, server/edit_dub.h). `request` is a GenerateRequest
-// body (schema-valid; laci=true, stream=false); `duration` the take's LACI duration target. `scale` puts the take on an
-// extended speaking-rate scale (zonos3.dub.plan.RateScale):
+// A LACI take with a duration target (the Python host's laci_takes call; zonos3.server.plugins.LaciTakeRequest).
+// `request` is a GenerateRequest body (laci=true, stream=false); `duration` the take's LACI duration target. `scale`
+// puts the take on an extended speaking-rate scale (zonos3.tts.laci.RateBuckets):
 // in a steered bucket (one of `doses`) the take's hidden delta gains `doses[bucket]` of the bundle direction
 // `direction` (steer.gguf rate_extension); the take carries its delta in every bucket so a rate-adjusting retake can
 // switch buckets. Without `scale` retakes move along the checkpoint's speaking-rate row.

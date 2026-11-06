@@ -10,23 +10,29 @@ export type BackboneApi = Pick<Backbone, 'steerSources'> & {
   prefill(slot: 0 | 1, ids: Int32Array, cond: Conditioning): Promise<{ logits: Float32Array }>;
   step(slot: 0 | 1, next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null):
     Promise<{ logits: Float32Array; probe: Float32Array | null }>;
+  /** Both slots' decode step in one submission (CFG); `twinSteer` is `steer` or null. */
+  stepPair(next: Int32Array, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
+    Promise<{ logits: Float32Array; twinLogits: Float32Array; probe: Float32Array | null }>;
 };
 
 /** Streaming codec decoder (src/zac.ts ZacStream). */
 export interface CodecApi {
   readonly gain: number;
   reset(): void;
+  /** Submits its GPU work before returning; results resolve in call order. */
   chunk(idx: Int32Array, p0: number, n: number): Promise<Float32Array>;
-  flush(): Float32Array;
+  flush(): Promise<Float32Array>;
 }
 
-/** A shipped default voice: its clip decoded to 44.1 kHz mono by the client and its shipped reference codes. */
+/** A shipped default voice: its clip decoded to 44.1 kHz mono by the client, its shipped reference codes and its
+ *  shipped speaker embedding (so neither encoder loads for a default voice). */
 export interface DefaultVoice {
   id: string;
   label: string;
   file: string;
   pcm: Float32Array | null;     // null when the client could not decode the clip
   codes: Int32Array | null;     // ordinary [T][10]
+  embedding: Float32Array | null; // [speakerDim]
 }
 
 export interface Engine {

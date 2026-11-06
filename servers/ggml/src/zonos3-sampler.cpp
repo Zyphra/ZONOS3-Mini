@@ -7,7 +7,15 @@
 zonos3_sampler::zonos3_sampler(const zonos3_sampling & s, const zonos3_hparams & hp)
     : sp(s), rng(s.seed), n_cb((int) hp.n_codebooks), vocab((int) hp.audio_vocab),
       codebook_size((int) hp.codebook_size), pad_id((int) hp.audio_pad_id), stop_id((int) hp.eoa_id),
-      hist(hp.n_codebooks) {}
+      hist(hp.n_codebooks) {
+    logit.resize(vocab);
+    tmp.resize(vocab);
+    p.reserve(vocab);
+    idx.reserve(vocab);
+    ord.reserve(vocab);
+    keep.reserve(vocab);
+    seen.assign(vocab, 0);
+}
 
 void zonos3_sampler::accept(const std::vector<int> & frame) {
     for (int cb = 0; cb < n_cb && cb < (int) frame.size(); ++cb) {
@@ -21,7 +29,7 @@ void zonos3_sampler::accept(const std::vector<int> & frame) {
 // ordinary code once), temperature, top-k with ties kept, softmax, top-p on the mass *before*
 // each token, min-p, multinomial.
 int zonos3_sampler::sample(const float * in, int cb) {
-    std::vector<float> logit(in, in + vocab);
+    std::copy(in, in + vocab, logit.begin());
     // the audio pad is never a supervised target; special ids other than the request's stop id are never sampled,
     // and the stop id waits for min_frames
     for (int i = codebook_size; i < vocab; ++i)
@@ -29,10 +37,10 @@ int zonos3_sampler::sample(const float * in, int cb) {
 
     // repetition penalty over this codebook's recent ordinary codes (first rep_codebooks only)
     if (sp.rep_penalty != 1.0f && cb < sp.rep_codebooks) {
-        std::vector<char> seen(vocab, 0);
+        if (++seen_gen == 0) { std::fill(seen.begin(), seen.end(), 0u); seen_gen = 1; } // generation wrap
         for (int t : hist[cb]) {
-            if (t >= 0 && t < codebook_size && !seen[t]) {
-                seen[t] = 1;
+            if (t >= 0 && t < codebook_size && seen[t] != seen_gen) {
+                seen[t] = seen_gen;
                 logit[t] = logit[t] > 0.0f ? logit[t] / sp.rep_penalty : logit[t] * sp.rep_penalty;
             }
         }
@@ -47,10 +55,9 @@ int zonos3_sampler::sample(const float * in, int cb) {
     if (sp.temperature > 0.0f) for (auto & l : logit) l /= sp.temperature;
 
     // candidate set: every logit >= the k-th largest (ties at the threshold are kept)
-    std::vector<int> idx;
-    idx.reserve(vocab);
+    idx.clear();
     if (sp.top_k > 0 && sp.top_k < vocab) {
-        std::vector<float> tmp(logit);
+        std::copy(logit.begin(), logit.end(), tmp.begin());
         std::nth_element(tmp.begin(), tmp.begin() + (sp.top_k - 1), tmp.end(), std::greater<float>());
         const float kth = tmp[sp.top_k - 1];
         for (int i = 0; i < vocab; ++i) if (logit[i] >= kth) idx.push_back(i);
@@ -61,17 +68,17 @@ int zonos3_sampler::sample(const float * in, int cb) {
     // softmax over candidates
     float mx = -INFINITY;
     for (int i : idx) mx = std::max(mx, logit[i]);
-    std::vector<float> p(idx.size());
+    p.resize(idx.size());
     double sum = 0;
     for (size_t j = 0; j < idx.size(); ++j) { p[j] = std::exp(logit[idx[j]] - mx); sum += p[j]; }
     for (auto & x : p) x = (float) (x / sum);
 
     // order by prob desc (for top-p) and find max prob (for min-p)
-    std::vector<int> ord(idx.size());
+    ord.resize(idx.size());
     for (size_t j = 0; j < ord.size(); ++j) ord[j] = (int) j;
     std::sort(ord.begin(), ord.end(), [&](int a, int b) { return p[a] > p[b]; });
 
-    std::vector<char> keep(idx.size(), 1);
+    keep.assign(idx.size(), 1);
     if (sp.top_p > 0.0f && sp.top_p < 1.0f) {
         double before = 0;
         for (int r : ord) { if (before > sp.top_p) keep[r] = 0; before += p[r]; }

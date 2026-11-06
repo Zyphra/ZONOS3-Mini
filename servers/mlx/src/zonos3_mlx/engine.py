@@ -4,7 +4,7 @@
 companion request logic (steering bundle, accent adapters, LACI heads, the text normalizer), and is the
 ``zonos3.tts.plan.PromptContext`` of the shared request rules. ``plan_request`` turns a v2 GenerateRequest plus its
 pre-resolved speaker inputs into the ``Plan`` the scheduler runs: ``zonos3.tts.plan.plan_prompt`` plus the server-side
-fields (a dub take's LACI target, a speech-edit layout).
+fields (a LACI take's duration target, a speech-edit layout).
 """
 
 from __future__ import annotations
@@ -231,7 +231,7 @@ class Engine:
 
 @dataclass
 class LaciTake:
-    """A dub take's LACI duration target and its speaking-rate scale (sgl _dub_take_rate_steering)."""
+    """A LACI take's duration target and rate scale (zonos3.server.plugins.LaciTakeRequest)."""
 
     target_frames: float
     adjust_rate: bool = True
@@ -253,7 +253,7 @@ class EditLayout:
 
 @dataclass
 class Plan(PromptPlan):
-    """The shared PromptPlan plus the server-side fields: its LACI take (dub), its edit layout (speech editing,
+    """The shared PromptPlan plus the server-side fields: its LACI take, its edit layout (speech editing,
     codes-only) and the language whose LACI heads drive the span follower."""
 
     laci_take: LaciTake | None = None
@@ -264,7 +264,8 @@ class Plan(PromptPlan):
 def plan_request(engine: Engine, request: Mapping, speaker: Speaker | None, *, laci_take: LaciTake | None = None,
                  edit: EditLayout | None = None, hidden_delta=None) -> Plan:
     """The scheduler plan of ``request``: ``zonos3.tts.plan.plan_prompt`` over the engine with the speaker inputs the
-    HTTP layer resolved (None: none, in the request's speaker mode). ``laci_take``: a dub take's LACI duration target;
+    HTTP layer resolved (None: none, in the request's speaker mode). ``laci_take``: a LACI take's duration target
+    and rate scale (zonos3.server.plugins.LaciTakeRequest);
     ``edit``: a speech-edit region (the edit layout, no silence prefill, stop on span-end; ``hidden_delta`` its
     steering delta). Raises ValueError for a request the server refuses (HTTP 400)."""
     plan = plan_prompt(engine, request, lambda req, mode: Speaker(mode) if speaker is None else speaker,

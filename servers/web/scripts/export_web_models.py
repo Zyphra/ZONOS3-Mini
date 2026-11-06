@@ -326,8 +326,13 @@ def export_backbone(path, out):
             raise SystemExit(f"blk.{L}: mixed attention projection types")
         skip.update(names)
     for name in g.order:
-        if name not in skip:
-            copy_plain(w, g, name)
+        if name in skip:
+            continue
+        if name == "output.weight":
+            # web only: the 84 MB F16 logits head as q8_0 (half the bytes of every decode step)
+            w.add_q8_from(name, g.arr(name), g.tensors[name].ne)
+            continue
+        copy_plain(w, g, name)
     w.finish()
 
 
@@ -536,7 +541,8 @@ AUDIO_EXTS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"}
 
 
 def export_voices(voices, out):
-    """Each default-voice clip with its shipped <stem>.codes.npy; ids as servers/ggml/src/server/speakers.cpp."""
+    """Each default-voice clip with its shipped <stem>.codes.npy and <stem>.embedding.npy; ids as
+    servers/ggml/src/server/speakers.cpp."""
     vdir = os.path.join(out, "voices")
     if os.path.isdir(vdir):
         shutil.rmtree(vdir)
@@ -552,20 +558,25 @@ def export_voices(voices, out):
         stem, ext = os.path.splitext(fn)
         if ext.lower() not in AUDIO_EXTS:
             continue
-        codes_rel = rel[:len(rel) - len(fn)] + stem + ".codes.npy"
-        src_codes = os.path.join(root, codes_rel)
-        if not os.path.isfile(src_codes):
-            print(f"voices: skipping {rel}: no {stem}.codes.npy")
+        prefix = rel[:len(rel) - len(fn)] + stem
+        codes_rel, emb_rel = prefix + ".codes.npy", prefix + ".embedding.npy"
+        src_codes, src_emb = os.path.join(root, codes_rel), os.path.join(root, emb_rel)
+        missing = [n for n, p in ((codes_rel, src_codes), (emb_rel, src_emb)) if not os.path.isfile(p)]
+        if missing:
+            print(f"voices: skipping {rel}: no {', '.join(missing)}")
             continue
         codes = np.load(src_codes)
         if codes.ndim != 2 or codes.shape[1] != 10 or not 1 <= codes.shape[0]:
             raise SystemExit(f"voice {rel}: reference codes have shape {codes.shape}, expected [T,10]")
+        emb = np.load(src_emb, allow_pickle=False)
+        if emb.dtype != np.float32 or emb.shape != (192,) or not np.isfinite(emb).all():
+            raise SystemExit(f"voice {rel}: speaker embedding is {emb.dtype} {emb.shape}, expected finite float32 [192]")
         os.makedirs(os.path.dirname(os.path.join(vdir, rel)), exist_ok=True)
-        shutil.copyfile(os.path.join(root, rel), os.path.join(vdir, rel))
-        shutil.copyfile(src_codes, os.path.join(vdir, codes_rel))
+        for r in (rel, codes_rel, emb_rel):
+            shutil.copyfile(os.path.join(root, r), os.path.join(vdir, r))
         vid = "default_" + hashlib.sha1(rel.encode("utf-8")).hexdigest()[:16]
         label = stem.replace("_", " ").replace("-", " ").strip() or fn
-        entries.append({"id": vid, "label": label, "file": rel, "codes": codes_rel})
+        entries.append({"id": vid, "label": label, "file": rel, "codes": codes_rel, "embedding": emb_rel})
     with open(os.path.join(vdir, "voices.json"), "w") as f:
         json.dump(entries, f)
     print(f"voices: {len(entries)} entries")
@@ -617,7 +628,8 @@ MODEL_FILES = ("zonos3-ptq.gguf", "zac-keep2.gguf", "zac-encoder.gguf", "ssl-tea
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", required=True, help="directory with the ZONOS3 Mini GGUFs")
-    ap.add_argument("--voices", required=True, help="default voice directory (clips + <stem>.codes.npy)")
+    ap.add_argument("--voices", required=True,
+                    help="default voice directory (clips + <stem>.codes.npy + <stem>.embedding.npy)")
     ap.add_argument("--laci", required=True, help="LACI alignment head directory")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()

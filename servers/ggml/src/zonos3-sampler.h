@@ -3,6 +3,7 @@
 
 #include "zonos3.h"
 
+#include <cstdint>
 #include <deque>
 #include <random>
 #include <vector>
@@ -24,4 +25,13 @@ struct zonos3_sampler {
     zonos3_sampler(const zonos3_sampling & s, const zonos3_hparams & hp);
     int  sample(const float * logits, int cb);          // logits length == vocab
     void accept(const std::vector<int> & frame);        // push a sampled frame into history
+
+private:
+    // sample() scratch, reused across calls (no per-call heap allocation). seen[t] == seen_gen marks code t as
+    // already penalized in the current call.
+    std::vector<float> logit, tmp, p;
+    std::vector<int> idx, ord;
+    std::vector<char> keep;
+    std::vector<uint32_t> seen;
+    uint32_t seen_gen = 0;
 };

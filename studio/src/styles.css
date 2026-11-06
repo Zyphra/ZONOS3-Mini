@@ -183,9 +183,12 @@ body {
 
 /* ── Cast ──────────────────────────────────────────────────────────────────────────────────────── */
 
+/* Rail widths as variables so a folded rail (components/Rail.tsx, styles/mobile.css) can narrow its column. */
 .cast {
+  --rail-l: 208px;
+  --rail-r: 300px;
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr) 300px;
+  grid-template-columns: var(--rail-l) minmax(0, 1fr) var(--rail-r);
   height: 100%;
 }
 .bench {
@@ -1707,9 +1710,33 @@ body {
 /* ── Direct ────────────────────────────────────────────────────────────────────────────────────── */
 
 .direct {
+  --rail-l: 290px;
+  --rail-r: 280px;
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: var(--rail-l) minmax(0, 1fr) var(--rail-r);
   height: 100%;
+}
+/* The right sidebar: the script as a whole. */
+.rail.direct-side {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+  padding: 16px 16px 16px 12px;
+}
+/* "{voice} says…": add a line in that voice. */
+.voice-adds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 10px 0 4px;
+}
+.voice-bench {
+  margin: 10px 0 4px;
+}
+.voice-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--voice);
 }
 .legend {
   display: flex;
@@ -1728,8 +1755,7 @@ body {
   height: 3px;
   border-radius: 2px;
 }
-.script,
-.dialogue {
+.script {
   min-width: 0;
   overflow-y: auto;
   padding: 18px 28px 40px;
@@ -1774,6 +1800,7 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--surface);
+  box-shadow: inset 3px 0 0 var(--voice, transparent);
   transition: border-color var(--t), box-shadow var(--t);
 }
 .line:hover {
@@ -1781,7 +1808,7 @@ body {
 }
 .line.is-playing {
   border-color: var(--o);
-  box-shadow: 0 0 0 1px var(--o), 0 0 24px color-mix(in srgb, var(--o) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--voice, transparent), 0 0 0 1px var(--o), 0 0 24px color-mix(in srgb, var(--o) 12%, transparent);
 }
 .line-n {
   font-family: var(--mono);
@@ -1820,6 +1847,20 @@ body {
   display: grid;
   justify-items: end;
   gap: 6px;
+}
+/* Each line's voice, tinted with its lane color. */
+.line-voice {
+  width: 168px;
+  padding: 3px 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--voice);
+}
+/* The keeper take no longer matches the line's settings or voice. */
+.line-actions .btn.is-stale {
+  border-color: var(--warn-text);
+  color: var(--warn-text);
+  background: color-mix(in srgb, var(--warn-text) 10%, transparent);
 }
 .line-tools {
   display: flex;
@@ -1887,7 +1928,7 @@ body {
   color: var(--o);
 }
 .add-line {
-  margin-top: 10px;
+  margin: 10px 0 20px;
 }
 .script-text {
   display: grid;
@@ -1939,24 +1980,8 @@ body {
   width: 160px;
 }
 
-/* ── Dub ───────────────────────────────────────────────────────────────────────────────────────── */
+/* ── File drop ─────────────────────────────────────────────────────────────────────────────────── */
 
-.dub {
-  position: relative;
-  display: grid;
-  grid-template-columns: 270px minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-}
-.dub-main {
-  min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px 24px 40px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
 .file-drop {
   position: fixed;
   inset: 0;
@@ -1999,559 +2024,16 @@ body {
     opacity: 0;
   }
 }
-.dub-drop {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 10px 12px;
-  border: 1px dashed var(--line-2);
-  border-radius: var(--r-s);
-  color: var(--text-2);
-  cursor: pointer;
-  transition: border-color var(--t), color var(--t), background var(--t);
-}
-.dub-drop > div {
-  display: grid;
-  gap: 2px;
-}
-.dub-drop:hover,
-.dub-drop:focus-visible {
-  border-color: var(--o);
-  color: var(--text);
-  background: color-mix(in srgb, var(--o) 5%, transparent);
-  outline: none;
-}
-.dub-drop.is-big {
-  justify-content: center;
-  padding: 34px 20px;
-  font-size: 15px;
-}
-.dub-source {
-  display: grid;
-  gap: 3px;
-}
-.dub-source b {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dub-source .tag {
-  justify-self: start;
-  margin-left: 0;
-}
-.dub-lips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 6px 0 0;
-  color: var(--text-2);
-}
-.dub-lips.is-ready {
-  color: var(--ok-text);
-}
-.dub-lips.is-failed {
-  color: var(--bad-text);
-}
-.spin {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 2px solid var(--line-2);
-  border-top-color: var(--o);
-  animation: spin 0.9s linear infinite;
-  flex: none;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.dub-scene-btn {
-  width: 100%;
-  margin-bottom: 4px;
-}
-.dub-field {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0;
-  font-size: 12.5px;
-  color: var(--text-2);
-}
-.dub-field select {
-  grid-column: 2 / -1;
-}
-.dub-field:has(input[type='range']) {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-.dub-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text-2);
-}
-.dub-voice {
-  width: 100%;
-}
-.dub-stage {
-  display: grid;
-  grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-.dub-picture {
-  border-radius: var(--r);
-  overflow: hidden;
-  background: #000;
-  aspect-ratio: 16 / 9;
-  border: 1px solid var(--line);
-}
-.dub-video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-.dub-still {
-  height: 100%;
-  display: grid;
-  grid-template-rows: 1fr auto;
-  place-items: center;
-  background: var(--bg-2);
-  padding: 10px;
-}
-.dub-still-face {
-  position: relative;
-  width: 76px;
-  height: 76px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-weight: 700;
-  font-size: 20px;
-}
-.dub-still-face span {
-  transform: translateY(-8px);
-}
-.dub-still-mouth {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  width: 22px;
-  height: 12px;
-  margin-left: -11px;
-  border-radius: 50%;
-  background: var(--o);
-  transform-origin: center;
-}
-.dub-still-meters {
-  width: 100%;
-  display: grid;
-  gap: 4px;
-  font-size: 10.5px;
-  color: var(--text-2);
-}
-.dub-still-meters span {
-  display: grid;
-  grid-template-columns: 40px 1fr;
-  align-items: center;
-}
-.dub-still-meters i {
-  height: 4px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--o) 80%, transparent);
-}
-.dub-still-meters .is-dub i {
-  background: color-mix(in srgb, var(--info) 90%, transparent);
-}
-.dub-tracks {
-  min-width: 0;
-  display: grid;
-  gap: 8px;
-}
-.dub-transport {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.dub-play {
-  width: 34px;
-  height: 34px;
-  color: var(--text);
-  background: var(--o);
-  border-color: var(--o);
-}
-.dub-play.is-playing {
-  color: var(--bg);
-}
-.dub-lip-skipped {
-  color: var(--warn);
-}
-.dub-time {
-  min-width: 96px;
-}
-.dub-timeline {
-  position: relative;
-  border-radius: var(--r-s);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  cursor: pointer;
-  overflow: hidden;
-}
-.dub-timeline:focus-visible {
-  outline: 2px solid var(--o);
-  outline-offset: 2px;
-}
-.dub-timeline canvas {
-  display: block;
-  width: 100%;
-}
-.dub-playhead {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1.5px;
-  margin-left: -0.75px;
-  background: var(--text);
-  pointer-events: none;
-}
-.dub-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin: 0;
-  color: var(--text-2);
-}
-.dub-script {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-.dub-col {
-  display: grid;
-  gap: 6px;
-  align-content: start;
-}
-.dub-col-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: space-between;
-}
-.dub-col-head h3 {
-  margin: 0;
-  font-size: 13px;
-}
-.dub-area {
-  min-height: 150px;
-  resize: vertical;
-  font-size: 14px;
-  line-height: 1.5;
-}
-.dub-script-go {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.dub-segments {
-  display: grid;
-  gap: 8px;
-}
-.dsegs {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-.dseg {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) minmax(170px, 230px);
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-s);
-  background: var(--surface);
-}
-.dseg.is-selected {
-  border-color: color-mix(in srgb, var(--o) 55%, var(--line));
-}
-.dseg.is-stale {
-  border-left: 3px solid var(--warn);
-}
-.dseg-n {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid var(--line-2);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.dseg.is-selected .dseg-n {
-  color: var(--bg);
-  background: var(--o);
-  border-color: var(--o);
-}
-.dseg-main {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-}
-.dseg-ref {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  min-width: 0;
-  color: var(--text-2);
-}
-.dseg-ref .mono {
-  flex: none;
-  white-space: nowrap;
-}
-/* The whole source text of a segment, wrapped (no ellipsis: it is what the dub has to say). */
-.dseg-reftext {
-  min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-.dseg-target .dseg-input {
-  resize: none;
-  overflow: hidden;
-  line-height: 1.45;
-  min-height: 34px;
-}
-.dseg-target {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-}
-.dseg-target .input {
-  flex: 1;
-  min-width: 0;
-}
-.dseg-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-}
-.dseg-meta .input {
-  width: auto;
-  max-width: 220px;
-  padding: 3px 8px;
-  font-size: 12px;
-}
-.dseg-meta .btn.is-on {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--o) 50%, var(--line-2));
-}
-.dseg-side {
-  display: grid;
-  gap: 6px;
-  align-content: start;
-  justify-items: end;
-}
-.dseg-result {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
-  font-size: 11.5px;
-}
-.badge.ok {
-  background: color-mix(in srgb, var(--ok) 18%, transparent);
-  color: var(--ok-text);
-}
-.badge.warn {
-  background: color-mix(in srgb, var(--warn) 20%, transparent);
-  color: var(--warn-text);
-}
-.badge.bad {
-  background: color-mix(in srgb, var(--bad) 20%, transparent);
-  color: var(--bad-text);
-}
-.dseg-voicefix {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.dseg-flag.is-on {
-  color: var(--warn);
-  border-color: var(--warn);
-}
-.dseg-stale {
-  font-size: 11px;
-  color: var(--warn);
-}
-.dub-empty {
-  max-width: 760px;
-  margin: 40px auto;
-  display: grid;
-  gap: 14px;
-  text-align: center;
-}
-.dub-empty h2 {
-  margin: 0;
-}
-.dub-empty-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.dub-card {
-  display: grid;
-  gap: 4px;
-  padding: 14px;
-  text-align: left;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-s);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-.dub-card:hover:not(:disabled) {
-  border-color: var(--o);
-}
-.dub-card:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.dline-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
-}
-.tag-btn {
-  border: 1px solid var(--line-2);
-  background: var(--surface-2);
-  color: var(--text-2);
-  border-radius: 999px;
-  padding: 0 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.tag-btn:hover {
-  color: var(--text);
-}
 
-/* ── Scene ─────────────────────────────────────────────────────────────────────────────────────── */
+/* ── Direct timeline (one lane per voice) ──────────────────────────────────────────────────────── */
 
-.scene {
-  display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
-  height: 100%;
-}
-.chars {
-  list-style: none;
-  margin: 0 0 12px;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-.char-card {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: start;
-  padding: 10px;
-  border-radius: var(--r);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  box-shadow: inset 3px 0 0 var(--char);
-}
-.mini-who rect {
-  fill: var(--bg-2);
-  stroke: var(--line);
-}
-.mini-who line {
-  stroke: var(--line);
-}
-.char-main {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.signature {
-  font-size: 12px;
-  color: var(--text-2);
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.char-actions {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-}
-.dlines {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-  max-width: 1200px;
-}
-.dline {
-  display: grid;
-  grid-template-columns: 24px 170px minmax(0, 1fr) 150px auto;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: var(--r-s);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  box-shadow: inset 3px 0 0 var(--char);
-}
-.char-select {
-  color: var(--char);
-  font-weight: 600;
-}
-.dline-audio {
-  min-width: 0;
-}
-.dline-audio .error-line {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dline-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.add-lines {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 12px 0 20px;
-}
-.char-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--char);
-}
 .timeline {
   --lane-name: 130px;
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--surface);
   padding: 12px 14px 14px;
-  max-width: 1200px;
+  max-width: 1100px;
 }
 .timeline-head {
   display: flex;
@@ -2560,15 +2042,22 @@ body {
   margin-bottom: 10px;
 }
 .gap {
-  margin-left: auto;
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   font-size: 12px;
   color: var(--text-2);
 }
 .gap input {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  width: 100%;
   accent-color: var(--o);
+}
+.gap b {
+  grid-column: 2;
+  grid-row: 1;
 }
 .lanes {
   position: relative;
@@ -2582,7 +2071,7 @@ body {
 }
 .lane-name {
   font-size: 12.5px;
-  color: var(--char);
+  color: var(--voice);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -2600,8 +2089,8 @@ body {
   top: 3px;
   bottom: 3px;
   border-radius: 5px;
-  border: 1px solid color-mix(in srgb, var(--char) 55%, transparent);
-  background: color-mix(in srgb, var(--char) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--voice) 55%, transparent);
+  background: color-mix(in srgb, var(--voice) 12%, transparent);
   padding: 0 4px;
   overflow: hidden;
   cursor: pointer;
@@ -2716,7 +2205,6 @@ body {
   font-family: var(--mono);
   font-size: 11px;
 }
-.dline-textrow,
 .line-edit-row {
   display: flex;
   align-items: center;
@@ -2724,13 +2212,6 @@ body {
 }
 .line-edit-row .line-edit {
   flex: 1;
-}
-.dline-textcell {
-  min-width: 0;
-}
-.dline-textrow .dline-text {
-  flex: 1;
-  min-width: 0;
 }
 /* ── Nonverbal tags ─────────────────────────────────────────────────────────────────────────────── */
 
@@ -2998,8 +2479,9 @@ body {
 /* ── Edit ──────────────────────────────────────────────────────────────────────────────────────── */
 
 .edit {
+  --rail-l: 250px;
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: var(--rail-l) minmax(0, 1fr);
   height: 100%;
 }
 .edit-rail .row {
@@ -3904,7 +3386,8 @@ body {
     padding: 6px;
   }
   .cast {
-    grid-template-columns: 176px minmax(0, 1fr) 250px;
+    --rail-l: 176px;
+    --rail-r: 250px;
   }
   .hero {
     grid-template-columns: minmax(0, 1fr);
@@ -3915,8 +3398,9 @@ body {
   .bench-head {
     flex-wrap: wrap;
   }
-  .dline {
-    grid-template-columns: 24px 128px minmax(0, 1fr) 96px auto;
+  .direct {
+    --rail-l: 250px;
+    --rail-r: 230px;
   }
   .topbar {
     gap: 14px;
@@ -3928,7 +3412,7 @@ body {
 }
 @media (max-width: 1366px) {
   .edit {
-    grid-template-columns: 220px minmax(0, 1fr);
+    --rail-l: 220px;
   }
   .ed-columns {
     grid-template-columns: minmax(0, 1fr) 300px;
@@ -3937,7 +3421,8 @@ body {
     grid-template-columns: 1fr;
   }
   .cast {
-    grid-template-columns: 188px minmax(0, 1fr) 272px;
+    --rail-l: 188px;
+    --rail-r: 272px;
   }
   .bench-head {
     gap: 10px;

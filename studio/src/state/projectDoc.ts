@@ -1,35 +1,36 @@
 /**
- * The project document (`schema` 1): what every act holds, as JSON, with audio / video / embeddings referred to by
- * content hash (`media.ts`). `snapshot` reads the signals into a document, `restore` puts one back. Undo history,
- * drafts and in-flight work are per session; server ids that die with the server session (dub ref / dub ids) are
- * not kept, and voices the project created carry their clip or embedding so they can be registered again.
+ * The project document (`schema` 1): what every act holds, as JSON, with audio / embeddings referred to by content
+ * hash (`media.ts`). `snapshot` reads the signals into a document, `restore` puts one back. Undo history, drafts and
+ * in-flight work are per session; voices the project created carry their clip or embedding so they can be
+ * registered again. Keys older documents carry that the studio no longer has (a retired act's block) are ignored on
+ * restore and dropped on the next save; the retired Scene act's lines join the script.
  */
 import { batch } from '@preact/signals';
 import type { Rendered } from '../api';
 import * as player from '../audio/player';
 import { holdPreview, previewText } from '../audio/preview';
 import { base64ToBytes, bytesToBase64, parseWav } from '../lib/files';
+import { uid } from '../lib/math';
 import { projectSettings } from './app';
 import { designs, design, newDesign } from './design';
-import * as dub from './dub';
 import * as edit from './edit';
 import { cast, ownVoices, type OwnVoice } from './library';
 import { MediaSink, prime } from './media';
 import { load } from './persist';
-import { newScene, renders, scene, scenes, type LineRender } from './scene';
-import { lineBusy, lineError, newScript, script, scripts, takes, type Take } from './script';
+import { lineBusy, lineError, lineRequest, newScript, script, scripts, takes, type Script, type Take } from './script';
 import { voiceOrigins } from './who';
-import { DEFAULT_SETTINGS, SCHEMA, summaryOf, type ProjectDoc, type ProjectHead, type ProjectSettings, type StoredAudio, type StoredDub, type StoredEditDoc, type StoredSource } from './projectSchema';
+import { DEFAULT_SETTINGS, SCHEMA, summaryOf, type ProjectDoc, type ProjectHead, type ProjectSettings, type StoredAudio, type StoredEditDoc } from './projectSchema';
 
-/** The dub without its source (stored by the caller) and server ids. */
-function storedDub(d: dub.DubDoc, sink: MediaSink): StoredDub {
-  const { source: _source, refId: _ref, track, tracks, ...rest } = d;
-  return {
-    ...rest,
-    source: null,
-    trackId: track?.id ?? null,
-    tracks: tracks.map(({ pcm, sr, ...t }) => ({ ...t, dubId: '', media: sink.audio(pcm, sr) })),
-  };
+type OldScene = NonNullable<ProjectDoc['scene']>['scene'];
+
+/**
+ * A script as the studio holds it: lines carry only their own fields, a missing gap is filled (an old Scene's, else
+ * 0.35), and an old Scene's lines are appended, each in its character's voice.
+ */
+function withScene(s: Script, scene: OldScene | undefined): Script {
+  const lines = s.lines.map(({ id, text, spans, voice }) => ({ id, text, spans, ...(voice ? { voice } : {}) }));
+  const sceneLines = (scene?.lines ?? []).map(({ id, characterId, text }) => ({ id, text, spans: [], voice: characterId }));
+  return { ...s, lines: [...lines, ...sceneLines], gap: s.gap ?? scene?.gap ?? 0.35 };
 }
 
 export function emptyDoc(head: Pick<ProjectDoc, 'id' | 'name'>, settings: ProjectSettings): ProjectDoc {
@@ -44,9 +45,7 @@ export function emptyDoc(head: Pick<ProjectDoc, 'id' | 'name'>, settings: Projec
     voices: [],
     cast: { design: newDesign(settings.voiceMode), personas: [], origins: {}, previewText: '' },
     direct: { script: newScript(), takes: {} },
-    scene: { scene: newScene(), renders: {} },
     edit: { doc: null, clipLanguages: {} },
-    dub: storedDub(dub.EMPTY_DUB, new MediaSink()),
     media: {},
   };
 }
@@ -59,8 +58,8 @@ export function legacyDoc(head: Pick<ProjectDoc, 'id' | 'name'>): ProjectDoc {
   return {
     ...d,
     cast: { design: load('design', d.cast.design), personas: load('cast', []), origins: load('voiceOrigins', {}), previewText: load('previewText', '') },
-    direct: { script: load('script', d.direct.script), takes: {} },
-    scene: { scene: load('scene', d.scene.scene), renders: {} },
+    // Scene lines (the retired act) join the script; they had no saved renders.
+    direct: { script: withScene(load('script', d.direct.script), load<OldScene | undefined>('scene', undefined)), takes: {} },
     edit: { doc: null, clipLanguages: load('edit.languages', {}) },
   };
 }
@@ -73,15 +72,6 @@ export async function snapshot(head: ProjectHead, sink: MediaSink): Promise<Proj
   const editDoc: StoredEditDoc | null = e && { ...e, versions: e.versions.map(({ pcm, sr, b64, ...v }) => ({ ...v, media: sink.audio(pcm, sr, () => base64ToBytes(b64)) })) };
   const s = script.value;
   const t = takes.value;
-  const sc = scene.value;
-  const r = renders.value;
-  const d = dub.doc.value;
-  const src = d.source;
-  let source: StoredSource | null = null;
-  if (src) {
-    const { pcm, sr, video, ...rest } = src;
-    source = { ...rest, media: sink.audio(pcm, sr), video: video && { media: await sink.file(video.file), name: video.file.name, type: video.file.type } };
-  }
   const doc: ProjectDoc = {
     schema: SCHEMA,
     // Field by field: the caller's head is usually a whole ProjectMeta.
@@ -93,9 +83,7 @@ export async function snapshot(head: ProjectHead, sink: MediaSink): Promise<Proj
     voices: ownVoices.value.map((v) => ({ id: v.id, label: v.label, kind: v.clip ? 'clip' : 'embedding', media: v.clip ? sink.wav(v.clip) : sink.embedding(v.embedding!) })),
     cast: { design: design.value, personas: cast.value, origins: voiceOrigins.value, previewText: previewText.value },
     direct: { script: s, takes: Object.fromEntries(s.lines.filter((l) => t[l.id]?.length).map((l) => [l.id, t[l.id].map((x) => ({ ...x, audio: audio(x.audio) }))])) },
-    scene: { scene: sc, renders: Object.fromEntries(sc.lines.flatMap((l) => (r[l.id]?.audio ? [[l.id, { key: r[l.id].key, audio: audio(r[l.id].audio!) }]] : []))) },
     edit: { doc: editDoc, clipLanguages: edit.clipLanguages.value },
-    dub: { ...storedDub(d, sink), source },
     // Filled while the fields above were built.
     media: sink.info,
   };
@@ -142,12 +130,15 @@ export async function restore(doc: ProjectDoc, read: (hash: string) => Promise<B
   const takesIn: Record<string, Take[]> = Object.fromEntries(
     await Promise.all(Object.entries(doc.direct.takes).map(async ([id, ts]) => [id, await Promise.all(ts.map(async (x) => ({ ...x, audio: await audio(x.audio) })))] as const)),
   );
-  const rendersIn: Record<string, LineRender> = Object.fromEntries(
-    await Promise.all(Object.entries(doc.scene.renders).map(async ([id, x]) => [id, { key: x.key, audio: await audio(x.audio), busy: false, error: null }] as const)),
-  );
+  // The retired Scene act's renders: each becomes its line's starred take, marked edited (its request was a
+  // Scene request), so it isn't flagged stale while the text is unchanged.
+  const sceneRenders: [string, Rendered][] = await Promise.all(Object.entries(doc.scene?.renders ?? {}).map(async ([id, x]) => [id, await audio(x.audio)] as [string, Rendered]));
   const e = doc.edit.doc;
+  const KINDS: readonly string[] = ['take', 'voice', 'upload', 'recording'] satisfies edit.SourceKind[];
   const editDoc: edit.Doc | null = e && {
     ...e,
+    // A clip from a retired act (older documents) opens as an upload.
+    source: KINDS.includes(e.source.kind) ? e.source : { kind: 'upload', label: e.source.label },
     versions: await Promise.all(
       e.versions.map(async ({ media, ...v }) => {
         const { pcm, sr, bytes } = await wav(media);
@@ -155,25 +146,7 @@ export async function restore(doc: ProjectDoc, read: (hash: string) => Promise<B
       }),
     ),
   };
-  const sd = doc.dub;
-  const { source: ss, trackId, tracks: st, ...dubRest } = sd;
-  const tracks: dub.DubTrack[] = await Promise.all(
-    st.map(async ({ media, ...x }) => {
-      const { pcm, sr } = await wav(media);
-      return { ...x, pcm, sr };
-    }),
-  );
-  let source: Omit<dub.DubSource, 'video'> | null = null;
-  let videoFile: File | null = null;
-  if (ss) {
-    const { media, video, ...rest } = ss;
-    const { pcm, sr } = await wav(media);
-    source = { ...rest, pcm, sr };
-    if (video) {
-      videoFile = new File([await read(video.media)], video.name, { type: video.type });
-      prime(videoFile, video.media);
-    }
-  }
+  const scriptIn = withScene(doc.direct.script, doc.scene?.scene);
 
   return () =>
     batch(() => {
@@ -186,33 +159,25 @@ export async function restore(doc: ProjectDoc, read: (hash: string) => Promise<B
       cast.value = doc.cast.personas;
       voiceOrigins.value = doc.cast.origins;
       previewText.value = doc.cast.previewText;
-      scripts.reset(doc.direct.script);
-      takes.value = takesIn;
+      scripts.reset(scriptIn);
+      // After the cast, settings and backend are in (a migrated take's request is its line's).
+      const migrated = sceneRenders.flatMap(([id, audio]): [string, Take[]][] => {
+        const line = scriptIn.lines.find((l) => l.id === id);
+        return line ? [[id, [{ id: uid(), text: line.text, seed: 0, request: lineRequest(line, 0), audio, createdAt: Date.now(), starred: true, edited: true }]]] : [];
+      });
+      takes.value = { ...takesIn, ...Object.fromEntries(migrated) };
       lineBusy.value = {};
       lineError.value = {};
-      scenes.reset(doc.scene.scene);
-      renders.value = rendersIn;
       edit.clipLanguages.value = doc.edit.clipLanguages;
       edit.loadDoc(editDoc);
-      dub.loadDoc({
-        ...dubRest,
-        refId: null,
-        source: source && { ...source, video: videoFile && { url: URL.createObjectURL(videoFile), file: videoFile } },
-        tracks,
-        track: tracks.find((x) => x.id === trackId) ?? null,
-      });
     });
 }
 
-/** Where each server voice id is used (Cast bench, cast members, dub voices): what a missing voice breaks. */
+/** Where each server voice id is used (Cast bench, cast members): what a missing voice breaks. */
 export function speakerUses(doc: ProjectDoc): Map<string, Set<string>> {
   const uses = new Map<string, Set<string>>();
   const use = (id: string, where: string) => id && uses.set(id, (uses.get(id) ?? new Set()).add(where));
-  const voice = (v: dub.VoiceChoice | null, where: string) => v && v.kind !== 'source' && use(v.kind === 'speaker' ? v.id : v.design.baseId, where);
   use(doc.cast.design.baseId, 'the Cast bench');
   for (const p of doc.cast.personas) use(p.design.baseId, `cast member “${p.name}”`);
-  voice(doc.dub.voice, 'the dub');
-  doc.dub.segments.forEach((s) => voice(s.voice, 'dub segments'));
-  doc.dub.source?.lines.forEach((l) => voice(l.voice, 'the dub'));
   return uses;
 }

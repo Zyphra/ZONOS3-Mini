@@ -34,11 +34,11 @@ export function registerSpeakTool(server: McpServer) {
     {
       title: 'Speak a line',
       description:
-        'Render a line of speech into the project’s Direct script (new line, or `line` to add takes to an existing one). `delivery`: how the whole line is said; `spans`: delivery on specific words. Values are delivery controls from zonos_controls.',
+        'Render a line of speech into the project’s Direct script (new line, or `line` to add takes to an existing one). Each line has its own voice: `voice` sets this line’s voice (otherwise it keeps its voice, or follows the script voice / Cast bench). `delivery`: how the whole line is said; `spans`: delivery on specific words. Values are delivery controls from zonos_controls.',
       inputSchema: {
         text: z.string().optional().describe('The line text (new line, or replaces the text of `line`)'),
         line: lineRef.optional(),
-        voice: z.string().optional().describe('Persona name/id or library voice id/label (default: the script voice / Cast bench)'),
+        voice: z.string().optional().describe('Persona name/id or library voice id/label for this line (default: the line’s voice, else the script voice / Cast bench)'),
         delivery: values.optional(),
         spans: z.array(z.object({ text: z.string(), occurrence: z.number().int().min(1).optional(), values })).optional(),
         language: language.optional(),
@@ -66,11 +66,6 @@ export function registerSpeakTool(server: McpServer) {
       const doc = sess.doc;
       const script = doc.direct.script;
 
-      // Voice: the Direct script has one voice (Studio's rule).
-      const persona = resolveVoice(doc, ctx.speakers, a.voice);
-      const hasTakes = Object.values(doc.direct.takes).some((t) => t.length);
-      if (script.voice !== persona.id && hasTakes && (a.voice || script.voice)) warnings.push(`The script's voice changed to "${persona.name}": Studio marks earlier takes of other voices "Rendered with earlier settings".`);
-      script.voice = persona.id;
       if (a.language && a.language !== doc.settings.language) {
         doc.settings.language = a.language;
         warnings.push(`Project language set to ${langLabel(a.language)}`);
@@ -89,6 +84,10 @@ export function registerSpeakTool(server: McpServer) {
         script.lines.push(line);
         index = script.lines.length - 1;
       }
+      // Voice: per line (line.voice ?? script.voice ?? the Cast bench).
+      const own = a.voice ? null : doc.cast.personas.find((p) => p.id === (line.voice ?? script.voice));
+      const persona = own ?? resolveVoice(doc, ctx.speakers, a.voice);
+      if (a.voice) line.voice = persona.id;
       if (delivery || spanInput.length) line.spans = anchorSpans(line.text, delivery, spanInput);
       const problem = pronProblem(line.text, ctx.caps.phoneme_tokens ?? null);
       if (problem) throw new Error(problem);
@@ -112,17 +111,16 @@ export function registerSpeakTool(server: McpServer) {
       }
       if (!made.length) throw new Error(error ?? 'No take rendered');
 
-      const snapshot = structuredClone({ line, personaId: persona.id, persona, settings: doc.settings, index });
+      const snapshot = structuredClone({ line, persona, settings: doc.settings, index });
       const { result, project: ref } = await saveProject(sess, 'direct', (d, media) => {
         // On a conflict retry `d` is the fresh document: apply the same change to it.
         if (d !== doc) {
-          if (!d.cast.personas.some((p) => p.id === snapshot.personaId)) d.cast.personas.push(snapshot.persona);
+          if (!d.cast.personas.some((p) => p.id === snapshot.persona.id)) d.cast.personas.push(snapshot.persona);
           d.settings = snapshot.settings;
           const i = d.direct.script.lines.findIndex((l) => l.id === snapshot.line.id);
           if (i >= 0) d.direct.script.lines[i] = snapshot.line;
           else d.direct.script.lines.push(snapshot.line);
         }
-        d.direct.script.voice = snapshot.personaId;
         const list = [...(d.direct.takes[snapshot.line.id] ?? [])];
         for (const m of made) {
           m.take.audio.media = media.add(m.wav, 'audio/wav');

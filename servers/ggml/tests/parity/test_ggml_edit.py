@@ -1,5 +1,5 @@
 """Parity of src/zonos3-edit.cpp (via the edit-replay binary) with model/src/zonos3/tts/edit.py: the edit prompt
-layout the edit/dub worker's fill calls build.
+layout the Python host's fill calls build.
 
 Every case runs the same call through ``edit-replay`` ({"fn", "args"} JSON on stdin) and through the Python module;
 results must be equal. ``test_fixture_file_is_current`` keeps tests/fixtures/edit-replay/cases.json (the ctest replay)

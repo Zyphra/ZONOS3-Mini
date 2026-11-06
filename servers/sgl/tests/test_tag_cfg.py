@@ -392,7 +392,7 @@ def test_scheduler_refuses_a_guided_request_without_its_twin(monkeypatch, tmp_pa
 
 
 # ------------------------------------------------------------------------------------------------ interactions
-# Markup together with the rest of this runtime: pronunciation groups, steering, edit and dub text handling.
+# Markup together with the rest of this runtime: pronunciation groups, steering and edit text handling.
 G = "\ue000həˈloʊ\ue001"
 
 
@@ -487,12 +487,3 @@ def test_edit_target_markup_is_outside_the_word_diff():
     # [target tokens] + one token list per whitespace word: a marker word has none, a group is one token
     assert target_tokens(target) == [["SAY", "HI", G, "NOW"], ["SAY"], [], ["HI", G], ["NOW"]]
     assert target_tokens("plain words, too") == [["PLAIN", "WORDS", "TOO"], ["PLAIN"], ["WORDS"], ["TOO"]]
-
-
-def test_dub_text_rate_and_alignment_ignore_markup():
-    from zonos3.dub.runtime import spoken_text, text_bytes
-
-    assert text_bytes("hi <laugh/> there") == text_bytes("hi there") == len("hi there")
-    assert text_bytes("<shouting>go</shouting>") == 2
-    assert spoken_text(f"hi <laugh/> {G}") == "hi həˈloʊ"
-    assert spoken_text("plain  text") == "plain  text"

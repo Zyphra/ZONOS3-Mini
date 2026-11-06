@@ -10,7 +10,7 @@ import { extent, femaleAt, spotOf, who, yAtYears, yearsAt } from '../../state/wh
 
 const W = 420;
 const H = 420;
-const PAD_L = 30;
+const PAD_L = 42;
 const PAD_R = 12;
 const PAD_T = 12;
 const PAD_B = 26;
@@ -72,7 +72,8 @@ function placeLabels(items: { id: string; x: number; y: number; text: string }[]
   return out;
 }
 
-export function WhoMap() {
+/** `large`: the phone dialog's map, sized to the screen instead of the bench (`--map-h`). */
+export function WhoMap({ large }: { large?: boolean }) {
   const svg = useRef<SVGSVGElement>(null);
   const w = who.value;
   const cx = controlById.value.get(w.gender.control);
@@ -159,7 +160,7 @@ export function WhoMap() {
   const pf = femaleAt(dotX);
 
   return (
-    <div class="who" style={{ '--fam': color }}>
+    <div class={`who${large ? ' is-large' : ''}`} style={{ '--fam': color }}>
       <div class="who-main">
         <svg
           ref={svg}
@@ -199,7 +200,7 @@ export function WhoMap() {
           <text class="pole" x={W - PAD_R - 6} y={H - 8} text-anchor="end">
             {cx.poles?.[1] ?? 'feminine'} →
           </text>
-          <text class="pole axis-title" x={11} y={PAD_T + 2} transform={`rotate(-90 11 ${PAD_T + 2})`} text-anchor="end">
+          <text class="pole axis-title" x={9} y={PAD_T + 2} transform={`rotate(-90 9 ${PAD_T + 2})`} text-anchor="end">
             age (years)
           </text>
           <rect class="who-safe" x={toX(inX(safe.x[0]))} y={toY(inY(safe.y[1]))} width={toX(inX(safe.x[1])) - toX(inX(safe.x[0]))} height={toY(inY(safe.y[0])) - toY(inY(safe.y[1]))} rx="10" />

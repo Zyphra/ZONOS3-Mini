@@ -1,23 +1,25 @@
 """Keep long JSON requests alive behind a proxy with a response deadline.
 
 A Cloudflare quick tunnel answers 524 when the origin has not responded within 100 s, which a cold alignment
-worker or a long dub on a busy node can exceed. A POST to one of ``paths`` with the request header
+worker or a long plugin job on a busy node can exceed. A POST to one of ``paths`` with the request header
 ``X-Keepalive: 1`` therefore gets its 200 status line at once, a space every ``interval`` seconds while the
 endpoint works, and then the endpoint's JSON body (leading whitespace is valid JSON). An endpoint error keeps its
 detail but travels in the body, since the status line is already sent: ``{"detail": ..., "status_code": 4xx}``.
-Requests without the header take the normal path.
+Requests without the header take the normal path. ``paths`` is read on every request: a list the server extends with
+plugin paths before it serves.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Sequence
 
 KEEPALIVE_HEADER = b"x-keepalive"
 
 
 class KeepaliveMiddleware:
-    def __init__(self, app, paths: tuple[str, ...], interval: float = 10.0):
-        self.app, self.paths, self.interval = app, tuple(paths), float(interval)
+    def __init__(self, app, paths: Sequence[str], interval: float = 10.0):
+        self.app, self.paths, self.interval = app, paths, float(interval)
 
     def _applies(self, scope) -> bool:
         if scope["type"] != "http" or scope["method"] != "POST":

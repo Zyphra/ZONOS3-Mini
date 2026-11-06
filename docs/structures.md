@@ -7,7 +7,7 @@ This page describes the CUDA server (`servers/sgl`, package `zonos3_sgl`), the M
 
 ## Processes
 
-- **API server**: FastAPI frontend for `/v2/generate`, `/v1/audio/speech`, capabilities, speaker cache, edit, dub and studio project endpoints; it also serves the studio build at `/`.
+- **API server**: FastAPI frontend for `/v2/generate`, `/v1/audio/speech`, capabilities, speaker cache, edit and studio project endpoints, plus the routes of `--plugins`; it also serves the studio build at `/`.
 - **Tokenizer worker**: Builds SuperBPE / byte-token TTS prompt frames, encodes reference audio with the matched dual codec, and decodes audio frames to PCM with the codec's iSTFT decoder.
 - **Scheduler worker**: Runs one scheduler per tensor-parallel rank, manages request queues, KV cache slots, and decode scheduling.
 - **Engine**: Owns the model, attention backend, KV cache, CUDA graphs, and checkpoint weights for one rank.
@@ -31,12 +31,11 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 - `zonos3.models`: Model config conversion, the MECT speaker encoder, speaker cloning and the accent adapter file format.
 - `zonos3.tokenizer`: Text normalization (`textnorm.py`), the matched-codec registry (`matched_codec.py`) and the reference encoder (`dual_reference.py`).
 - `zonos3.tts`: Prompt building, markup, conditioning, direction sets (`directions.py`) and steering bundles (`steering.py`), LACI and span-follow, speech-edit prompts and alignment, the speech-edit runtime (`edit_runtime.py`: `/v2/edit*` of every server over the server's `EditEngine`), sampling helpers. `plan.py` holds the v2 GenerateRequest rules and prompt plan of every Python server (the reference, the MLX server's `plan_request`, the sgl frontend's `_tts_generate_msg` and the row helpers of its tokenizer worker): request head (tag CFG, speaker mode, condition rows), the rules after the speaker inputs (language, max_tokens, silence prefill, reference-code cut, decode context, accent, controls, span follow, CFG, pronunciation groups, LACI, seed) and the prompt rows with the CFG twin, over a server-supplied context; the ggml and in-browser servers port the same rules (`model/tests/fixtures/request_errors.json`).
-- `zonos3.dub`: The dub planner (`plan.py`) and the dub runtime behind `/v2/dub/*` of every server (`runtime.py`).
-- `zonos3.server`: Pieces the Python servers share: request schemas, the edit and dub routes (`edit.py`, `dub.py`), studio projects and the keepalive middleware.
+- `zonos3.server`: Pieces the Python servers share: request schemas, the edit routes (`edit.py`), the plugin seam (`plugins.py`), the HTTP error mapping (`errors.py`), studio projects and the keepalive middleware.
 - `zonos3.reference`: The plain-PyTorch reference LM and synthesis (`python -m zonos3.reference`), the numerical oracle for every server; `synth.plan_prompt` resolves a request's speaker inputs and runs `zonos3.tts.plan`; `synth.synthesize` decodes at EOS or, with `on_audio`, prefix-streams the take (`PrefixStream`, the servers' prefix mode; `StreamSettings.first_chunk` can open with a shorter chunk, 4 frames on the ZeroGPU Space of `space/`).
 - `zonos3.generation`: The generation registry's loader: sampling defaults, the tag-CFG range, the silence-prefill default and maximum, the decode-context default, the GGUF servers' reference limit and frame budget, the API sample rate and the audio length limits (reference clip, upload, edit).
-- `zonos3.registries`: Codec, speaker-encoder, language and generation registries. `languages.json` (loaded by `zonos3.languages`; embedded by the ggml server, imported by the studio and the in-browser server) holds every language table: the request codes with their labels, NeMo packages and lexicon codes, the speech-recognition / dub languages and the espeak-ng voices. `generation.json` (loaded by `zonos3.generation`; embedded by the ggml server, imported by the in-browser server) holds the request defaults and limits every server reads.
-- `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, Qwen3-ASR speech recognition, FuseAlign forced alignment and speech segmentation, dub word alignment / lip-sync, and the ggml server's speech editing and dubbing: `edit_dub.py` runs the edit and dub runtimes and calls back into the C++ engine).
+- `zonos3.registries`: Codec, speaker-encoder, language and generation registries. `languages.json` (loaded by `zonos3.languages`; embedded by the ggml server, imported by the studio and the in-browser server) holds every language table: the request codes with their labels, NeMo packages and lexicon codes, the speech-recognition languages and the espeak-ng voices. `generation.json` (loaded by `zonos3.generation`; embedded by the ggml server, imported by the in-browser server) holds the request defaults and limits every server reads.
+- `zonos3.workers`: Standalone worker scripts the servers spawn (text normalization, Qwen3-ASR speech recognition, FuseAlign forced alignment and speech segmentation, and the ggml server's Python host: `pyhost.py` runs speech editing and the `--plugins` routes and calls back into the C++ engine).
 
 `zonos3_sgl` (`servers/sgl/src/zonos3_sgl`):
 
@@ -60,5 +59,5 @@ The processes communicate through ZeroMQ. Tensor-parallel ranks use `torch.distr
 - `zonos3_mlx.engine`: The loaded networks and companions, and `plan_request` (a v2 request's prompt rows, conditioning and CFG twin).
 - `zonos3_mlx.scheduler`: The worker thread that owns every MLX call: batched slots, CFG, LACI and span-follow, work items.
 - `zonos3_mlx.vocoder`: Per-request whole / prefix streaming decode.
-- `zonos3_mlx.server`: The FastAPI app (speakers, generate, capabilities, phonemize, edit, dub, projects, studio); `python -m zonos3_mlx` launches it.
+- `zonos3_mlx.server`: The FastAPI app (speakers, generate, capabilities, phonemize, edit, projects, plugins, studio); `python -m zonos3_mlx` launches it.
 - `zonos3_mlx.tools`, `zonos3_mlx.validate`: Single-network CLIs and LM captures for `tools/compare_golden.py`.

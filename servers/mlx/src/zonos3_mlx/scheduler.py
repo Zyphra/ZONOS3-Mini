@@ -1,13 +1,16 @@
-"""The MLX server's generation scheduler: one worker thread owns every MLX computation.
+"""The MLX server's generation scheduler: one worker thread owns every LM computation, one codec thread the streamed
+audio decodes.
 
 Each tick the worker runs the queued work items (codec decodes, speaker / reference encodes), admits waiting jobs into
-free slots (``--batch``; a CFG job takes two), and advances every active job by one row (one LM call per branch). The
-per-job logic is ``zonos3.reference.synth.generate_rows`` / ``_laci`` (sampling, CFG guidance, the EOS countdown, the
-probe readout to LACI and span-follow, LACI rollbacks re-prefilled in place) over the MLX LM, after the ggml server's
-scheduler (servers/ggml/src/server/scheduler.cpp ``worker_loop``).
+free slots (``--batch``; a CFG job takes two), and advances every active job by one row (its branches' LM forwards in
+one MLX evaluation). The per-job logic is ``zonos3.reference.synth.generate_rows`` / ``_laci`` (sampling, CFG
+guidance, the EOS countdown, the probe readout to LACI and span-follow, LACI rollbacks re-prefilled in place) over the
+MLX LM, after the ggml server's scheduler (servers/ggml/src/server/scheduler.cpp ``worker_loop``).
 
 Jobs report through their ``sink``: ``("row", row, eos_frame | None)`` per final row, then ``("done", laci_record |
-None)``, or ``("error", message)``.
+None)``, or ``("error", message)``. A sink hands its audio decoding to ``codec_submit`` (the codec thread: one FIFO
+for every job, so each job's chunks keep their order), and the backbone steps on while the codec runs; MLX >= 0.31.2
+evaluates independent graphs from several threads, each on its own default stream.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import logging
 import os
 import queue
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
@@ -85,6 +88,7 @@ class Scheduler:
         self._active: list[_Active] = []
         self._cv = threading.Condition()
         self._thread: threading.Thread | None = None
+        self._codec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="zonos3-mlx-codec")
         self._running = False
         self.laci_config = LaciConfig()
 
@@ -97,6 +101,7 @@ class Scheduler:
         self._thread.start()
         if warmup:
             self.submit(self._warmup).result()
+            self.codec_submit(self._warmup_codec).result()
 
     def stop(self) -> None:
         with self._cv:
@@ -104,14 +109,19 @@ class Scheduler:
             self._cv.notify_all()
         if self._thread is not None:
             self._thread.join(timeout=30)
+        self._codec.shutdown(wait=True, cancel_futures=True)
 
     def submit(self, fn: Callable, *args, **kwargs) -> Future:
-        """Run ``fn`` on the worker thread (every MLX call goes through here); returns its future."""
+        """Run ``fn`` on the worker thread (every MLX call but the streamed decodes); returns its future."""
         future: Future = Future()
         with self._cv:
             self._work.append((lambda: fn(*args, **kwargs), future))
             self._cv.notify_all()
         return future
+
+    def codec_submit(self, fn: Callable, *args, **kwargs) -> Future:
+        """Run ``fn`` on the codec thread (the streamed audio decodes of every job, in submission order)."""
+        return self._codec.submit(fn, *args, **kwargs)
 
     def enqueue(self, job: Job) -> Job:
         if job.slots > self.batch:
@@ -182,15 +192,20 @@ class Scheduler:
 
     # ------------------------------------------------------------------------------------------------- jobs
     def _forward(self, a: _Active, branch: Branch, state: LMState, ids, frame: int | None, with_probe: bool):
+        """One branch's forward graph (unevaluated; ``_run`` evaluates a tick's branches together)."""
         hidden = None
         if frame is not None and branch.steered:
             steer = steer_fn(a.job.plan, a.follower, a.delta)
             if steer is not None:
                 hidden = steer(frame)
-        return self.engine.lm.forward(
+        return self.engine.lm.forward_lazy(
             ids, state, speaker_rows=branch.speaker_rows(),
             condition_rows=branch.condition_rows(), hidden_deltas=hidden, accents=a.accents,
             probe=a.probe.spec() if with_probe and a.probe is not None else None)
+
+    def _run(self, pending: list) -> list:
+        """Evaluate a job's branch forwards (the CFG pair) in one MLX evaluation."""
+        return self.engine.lm.finish(pending)
 
     def _start(self, job: Job) -> _Active:
         plan, c, engine = job.plan, self.config, self.engine
@@ -221,7 +236,7 @@ class Scheduler:
         elif follower is not None:
             a.probe = ProbeState(engine.laci_heads[plan.follow_language].heads, *text_span)
             a.observer = follower
-        a.outs = [self._forward(a, b, state, b.input_ids, None, False) for b, state in branches]
+        a.outs = self._run([self._forward(a, b, state, b.input_ids, None, False) for b, state in branches])
         return a
 
     def _laci_session(self, plan: Plan, follower: SpanFollower | None) -> LaciSession:
@@ -312,7 +327,7 @@ class Scheduler:
         a.step += 1
         frame = len(a.rows) + a.history_rows
         ids = token[None]
-        a.outs = [self._forward(a, b, state, ids, frame, i == 0) for i, (b, state) in enumerate(a.branches)]
+        a.outs = self._run([self._forward(a, b, state, ids, frame, i == 0) for i, (b, state) in enumerate(a.branches)])
 
     def _resume(self, a: _Active, cont) -> None:
         """A LACI rollback: re-prefill the prompt plus the kept rows (synth._laci, ggml laci_resume)."""
@@ -330,7 +345,7 @@ class Scheduler:
         a.remain, a.history_rows = int(cont.max_tokens), int(cont.history_rows)
         a.rows, a.eos_frame, a.countdown, a.step = [], -1, -1, 0
         a.probe = ProbeState(a.session.heads.heads, *a.text_span, mask=a.session.probe_mask())
-        a.outs = [self._forward(a, branch, a.branches[0][1], branch.input_ids, None, False)]
+        a.outs = self._run([self._forward(a, branch, a.branches[0][1], branch.input_ids, None, False)])
 
     def _warmup(self) -> None:
         c = self.config
@@ -340,6 +355,9 @@ class Scheduler:
         self.engine.lm.forward(ids, state)
         self.engine.lm.forward(ids[:1], state)
         self.engine.decoder.decode(np.zeros((4, c.n_codebooks), dtype=np.int64))
+
+    def _warmup_codec(self) -> None:
+        self.engine.decoder.decode(np.zeros((4, self.config.n_codebooks), dtype=np.int64))
 
     # ------------------------------------------------------------------------------------------------- offline
     def synthesize(self, request: dict, speaker=None):

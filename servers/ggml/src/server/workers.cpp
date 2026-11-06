@@ -234,9 +234,17 @@ nlohmann::json JsonLinesWorker::call(const nlohmann::json & request) {
     return response;
 }
 
-#ifdef _WIN32
 int run_process(const std::vector<std::string> & argv, std::string & stderr_text) {
+    return run_process(argv, {}, stderr_text);
+}
+
+#ifdef _WIN32
+int run_process(const std::vector<std::string> & argv, const std::map<std::string, std::optional<std::string>> & env,
+                std::string & stderr_text) {
     stderr_text.clear();
+    std::string envblock;
+    for (const auto & e : child_environment(env)) { envblock += e; envblock += '\0'; }
+    envblock += '\0';
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE err_r, err_w;
     if (!CreatePipe(&err_r, &err_w, &sa, 0)) { stderr_text = "cannot create a pipe"; return -1; }
@@ -251,7 +259,8 @@ int run_process(const std::vector<std::string> & argv, std::string & stderr_text
     si.hStdOutput = nul;
     si.hStdError = err_w;
     PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    const BOOL ok = CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, envblock.data(),
+                                   nullptr, &si, &pi);
     CloseHandle(err_w);
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
     if (!ok) { CloseHandle(err_r); stderr_text = "cannot start " + argv[0]; return -1; }
@@ -267,8 +276,13 @@ int run_process(const std::vector<std::string> & argv, std::string & stderr_text
     return (int) code;
 }
 #else
-int run_process(const std::vector<std::string> & argv, std::string & stderr_text) {
+int run_process(const std::vector<std::string> & argv, const std::map<std::string, std::optional<std::string>> & env,
+                std::string & stderr_text) {
     stderr_text.clear();
+    std::vector<std::string> envs = child_environment(env);
+    std::vector<char *> envp;
+    for (auto & e : envs) envp.push_back(e.data());
+    envp.push_back(nullptr);
     int err_pipe[2];
     if (pipe(err_pipe) != 0) { stderr_text = "cannot create a pipe"; return -1; }
     fcntl(err_pipe[0], F_SETFD, FD_CLOEXEC);
@@ -283,7 +297,7 @@ int run_process(const std::vector<std::string> & argv, std::string & stderr_text
     for (auto & a : args_copy) args.push_back(a.data());
     args.push_back(nullptr);
     pid_t pid = -1;
-    const int rc = posix_spawnp(&pid, args[0], &fa, nullptr, args.data(), environ);
+    const int rc = posix_spawnp(&pid, args[0], &fa, nullptr, args.data(), envp.data());
     posix_spawn_file_actions_destroy(&fa);
     ::close(err_pipe[1]);
     if (rc != 0) {

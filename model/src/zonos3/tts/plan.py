@@ -356,8 +356,8 @@ def validate_phoneme_groups(spec: dict | None, text: str) -> None:
 
 
 def check_laci(ctx: RulesContext, req: Request, language: str, *, duration_target: bool = False) -> None:
-    """R14: a laci=true request needs alignment heads for its language and no CFG; a LACI duration target (a dub
-    take) needs laci=true."""
+    """R14: a laci=true request needs alignment heads for its language and no CFG; a LACI duration target (a
+    duration-target take, zonos3.server.plugins.LaciTakeRequest) needs laci=true."""
     if not req.laci:
         if duration_target:
             raise ValueError("A LACI duration target needs laci=true")
@@ -415,7 +415,7 @@ def request_rules(ctx: RulesContext, req: Request, head: RequestHead, speaker: S
                   edit: bool = False, duration_target: bool = False) -> Rules:
     """R4-R16 for the speaker inputs the server resolved for ``head.mode``. ``hidden_delta``: a server-side steering
     delta added to the request's (a speech-edit region's); ``edit``: a speech-edit region (no silence prefill, no span
-    follow); ``duration_target``: the request carries a LACI duration target (a dub take)."""
+    follow); ``duration_target``: the request carries a LACI duration target (a duration-target take)."""
     language = languages.normalize(req.language)
     max_tokens = max_tokens_budget(req.max_tokens, ctx.max_frames)
     silence = 0 if edit else silence_prefill_frames(req.silence_prefill_frames, available=ctx.silence_available)

@@ -36,7 +36,7 @@ export class Speakers {
   constructor(private e: Engine, now = 0) {
     this.defaults = e.voices.map(v => ({
       id: v.id, label: v.label, sourceType: 'audio', isDefault: true, originalName: v.file.split('/').pop() ?? v.file,
-      created: now, pcm: v.pcm, codes: v.codes, embedding: null,
+      created: now, pcm: v.pcm, codes: v.codes, embedding: v.embedding,
     }));
   }
 
@@ -93,7 +93,8 @@ export class Speakers {
     fail(400, `Cached speaker '${v.label}' has no reference audio.`);
   }
 
-  /** speakers.cpp voice_embedding: an embedding file's vector, or the speaker encoder's embedding of the clip, once. */
+  /** speakers.cpp voice_embedding: an embedding file's vector, a default voice's shipped embedding, or the speaker
+   *  encoder's embedding of the clip, once. */
   async voiceEmbedding(session: string | null, id: string): Promise<Float32Array> {
     const v = this.lookup(session, id);
     const dim = this.e.hp.speakerDim;

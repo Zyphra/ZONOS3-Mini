@@ -109,7 +109,7 @@ describe('buildPrompt golden', () => {
   it.skipIf(!have)('matches zonos3-cli --build-prompt', () => {
     const meta = JSON.parse(readFileSync(M, 'utf8')).meta;
     const p = buildPrompt(tok, 'Hello from the browser engine.',
-      { speakerEmbedding: npy('speaker-embedding.npy').data, buckets: [3, 5, 10], silencePrefill: 3 }, modelHp(meta));
+      { speakerEmbedding: npy('speaker-embedding.npy').data, buckets: [3, 5, 30], silencePrefill: 3 }, modelHp(meta));
     const ids = npy('ids.npy');
     expect(ids.shape).toEqual([p.nRows, W]);
     expect(Array.from(p.ids)).toEqual(Array.from(ids.data));

@@ -1,5 +1,5 @@
 // Speech editing: POST /v2/edit/transcribe, /v2/edit/align, /v2/edit and the edit capabilities. The requests run in
-// the edit/dub worker (server/edit_dub.h: zonos3.tts.edit_runtime.EditRuntime), which calls back into the served model
+// the Python host (server/pyhost.h: zonos3.tts.edit_runtime.EditRuntime), which calls back into the served model
 // for each region's span-end-terminated generation and the decode of the spliced codes.
 #pragma once
 

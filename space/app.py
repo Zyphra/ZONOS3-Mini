@@ -2,13 +2,14 @@
 reference (zonos3.reference) with generation on ZeroGPU.
 
 ``gr.Server`` is the FastAPI app; its ``launch()`` runs through ``gr.Blocks.launch``, where ``spaces`` starts ZeroGPU.
-The routes are the part of api/openapi.yaml the studio and the lite page use when the server has no speech editing,
-dubbing, project store or pronunciation lexicon (``/v2/capabilities`` says so and the studio adapts): GET
-``/v2/capabilities``, ``/v2/controls``, ``/v2/speakers``, ``/v2/speakers/{id}/preview``,
-``/v2/speakers/{id}/embedding``, POST ``/v2/speakers`` and ``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first
-chunk). Speaker embeddings run on this process's CPU; only ``/v2/generate`` takes a GPU, in a held GPU session
-(``gpu_session`` / ``GpuSessions``), on the visitor's ZeroGPU quota through the X-IP-Token the studio forwards from
-huggingface.co (studio/src/lib/zerogpu.ts).
+The routes are the part of api/openapi.yaml the studio and the lite page use when the server has no plugins, project
+store or pronunciation lexicon (``/v2/capabilities`` says so and the studio adapts): GET ``/v2/capabilities``,
+``/v2/controls``, ``/v2/speakers``, ``/v2/speakers/{id}/preview``, ``/v2/speakers/{id}/embedding``, POST
+``/v2/speakers``, ``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first chunk) and speech editing
+(``/v2/edit/transcribe``, ``/v2/edit/align``, ``/v2/edit``: the edit LoRA per request). Speaker embeddings run on this
+process's CPU; generation, edit regions, Qwen3-ASR and FuseAlign run in a held GPU session (``gpu_session`` /
+``GpuSessions``), on the visitor's ZeroGPU quota through the X-IP-Token the studio forwards from huggingface.co
+(studio/src/lib/zerogpu.ts).
 """
 
 import spaces  # noqa: I001  (ZeroGPU: must be imported before torch)
@@ -65,7 +66,7 @@ from zonos3.reference.synth import (
     output_gain,
     synthesize,
 )
-from zonos3.server.edit import call as edit_errors
+from zonos3.server.errors import call as edit_errors
 from zonos3.server.schemas import (
     EditAlignRequest,
     EditRequest,
@@ -187,7 +188,7 @@ def capabilities() -> dict:
                                      "generated_history",
         "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
         "laci_languages": sorted(CONTEXT.laci_languages),
-        "dub": False,
+        "plugins": [],
         "speaker_embedding_upload": True,
         "speaker_embedding_cache": True,
         "speaker_embedding_blend": True,

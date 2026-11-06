@@ -11,16 +11,14 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
-from zonos3.server.dub import make_router as dub_router
+from zonos3.server import plugins
 from zonos3.server.edit import make_router as edit_router
 from zonos3.server.keepalive import KeepaliveMiddleware
 from zonos3.server.projects import make_router as projects_router
 
-from zonos3_mlx.server import capabilities, dub, edit, generate, speakers
+from zonos3_mlx.server import capabilities, edit, generate, host, speakers
 from zonos3_mlx.server.state import ServerState
 
-KEEPALIVE_PATHS = ("/v2/edit", "/v2/dub/ref", "/v2/dub/lips", "/v2/dub/transcribe", "/v2/dub/analyze",
-                   "/v2/dub/generate", "/v2/dub/regenerate")
 EXPOSED_HEADERS = ["X-Audio-Sample-Rate", "X-Audio-Channels", "X-Audio-Format", "X-Control-Span-Follow", "X-Seed"]
 
 
@@ -38,8 +36,9 @@ def create_app(state: ServerState) -> FastAPI:
     app.state.zonos3 = state
 
     # Innermost, so CORS and the access check wrap its early status line. The /v2/edit prefix covers
-    # /v2/edit/transcribe and /v2/edit/align.
-    app.add_middleware(KeepaliveMiddleware, paths=KEEPALIVE_PATHS)
+    # /v2/edit/transcribe and /v2/edit/align; plugins.mount extends the list with the plugins' paths.
+    keepalive = ["/v2/edit"]
+    app.add_middleware(KeepaliveMiddleware, paths=keepalive)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
                        expose_headers=EXPOSED_HEADERS)
 
@@ -73,8 +72,7 @@ def create_app(state: ServerState) -> FastAPI:
     for module in (capabilities, speakers, generate):
         app.include_router(module.router(state))
     app.include_router(edit_router(lambda: edit.runtime(state)))
-    app.include_router(dub_router(lambda: dub.runtime(state), lambda: capabilities.dub_available(state),
-                                  dub.UNAVAILABLE))
+    plugins.mount(app, state.plugins, host.MlxHost(state), keepalive)
 
     # Registered last, so every API route matches first: GET|HEAD / is the studio's index.html (the chooser),
     # GET|HEAD /<path> a file inside the studio dir, else the page <path>.html (/studio, /lite; never under /v1/ or

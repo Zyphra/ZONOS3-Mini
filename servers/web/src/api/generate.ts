@@ -32,8 +32,9 @@ const VOCAB = 4098;
 export const CONTEXT_CAPACITY = MAX_FRAMES + 4096;
 /** probe_max_text = min(2048, context_capacity) with LACI heads. */
 const PROBE_MAX_TEXT = 2048;
-/** Prefix streaming (PrefixStreamSettings defaults). */
-const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3;
+/** Prefix streaming (PrefixStreamSettings defaults): chunk, hold-back, and the shorter first chunk of a request
+ *  (ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES on the native servers). */
+const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3, PREFIX_FIRST_CHUNK_FRAMES = 4;
 
 /** A validated GenerateRequest resolved into what the scheduler runs (generate.cpp GenReq + GeneratePlan). */
 interface Plan {
@@ -441,26 +442,32 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
   let readout: { argmax: number; centroid: number } | null = null;
   let hidden = p.steering.hidden;
 
-  // codec stream state (prefix streaming: incremental; whole: decoded at the end through the same causal stream)
+  // codec stream state (prefix streaming: incremental; whole: decoded at the end through the same causal stream).
+  // Prefix chunks are queued, not awaited: their GPU work is submitted before the next backbone step and their host
+  // half (codec worker) runs while the GPU runs the following steps; pcmChain emits them in order.
   codec.reset();
   let decoded = 0;         // frames handed to the codec
-  const decodeUpTo = async (rows: number[], H: number, fHi: number) => {
+  let pcmChain: Promise<void> = Promise.resolve();
+  let codecErr: unknown = null;
+  const decodeUpTo = (rows: number[], H: number, fHi: number) => {
     while (decoded < fHi) {
       const n = Math.min(BLOCK, fHi - decoded);
-      const out = await codec.chunk(buildIdx(rows, H, decoded, n), decoded, n);
+      const out = codec.chunk(buildIdx(rows, H, decoded, n), decoded, n);
+      out.catch(() => {});   // handled through pcmChain; avoids an unhandled-rejection report
       decoded += n;
-      const pcm = finish(out);
-      if (pcm.length) emit(pcm);
+      pcmChain = pcmChain.then(() => out).then(pcm => { const f = finish(pcm); if (f.length) emit(f); })
+        .catch(e => { codecErr ??= e; });
     }
   };
   let emitted = p.prompt.prefillFrames;   // prefix streaming: frames handed to the codec (scheduler job->emitted)
-  const prefixReady = async () => {
+  const prefixReady = () => {
     const H = codes.length / ncb;
     let complete = H - (ncb - 1);
     if (eosFrame >= 0) complete = Math.min(complete, eosFrame);
     const decodable = complete - PREFIX_HOLD_BACK_FRAMES;
-    if (decodable - emitted < PREFIX_CHUNK_FRAMES) return;
-    await decodeUpTo(decodeRows(codes, H, p.decodeContext, ctxFrames), H + ctxFrames, decodable + ctxFrames);
+    const need = emitted === p.prompt.prefillFrames ? PREFIX_FIRST_CHUNK_FRAMES : PREFIX_CHUNK_FRAMES;
+    if (decodable - emitted < need) return;
+    decodeUpTo(decodeRows(codes, H, p.decodeContext, ctxFrames), H + ctxFrames, decodable + ctxFrames);
     emitted = decodable;
   };
 
@@ -472,7 +479,8 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
   const guided = twin ? new Float32Array(logits.length) : null;
 
   for (;;) {
-    if (aborted()) return;
+    if (aborted()) { await pcmChain; return; }
+    if (codecErr) throw codecErr;
     // 3. sample one frame from the current logits
     let source = logits;
     if (twinLogits && guided) {
@@ -508,7 +516,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
       for (const c of frame) codes.push(c);
       eosFrame = slot.eosFrame;
     }
-    if (p.prefix) await prefixReady();
+    if (p.prefix) prefixReady();
 
     // 4. a finished slot: LACI rollback, or the final decode
     if (slot.done) {
@@ -537,7 +545,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
           logits = (await bb.prefill(0, ids, cond)).logits;
           const r = laci.drain();
           for (let i = r.begin; i < r.end; i++) for (let k = 0; k < ncb; k++) codes.push(laci.stream[i][k]);
-          if (p.prefix) await prefixReady();
+          if (p.prefix) prefixReady();
           continue;
         }
         const r = laci.drain(true);
@@ -546,6 +554,8 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
       }
       // submit_finalize: EOS inside the silence prefill leaves no audio
       if (eosFrame >= 0 && eosFrame <= p.prompt.prefillFrames) throw new Error('generation failed');
+      await pcmChain;
+      if (codecErr) throw codecErr;
       const nf = codes.length / ncb;
       const H = nf + ctxFrames;
       const E = Math.min(eosFrame >= 0 ? eosFrame + ctxFrames : H, H - (ncb - 1));
@@ -559,7 +569,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
           keep(finish(await codec.chunk(buildIdx(rows, H, decoded, n), decoded, n)));
           decoded += n;
         }
-        keep(finish(codec.flush()));
+        keep(finish(await codec.flush()));
         const total = tail.reduce((a, b) => a + b.length, 0);
         const out = new Float32Array(total);
         let o = 0;
@@ -586,10 +596,18 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
       steer = out.v;
     }
     const next = Int32Array.from(slot.nextIds);
-    const res = await bb.step(0, next, steer, probeInput());
-    logits = res.logits;
-    if (twin) twinLogits = (await bb.step(1, next, twinSteered ? steer : null, null)).logits;
-    if (probe && res.probe) readout = probeReduce(res.probe, probe.textLen);
+    let probeOut: Float32Array | null;
+    if (twin) {
+      const r = await bb.stepPair(next, steer, twinSteered ? steer : null, probeInput());
+      logits = r.logits;
+      twinLogits = r.twinLogits;
+      probeOut = r.probe;
+    } else {
+      const r = await bb.step(0, next, steer, probeInput());
+      logits = r.logits;
+      probeOut = r.probe;
+    }
+    if (probe && probeOut) readout = probeReduce(probeOut, probe.textLen);
   }
 }
 

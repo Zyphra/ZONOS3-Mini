@@ -51,6 +51,9 @@ export const ICONS: Record<string, string> = {
   sun: 'M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',
   alert: 'M12 3.5 2.5 20h19zM12 10v4.5M12 17.2v.1',
+  left: 'M15 6l-6 6 6 6',
+  right: 'M9 6l6 6-6 6',
+  more: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
 };
 
-export const FILLED_ICONS: Record<string, true> = { play: true, stop: true, dice: true };
+export const FILLED_ICONS: Record<string, true> = { play: true, stop: true, dice: true, more: true };

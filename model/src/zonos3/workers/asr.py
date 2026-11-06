@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qwen3-ASR speech recognition (speech editing and dubbing) in a persistent process.
+"""Qwen3-ASR speech recognition (speech editing and plugins) in a persistent process.
 
 Runs in .venv-asr (tools/setup_asr_env.sh; qwen-asr pins its own transformers) with ``PYTHONPATH=<model/src>``. Reads
 one JSON request per stdin line (``{"id", "op", ...}``) and answers each with one JSON line on stdout, in order, until
