@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import functools
-import hashlib
 import io
 import os
 import subprocess
 import time
-import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +31,7 @@ from zonos3_sgl.message import (
 )
 from zonos3 import languages
 from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE
+from zonos3.reference.synth import decode_base64_blob, load_embedding_vector, slerp
 from zonos3.tts import plan
 from zonos3.tts.audio import (
     _decode_audio_bytes,
@@ -63,10 +61,25 @@ from zonos3.server.middleware import access_log_enabled, install_cors, install_p
 from zonos3.server.projects import ProjectStore, make_router as _projects_router
 from zonos3.server.studio import install_studio
 from zonos3.server.schemas import (
+    SPEAKER_INPUT_FIELDS,
     GenerateRequest,
     PhonemizeRequest,
     SpeakerCreateRequest,
     SpeechRequest,
+)
+from zonos3.server.voices import (
+    DefaultVoice,
+    new_speaker_id,
+    normalize_session_id,
+    read_voice_file,
+    require_session_id,
+    scan_default_voices,
+    serialize_default_voice,
+    serialize_session_voice,
+    speaker_label,
+    voice_preview,
+    voice_speaker_modes,
+    warm_voice_embeddings,
 )
 from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
 from zonos3_sgl.utils.logger import init_logger
@@ -84,7 +97,7 @@ _SPEAKER_EMBEDDERS = {}
 _SPEAKER_EMBEDDER_LOCK = asyncio.Lock()
 _SESSION_SPEAKER_CACHE: Dict[str, Dict[str, "CachedSpeakerReference"]] = {}
 _SESSION_SPEAKER_CACHE_LOCK = asyncio.Lock()
-_DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, "DefaultSpeakerReference"]] = {}
+_DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, DefaultVoice]] = {}
 _DEFAULT_SPEAKER_CACHE_LOCK = asyncio.Lock()
 # The server's ASR worker (zonos3/workers/asr.py: Qwen3-ASR in .venv-asr; ZONOS3_ASR_PYTHON / ZONOS3_ASR_DEVICE):
 # every speech recognition of speech editing and plugins. It starts on the first call.
@@ -94,17 +107,6 @@ _ASR = AsrWorker()
 _FUSEALIGN = FuseAlignWorker()
 # Gold pronunciation lexicons, keyed by LMDB directory.
 _PHONEME_LEXICON_CACHE: Dict[str, "PhonemeLexicon"] = {}
-_DEFAULT_VOICE_AUDIO_EXTENSIONS = {
-    ".aac",
-    ".flac",
-    ".m4a",
-    ".mp3",
-    ".ogg",
-    ".opus",
-    ".wav",
-    ".webm",
-}
-_DEFAULT_VOICE_EMBEDDING_EXTENSIONS = {".npy", ".npz"}
 
 
 @dataclass
@@ -117,20 +119,6 @@ class CachedSpeakerReference:
     original_name: str | None = None
     audio_bytes: bytes | None = None
     audio_media_type: str | None = None
-
-
-@dataclass
-class DefaultSpeakerReference:
-    speaker_id: str
-    label: str
-    source_type: Literal["audio", "embedding"]
-    path: Path
-    mtime: float
-    original_name: str
-    embedding: torch.Tensor | None = None
-    audio_bytes: bytes | None = None
-    audio_media_type: str | None = None
-    transcript: str | None = None  # <voice>.txt next to the audio (studio edit examples)
 
 
 def get_global_state() -> FrontendManager:
@@ -436,63 +424,6 @@ def _apply_fade_out_pcm(
     return samples.tobytes()
 
 
-def _normalize_session_id(session_id: str | None) -> str | None:
-    if session_id is None:
-        return None
-    normalized = session_id.strip()
-    return normalized or None
-
-
-def _require_session_id(session_id: str | None) -> str:
-    normalized = _normalize_session_id(session_id)
-    if normalized is None:
-        raise ValueError("Cached speaker operations require the X-TTS-Session-ID header.")
-    return normalized
-
-
-def _default_speaker_label(
-    explicit_label: str | None,
-    file_name: str | None,
-    *,
-    fallback: str,
-) -> str:
-    if explicit_label and explicit_label.strip():
-        return explicit_label.strip()
-    if file_name:
-        stem = Path(file_name).stem.strip()
-        if stem:
-            return stem
-    return fallback
-
-
-def _slerp_embeddings(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
-    v0 = v0.detach().to(dtype=torch.float32, device="cpu").contiguous().view(-1)
-    v1 = v1.detach().to(dtype=torch.float32, device="cpu").contiguous().view(-1)
-    if v0.shape != v1.shape:
-        raise ValueError(
-            f"Cannot blend speaker embeddings with different shapes {tuple(v0.shape)} and {tuple(v1.shape)}."
-        )
-
-    blend = float(t)
-    if blend < 0.0 or blend > 1.0:
-        raise ValueError("speaker_blend_t must be between 0.0 and 1.0.")
-
-    v0_norm = torch.linalg.vector_norm(v0) + 1e-8
-    v1_norm = torch.linalg.vector_norm(v1) + 1e-8
-    v0_n = v0 / v0_norm
-    v1_n = v1 / v1_norm
-    omega = torch.acos(torch.clamp(torch.dot(v0_n, v1_n), -1.0, 1.0))
-    if float(omega) < 1e-6:
-        return ((1.0 - blend) * v0 + blend * v1).contiguous()
-
-    sin_omega = torch.sin(omega)
-    mixed = (
-        (torch.sin((1.0 - blend) * omega) / sin_omega) * v0
-        + (torch.sin(blend * omega) / sin_omega) * v1
-    )
-    return mixed.to(dtype=torch.float32, device="cpu").contiguous()
-
-
 def _get_phoneme_lexicon(config: ServerArgs) -> "PhonemeLexicon | None":
     """Open (and cache) the configured gold pronunciation lexicon."""
     path = getattr(config, "tts_phoneme_lexicon", None)
@@ -523,52 +454,19 @@ def _tag_cfg_capabilities(config: ServerArgs) -> dict:
             "default_scale": 1.0}
 
 
-def _voice_speaker_modes(config: ServerArgs, source_type: str, has_embedding: bool = True) -> list[str]:
-    """The checkpoint's speaker modes a voice supports: an embedding voice only ``embedding``, an audio voice every
-    mode (a session clip cached without its embedding: ``reference`` only)."""
-    modes = _speaker_modes(config)
-    if source_type == "embedding":
-        return [m for m in modes if m == "embedding"]
-    return modes if has_embedding else [m for m in modes if m != "embedding"]
-
-
-def _serialize_cached_speaker(config: ServerArgs, entry: CachedSpeakerReference) -> dict:
+def _speaker_document(config: ServerArgs, entry: CachedSpeakerReference | DefaultVoice) -> dict:
+    """A voice of GET /v2/speakers (zonos3.server.voices) with the checkpoint's speaker modes and dimension."""
+    modes, disabled = _speaker_modes(config), disabled_controls(_steer_bundle(config), entry.speaker_id)
+    if isinstance(entry, DefaultVoice):
+        return serialize_default_voice(entry, modes=voice_speaker_modes(modes, entry.source_type),
+                                       embedding_dim=_model_speaker_dim(config), disabled=disabled)
     dim = int(entry.embedding.numel())
-    modes = _voice_speaker_modes(config, entry.source_type, has_embedding=dim > 0)
-    return {
-        "id": entry.speaker_id,
-        "label": entry.label,
-        "source_type": entry.source_type,
-        "scope": "session",
-        "is_default": False,
-        "original_name": entry.original_name,
-        "created_at": entry.created_at,
-        "has_preview": bool(entry.audio_bytes),
-        "speaker_modes": modes,
-        "embedding_dim": dim if "embedding" in modes else None,
-        "transcript": None,
-        "disabled_controls": disabled_controls(_steer_bundle(config), entry.speaker_id),
-    }
-
-
-def _serialize_default_speaker(
-    config: ServerArgs, entry: DefaultSpeakerReference, expected_dim: int
-) -> dict:
-    modes = _voice_speaker_modes(config, entry.source_type)
-    return {
-        "id": entry.speaker_id,
-        "label": entry.label,
-        "source_type": entry.source_type,
-        "scope": "default",
-        "is_default": True,
-        "original_name": entry.original_name,
-        "created_at": entry.mtime,
-        "has_preview": entry.source_type == "audio",
-        "speaker_modes": modes,
-        "embedding_dim": expected_dim if "embedding" in modes else None,
-        "transcript": entry.transcript,
-        "disabled_controls": disabled_controls(_steer_bundle(config), entry.speaker_id),
-    }
+    return serialize_session_voice(
+        speaker_id=entry.speaker_id, label=entry.label, source_type=entry.source_type,
+        original_name=entry.original_name, created_at=entry.created_at, has_preview=bool(entry.audio_bytes),
+        embedding_dim=dim, modes=voice_speaker_modes(modes, entry.source_type, has_embedding=dim > 0),
+        disabled=disabled,
+    )
 
 
 def _default_voice_root(config: ServerArgs) -> Path | None:
@@ -578,40 +476,7 @@ def _default_voice_root(config: ServerArgs) -> Path | None:
     return Path(str(raw)).expanduser()
 
 
-def _default_voice_source_type(path: Path) -> Literal["audio", "embedding"] | None:
-    name = path.name.lower()
-    # An audio voice's sidecars for the GGUF servers (reference codes, speaker embedding) are no voice; this server
-    # computes both from the clip with its own encoders.
-    if name.endswith(".codes.npy") or name.endswith(".embedding.npy"):
-        return None
-    suffix = path.suffix.lower()
-    if suffix in _DEFAULT_VOICE_EMBEDDING_EXTENSIONS:
-        return "embedding"
-    if suffix in _DEFAULT_VOICE_AUDIO_EXTENSIONS:
-        return "audio"
-    return None
-
-
-def _default_voice_id(root: Path, path: Path) -> str:
-    rel = path.relative_to(root).as_posix()
-    digest = hashlib.sha1(rel.encode("utf-8")).hexdigest()[:16]
-    return f"default_{digest}"
-
-
-def _default_voice_label(path: Path) -> str:
-    label = path.stem.replace("_", " ").replace("-", " ").strip()
-    return label or path.name
-
-
-def _read_voice_transcript(path: Path) -> str | None:
-    """Text of the ``<voice>.txt`` sidecar next to a default voice, when present."""
-    try:
-        return path.with_suffix(".txt").read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
-
-
-async def _list_default_speakers(config: ServerArgs) -> list[DefaultSpeakerReference]:
+async def _list_default_speakers(config: ServerArgs) -> list[DefaultVoice]:
     root = _default_voice_root(config)
     if root is None:
         return []
@@ -624,41 +489,7 @@ async def _list_default_speakers(config: ServerArgs) -> list[DefaultSpeakerRefer
     cache_key = (str(root), expected_dim)
 
     async with _DEFAULT_SPEAKER_CACHE_LOCK:
-        previous = _DEFAULT_SPEAKER_CACHE.get(cache_key, {})
-        current: dict[str, DefaultSpeakerReference] = {}
-        for path in sorted((p for p in root.rglob("*") if p.is_file()), key=lambda p: p.as_posix()):
-            source_type = _default_voice_source_type(path)
-            if source_type is None:
-                continue
-
-            resolved_path = path.resolve()
-            try:
-                stat = resolved_path.stat()
-            except OSError:
-                continue
-
-            speaker_id = _default_voice_id(root, path)
-            existing = previous.get(speaker_id)
-            if (
-                existing is not None
-                and existing.path == resolved_path
-                and existing.mtime == stat.st_mtime
-                and existing.source_type == source_type
-            ):
-                existing.transcript = _read_voice_transcript(existing.path)
-                current[speaker_id] = existing
-                continue
-
-            current[speaker_id] = DefaultSpeakerReference(
-                speaker_id=speaker_id,
-                label=_default_voice_label(resolved_path),
-                source_type=source_type,
-                path=resolved_path,
-                mtime=stat.st_mtime,
-                original_name=resolved_path.name,
-                transcript=_read_voice_transcript(resolved_path),
-            )
-
+        current = scan_default_voices(root, _DEFAULT_SPEAKER_CACHE.get(cache_key, {}))
         _DEFAULT_SPEAKER_CACHE[cache_key] = current
         return sorted(current.values(), key=lambda entry: entry.label.lower())
 
@@ -666,41 +497,25 @@ async def _list_default_speakers(config: ServerArgs) -> list[DefaultSpeakerRefer
 async def _get_default_speaker(
     config: ServerArgs,
     speaker_id: str,
-) -> DefaultSpeakerReference | None:
+) -> DefaultVoice | None:
     speakers = await _list_default_speakers(config)
     return next((entry for entry in speakers if entry.speaker_id == speaker_id), None)
 
 
-def _read_default_voice_file(entry: DefaultSpeakerReference) -> bytes:
-    try:
-        return entry.path.read_bytes()
-    except OSError as exc:
-        raise ValueError(f"Failed to read default voice '{entry.label}'.") from exc
-
-
-async def _default_speaker_preview(entry: DefaultSpeakerReference) -> tuple[bytes, str]:
-    if entry.source_type != "audio":
-        raise ValueError("Default embedding speakers do not include preview audio.")
-    if entry.audio_bytes is None:
-        entry.audio_bytes = _transcode_audio_bytes_to_wav(_read_default_voice_file(entry))
-        entry.audio_media_type = "audio/wav"
-    return entry.audio_bytes, entry.audio_media_type or "audio/wav"
-
-
 async def _load_default_speaker_embedding(
     config: ServerArgs,
-    entry: DefaultSpeakerReference,
+    entry: DefaultVoice,
 ) -> torch.Tensor:
     expected_dim = _model_speaker_dim(config)
     if entry.embedding is None:
         if entry.source_type == "embedding":
-            entry.embedding = _load_embedding_vector(
-                _read_default_voice_file(entry),
+            entry.embedding = load_embedding_vector(
+                read_voice_file(entry),
                 expected_dim=expected_dim,
                 file_name=entry.original_name,
             )
         else:
-            wav_bytes, _ = await _default_speaker_preview(entry)
+            wav_bytes, _ = voice_preview(entry)
             wav, sample_rate = _decode_wav_bytes(wav_bytes)
             entry.embedding = await _compute_speaker_embedding_from_waveform(
                 wav,
@@ -723,7 +538,7 @@ async def _cache_speaker_reference(
     audio_media_type: str | None = None,
 ) -> CachedSpeakerReference:
     entry = CachedSpeakerReference(
-        speaker_id=f"spk_{uuid.uuid4().hex[:12]}",
+        speaker_id=new_speaker_id(),
         label=label,
         source_type=source_type,
         embedding=embedding.detach().to(dtype=torch.float32, device="cpu").contiguous().clone(),
@@ -755,81 +570,6 @@ async def _get_cached_speaker(session_id: str, speaker_id: str) -> CachedSpeaker
     if entry is None:
         raise ValueError(f"Unknown cached speaker id '{speaker_id}'.")
     return entry
-
-
-def _decode_base64_blob(data: str, field_name: str) -> bytes:
-    payload = data.strip()
-    if payload.startswith("data:"):
-        if "," not in payload:
-            raise ValueError(f"Invalid data URL for {field_name}.")
-        payload = payload.split(",", 1)[1]
-    try:
-        return base64.b64decode(payload, validate=True)
-    except Exception as exc:  # pragma: no cover - branch depends on invalid user payload
-        raise ValueError(f"{field_name} must be valid base64-encoded data.") from exc
-
-
-def _load_embedding_vector(
-    embedding_bytes: bytes,
-    *,
-    expected_dim: int,
-    file_name: str | None = None,
-) -> torch.Tensor:
-    try:
-        loaded = np.load(io.BytesIO(embedding_bytes), allow_pickle=False)
-    except Exception as exc:
-        file_desc = file_name or "Speaker embedding file"
-        raise ValueError(
-            f"{file_desc} must be a valid .npy or .npz file saved without pickle."
-        ) from exc
-
-    arr = None
-    if isinstance(loaded, np.lib.npyio.NpzFile):
-        try:
-            if "emb" in loaded.files:
-                arr = loaded["emb"]
-            elif len(loaded.files) == 1:
-                arr = loaded[loaded.files[0]]
-            else:
-                raise ValueError(
-                    "Embedding archive must contain an 'emb' array or exactly one array."
-                )
-        finally:
-            loaded.close()
-    else:
-        arr = loaded
-
-    if isinstance(arr, np.ndarray) and arr.dtype.names:
-        if "emb" in arr.dtype.names:
-            arr = arr["emb"]
-        elif len(arr.dtype.names) == 1:
-            arr = arr[arr.dtype.names[0]]
-        else:
-            raise ValueError("Structured embedding arrays must contain an 'emb' field.")
-
-    arr = np.asarray(arr, dtype=np.float32)
-    arr = np.squeeze(arr)
-
-    if arr.ndim == 1:
-        vector = arr
-    elif arr.ndim == 2:
-        if arr.shape[0] == 0:
-            raise ValueError("Speaker embedding file is empty.")
-        # Multi-row embedding files come from segmented exports; average them into one speaker vector.
-        vector = arr[0] if arr.shape[0] == 1 else arr.mean(axis=0)
-    else:
-        raise ValueError(
-            f"Unsupported embedding array shape {tuple(arr.shape)}. Expected (D,) or (N, D)."
-        )
-
-    vector = np.ascontiguousarray(vector, dtype=np.float32)
-    if vector.shape[-1] != expected_dim:
-        raise ValueError(
-            f"Reference embedding dimension mismatch. Model expects {expected_dim}, "
-            f"but loaded file has {vector.shape[-1]}."
-        )
-
-    return torch.from_numpy(vector).to(dtype=torch.float32, device="cpu")
 
 
 async def _get_speaker_embedder(expected_dim: int, speaker_codec: str | None = None):
@@ -867,7 +607,7 @@ async def _compute_speaker_embedding_from_audio(
     expected_dim: int,
     speaker_codec: str | None = None,
 ) -> torch.Tensor:
-    audio_bytes = _decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
+    audio_bytes = decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
     wav, sample_rate = _decode_audio_bytes(audio_bytes)
     return await _compute_speaker_embedding_from_waveform(
         wav,
@@ -911,11 +651,11 @@ def _compute_speaker_embedding_from_file(
     expected_dim: int,
     speaker_embedding_name: str | None = None,
 ) -> torch.Tensor:
-    embedding_bytes = _decode_base64_blob(
+    embedding_bytes = decode_base64_blob(
         speaker_embedding_base64,
         "speaker_embedding_base64",
     )
-    return _load_embedding_vector(
+    return load_embedding_vector(
         embedding_bytes,
         expected_dim=expected_dim,
         file_name=speaker_embedding_name,
@@ -938,7 +678,7 @@ async def _resolve_cached_speaker_embedding(
     if default_entry is not None:
         return await _load_default_speaker_embedding(config, default_entry)
 
-    resolved_session_id = _require_session_id(session_id)
+    resolved_session_id = require_session_id(session_id)
     entry = await _get_cached_speaker(resolved_session_id, speaker_id)
     expected_dim = _model_speaker_dim(config)
     actual_dim = int(entry.embedding.numel())
@@ -998,7 +738,7 @@ async def _resolve_speaker_embedding(
         )
         if speaker_a is None or speaker_b is None:
             return None
-        return _slerp_embeddings(
+        return slerp(
             speaker_a,
             speaker_b,
             0.5 if speaker_blend_t is None else speaker_blend_t,
@@ -1059,15 +799,15 @@ async def _resolve_speaker_reference_audio(
                 raise ValueError(
                     f"Default voice '{default_entry.label}' is an embedding file; this checkpoint needs reference audio."
                 )
-            audio_bytes, _ = await _default_speaker_preview(default_entry)   # transcoded WAV, cached on the entry
+            audio_bytes, _ = voice_preview(default_entry)   # transcoded WAV, cached on the entry
             return audio_bytes
-        entry = await _get_cached_speaker(_require_session_id(session_id), speaker_embedding_id)
+        entry = await _get_cached_speaker(require_session_id(session_id), speaker_embedding_id)
         if not entry.audio_bytes:
             raise ValueError(f"Cached speaker '{entry.label}' has no reference audio.")
         return entry.audio_bytes
     if speaker_audio_base64 is None:
         return None
-    return _decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
+    return decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
 
 
 @dataclass
@@ -1221,12 +961,8 @@ async def _warm_default_speaker_embeddings(config: ServerArgs) -> None:
     """Compute every default voice's speaker embedding once (the studio's Who map places them all)."""
     if not _model_supports_speaker_embedding(config):
         return
-    for entry in await _list_default_speakers(config):
-        try:
-            await _load_default_speaker_embedding(config, entry)
-        except (ValueError, RuntimeError) as exc:
-            logger.warning("Default voice %s has no speaker embedding: %s", entry.label, exc)
-        await asyncio.sleep(0)
+    await warm_voice_embeddings(await _list_default_speakers(config),
+                                lambda entry: _load_default_speaker_embedding(config, entry), logger)
 
 
 @asynccontextmanager
@@ -1316,14 +1052,6 @@ async def _resolve_request_speaker_conditioning(
     return speaker_reference_audio, speaker_embedding
 
 
-# The speaker input fields a SpeechRequest `voice` cannot be combined with.
-_SPEAKER_INPUT_FIELDS = (
-    "speaker_audio_base64", "speaker_audio_name", "speaker_reference_codes", "speaker_embedding_base64",
-    "speaker_embedding_name", "speaker_embedding_id", "speaker_blend_embedding_id_a", "speaker_blend_embedding_id_b",
-    "speaker_blend_t",
-)
-
-
 @app.post("/v1/audio/speech")
 async def create_speech(
     req: SpeechRequest,
@@ -1335,9 +1063,9 @@ async def create_speech(
     state = get_global_state()
     fields = req.model_dump(exclude={"model", "input", "voice", "response_format"})
     if req.voice is not None:
-        if any(fields[name] is not None for name in _SPEAKER_INPUT_FIELDS):
+        if any(fields[name] is not None for name in SPEAKER_INPUT_FIELDS):
             raise HTTPException(status_code=400, detail="voice cannot be combined with speaker_* fields")
-        session_id = _normalize_session_id(x_tts_session_id)
+        session_id = normalize_session_id(x_tts_session_id)
         known = await _get_default_speaker(state.config, req.voice) is not None
         if not known and session_id is not None:
             async with _SESSION_SPEAKER_CACHE_LOCK:
@@ -1476,7 +1204,7 @@ async def tts_cache_speaker(
     """Cache a speaker embedding for later selection in the current session."""
     state = get_global_state()
     try:
-        session_id = _require_session_id(x_tts_session_id)
+        session_id = require_session_id(x_tts_session_id)
         if _model_uses_speaker_reference_prefix(state.config):
             # Raw-reference checkpoint: the cache holds the clip itself, plus its embedding when the checkpoint
             # also conditions on embeddings. An embedding file (e.g. a voice designed in the studio) is cached
@@ -1492,18 +1220,18 @@ async def tts_cache_speaker(
                 embedding_name = req.speaker_embedding_name
                 entry = await _cache_speaker_reference(
                     session_id=session_id,
-                    label=_default_speaker_label(req.label, embedding_name, fallback="Speaker embedding"),
+                    label=speaker_label(req.label, embedding_name, fallback="Speaker embedding"),
                     source_type="embedding",
                     embedding=_compute_speaker_embedding_from_file(
                         req.speaker_embedding_base64, expected_dim=_model_speaker_dim(state.config),
                         speaker_embedding_name=embedding_name),
                     original_name=embedding_name,
                 )
-                return _serialize_cached_speaker(state.config, entry)
+                return _speaker_document(state.config, entry)
             if not raw_audio_base64:
                 raise ValueError("Provide an audio file to cache as the speaker reference.")
             raw_name = req.speaker_audio_name
-            raw_bytes = _decode_base64_blob(raw_audio_base64, "speaker_audio_base64")
+            raw_bytes = decode_base64_blob(raw_audio_base64, "speaker_audio_base64")
             raw_wav_bytes = _transcode_audio_bytes_to_wav(raw_bytes)
             raw_embedding = torch.empty(0)
             if _model_supports_speaker_embedding(state.config):     # both paths: keep the clip and its embedding
@@ -1512,14 +1240,14 @@ async def tts_cache_speaker(
                     raw_wav, raw_rate, expected_dim=_model_speaker_dim(state.config), speaker_codec=_model_speaker_codec(state.config))
             entry = await _cache_speaker_reference(
                 session_id=session_id,
-                label=_default_speaker_label(req.label, raw_name, fallback="Speaker audio"),
+                label=speaker_label(req.label, raw_name, fallback="Speaker audio"),
                 source_type="audio",
                 embedding=raw_embedding,
                 original_name=raw_name,
                 audio_bytes=raw_wav_bytes,
                 audio_media_type="audio/wav",
             )
-            return _serialize_cached_speaker(state.config, entry)
+            return _speaker_document(state.config, entry)
         if not _model_supports_speaker_embedding(state.config):
             raise ValueError("Current model does not support speaker embeddings.")
 
@@ -1538,7 +1266,7 @@ async def tts_cache_speaker(
         expected_dim = _model_speaker_dim(state.config)
         if speaker_audio_base64:
             audio_name = req.speaker_audio_name
-            audio_bytes = _decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
+            audio_bytes = decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
             preview_wav_bytes = _transcode_audio_bytes_to_wav(audio_bytes)
             wav, sample_rate = _decode_wav_bytes(preview_wav_bytes)
             embedding = await _compute_speaker_embedding_from_waveform(
@@ -1549,7 +1277,7 @@ async def tts_cache_speaker(
             )
             entry = await _cache_speaker_reference(
                 session_id=session_id,
-                label=_default_speaker_label(req.label, audio_name, fallback="Speaker audio"),
+                label=speaker_label(req.label, audio_name, fallback="Speaker audio"),
                 source_type="audio",
                 embedding=embedding,
                 original_name=audio_name,
@@ -1565,7 +1293,7 @@ async def tts_cache_speaker(
             )
             entry = await _cache_speaker_reference(
                 session_id=session_id,
-                label=_default_speaker_label(req.label, embedding_name, fallback="Speaker embedding"),
+                label=speaker_label(req.label, embedding_name, fallback="Speaker embedding"),
                 source_type="embedding",
                 embedding=embedding,
                 original_name=embedding_name,
@@ -1575,7 +1303,7 @@ async def tts_cache_speaker(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return _serialize_cached_speaker(state.config, entry)
+    return _speaker_document(state.config, entry)
 
 
 @app.get("/v2/speakers")
@@ -1584,20 +1312,14 @@ async def tts_list_speakers(
 ):
     """List default disk speakers and cached speakers for the current session."""
     state = get_global_state()
-    expected_dim = _model_speaker_dim(state.config)
     default_entries = await _list_default_speakers(state.config)
 
     entries: list[CachedSpeakerReference] = []
-    session_id = _normalize_session_id(x_tts_session_id)
+    session_id = normalize_session_id(x_tts_session_id)
     if session_id is not None:
         entries = await _list_cached_speakers(session_id)
 
-    return {
-        "speakers": [
-            *[_serialize_default_speaker(state.config, entry, expected_dim) for entry in default_entries],
-            *[_serialize_cached_speaker(state.config, entry) for entry in entries],
-        ]
-    }
+    return {"speakers": [_speaker_document(state.config, entry) for entry in (*default_entries, *entries)]}
 
 
 @app.get("/v2/speakers/{speaker_id}/preview")
@@ -1610,10 +1332,10 @@ async def tts_preview_speaker(
     try:
         default_entry = await _get_default_speaker(state.config, speaker_id)
         if default_entry is not None:
-            audio_bytes, media_type = await _default_speaker_preview(default_entry)
+            audio_bytes, media_type = voice_preview(default_entry)
             return Response(content=audio_bytes, media_type=media_type)
 
-        session_id = _require_session_id(x_tts_session_id)
+        session_id = require_session_id(x_tts_session_id)
         entry = await _get_cached_speaker(session_id, speaker_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

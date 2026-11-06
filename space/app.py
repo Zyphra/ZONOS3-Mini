@@ -25,15 +25,12 @@ subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "--quiet", 
 import asyncio
 import base64
 import contextvars
-import hashlib
 import io
 import multiprocessing
 import re
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 import gradio as gr
 import numpy as np
@@ -64,6 +61,7 @@ from zonos3.reference.synth import (
     edit_region,
     load_embedding_vector,
     output_gain,
+    slerp,
     synthesize,
 )
 from zonos3.server.errors import call as edit_errors
@@ -76,6 +74,21 @@ from zonos3.server.schemas import (
     SpeakerCreateRequest,
 )
 from zonos3.server.studio import resolve_studio_file, studio_cache_control
+from zonos3.server.voices import (
+    DefaultVoice,
+    SessionVoice,
+    new_speaker_id,
+    normalize_session_id,
+    read_voice_file,
+    require_session_id,
+    scan_default_voices,
+    serialize_default_voice,
+    serialize_session_voice,
+    speaker_label,
+    voice_preview,
+    voice_sidecar,
+    voice_speaker_modes,
+)
 from zonos3.tokenizer import matched_codec
 from zonos3.tokenizer.dual_reference import encode_dual_reference
 from zonos3.tokenizer.matched_codec import decode_model
@@ -219,64 +232,37 @@ CONTROLS = controls_document(ASSETS.steer_bundle, speaker_embedding_dim=CONFIG.s
 # --------------------------------------------------------------------------------------------------- voices
 
 
-@dataclass
-class Voice:
-    """A default voice (default_voices/) or a session voice (POST /v2/speakers, per X-TTS-Session-ID)."""
-
-    speaker_id: str
-    label: str
-    source_type: Literal["audio", "embedding"]
-    created_at: float
-    is_default: bool
-    original_name: str | None = None
-    audio: bytes | None = None  # an audio voice's clip
-    codes: list | None = None  # a default voice's shipped <stem>.codes.npy (reference prefix codes)
-    embedding: torch.Tensor | None = None
-    preview_wav: bytes | None = None
+# Default voices (default_voices/, zonos3.server.voices: audio files and embeddings, ids of their relative paths) and
+# session voices (POST /v2/speakers, per X-TTS-Session-ID).
+DEFAULT_VOICES = scan_default_voices(ROOT / "default_voices", {})
+SESSIONS: dict[str, dict[str, SessionVoice]] = {}
 
 
-def default_voices() -> dict[str, Voice]:
-    """The clips of default_voices/ (ids ``default_<sha1[:16]>`` of the file name, as the servers name them)."""
-    voices = {}
-    for path in sorted((ROOT / "default_voices").glob("*.mp3")):
-        speaker_id = "default_" + hashlib.sha1(path.name.encode("utf-8")).hexdigest()[:16]
-        codes = path.with_name(path.stem + ".codes.npy")
-        voices[speaker_id] = Voice(speaker_id, path.stem.replace("_", " ").replace("-", " "), "audio",
-                                   path.stat().st_mtime, True, path.name, path.read_bytes(),
-                                   np.load(codes).tolist() if codes.is_file() else None)
-    return voices
+def serialize(voice: DefaultVoice | SessionVoice) -> dict:
+    modes = voice_speaker_modes(list(CONTEXT.speaker_modes), voice.source_type)
+    disabled = disabled_controls(ASSETS.steer_bundle, voice.speaker_id)
+    if isinstance(voice, DefaultVoice):
+        return serialize_default_voice(voice, modes=modes, embedding_dim=CONFIG.speaker_embedding_dim,
+                                       disabled=disabled)
+    return serialize_session_voice(speaker_id=voice.speaker_id, label=voice.label, source_type=voice.source_type,
+                                   original_name=voice.original_name, created_at=voice.created_at,
+                                   has_preview=bool(voice.audio_bytes), embedding_dim=CONFIG.speaker_embedding_dim,
+                                   modes=modes, disabled=disabled)
 
 
-DEFAULT_VOICES = default_voices()
-SESSIONS: dict[str, dict[str, Voice]] = {}
-
-
-def serialize(voice: Voice) -> dict:
-    return {
-        "id": voice.speaker_id, "label": voice.label, "source_type": voice.source_type,
-        "scope": "default" if voice.is_default else "session", "is_default": voice.is_default,
-        "original_name": voice.original_name, "created_at": voice.created_at,
-        "has_preview": voice.source_type == "audio",
-        "speaker_modes": ["embedding"] if voice.source_type == "embedding" else list(CONTEXT.speaker_modes),
-        "embedding_dim": CONFIG.speaker_embedding_dim, "transcript": None,
-        "disabled_controls": disabled_controls(ASSETS.steer_bundle, voice.speaker_id),
-    }
-
-
-def session_of(header: str | None) -> str | None:
-    return (header.strip() or None) if header is not None else None
-
-
-def find_voice(session_id: str | None, speaker_id: str) -> Voice:
+def find_voice(session_id: str | None, speaker_id: str) -> DefaultVoice | SessionVoice:
     voice = DEFAULT_VOICES.get(speaker_id)
     if voice is not None:
         return voice
-    if session_id is None:
-        raise ValueError("Cached speaker operations require the X-TTS-Session-ID header.")
-    voice = SESSIONS.get(session_id, {}).get(speaker_id)
+    voice = SESSIONS.get(require_session_id(session_id), {}).get(speaker_id)
     if voice is None:
         raise ValueError(f"Unknown cached speaker id '{speaker_id}'.")
     return voice
+
+
+def voice_audio(voice: DefaultVoice | SessionVoice) -> bytes:
+    """An audio voice's clip as uploaded / on disk."""
+    return read_voice_file(voice) if isinstance(voice, DefaultVoice) else voice.audio_bytes
 
 
 def embed_audio(audio: bytes) -> torch.Tensor:
@@ -285,22 +271,14 @@ def embed_audio(audio: bytes) -> torch.Tensor:
     return _speaker_embedding(LM, req, ASSETS, CPU)
 
 
-async def voice_embedding(voice: Voice) -> torch.Tensor:
+async def voice_embedding(voice: DefaultVoice | SessionVoice) -> torch.Tensor:
     if voice.embedding is None:
-        voice.embedding = await asyncio.to_thread(embed_audio, voice.audio)
+        if voice.source_type == "embedding":  # a default .npy/.npz voice (session ones carry theirs)
+            voice.embedding = load_embedding_vector(read_voice_file(voice), expected_dim=CONFIG.speaker_embedding_dim,
+                                                    file_name=voice.original_name)
+        else:
+            voice.embedding = await asyncio.to_thread(embed_audio, voice_audio(voice))
     return voice.embedding.detach().to(torch.float32).clone()
-
-
-def slerp(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
-    v0, v1 = v0.reshape(-1).float(), v1.reshape(-1).float()
-    if not 0.0 <= t <= 1.0:
-        raise ValueError("speaker_blend_t must be between 0.0 and 1.0.")
-    a, b = v0 / (torch.linalg.vector_norm(v0) + 1e-8), v1 / (torch.linalg.vector_norm(v1) + 1e-8)
-    omega = torch.acos(torch.clamp(torch.dot(a, b), -1.0, 1.0))
-    if float(omega) < 1e-6:
-        return ((1.0 - t) * v0 + t * v1).contiguous()
-    s = torch.sin(omega)
-    return ((torch.sin((1.0 - t) * omega) / s) * v0 + (torch.sin(t * omega) / s) * v1).contiguous()
 
 
 async def resolve_embedding(session_id: str | None, req: P.Request) -> torch.Tensor | None:
@@ -360,10 +338,11 @@ async def prepare(body: dict, session_id: str | None) -> dict:
         if voice.source_type != "audio":
             raise ValueError(f"Speaker '{voice.label}' is an embedding; speaker_mode=reference needs reference audio.")
         body.update(ids)
-        if voice.codes is not None:
-            body["speaker_reference_codes"] = voice.codes
+        codes = voice_sidecar(voice.path, ".codes.npy") if isinstance(voice, DefaultVoice) else None
+        if codes is not None:  # a default voice's shipped reference prefix codes
+            body["speaker_reference_codes"] = np.load(codes).tolist()
         else:
-            body.update(speaker_audio_base64=base64.b64encode(voice.audio).decode("ascii"),
+            body.update(speaker_audio_base64=base64.b64encode(voice_audio(voice)).decode("ascii"),
                         speaker_audio_name=voice.original_name)
     return body
 
@@ -775,7 +754,7 @@ async def get_controls():
 
 @app.get("/v2/speakers")
 async def list_speakers(x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
-    session = SESSIONS.get(session_of(x_tts_session_id) or "", {})
+    session = SESSIONS.get(normalize_session_id(x_tts_session_id) or "", {})
     voices = sorted(DEFAULT_VOICES.values(), key=lambda v: v.label.lower())
     voices += sorted(session.values(), key=lambda v: v.created_at, reverse=True)
     return {"speakers": [serialize(v) for v in voices]}
@@ -785,58 +764,50 @@ async def list_speakers(x_tts_session_id: str | None = Header(default=None, alia
 async def create_speaker(req: SpeakerCreateRequest,
                          x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
     try:
-        session_id = session_of(x_tts_session_id)
-        if session_id is None:
-            raise ValueError("Cached speaker operations require the X-TTS-Session-ID header.")
+        session_id = require_session_id(x_tts_session_id)
         if req.speaker_audio_base64 and req.speaker_embedding_base64:
             raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
-        speaker_id = f"spk_{uuid.uuid4().hex[:12]}"
         if req.speaker_embedding_base64:
             name = req.speaker_embedding_name
             embedding = load_embedding_vector(decode_base64_blob(req.speaker_embedding_base64,
                                                                  "speaker_embedding_base64"),
                                               expected_dim=CONFIG.speaker_embedding_dim, file_name=name)
-            voice = Voice(speaker_id, label_of(req.label, name, "Speaker embedding"), "embedding", time.time(),
-                          False, name, embedding=embedding)
+            voice = SessionVoice(new_speaker_id(), speaker_label(req.label, name, fallback="Speaker embedding"),
+                                 "embedding", time.time(), name, embedding=embedding)
         elif req.speaker_audio_base64:
             name = req.speaker_audio_name
             audio = decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64")
-            voice = Voice(speaker_id, label_of(req.label, name, "Speaker audio"), "audio", time.time(), False, name,
-                          audio, preview_wav=await asyncio.to_thread(_transcode_audio_bytes_to_wav, audio))
+            voice = SessionVoice(new_speaker_id(), speaker_label(req.label, name, fallback="Speaker audio"), "audio",
+                                 time.time(), name, audio_bytes=audio,
+                                 preview_wav=await asyncio.to_thread(_transcode_audio_bytes_to_wav, audio))
             await voice_embedding(voice)
         else:
             raise ValueError("Provide an audio file or saved embedding file to cache.")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    SESSIONS.setdefault(session_id, {})[speaker_id] = voice
+    SESSIONS.setdefault(session_id, {})[voice.speaker_id] = voice
     return serialize(voice)
-
-
-def label_of(explicit: str | None, name: str | None, fallback: str) -> str:
-    if explicit and explicit.strip():
-        return explicit.strip()
-    if name and Path(name).stem.strip():
-        return Path(name).stem.strip()
-    return fallback
 
 
 @app.get("/v2/speakers/{speaker_id}/preview")
 async def preview(speaker_id: str, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
     try:
-        voice = find_voice(session_of(x_tts_session_id), speaker_id)
+        voice = find_voice(normalize_session_id(x_tts_session_id), speaker_id)
         if voice.source_type != "audio":
             raise HTTPException(status_code=404, detail="This voice has no preview audio.")
-        if voice.preview_wav is None:
-            voice.preview_wav = await asyncio.to_thread(_transcode_audio_bytes_to_wav, voice.audio)
+        if isinstance(voice, DefaultVoice):
+            wav = (await asyncio.to_thread(voice_preview, voice))[0]
+        else:
+            wav = voice.preview_wav
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return Response(content=voice.preview_wav, media_type="audio/wav")
+    return Response(content=wav, media_type="audio/wav")
 
 
 @app.get("/v2/speakers/{speaker_id}/embedding")
 async def embedding(speaker_id: str, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
     try:
-        vector = await voice_embedding(find_voice(session_of(x_tts_session_id), speaker_id))
+        vector = await voice_embedding(find_voice(normalize_session_id(x_tts_session_id), speaker_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"id": speaker_id, "embedding": [round(float(x), 6) for x in vector.reshape(-1)]}
@@ -850,7 +821,7 @@ async def generate(req: GenerateRequest, request: Request,
     if req.stream and req.format == "wav":
         raise HTTPException(status_code=400, detail="format=wav needs stream=false")
     try:
-        body = await prepare(req.model_dump(), session_of(x_tts_session_id))
+        body = await prepare(req.model_dump(), normalize_session_id(x_tts_session_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     take = GPU.submit(body, request)

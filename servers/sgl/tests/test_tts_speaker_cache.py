@@ -6,6 +6,8 @@ import pytest
 np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
+from zonos3.reference.synth import slerp  # noqa: E402
+from zonos3.server import voices  # noqa: E402
 from zonos3.server.schemas import SpeakerCreateRequest  # noqa: E402
 from zonos3.tts import plan  # noqa: E402
 
@@ -29,9 +31,9 @@ def test_slerp_embeddings_respects_endpoints_and_midpoint():
     v0 = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
     v1 = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32)
 
-    start = api_server._slerp_embeddings(v0, v1, 0.0)
-    end = api_server._slerp_embeddings(v0, v1, 1.0)
-    mid = api_server._slerp_embeddings(v0, v1, 0.5)
+    start = slerp(v0, v1, 0.0)
+    end = slerp(v0, v1, 1.0)
+    mid = slerp(v0, v1, 0.5)
 
     assert torch.allclose(start, v0)
     assert torch.allclose(end, v1)
@@ -88,7 +90,7 @@ def test_default_speaker_directory_lists_and_resolves_embedding(tmp_path):
             session_id=None,
             speaker_embedding_id=speakers[0].speaker_id,
         )
-        serialized = api_server._serialize_default_speaker(config, speakers[0], expected_dim=3)
+        serialized = api_server._speaker_document(config, speakers[0])
         return speakers, resolved, serialized
 
     speakers, resolved, serialized = asyncio.run(_run())
@@ -112,7 +114,7 @@ def test_default_speaker_transcript_sidecar(tmp_path):
         api_server._DEFAULT_SPEAKER_CACHE.clear()
         config = _DefaultVoiceConfig(tmp_path)
         speakers = await api_server._list_default_speakers(config)
-        return [api_server._serialize_default_speaker(config, entry, 3) for entry in speakers]
+        return [api_server._speaker_document(config, entry) for entry in speakers]
 
     serialized = asyncio.run(_run())
 
@@ -177,7 +179,7 @@ def test_raw_reference_model_steers_without_speaker_embedding(tmp_path, monkeypa
     def speaker(speaker_id):
         entry = SimpleNamespace(speaker_id=speaker_id, label=speaker_id, source_type="audio", embedding=torch.empty(0),
                                 created_at=0.0, original_name=None, audio_bytes=b"clip")
-        return api_server._serialize_cached_speaker(config, entry)
+        return api_server._speaker_document(config, entry)
 
     assert speaker("voice_a")["disabled_controls"] == ["mood.sad"]
     assert speaker("voice_b")["disabled_controls"] == []
@@ -186,7 +188,7 @@ def test_raw_reference_model_steers_without_speaker_embedding(tmp_path, monkeypa
 
 def test_raw_reference_checkpoints_resolve_voice_ids_to_reference_audio(tmp_path, monkeypatch):
     # The web UI selects voices by id; raw-reference checkpoints need the audio behind it.
-    monkeypatch.setattr(api_server, "_transcode_audio_bytes_to_wav", lambda data: b"WAV:" + data)
+    monkeypatch.setattr(voices, "_transcode_audio_bytes_to_wav", lambda data: b"WAV:" + data)
     (tmp_path / "Bob.mp3").write_bytes(b"mp3")
     config = _DefaultVoiceConfig(tmp_path)
 

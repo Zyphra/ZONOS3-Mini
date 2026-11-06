@@ -3,6 +3,7 @@ wrapper, studio projects and the studio's production build at / (the sgl api_ser
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,6 +21,9 @@ from zonos3_mlx.server.state import ServerState
 def create_app(state: ServerState) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # with a steering bundle, every default voice's embedding up front (the studio's Who map), as the sgl server does
+        if state.engine.steer_bundle is not None:
+            asyncio.get_running_loop().create_task(speakers.warm_default_voices(state))
         try:
             yield
         finally:

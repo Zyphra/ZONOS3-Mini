@@ -17,7 +17,8 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from zonos3.generation import SAMPLE_RATE
 from zonos3.reference.synth import Sampling, fade_out
-from zonos3.server.schemas import GenerateRequest, SpeechRequest
+from zonos3.server.schemas import SPEAKER_INPUT_FIELDS, GenerateRequest, SpeechRequest
+from zonos3.server.voices import normalize_session_id
 from zonos3.tts.audio import pcm16_wav_bytes
 from zonos3.tts.plan import parse_request, request_head
 from zonos3.tts.stream import StreamDecoder
@@ -28,13 +29,6 @@ from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
 
 logger = logging.getLogger("zonos3_mlx.server")
-
-# The speaker input fields a SpeechRequest `voice` cannot be combined with.
-SPEAKER_INPUT_FIELDS = (
-    "speaker_audio_base64", "speaker_audio_name", "speaker_reference_codes", "speaker_embedding_base64",
-    "speaker_embedding_name", "speaker_embedding_id", "speaker_blend_embedding_id_a", "speaker_blend_embedding_id_b",
-    "speaker_blend_t",
-)
 
 
 class JobRun:
@@ -212,14 +206,14 @@ def router(state: ServerState) -> APIRouter:
 
     @r.post("/v2/generate")
     async def generate(req: GenerateRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
-        return await generate_response(state, req, _session(x_tts_session_id))
+        return await generate_response(state, req, normalize_session_id(x_tts_session_id))
 
     @r.post("/v1/audio/speech")
     async def speech(req: SpeechRequest, x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
         """OpenAI-compatible: the /v2/generate request of ``input`` (pcm streams, wav is buffered), with ``voice``
         (a speaker id of GET /v2/speakers) as its speaker_embedding_id."""
         fields = req.model_dump(exclude={"model", "input", "voice", "response_format"})
-        session_id = _session(x_tts_session_id)
+        session_id = normalize_session_id(x_tts_session_id)
         if req.voice is not None:
             if any(fields[name] is not None for name in SPEAKER_INPUT_FIELDS):
                 raise HTTPException(status_code=400, detail="voice cannot be combined with speaker_* fields")
@@ -235,10 +229,6 @@ def router(state: ServerState) -> APIRouter:
         return await generate_response(state, request, session_id)
 
     return r
-
-
-def _session(header: str | None) -> str | None:
-    return (header.strip() or None) if header is not None else None
 
 
 def default_stream_decode() -> str:

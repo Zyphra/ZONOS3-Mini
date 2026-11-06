@@ -107,6 +107,14 @@ class SpeechRequest(GenerationOptions):
     response_format: Literal["pcm", "wav"] = "pcm"
 
 
+# The speaker input fields a SpeechRequest `voice` cannot be combined with.
+SPEAKER_INPUT_FIELDS = (
+    "speaker_audio_base64", "speaker_audio_name", "speaker_reference_codes", "speaker_embedding_base64",
+    "speaker_embedding_name", "speaker_embedding_id", "speaker_blend_embedding_id_a", "speaker_blend_embedding_id_b",
+    "speaker_blend_t",
+)
+
+
 # ------------------------------------------------------------------------------------------------------- speakers
 class SpeakerCreateRequest(_Strict):
     label: str | None = None

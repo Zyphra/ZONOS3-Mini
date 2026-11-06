@@ -166,6 +166,26 @@ def load_embedding_vector(embedding_bytes: bytes, *, expected_dim: int, file_nam
     return torch.from_numpy(vector).to(dtype=torch.float32, device="cpu")
 
 
+def slerp(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+    """Spherical interpolation of two speaker embeddings (``speaker_blend_t``), on the CPU in float32."""
+    v0 = v0.detach().to(dtype=torch.float32, device="cpu").contiguous().view(-1)
+    v1 = v1.detach().to(dtype=torch.float32, device="cpu").contiguous().view(-1)
+    if v0.shape != v1.shape:
+        raise ValueError(
+            f"Cannot blend speaker embeddings with different shapes {tuple(v0.shape)} and {tuple(v1.shape)}.")
+    blend = float(t)
+    if blend < 0.0 or blend > 1.0:
+        raise ValueError("speaker_blend_t must be between 0.0 and 1.0.")
+    v0_n = v0 / (torch.linalg.vector_norm(v0) + 1e-8)
+    v1_n = v1 / (torch.linalg.vector_norm(v1) + 1e-8)
+    omega = torch.acos(torch.clamp(torch.dot(v0_n, v1_n), -1.0, 1.0))
+    if float(omega) < 1e-6:
+        return ((1.0 - blend) * v0 + blend * v1).contiguous()
+    sin_omega = torch.sin(omega)
+    mixed = (torch.sin((1.0 - blend) * omega) / sin_omega) * v0 + (torch.sin(blend * omega) / sin_omega) * v1
+    return mixed.to(dtype=torch.float32, device="cpu").contiguous()
+
+
 def silence_frame(codec: str, device) -> torch.Tensor:
     """The codec-matched silence frame (registry ``silence_frame``, else the dual encoder's steady state of 2 s of
     silence, as TTSVocoderManager.silence_frame_codes)."""
