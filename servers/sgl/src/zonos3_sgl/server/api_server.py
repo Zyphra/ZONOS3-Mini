@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 import io
 import os
@@ -111,10 +110,11 @@ logger = init_logger(__name__, "FrontendAPI")
 _GLOBAL_STATE = None
 _SPEAKER_EMBEDDERS = {}
 _SPEAKER_EMBEDDER_LOCK = asyncio.Lock()
-# Reference clips are decoded and embedded on this many worker threads (each with its own CUDA stream).
+# Reference clips are decoded (ffmpeg transcode) on this many worker threads, off the event loop. The encoder forward
+# itself is serialized: concurrent forwards from several threads hit "illegal memory access" in the CUDA front end.
 _SPEAKER_EMBEDDER_THREADS = max(1, int(os.getenv("ZONOS3_SPEAKER_EMBEDDER_THREADS", "8")))
 _SPEAKER_EMBEDDER_POOL: ThreadPoolExecutor | None = None
-_SPEAKER_EMBEDDER_STREAMS = threading.local()
+_SPEAKER_EMBEDDER_FORWARD_LOCK = threading.Lock()
 _SESSION_SPEAKER_CACHE: Dict[str, Dict[str, "CachedSpeakerReference"]] = {}
 _SESSION_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, DefaultVoice]] = {}
@@ -561,8 +561,8 @@ async def _get_speaker_embedder(expected_dim: int, speaker_codec: str | None = N
 
 
 def _speaker_embedder_pool() -> ThreadPoolExecutor:
-    """Worker threads for reference-clip decoding and speaker embedding, so concurrent uploads run in parallel instead
-    of one after another on the event loop (ffmpeg transcode, resample, fbank and encoder forward per clip)."""
+    """Worker threads for reference-clip decoding and speaker embedding, so concurrent uploads are decoded in parallel
+    instead of one after another on the event loop."""
     global _SPEAKER_EMBEDDER_POOL
     if _SPEAKER_EMBEDDER_POOL is None:
         _SPEAKER_EMBEDDER_POOL = ThreadPoolExecutor(
@@ -572,14 +572,8 @@ def _speaker_embedder_pool() -> ThreadPoolExecutor:
 
 
 def _embed_waveform_sync(embedder, wav: torch.Tensor, sample_rate: int) -> list[torch.Tensor]:
-    """One encoder forward on the calling worker thread's own CUDA stream; returns the CPU candidates."""
-    device = getattr(embedder, "device", None)
-    stream = None
-    if isinstance(device, torch.device) and device.type == "cuda":
-        stream = getattr(_SPEAKER_EMBEDDER_STREAMS, "stream", None)
-        if stream is None:
-            stream = _SPEAKER_EMBEDDER_STREAMS.stream = torch.cuda.Stream(device=device)
-    with torch.inference_mode(), (torch.cuda.stream(stream) if stream is not None else contextlib.nullcontext()):
+    """One encoder forward (one at a time across worker threads); returns the CPU candidates."""
+    with _SPEAKER_EMBEDDER_FORWARD_LOCK, torch.inference_mode():
         output = embedder(wav, sample_rate)
         outputs = output if isinstance(output, tuple) else (output,)
         return [tensor.squeeze(0).to(dtype=torch.float32, device="cpu") for tensor in outputs]
