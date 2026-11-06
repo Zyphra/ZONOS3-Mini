@@ -32,7 +32,7 @@ from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import LaciConfig, LaciHeads, LaciSession, RateBuckets
 from zonos3.tts.probe import locate_text_span
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
-from zonos3.tts.sampler import sample_tts
+from zonos3.tts.sampler import active_repetition_window, clamp_sampling, sample_tts
 from zonos3.tts.span_follow import FollowConfig, SpanFollower
 from zonos3.tts.steering import SteeringBundle, load_bundle, schedule_delta
 from zonos3.tts.stream import StreamDecoder, StreamSettings
@@ -378,26 +378,24 @@ def sample_row(config, logits, sampling: Sampling, history: torch.Tensor, total_
     c = config
     n_cb = c.n_codebooks
     device = logits.device
-    window = max(int(sampling.repetition_window), 0)
-    penalty = max(float(sampling.repetition_penalty), 1.0)
-    codebooks = n_cb if sampling.repetition_codebooks < 0 else min(max(sampling.repetition_codebooks, 0), n_cb)
-    active = min(window, total_generated + history_rows, len(history)) if window > 0 and penalty > 1.0 and codebooks > 0 else 0
+    s = clamp_sampling(sampling, n_codebooks=n_cb, codebook_size=c.codebook_size)
+    active = active_repetition_window(s, min(total_generated + history_rows, len(history)))
     repetition_ids = repetition_penalties = None
     if active > 0:
         recent = history[len(history) - active:, :n_cb].to(device=device, dtype=torch.int64).transpose(0, 1)
         valid = (recent >= 0) & (recent < c.codebook_size)
-        valid[codebooks:] = False
+        valid[s.repetition_codebooks:] = False
         repetition_ids = torch.where(valid, recent, torch.full_like(recent, -1)).unsqueeze(0)
-        repetition_penalties = torch.tensor([penalty], dtype=torch.float32, device=device)
+        repetition_penalties = torch.tensor([s.repetition_penalty], dtype=torch.float32, device=device)
     stop_blocked = None
     if sampling.min_frames > 0:
         stop_blocked = torch.tensor([[total_generated < sampling.min_frames + cb for cb in range(n_cb)]], device=device)
     row = sample_tts(
         logits.float().unsqueeze(0),
-        torch.tensor([max(sampling.temperature, 1e-6)], dtype=torch.float32, device=device),
-        torch.tensor([sampling.topk if sampling.topk >= 1 else c.codebook_size], dtype=torch.int32, device=device),
-        torch.tensor([min(max(sampling.top_p, 0.0), 1.0)], dtype=torch.float32, device=device),
-        torch.tensor([max(sampling.min_p, 0.0)], dtype=torch.float32, device=device),
+        torch.tensor([s.temperature], dtype=torch.float32, device=device),
+        torch.tensor([s.topk], dtype=torch.int32, device=device),
+        torch.tensor([s.top_p], dtype=torch.float32, device=device),
+        torch.tensor([s.min_p], dtype=torch.float32, device=device),
         codebook_size=c.codebook_size, audio_pad_id=c.audio_pad_id,
         stop_token_ids=torch.tensor([stop_id], dtype=torch.int64, device=device),
         repetition_token_ids=repetition_ids, repetition_penalties=repetition_penalties,

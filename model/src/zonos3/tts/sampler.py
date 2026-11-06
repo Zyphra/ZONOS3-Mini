@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import List
 
 import torch
@@ -9,6 +10,42 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 EOA_TOKEN = 1024  # End of audio token
+
+
+@dataclass(frozen=True)
+class ClampedSampling:
+    """One request's sampler settings as every sampler applies them (:func:`clamp_sampling`)."""
+
+    temperature: float
+    topk: int
+    top_p: float
+    min_p: float
+    repetition_window: int
+    repetition_penalty: float
+    repetition_codebooks: int
+
+
+def clamp_sampling(p, *, n_codebooks: int, codebook_size: int) -> ClampedSampling:
+    """Request sampling fields (``temperature``, ``topk``, ``top_p``, ``min_p``, ``repetition_window``,
+    ``repetition_penalty``, ``repetition_codebooks``) clamped to their usable ranges: topk < 1 = the whole codebook,
+    repetition_codebooks < 0 = every codebook."""
+    codebooks = int(p.repetition_codebooks)
+    return ClampedSampling(
+        temperature=max(float(p.temperature), 1e-6),
+        topk=int(p.topk) if int(p.topk) >= 1 else int(codebook_size),
+        top_p=min(max(float(p.top_p), 0.0), 1.0),
+        min_p=max(float(p.min_p), 0.0),
+        repetition_window=max(int(p.repetition_window), 0),
+        repetition_penalty=max(float(p.repetition_penalty), 1.0),
+        repetition_codebooks=n_codebooks if codebooks < 0 else min(max(codebooks, 0), n_codebooks),
+    )
+
+
+def active_repetition_window(c: ClampedSampling, available: int) -> int:
+    """The repetition-penalty window over the ``available`` history rows (0 = no penalty)."""
+    if c.repetition_window > 0 and c.repetition_penalty > 1.0 and c.repetition_codebooks > 0:
+        return min(c.repetition_window, available)
+    return 0
 
 
 def sample_logits_in_fp32(model_config) -> bool:

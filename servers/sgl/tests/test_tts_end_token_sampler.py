@@ -74,6 +74,7 @@ def test_prepare_builds_stop_ids_and_rejects_unknown_end_tokens():
         return SimpleNamespace(
             sampling_params=TTSSamplingParams(repetition_penalty=1.0),
             total_generated=0,
+            history_rows=0,
             device_len=1,
             table_idx=0,
             input_ids=torch.zeros((1, 3), dtype=torch.int32),
@@ -154,7 +155,8 @@ def test_min_frames_hold_the_aligned_stop_frame_back(min_frames):
 
 
 def test_min_frames_off_builds_no_mask():
-    req = SimpleNamespace(sampling_params=TTSSamplingParams(repetition_penalty=1.0), total_generated=0, device_len=1,
+    req = SimpleNamespace(sampling_params=TTSSamplingParams(repetition_penalty=1.0), total_generated=0, history_rows=0,
+                          device_len=1,
                           table_idx=0, input_ids=torch.zeros((1, 3), dtype=torch.int32), rng=None, stop_id=EOA)
     sampler = TTSSampler(device=torch.device("cpu"), n_codebooks=2, codebook_size=CODEBOOK_SIZE, text_vocab=99,
                          audio_pad_id=PAD, end_token_ids=(EOA,), codebook_sizes=CODEBOOK_SIZES)

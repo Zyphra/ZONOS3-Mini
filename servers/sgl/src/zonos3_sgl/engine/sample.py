@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List
 
 import torch
-from zonos3.tts.sampler import sample_tts
+from zonos3.tts.sampler import active_repetition_window, clamp_sampling, sample_tts
 
 if TYPE_CHECKING:
     from zonos3_sgl.core import TTSBatch
@@ -74,33 +74,20 @@ class TTSSampler:
                     f"Request stop id {stop_id} is not an end token of this model {self.end_token_ids}"
                 )
 
-        MIN_T = 1e-6
-        temps = [max(p.temperature, MIN_T) for p in params]
-        top_ks = [p.topk if p.topk >= 1 else self.codebook_size for p in params]
-        top_ps = [min(max(p.top_p, 0.0), 1.0) for p in params]
-        min_ps = [max(p.min_p, 0.0) for p in params]
-        repetition_windows = [max(int(p.repetition_window), 0) for p in params]
-        repetition_penalties = [max(float(p.repetition_penalty), 1.0) for p in params]
-        repetition_codebooks = [
-            self.n_codebooks
-            if int(p.repetition_codebooks) < 0
-            else min(max(int(p.repetition_codebooks), 0), self.n_codebooks)
-            for p in params
-        ]
+        clamped = [clamp_sampling(p, n_codebooks=self.n_codebooks, codebook_size=self.codebook_size) for p in params]
+        temps = [c.temperature for c in clamped]
+        top_ks = [c.topk for c in clamped]
+        top_ps = [c.top_p for c in clamped]
+        min_ps = [c.min_p for c in clamped]
+        repetition_penalties = [c.repetition_penalty for c in clamped]
+        repetition_codebooks = [c.repetition_codebooks for c in clamped]
         generators = [r.rng for r in batch.reqs]
         repetition_token_ids = None
         repetition_penalties_tensor = None
 
         active_windows = [
-            min(window, r.total_generated + r.history_rows, r.device_len)
-            if window > 0 and penalty > 1.0 and codebooks > 0
-            else 0
-            for r, window, penalty, codebooks in zip(
-                batch.reqs,
-                repetition_windows,
-                repetition_penalties,
-                repetition_codebooks,
-            )
+            active_repetition_window(c, min(r.total_generated + r.history_rows, r.device_len))
+            for r, c in zip(batch.reqs, clamped)
         ]
         max_window = max(active_windows, default=0)
         if max_window > 0:
