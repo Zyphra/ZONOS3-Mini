@@ -1,5 +1,5 @@
 // HTTP plumbing of zonos3-server: {"detail"} errors, CORS, the ZONOS3_ACCESS_TOKEN gate, the X-Keepalive wrapper,
-// X-TTS-Session-ID and the studio serving rule (api/openapi.yaml info.description).
+// X-TTS-Session-ID and the studio serving rule (servers/api/openapi.yaml info.description).
 #pragma once
 
 #include "httplib.h"

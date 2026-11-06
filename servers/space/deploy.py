@@ -1,10 +1,11 @@
 """Stage and deploy the ZONOS3 Mini ZeroGPU Space.
 
-    uv run --locked python space/deploy.py [--repo-id Zyphra/ZONOS3-Mini] [--stage-only DIR]
+    uv run --locked python servers/space/deploy.py [--repo-id Zyphra/ZONOS3-Mini] [--stage-only DIR]
 
 Deploying creates the private Space, stores the local HF login token as its HF_TOKEN secret, requests
-ZeroGPU hardware and uploads app.py + the space card + the zonos3 package, steering/, default_voices/,
-FuseAlign's fusealign_hub package and the studio's build (studio/dist, without the in-browser engine) as studio/.
+ZeroGPU hardware and uploads app.py + the space card + the zonos3 package, steering/ and default_voices/ (from
+assets/), FuseAlign's fusealign_hub package and the studio's build (studio/dist, without the in-browser engine) as
+studio/.
 """
 
 import argparse
@@ -17,9 +18,10 @@ from pathlib import Path
 from huggingface_hub import HfApi, SpaceHardware, get_token
 
 SPACE_ID = "Zyphra/ZONOS3-Mini"
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 SPACE_FILES = ("app.py", "README.md", "requirements.txt", "packages.txt")
-TRACKED = ("model/src/zonos3", "steering", "default_voices")
+# Tracked repo paths and where the Space has them (app.py reads them relative to itself).
+TRACKED = {"model/src/zonos3": "zonos3", "assets/steering": "steering", "assets/default_voices": "default_voices"}
 # FuseAlign (speech editing's forced aligner), a submodule: its package as tracked there, with its license.
 FUSEALIGN = REPO / "third_party" / "fusealign-multilingual"
 
@@ -31,9 +33,10 @@ def git(*args: str, repo: Path = REPO) -> str:
 def stage(dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     for name in SPACE_FILES:
-        shutil.copy2(REPO / "space" / name, dest / name)
+        shutil.copy2(REPO / "servers" / "space" / name, dest / name)
     for path in filter(None, git("ls-files", "-z", "--", *TRACKED).split("\0")):
-        target = dest / path.removeprefix("model/src/")
+        source = next(s for s in TRACKED if path.startswith(f"{s}/"))
+        target = dest / TRACKED[source] / path.removeprefix(f"{source}/")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / path, target)
     for path in filter(None, git("ls-files", "-z", "--", "fusealign_hub", repo=FUSEALIGN).split("\0")):

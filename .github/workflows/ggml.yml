@@ -7,10 +7,10 @@ on:
     tags: ['ggml-v*']
     paths:
       - "servers/ggml/**"
-      - "api/openapi.json"
+      - "servers/api/openapi.json"
       - "studio/dist/**"
-      - "default_voices/**"
-      - "laci_heads/**"
+      - "assets/default_voices/**"
+      - "assets/laci_heads/**"
       - "model/src/zonos3/**"
       - "third_party/fusealign-multilingual"
       - ".github/workflows/ggml.yml"
@@ -19,10 +19,10 @@ on:
     branches: [main]
     paths:
       - "servers/ggml/**"
-      - "api/openapi.json"
+      - "servers/api/openapi.json"
       - "studio/dist/**"
-      - "default_voices/**"
-      - "laci_heads/**"
+      - "assets/default_voices/**"
+      - "assets/laci_heads/**"
       - "model/src/zonos3/**"
       - "third_party/fusealign-multilingual"
       - ".github/workflows/ggml.yml"
@@ -105,13 +105,13 @@ jobs:
           mkdir -p dist
           find build \( -name 'zonos3-cli' -o -name 'zac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'zac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
-          cp -r ../../default_voices dist/
-          cp -r ../../laci_heads dist/
+          cp -r ../../assets/default_voices dist/
+          cp -r ../../assets/laci_heads dist/
           mkdir -p dist/python
           cp -r ../../model/src/zonos3 dist/python/zonos3
           cp -r ../../third_party/fusealign-multilingual/fusealign_hub dist/python/fusealign_hub
           cp ../../third_party/fusealign-multilingual/LICENSE dist/python/fusealign_hub/LICENSE
-          cp -r ../../LICENSE ../../NOTICE ../../licenses dist/
+          cp -r ../../LICENSE ../../NOTICE dist/ && mkdir -p dist/third_party && cp -r ../../third_party/licenses dist/third_party/
           cp scripts/start-zonos3.sh dist/start-zonos3.sh
           chmod +x dist/start-zonos3.sh
           tar -C dist -czf zonos3-linux-x64-cpu.tar.gz .
@@ -203,13 +203,13 @@ jobs:
           mkdir -p dist
           find build \( -name 'zonos3-cli' -o -name 'zac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'zac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
-          cp -r ../../default_voices dist/
-          cp -r ../../laci_heads dist/
+          cp -r ../../assets/default_voices dist/
+          cp -r ../../assets/laci_heads dist/
           mkdir -p dist/python
           cp -r ../../model/src/zonos3 dist/python/zonos3
           cp -r ../../third_party/fusealign-multilingual/fusealign_hub dist/python/fusealign_hub
           cp ../../third_party/fusealign-multilingual/LICENSE dist/python/fusealign_hub/LICENSE
-          cp -r ../../LICENSE ../../NOTICE ../../licenses dist/
+          cp -r ../../LICENSE ../../NOTICE dist/ && mkdir -p dist/third_party && cp -r ../../third_party/licenses dist/third_party/
           # stamp the launcher's backend default to match this archive's build
           sed 's/^GPU_DEFAULT=cpu/GPU_DEFAULT=gpu/' scripts/start-zonos3.sh > dist/start-zonos3.sh
           grep -q '^GPU_DEFAULT=gpu' dist/start-zonos3.sh || { echo "GPU stamp failed"; exit 1; }
@@ -274,13 +274,13 @@ jobs:
           find build -name 'zonos3-app' -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
           cp assets/app/zonos3.desktop assets/app/zonos3.png dist/
-          cp -r ../../default_voices dist/
-          cp -r ../../laci_heads dist/
+          cp -r ../../assets/default_voices dist/
+          cp -r ../../assets/laci_heads dist/
           mkdir -p dist/python
           cp -r ../../model/src/zonos3 dist/python/zonos3
           cp -r ../../third_party/fusealign-multilingual/fusealign_hub dist/python/fusealign_hub
           cp ../../third_party/fusealign-multilingual/LICENSE dist/python/fusealign_hub/LICENSE
-          cp -r ../../LICENSE ../../NOTICE ../../licenses dist/
+          cp -r ../../LICENSE ../../NOTICE dist/ && mkdir -p dist/third_party && cp -r ../../third_party/licenses dist/third_party/
           tar -C dist -czf zonos3-linux-x64-app.tar.gz .
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/ggml-v')
@@ -369,13 +369,13 @@ jobs:
           mkdir -p dist
           find build \( -name 'zonos3-cli' -o -name 'zac-encoder-cli' -o -name 'ssl-encoder-cli' -o -name 'spk-encoder-cli' -o -name 'zac-cli' -o -name 'quantize-cli' -o -name 'zonos3-server' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
-          cp -r ../../default_voices dist/
-          cp -r ../../laci_heads dist/
+          cp -r ../../assets/default_voices dist/
+          cp -r ../../assets/laci_heads dist/
           mkdir -p dist/python
           cp -r ../../model/src/zonos3 dist/python/zonos3
           cp -r ../../third_party/fusealign-multilingual/fusealign_hub dist/python/fusealign_hub
           cp ../../third_party/fusealign-multilingual/LICENSE dist/python/fusealign_hub/LICENSE
-          cp -r ../../LICENSE ../../NOTICE ../../licenses dist/
+          cp -r ../../LICENSE ../../NOTICE dist/ && mkdir -p dist/third_party && cp -r ../../third_party/licenses dist/third_party/
           # stamp the launcher's backend default to match this archive's build;
           # ship it twice: .command for Finder double-click, .sh for the terminal
           sed 's/^GPU_DEFAULT=cpu/GPU_DEFAULT=gpu/' scripts/start-zonos3.sh > dist/start-zonos3.sh
@@ -559,13 +559,13 @@ jobs:
           mkdir -p dist
           find build \( -name 'zonos3-cli.exe' -o -name 'zac-encoder-cli.exe' -o -name 'ssl-encoder-cli.exe' -o -name 'spk-encoder-cli.exe' -o -name 'zac-cli.exe' -o -name 'quantize-cli.exe' -o -name 'zonos3-server.exe' -o -name 'zonos3-app.exe' \) -type f -exec cp {} dist/ \;
           cp -r ../../studio/dist dist/studio
-          cp -r ../../default_voices dist/
-          cp -r ../../laci_heads dist/
+          cp -r ../../assets/default_voices dist/
+          cp -r ../../assets/laci_heads dist/
           mkdir -p dist/python
           cp -r ../../model/src/zonos3 dist/python/zonos3
           cp -r ../../third_party/fusealign-multilingual/fusealign_hub dist/python/fusealign_hub
           cp ../../third_party/fusealign-multilingual/LICENSE dist/python/fusealign_hub/LICENSE
-          cp -r ../../LICENSE ../../NOTICE ../../licenses dist/
+          cp -r ../../LICENSE ../../NOTICE dist/ && mkdir -p dist/third_party && cp -r ../../third_party/licenses dist/third_party/
           # dist already contains the BOM-preserving, regression-tested launchers.
           # zip, not tar.gz: Explorer extracts it natively and (unlike tar) keeps
           # the Mark-of-the-Web flow the README's SmartScreen guidance describes

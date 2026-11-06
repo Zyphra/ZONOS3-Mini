@@ -3588,7 +3588,7 @@ requires-dist = [
 [[package]]
 name = "zonos3-api"
 version = "0.1.0"
-source = { virtual = "api" }
+source = { virtual = "servers/api" }
 dependencies = [
     { name = "httpx" },
     { name = "jsonschema" },

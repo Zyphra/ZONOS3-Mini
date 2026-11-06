@@ -1,5 +1,5 @@
 // The generation registry (model/src/zonos3/registries/generation.json, Python zonos3.generation): the request defaults
-// and limits every server shares. The ggml server embeds the same file at build time; api/openapi.yaml repeats the
+// and limits every server shares. The ggml server embeds the same file at build time; servers/api/openapi.yaml repeats the
 // sampling defaults.
 import registry from '../../../model/src/zonos3/registries/generation.json';
 

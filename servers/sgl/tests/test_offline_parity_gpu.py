@@ -27,7 +27,7 @@ pytestmark = [
 ]
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-VOICE = os.path.join(REPO, "default_voices", "AmericanFemale.mp3")
+VOICE = os.path.join(REPO, "assets", "default_voices", "AmericanFemale.mp3")
 TEXT = "Call me at 123 Main Street."
 SEED = 12345
 

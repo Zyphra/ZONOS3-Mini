@@ -1,6 +1,6 @@
-// Request validation against api/openapi.json for the keyword subset the spec uses, with FastAPI-style 422 details
+// Request validation against servers/api/openapi.json for the keyword subset the spec uses, with FastAPI-style 422 details
 // (servers/ggml/src/server/schema.cpp: loc = ["body", path...], type "value_error"; JSON errors "json_invalid").
-import spec from '../../../../api/openapi.json';
+import spec from '../../../api/openapi.json';
 
 export interface ValidationItem { loc: (string | number)[]; msg: string; type: string }
 
@@ -106,7 +106,7 @@ function check(s0: Schema, v: unknown, path: (string | number)[], out: Validatio
 /** Violations of `body` against #/components/schemas/<name> (empty: conforms). */
 export function validate(name: string, body: unknown): ValidationItem[] {
   const s = schemas[name];
-  if (!s) throw new Error(`api/openapi.json has no schema ${name}`);
+  if (!s) throw new Error(`servers/api/openapi.json has no schema ${name}`);
   const out: ValidationItem[] = [];
   check(s, body, [], out);
   return out;

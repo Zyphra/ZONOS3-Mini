@@ -1,6 +1,6 @@
 """The generation registry (``registries/generation.json``): the request defaults and limits of every server.
 
-``SAMPLING`` holds the v2 sampling defaults (``api/openapi.yaml`` repeats them), the rest the request limits the
+``SAMPLING`` holds the v2 sampling defaults (``servers/api/openapi.yaml`` repeats them), the rest the request limits the
 request rules (``zonos3.tts.plan``) and the servers' upload paths enforce. The ggml server embeds the same file at
 build time; the in-browser server imports it.
 """

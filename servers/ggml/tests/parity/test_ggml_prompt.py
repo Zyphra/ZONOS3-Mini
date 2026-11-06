@@ -1,7 +1,7 @@
 """Prompt parity: ``zonos3-cli --request req.json --build-prompt ids.npy`` (the ggml server's request resolver) against
 ``python -m zonos3.reference --request req.json --dump-prompt ids.npy`` for every request of
 model/tests/fixtures/prompt_requests.json whose ``requires`` the loaded backbone meets. Both sides load the steering
-bundle ``steering/studio_bundle_mect60k.json`` (ggml: its ``convert_gguf.py steer`` GGUF) for the ``controls`` entries.
+bundle ``assets/steering/studio_bundle_mect60k.json`` (ggml: its ``convert_gguf.py steer`` GGUF) for the ``controls`` entries.
 
 Rows (and a CFG twin's rows) must be identical; the ``.cond.json`` sidecars equal, speaker embeddings within 1e-6.
 
@@ -49,7 +49,7 @@ BACKBONES = {
         os.environ.get("ZONOS3_PHONEME_MODEL", "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k"),
     ),
 }
-BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
+BUNDLE = REPO / "assets" / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
 ERRORS = json.loads(ERROR_FIXTURES.read_text())
 

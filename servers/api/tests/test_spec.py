@@ -24,7 +24,7 @@ def _spec() -> dict:
 
 def test_openapi_json_is_the_bundled_yaml():
     assert (API / "openapi.json").read_text() == _bundle_module().bundle(), (
-        "api/openapi.json is stale: run `uv run --package zonos3-api python api/bundle.py`"
+        "servers/api/openapi.json is stale: run `uv run --package zonos3-api python servers/api/bundle.py`"
     )
 
 

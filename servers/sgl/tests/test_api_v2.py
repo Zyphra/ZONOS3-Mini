@@ -1,4 +1,4 @@
-"""The v2 HTTP surface of the sgl server against api/openapi.json, with a stub frontend (no model): request models
+"""The v2 HTTP surface of the sgl server against servers/api/openapi.json, with a stub frontend (no model): request models
 transcribe the spec, routes live under /v1 and /v2 only, and the generate / speech / speaker responses take the
 v2 shapes (format, X-Seed, voice ids)."""
 
@@ -17,7 +17,7 @@ api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
 from zonos3.server import schemas  # noqa: E402
 
-SPEC = json.loads((Path(__file__).resolve().parents[3] / "api" / "openapi.json").read_text())
+SPEC = json.loads((Path(__file__).resolve().parents[3] / "servers" / "api" / "openapi.json").read_text())
 CODEC = "opus_dual_3n_600k_sched600k_r4096_step600000"
 
 

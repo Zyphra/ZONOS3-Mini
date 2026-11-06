@@ -1,4 +1,4 @@
-"""The FastAPI app of the MLX server: the v2 API of api/openapi.yaml, the access-token gate, CORS, the keepalive
+"""The FastAPI app of the MLX server: the v2 API of servers/api/openapi.yaml, the access-token gate, CORS, the keepalive
 wrapper, studio projects and the studio's production build at / (the sgl api_server app, route for route)."""
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def create_app(state: ServerState) -> FastAPI:
         finally:
             state.close()
 
-    # The spec of this API is api/openapi.yaml; FastAPI's generated docs would describe a second one.
+    # The spec of this API is servers/api/openapi.yaml; FastAPI's generated docs would describe a second one.
     app = FastAPI(
         title="Zonos3 API Server (MLX)",
         version="2.0.0",

@@ -1,7 +1,7 @@
 #!/bin/bash
 # MLX ZONOS3 server on 127.0.0.1:1919 (Apple Silicon). Extra flags are appended.
 # Serves the GGUF files of hf://Zyphra/ZONOS3_Mini_GGUF (the ggml server's) from MODELS_DIR, with the voices in
-# default_voices/. Companions (zac, spk-encoder, zac-encoder, ssl-teacher, steer, accents) are picked up
+# assets/default_voices/. Companions (zac, spk-encoder, zac-encoder, ssl-teacher, steer, accents) are picked up
 # next to the backbone. Overrides:
 #   MODELS_DIR                  directory holding the GGUFs (default servers/ggml/models)
 #   SERVE_MODEL                 backbone GGUF (default $MODELS_DIR/zonos3-ptq.gguf)
@@ -12,7 +12,7 @@
 #                               off without it) and the FuseAlign forced aligner (needs fusealign-hub; default this
 #                               venv's interpreter; ZONOS3_FUSEALIGN_DEVICE, default cpu on macOS)
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
-#   LACI_ALL=1                  LACI heads for every server language from LACI_HEADS_DIR (default laci_heads/): the
+#   LACI_ALL=1                  LACI heads for every server language from LACI_HEADS_DIR (default assets/laci_heads/): the
 #                               default *_heads.json, overridden by a *_heads_<speech code>.json (the zh file for Chinese)
 #   PLUGINS                     "name ..." server plugins (--plugins; e.g. dub, from Zyphra/ZONOS3-dub)
 # Speech recognition (speech editing and plugins) is Qwen3-ASR in .venv-asr (tools/setup_asr_env.sh); ZONOS3_ASR_PYTHON
@@ -31,7 +31,7 @@ fi
 source "$repo_root/servers/serve-common.sh"
 exec uv run --locked --package "$serve_package" --group phonemize python -m zonos3_mlx "$model" \
     --host 127.0.0.1 --port 1919 \
-    --tts-default-voices-dir "${SERVE_VOICES:-$repo_root/default_voices}" \
+    --tts-default-voices-dir "${SERVE_VOICES:-$repo_root/assets/default_voices}" \
     ${PHONEME_LEXICON:+--tts-phoneme-lexicon "$PHONEME_LEXICON"} \
     ${WORKER_PYTHON:+--worker-python "$WORKER_PYTHON"} \
     ${studio_projects:+--studio-projects-dir "$studio_projects"} \

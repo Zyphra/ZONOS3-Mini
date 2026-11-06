@@ -50,7 +50,7 @@ def _clip(seconds: float) -> np.ndarray:
     """The default voices at 44.1 kHz mono, concatenated and repeated to ``seconds``; peak at most 1 (the reference
     normalizes louder input, the native encoder takes it as is)."""
     parts = []
-    for mp3 in sorted((REPO / "default_voices").glob("*.mp3")):
+    for mp3 in sorted((REPO / "assets" / "default_voices").glob("*.mp3")):
         raw = subprocess.check_output(
             ["ffmpeg", "-nostdin", "-v", "error", "-i", str(mp3), "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"]
         )

@@ -685,7 +685,7 @@ function Unavailable() {
       <p>
         Speech editing needs the speech-editing checkpoint (the one it serves may have no span-end token, so it can only speak whole utterances), the FuseAlign forced aligner and the reference encoder. Speech recognition is optional: without it you type each clip’s transcript. Serve the speech-editing checkpoint to edit words in recordings:
       </p>
-      <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=steering/studio_bundle_mect60k.json</pre>
+      <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=assets/steering/studio_bundle_mect60k.json</pre>
       <p class="muted small">{b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
     </div>
   );

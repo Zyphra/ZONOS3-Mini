@@ -1,6 +1,6 @@
 """Write openapi.json, the bundled (anchor-free) form of openapi.yaml.
 
-uv run --package zonos3-api python api/bundle.py
+uv run --package zonos3-api python servers/api/bundle.py
 """
 
 from __future__ import annotations

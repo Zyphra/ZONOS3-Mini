@@ -1,7 +1,7 @@
 """Transcript tokens and error rates of speech editing: the edit's word diff, verify WER and CER.
 
 ``normalize`` and ``char_error_rate`` are copied verbatim from ``z_speech_alignment/textmatch.py`` (Zyphra's
-z-speech-alignment, MIT License, Copyright (c) 2026 Sofian Mejjoute; licenses/z-speech-alignment-MIT.txt), which ported
+z-speech-alignment, MIT License, Copyright (c) 2026 Sofian Mejjoute; third_party/licenses/z-speech-alignment-MIT.txt), which ported
 ``normalize`` from the k2-fsa/libriheavy corpus pipeline (``scripts/filter_by_cer.py``). ``word_errors`` is the word
 Levenshtein of the edit's former recognition worker.
 """

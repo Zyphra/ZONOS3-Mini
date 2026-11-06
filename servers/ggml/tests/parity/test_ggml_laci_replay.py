@@ -289,7 +289,7 @@ def laci_traces() -> dict[str, dict]:
         ),
         # the release heads file (two heads, its own pace prior) through LaciHeads.load
         "release_heads": base(
-            heads_json=str(REPO / "laci_heads" / "zonos3_mini_mect60k_heads.json"),
+            heads_json=str(REPO / "assets" / "laci_heads" / "zonos3_mini_mect60k_heads.json"),
             seed=11,
             attempts=[
                 {"steps": reading(0, 50, fpt=3, jitter=0.8) + reading(70, 100, fpt=3) + tail()},

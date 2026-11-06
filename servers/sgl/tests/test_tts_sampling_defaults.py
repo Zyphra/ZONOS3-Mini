@@ -3,7 +3,7 @@ from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest
 from zonos3_sgl.core import TTSSamplingParams as CoreTTSSamplingParams
 from zonos3_sgl.message.tts import TTSSamplingParams as MessageTTSSamplingParams
 
-# the generation registry's sampling defaults (model/tests/test_generation.py pins them to api/openapi.json)
+# the generation registry's sampling defaults (model/tests/test_generation.py pins them to servers/api/openapi.json)
 EXPECTED_DEFAULTS = dict(SAMPLING)
 
 

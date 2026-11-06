@@ -12,8 +12,8 @@ from jsonschema import Draft7Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT7
 
-REPO = Path(__file__).resolve().parents[3]
-SPEC = json.loads((REPO / "api" / "openapi.json").read_text())
+REPO = Path(__file__).resolve().parents[4]
+SPEC = json.loads((REPO / "servers" / "api" / "openapi.json").read_text())
 _SPEC_URI = "urn:zonos3:openapi"
 _REGISTRY = Registry().with_resource(_SPEC_URI, Resource.from_contents(SPEC, default_specification=DRAFT7))
 

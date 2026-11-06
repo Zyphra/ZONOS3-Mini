@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Goldens for the in-browser FuseAlign port (harness/checks/aligner.ts, tests/aligner.test.ts).
 
-Short 16 kHz clips cut from default_voices/ with their transcripts, aligned by the PyTorch reference
+Short 16 kHz clips cut from assets/default_voices/ with their transcripts, aligned by the PyTorch reference
 (fusealign_hub.load_aligner on CPU, batch size 1: FuseAlign fp32, Dia bf16) from the local
 Zyphra/fusealign safetensors. Writes:
   harness/goldens/aligner/<clip>.s16    the exact 16 kHz input, int16 little-endian (the reference aligns s16 / 32768)
@@ -83,7 +83,9 @@ def main():
 
     clips = []
     for name, src, start, end, text in CLIPS:
-        wav16 = torchaudio.functional.resample(decode44k(os.path.join(REPO, "default_voices", src)), 44100, 16000)
+        wav16 = torchaudio.functional.resample(
+            decode44k(os.path.join(REPO, "assets", "default_voices", src)), 44100, 16000
+        )
         cut = wav16.numpy()[round(start * 16000) : round(end * 16000)]
         s16 = np.clip(np.round(cut * 32768), -32768, 32767).astype("<i2")
         s16.tofile(os.path.join(out, name + ".s16"))
@@ -95,7 +97,7 @@ def main():
                 "name": name,
                 "file": name + ".s16",
                 "samples": int(s16.size),
-                "source": f"default_voices/{src}",
+                "source": f"assets/default_voices/{src}",
                 "source_start": start,
                 "tokens": tokens,
                 "words": [

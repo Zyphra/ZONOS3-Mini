@@ -2,7 +2,7 @@
 reference (zonos3.reference) with generation on ZeroGPU.
 
 ``gr.Server`` is the FastAPI app; its ``launch()`` runs through ``gr.Blocks.launch``, where ``spaces`` starts ZeroGPU.
-The routes are the part of api/openapi.yaml the studio and the lite page use when the server has no plugins or project
+The routes are the part of servers/api/openapi.yaml the studio and the lite page use when the server has no plugins or project
 store (``/v2/capabilities`` says so and the studio adapts): GET ``/v2/capabilities``, ``/v2/controls``,
 ``/v2/speakers``, ``/v2/speakers/{id}/preview``, ``/v2/speakers/{id}/embedding``, POST ``/v2/speakers``,
 ``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first chunk), ``/v2/phonemize`` (the gold lexicon, espeak-ng

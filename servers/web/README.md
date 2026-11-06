@@ -1,7 +1,7 @@
 # zonos3-web — the in-browser server
 
 ZONOS3 Mini running in the browser on hand-written WebGPU (WGSL) inside a Web Worker, serving the v2 API of
-[`api/openapi.yaml`](../../api/openapi.yaml) through a fetch-compatible in-process transport. The studio uses it as
+[`servers/api/openapi.yaml`](../api/openapi.yaml) through a fetch-compatible in-process transport. The studio uses it as
 its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted from web-zonos3.
 
 | Served | Off (capabilities say so; the browser cannot run their Python workers) |
@@ -60,7 +60,7 @@ pnpm --dir servers/web test            # gen:api (src/api/schema.ts, untracked),
 pnpm --dir servers/web goldens         # CPU ggml goldens (needs a CPU ggml build at $GGML_BUILD, default /tmp/ggml-build)
 pnpm --dir servers/web parity          # WebGPU parity vs the goldens in headless Chrome
 pnpm --dir servers/web harness         # HTTP front on :1920, then:
-uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1920
+uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1920
 ```
 
 The harness and parity runner launch Chrome from `CHROME_PATH`, else `harness/.chrome`

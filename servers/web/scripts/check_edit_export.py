@@ -32,7 +32,7 @@ from export_web_models import Gguf, edit_adapter  # noqa: E402
 
 MODELS = "servers/ggml/models"
 TEXT = "Hello there, this is a short speech editing test sentence."
-VOICE = "default_voices/AmericanFemale"
+VOICE = "assets/default_voices/AmericanFemale"
 SPANS = [(30, 20), (90, 20)]
 QKVG = ("q", "k", "v", "gate")
 

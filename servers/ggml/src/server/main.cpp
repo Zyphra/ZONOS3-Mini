@@ -1,8 +1,8 @@
-// zonos3-server: the HTTP API v2 (api/openapi.yaml) over the native GGUF backbone, ZAC decoder and companions, and the
+// zonos3-server: the HTTP API v2 (servers/api/openapi.yaml) over the native GGUF backbone, ZAC decoder and companions, and the
 // studio at /. Module layout (src/server/):
 //   main.cpp          flags, model/companion loading, route registration, the accept loop (zonos3_server_main)
 //   http.*            {"detail"} errors, CORS, ZONOS3_ACCESS_TOKEN, X-Keepalive, X-TTS-Session-ID, studio serving
-//   schema.*          request validation against the embedded api/openapi.json (422 ValidationError)
+//   schema.*          request validation against the embedded servers/api/openapi.json (422 ValidationError)
 //   scheduler.*       continuous batching (backbone worker) + ZAC decode lanes (prefix / whole decode)
 //   speakers.*        default + session voices, speaker prompts of requests, /v2/speakers*
 //   generate.*        /v2/generate, /v1/audio/speech

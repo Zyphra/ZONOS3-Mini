@@ -355,7 +355,7 @@ uv run --package zonos3-tools python tools/convert_gguf.py lm <LM dir> --outtype
     --edit-adapter <z3m_omni3b_edit_lora.pt> --phoneme-rows <phoneme_tokens_s15000.pt> -o zonos3-ptq-edit.gguf
 ```
 
-The Space (`space/`) serves the release LM with both. A converted checkpoint can also carry the rows on disk:
+The Space (`servers/space/`) serves the release LM with both. A converted checkpoint can also carry the rows on disk:
 `tools/add_text_extra_rows.py --base <checkpoint> --rows <phoneme_tokens.pt> --out <phoneme checkpoint>` writes
 `text_extra_tokens` and `text_tokenizer_spec.phonemes` (group markers, token ids, symbols) into `params.json`.
 `text_extra_tokens` is the same field the speech-edit vocabulary uses for its marker rows. The phoneme block is always
@@ -421,7 +421,7 @@ the edit marker rows, exactly as for the edit checkpoint:
 ```bash
 uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <NV checkpoint> \
     --rows <phoneme_tokens.pt> --out <NV + phoneme checkpoint>
-SERVE_MODEL=<NV + phoneme checkpoint> STEER_BUNDLE=steering/studio_bundle_mect60k.json LACI_ALL=1 \
+SERVE_MODEL=<NV + phoneme checkpoint> STEER_BUNDLE=assets/steering/studio_bundle_mect60k.json LACI_ALL=1 \
 PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh
 ```
 
@@ -480,7 +480,7 @@ styles, accents, voice qualities, pitch, …) **without changing the model**: no
 checkpoint changes, so the timbre is preserved while the delivery shifts. Every
 direction set is served through one steering bundle: `--steer-bundle FILE`
 (`STEER_BUNDLE` for `servers/sgl/scripts/serve.sh`, default
-`steering/studio_bundle_mect60k.json`; `STEER_BUNDLE=` serves no controls); the
+`assets/steering/studio_bundle_mect60k.json`; `STEER_BUNDLE=` serves no controls); the
 ggml, mlx and web servers read the same bundle packed as `steer.gguf`
 (`tools/convert_gguf.py steer`). A request picks raw doses with `controls`
 (`"<set>.<direction>": dose`) and, for hidden-space directions, `control_spans`
@@ -526,7 +526,7 @@ refused at load.
 Directions are measured, not trained: clips are teacher-forced through the offline
 engine, every bank source is mean-pooled over the clip's own frames, and a direction
 is a contrast of those means (e.g. style − neutral) at one source. The shipped
-`steering/emotion_directions_mect60k_axes/` (bundle set `mood`) uses the GDN output
+`assets/steering/emotion_directions_mect60k_axes/` (bundle set `mood`) uses the GDN output
 of layer 9 (`source_index` 19, `L9.attn`) and folds the style directions into
 orthogonal conceptual axes: valence, arousal, dominance, loudness, tempo, clarity
 and articulation. `articulation` is the component enunciated and confused share,
@@ -559,7 +559,7 @@ articulation 4, loudness and clarity 2) and no per-voice entries, so
 
 The `accent` / `accent_strength` request fields select accent adapters only (see
 [Accent adapters](#accent-adapters)); accent directions are controls of the bundle.
-The shipped `steering/accent_directions_mect60k/` (lm/mect_60k, bundle set
+The shipped `assets/steering/accent_directions_mect60k/` (lm/mect_60k, bundle set
 `accent_hidden`, control `accent_hidden.hin`) holds Hindi only, at L7.attn
 (`source_index` 15): accented English minus English, from English-labelled clips
 that MMS-LID hears as most Hindi-like against native English clips. The other
@@ -574,11 +574,11 @@ to the embedding's norm as every raw control is, and needs `speaker_mode: embedd
 (a reference-mode request with such a control gets a 400). The direction is the
 mean over native L1 speakers minus the mean over native
 English speakers of the embedding (clips averaged per recording first; gender and
-age, `steering/speaker_attributes_mect60k/`, projected out). The embedding has no
+age, `assets/steering/speaker_attributes_mect60k/`, projected out). The embedding has no
 text in it, so unlike the hidden native-minus-English direction it does not carry
 a language switch. Strong doses trade voice identity for accent (the speaker partly
 becomes a different one), where the LoRA adapters keep it. The shipped
-`steering/speaker_accents_mect60k/` (bundle set `accents_l1`) holds hin, spa, fra,
+`assets/steering/speaker_accents_mect60k/` (bundle set `accents_l1`) holds hin, spa, fra,
 por, deu, vie and pol; Mandarin, Korean and Japanese barely move in the embedding
 alone and stay on `--accent-adapters`.
 
@@ -586,14 +586,14 @@ alone and stay on `--accent-adapters`.
 
 Neither the speaker-embedding direction nor the hidden native − English direction
 gives Mandarin, Korean or Japanese alone. Served together the two add up for
-Mandarin, at the price of the voice: `steering/mandarin_mect60k/` (raw, `cmn`) and
-`steering/mandarin_hidden_mect60k/` (L7.attn, `cmn`) are that pair (in the studio
+Mandarin, at the price of the voice: `assets/steering/mandarin_mect60k/` (raw, `cmn`) and
+`assets/steering/mandarin_hidden_mect60k/` (L7.attn, `cmn`) are that pair (in the studio
 bundle as `mandarin` and `mandarin_hidden`). Korean and Japanese stay on the LoRA
 adapters.
 
 #### Regional English accents
 
-`steering/english_accents_mect60k/` (raw, bundle set `accents_en`) holds british, american, scottish, irish,
+`assets/steering/english_accents_mect60k/` (raw, bundle set `accents_en`) holds british, american, scottish, irish,
 australian, indian and welsh, each relative to American English (american is
 the reverse of british, for British voices). They are fitted from speakers with a
 known accent, each contrast inside one corpus so its recording conditions cancel:
@@ -603,7 +603,7 @@ projected out. welsh also slows speech slightly.
 
 #### Voice quality
 
-`steering/voice_quality_mect60k/` (raw, bundle set `texture`) holds deep,
+`assets/steering/voice_quality_mect60k/` (raw, bundle set `texture`) holds deep,
 shrill, husky, raspy, soft and authoritative: ParaSpeechCaps' human speaker tags
 (VoxCeleb / EARS / Expresso speakers on their original recordings), tagged minus
 untagged speakers inside each corpus and gender, gender and age projected out. The
@@ -612,7 +612,7 @@ useful doses run to about ×4.
 
 #### Pitch level and range
 
-`steering/pitch_mect60k/` (raw axes) holds pitch and pitch_range, fitted on
+`assets/steering/pitch_mect60k/` (raw axes) holds pitch and pitch_range, fitted on
 LibriTTS-R speakers with their measured F0 (pYIN): the least-squares slope of the
 embedding on the speaker's log F0 (pitch) or F0 spread in semitones (pitch_range)
 inside each gender, times the P10-P90 span (dose 1 = from a low-pitched to a
@@ -621,7 +621,7 @@ at ±2; pitch_range leaves the F0 level about where it was.
 
 #### Recording channel
 
-`steering/channel_mect60k/` (raw axis `clean`) is the within-speaker change of the
+`assets/steering/channel_mect60k/` (raw axis `clean`) is the within-speaker change of the
 embedding with ParaSpeechCaps' recording-cleanliness tag (very noisy … very clean,
 per clip): every VoxCeleb clip minus its speaker's mean clip, regressed on the tag
 minus the speaker's mean tag (`"group_by": "clip", "center": "speaker"`), so the
@@ -630,7 +630,7 @@ bandwidth and slow speech slightly. Useful range −2 … +4.
 
 #### Speaking styles in hidden space (EARS)
 
-`steering/ears_styles_mect60k/` (attnres_source, L9.attn like the `mood` axes)
+`assets/steering/ears_styles_mect60k/` (attnres_source, L9.attn like the `mood` axes)
 holds whisper, loud, tempo (fast − slow), pitch (high − low) and conversational
 (spontaneous − read): EARS's speakers read the same passage and sentences in every
 style and talk freely, so each direction is a within-speaker contrast
@@ -648,7 +648,7 @@ style and talk freely, so each direction is a within-speaker contrast
 
 #### Expressiveness in hidden space
 
-`steering/expressive_mect60k/` (attnres_source L9.attn, axis `expressive`) is the
+`assets/steering/expressive_mect60k/` (attnres_source L9.attn, axis `expressive`) is the
 within-speaker change of the bank with a clip's F0 spread: LibriTTS-R readers'
 livelier and flatter clips. The direction is short, so doses run to ±16. Livelier
 readings are also higher and slower in LibriTTS-R, and the direction keeps that;
@@ -657,7 +657,7 @@ so it is the cleaner control of the two.
 
 #### Disfluency in hidden space
 
-`steering/disfluency_mect60k/` (attnres_source L9.attn, axis `disfluent`):
+`assets/steering/disfluency_mect60k/` (attnres_source L9.attn, axis `disfluent`):
 DisfluencySpeech's speaker reads Switchboard turns with their fillers, repetitions
 and restarts; each clip is teacher-forced with the FLUENT transcript, so the bank
 sees hesitations the text does not ask for, and the direction is the regression on
@@ -669,15 +669,15 @@ fillers; past +8 words start to drop.
 EARS's speakers also read the same sentences in 22 emotions and neutral.
 Within-speaker emotion − neutral gives angry, sad, happy (amusement), fearful,
 disgusted and surprised (amazement) both in the speaker embedding
-(`steering/speaker_emotions_mect60k/`, raw, gender and age projected out) and at
-L9.attn (`steering/ears_emotions_mect60k/`, attnres_source). The speaker-embedding
+(`assets/steering/speaker_emotions_mect60k/`, raw, gender and age projected out) and at
+L9.attn (`assets/steering/ears_emotions_mect60k/`, attnres_source). The speaker-embedding
 directions move the perceived emotion most, at a larger identity cost and in
 embedding mode only. Neither set is in the studio bundle; add them to a bundle of
 your own to combine them with the `mood` axes.
 
 #### Persona presets
 
-`steering/speaker_traits_mect60k/` merges every speaker-embedding axis into one
+`assets/steering/speaker_traits_mect60k/` merges every speaker-embedding axis into one
 raw set (gender, age, the seven regional accents, six voice qualities, pitch,
 pitch_range, clean) with six persona presets (`presets.json`, raw doses of the
 set's directions). It is not in the studio bundle (whose `ui.presets` are its own
@@ -698,7 +698,7 @@ A persona is a different speaker by design.
 
 ```bash
 cat > my_bundle.json <<'EOF'
-{"name": "personas", "sets": {"traits": "steering/speaker_traits_mect60k", "delivery": "steering/ears_styles_mect60k"}}
+{"name": "personas", "sets": {"traits": "assets/steering/speaker_traits_mect60k", "delivery": "assets/steering/ears_styles_mect60k"}}
 EOF
 STEER_BUNDLE=my_bundle.json servers/sgl/scripts/serve.sh
 ```
@@ -714,7 +714,7 @@ damage).
 
 #### More moods (EARS)
 
-`steering/ears_moods_mect60k/` holds every EARS emotion against neutral in the same
+`assets/steering/ears_moods_mect60k/` holds every EARS emotion against neutral in the same
 space and spec style as `ears_emotions_mect60k` (attnres_source L9.attn,
 `"group_by": "clip"`, `"center": "speaker"`; its six directions are identical):
 adoring, confused, content, cute, desirous, disappointed, distressed, embarrassed,
@@ -728,7 +728,7 @@ Six moods ship as studio controls: angry, happy, sad, calm (`emotions.serene`),
 scared (`emotions.scared`) and confused. In the studio bundle the `emotions` set is
 `ears_moods_mect60k`, and each shipped mood is a unipolar, spannable `mood` control
 whose safe range, range, effect line, identity curve and default dose come from
-`steering/ears_moods_mect60k/eval/effects.json` (rendered on the edit checkpoint).
+`assets/steering/ears_moods_mect60k/eval/effects.json` (rendered on the edit checkpoint).
 `ui.moods` places each one on the Mood pad at its default dose by its valence and
 arousal shift.
 
@@ -757,7 +757,7 @@ direction set above:
 - **Scene**: cast members as characters, a dialogue rendered line by line, played on a
   timeline and exported as WAV.
 
-It needs a server with a steering bundle; `steering/studio_bundle_mect60k.json`
+It needs a server with a steering bundle; `assets/steering/studio_bundle_mect60k.json`
 holds 14 sets (identity, pitch, English and L1 accents, the hidden Hindi accent, the
 Mandarin pair, texture, room, the EARS delivery styles, expressiveness, disfluency,
 the `mood` axes and the EARS moods; set paths resolve relative to the bundle file),
@@ -766,7 +766,7 @@ each set's evaluation, 15 accents, 8 personas, Who-map positions of the default
 voices and Mood-pad landmarks of the six named moods (see More moods).
 
 ```bash
-servers/sgl/scripts/serve.sh  # STEER_BUNDLE defaults to steering/studio_bundle_mect60k.json
+servers/sgl/scripts/serve.sh  # STEER_BUNDLE defaults to assets/steering/studio_bundle_mect60k.json
 # open http://127.0.0.1:1919/studio
 ```
 
@@ -813,7 +813,7 @@ every write is a temp file renamed into place, under a lock (flock, so servers c
 `--studio-max-project-bytes` (20 MB) and `--studio-max-media-bytes` (2 GB).
 
 ```bash
-ZONOS3_STUDIO_PROJECTS=<projects dir> STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
+ZONOS3_STUDIO_PROJECTS=<projects dir> STEER_BUNDLE=assets/steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
 ```
 
 - `GET /v2/projects` → `[{id, name, updated_at, revision, bytes, media_bytes, summary}]`, newest first (`summary` =
@@ -852,7 +852,7 @@ The dubbing tool is such a plugin: [Zyphra/ZONOS3-dub](https://github.com/Zyphra
   too early or too late is retaken in the speaking-rate bucket its duration ratio asks for (with `adjust_rate`; see
   [features.md](features.md)). A take may also run on an extended speaking-rate scale (`RateBuckets`: edges, first
   bucket, its bucket and the tempo doses of steered buckets). LACI needs `--laci-heads` (`LACI_ALL=1` in the serve
-  scripts passes the `laci_heads/` heads of every language: `zonos3_mini_mect60k_heads_zh.json` for `cmn`,
+  scripts passes the `assets/laci_heads/` heads of every language: `zonos3_mini_mect60k_heads_zh.json` for `cmn`,
   `zonos3_mini_mect60k_heads.json` for the rest; `LACI_HEADS_DIR` / `LACI_HEADS` override).
 
 ### Extended speaking-rate buckets (`rate_extension`)
@@ -862,7 +862,7 @@ the row has a tempo dose that reproduces it (agreeing across English and French 
 dose is continuous and reaches further than the row in both directions, and the rate row is left unknown while
 steering (a set bucket damps the steering).
 
-The bundle's `rate_extension` block (also `steering/ears_styles_mect60k/eval/rate_extension.json`) continues the
+The bundle's `rate_extension` block (also `assets/steering/ears_styles_mect60k/eval/rate_extension.json`) continues the
 `lm/mect_60k` row's ten buckets with **tempo-steered buckets**: −1, −2, … below bucket 0 and 10, 11, … above bucket 9,
 each the rate row unknown plus a `delivery.tempo` dose, only as far as measured safe per language. It holds only for
 the row edges it was measured on: on a checkpoint with other speaking-rate edges (the default

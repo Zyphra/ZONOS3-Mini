@@ -9,7 +9,7 @@
     $T codec-encoder RELEASE/autoencoder/generator.pt -o zac-encoder.gguf
     $T ssl-teacher RELEASE/autoencoder/teacher -o ssl-teacher.gguf
     $T speaker-encoder RELEASE/speaker_encoders/ownmect_s2/ckpt_0037.pth -o spk-encoder.gguf
-    $T steer steering/studio_bundle_mect60k.json -o steer.gguf
+    $T steer assets/steering/studio_bundle_mect60k.json -o steer.gguf
     $T accents ACCENT_ADAPTER_DIR -o accents.gguf
 
 The server finds `steer.gguf` and `accents.gguf` beside the backbone GGUF.

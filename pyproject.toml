@@ -2,7 +2,7 @@
 # GGUF tools and the API conformance suite. The ggml server (servers/ggml) and the studio (studio/) build outside uv.
 
 [tool.uv.workspace]
-members = ["model", "servers/sgl", "servers/mlx", "tools", "api"]
+members = ["model", "servers/sgl", "servers/mlx", "tools", "servers/api"]
 
 [tool.uv]
 # tilelang 0.1.14 declares apache-tvm-ffi>=0.1.11,<0.1.13; the qualified runtime runs it against 0.1.8.post2.
@@ -30,7 +30,7 @@ phonemize = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["model/tests", "servers/sgl/tests", "servers/mlx/tests", "tools/tests", "api/tests/test_spec.py"]
+testpaths = ["model/tests", "servers/sgl/tests", "servers/mlx/tests", "tools/tests", "servers/api/tests/test_spec.py"]
 pythonpath = ["tools"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]

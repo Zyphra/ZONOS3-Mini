@@ -1,4 +1,4 @@
-// HTTP front of the in-browser server, so HTTP clients (api/tests/conformance, curl) can reach it:
+// HTTP front of the in-browser server, so HTTP clients (servers/api/tests/conformance, curl) can reach it:
 //   node harness/server.mjs [--port 1920]
 // Headless Chrome (WebGPU) opens harness/page.html, which loads dist/engine.js; every /v1 and /v2 request is replayed
 // through the page's localFetch and streamed back. Static files: studio/dist at / (the ggml studio serving rule),

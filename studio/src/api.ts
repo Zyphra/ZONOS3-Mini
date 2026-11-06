@@ -1,6 +1,6 @@
 /**
  * The only module that talks to the ZONOS3 server. Everything else sees the contract types below, which alias the
- * schemas of the v2 API spec (`api/openapi.json`, generated into `./api/schema.ts` by `pnpm gen:api`).
+ * schemas of the v2 API spec (`servers/api/openapi.json`, generated into `./api/schema.ts` by `pnpm gen:api`).
  *
  * Backends (picked once by `connect()`):
  *  - live:    the server serves GET /v2/controls; requests carry `controls` / `control_spans`.

@@ -1,6 +1,6 @@
 """The v2 GenerateRequest rules and prompt plan of every Python server (the reference, the MLX and the sgl server).
 
-One request goes through three steps, in the order the sgl frontend has always checked them (api/openapi.yaml; the
+One request goes through three steps, in the order the sgl frontend has always checked them (servers/api/openapi.yaml; the
 rules R1-R16 the ggml and in-browser servers port natively and ``model/tests/fixtures/request_errors.json`` pins):
 
 1. ``request_head``: tag CFG (R1), the speaker mode (R2) and the condition rows (R3) -- everything the server needs
@@ -43,7 +43,7 @@ from zonos3.tts.prompt import TTSPromptBuilder, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
 from zonos3.tts.steering import SteeringBundle, no_steering_message, resolve_controls
 
-# v2 GenerateRequest (api/openapi.yaml): every field and its default.
+# v2 GenerateRequest (servers/api/openapi.yaml): every field and its default.
 GENERATE_DEFAULTS: dict = {
     "text": None,
     "language": "en_us",

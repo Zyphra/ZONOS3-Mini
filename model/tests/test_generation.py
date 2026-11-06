@@ -1,4 +1,4 @@
-"""The generation registry (zonos3.generation, registries/generation.json) against api/openapi.json: the spec repeats
+"""The generation registry (zonos3.generation, registries/generation.json) against servers/api/openapi.json: the spec repeats
 the sampling defaults and request limits, the registry is what every server reads."""
 
 import json
@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from zonos3 import generation
 
-SCHEMAS = json.loads((Path(__file__).resolve().parents[2] / "api" / "openapi.json").read_text())["components"][
-    "schemas"
-]
+SCHEMAS = json.loads((Path(__file__).resolve().parents[2] / "servers" / "api" / "openapi.json").read_text())[
+    "components"
+]["schemas"]
 
 
 @pytest.mark.parametrize("schema", ["GenerationOptions", "GenerateRequest", "SpeechRequest", "EditRequest"])

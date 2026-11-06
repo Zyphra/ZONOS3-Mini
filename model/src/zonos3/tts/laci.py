@@ -279,7 +279,7 @@ class AciCenter:
 
 @dataclass(frozen=True)
 class LaciHeads:
-    """Alignment heads of one model and language (the JSON files in laci_heads/)."""
+    """Alignment heads of one model and language (the JSON files in assets/laci_heads/)."""
 
     heads: tuple[Head, ...]
     radius: dict[Head, int]  # ACI mask half-width per head

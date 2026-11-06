@@ -116,7 +116,7 @@ struct Head {
     bool operator==(const Head & o) const { return layer == o.layer && head == o.head; }
 };
 
-// Alignment heads of one model and language (the JSON files in laci_heads/).
+// Alignment heads of one model and language (the JSON files in assets/laci_heads/).
 struct LaciHeads {
     std::vector<Head> heads;                     // spec order (Python's `heads` tuple)
     std::vector<std::pair<Head, int>> radius;    // ACI mask half-width per head, dict order (first insertion)

@@ -70,7 +70,7 @@ static void usage(const char * a0) {
             "    companions auto-discover next to backbone\n"
             "  --max N --seed N --greedy --recompute\n"
             "  --dump-ids <ids.npy> saves the full teacher-forcing sequence for calibration\n"
-            "  --probe-heads <heads.json> alignment probe of the decode steps (a laci_heads/ JSON: its heads, weight 1) over\n"
+            "  --probe-heads <heads.json> alignment probe of the decode steps (a assets/laci_heads/ JSON: its heads, weight 1) over\n"
             "      the prompt's BOS..EOS text rows; --probe-window LAYER:HEAD:LO:HI (repeatable) masks that head to text\n"
             "      indices [LO,HI] (ACI hard mask); --dump-probe <probe.npy> saves float32 [steps,2] (argmax, centroid)\n"
             "      per decode step (--generate/--tts, KV path)\n"

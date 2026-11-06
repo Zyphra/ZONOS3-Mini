@@ -1,6 +1,6 @@
 # zonos3-mlx
 
-The ZONOS3 Mini HTTP server on Apple Silicon: the v2 API of [api/openapi.yaml](../../api/openapi.yaml) and the Zonos
+The ZONOS3 Mini HTTP server on Apple Silicon: the v2 API of [servers/api/openapi.yaml](../api/openapi.yaml) and the Zonos
 Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) from the ggml server's GGUF files.
 
 | Network | GGUF | Notes |
@@ -63,7 +63,7 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
 
 ```bash
 uv run --package zonos3-mlx pytest servers/mlx/tests                       # tiny-model parity, decoder, server
-uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919
+uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919
 ```
 
 Against the release goldens of `tools/dump_golden.py`: the F16 backbone (`zonos3-f16.gguf`) matches the reference

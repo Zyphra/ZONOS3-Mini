@@ -73,11 +73,11 @@ Three pages, three Vite entries: `index.html` (`src/home/`) is the chooser at `/
 `studio.html` (`src/main.tsx`) is the Voice Studio at `/studio`, and `lite.html` (`src/lite/`) is the lite page at
 `/lite`. The chooser passes its query on (`/?api=web` opens `/studio?api=web`) and shows both apps on every device,
 phones included. Every server maps `/<page>` to
-`<page>.html` (the studio serving rule of `../api/openapi.yaml`; Vite's dev and preview servers and Cloudflare's
+`<page>.html` (the studio serving rule of `../servers/api/openapi.yaml`; Vite's dev and preview servers and Cloudflare's
 static assets do the same).
 
 `studio/dist/` is committed so a checkout serves the studio without Node: every server serves it (pages uncached,
-hashed assets immutable, other files revalidated; `--studio-dir` points elsewhere). The API contract is `../api/openapi.json`:
+hashed assets immutable, other files revalidated; `--studio-dir` points elsewhere). The API contract is `../servers/api/openapi.json`:
 `pnpm gen:api` (run by `build`, `typecheck` and `test`) regenerates the untracked `src/api/schema.ts` from it, and
 `src/api.ts` aliases its schemas and sends every JSON call through an `openapi-fetch` client typed by its `paths`;
 the streamed `/v2/generate` and the raw-body / binary routes (`/v2/speakers/{id}/preview`,
@@ -92,7 +92,7 @@ browser has WebGPU and the site serves the in-browser engine at `/web-engine/eng
 applies every control). Force one with `?api=live|fixture|offline|web` (`?engine=URL` points at another engine
 build); point a build at another server with `?server=https://…` (CORS is open). Every request goes through one
 transport (`fetch`, or the engine's `localFetch` on the web backend; `src/lib/web-engine.ts`, shared with the lite
-page). On a Hugging Face Space framed by huggingface.co (the ZeroGPU Space of `../space/`), that transport adds the
+page). On a Hugging Face Space framed by huggingface.co (the ZeroGPU Space of `../servers/space/`), that transport adds the
 visitor's ZeroGPU headers to `/v2/generate` (`src/lib/zerogpu.ts`: the `supports-zerogpu-headers` /
 `zerogpu-headers` handshake Gradio's client does), so renders count against the visitor's GPU quota.
 `pnpm dev` / `pnpm preview` serve the engine

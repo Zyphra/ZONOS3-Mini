@@ -30,7 +30,7 @@ pytestmark = [
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURES = REPO / "model" / "tests" / "fixtures" / "prompt_requests.json"
-STEER_BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
+STEER_BUNDLE = REPO / "assets" / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
 
 

@@ -47,7 +47,7 @@ class ServerArgs(SchedulerConfig):
     studio_projects_dir: str | None = None
     studio_max_project_bytes: int = 20 * 1024**2
     studio_max_media_bytes: int = 2 * 1024**3
-    # Production build of Zonos Voice Studio (studio/dist): / chooser, /studio, /lite (the studio serving rule of api/openapi.yaml).
+    # Production build of Zonos Voice Studio (studio/dist): / chooser, /studio, /lite (the studio serving rule of servers/api/openapi.yaml).
     studio_dir: str = str(Path(__file__).resolve().parents[5] / "studio" / "dist")
     # --plugins: server plugins (zonos3.server.plugins), each imported as zonos3_<name>.
     plugins: tuple[str, ...] = ()

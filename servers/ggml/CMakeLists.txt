@@ -172,9 +172,9 @@ target_link_libraries(zonos3-perplexity PRIVATE zonos3)
 target_include_directories(zonos3-perplexity PRIVATE vendor)
 
 # --- HTTP server (plan 7.1): src/server/*, the API spec embedded for request validation ---
-# Request validation: vendored pboettch/json-schema-validator 2.3.0 (MIT) against api/openapi.json, embedded as
+# Request validation: vendored pboettch/json-schema-validator 2.3.0 (MIT) against servers/api/openapi.json, embedded as
 # generated/zonos3-openapi.h.
-zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../api/openapi.json zonos3_openapi_json zonos3-openapi.h)
+zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../api/openapi.json zonos3_openapi_json zonos3-openapi.h)
 # The validator includes <nlohmann/json.hpp>: point it at the vendored single header.
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/generated/nlohmann/json.hpp "#include \"${CMAKE_CURRENT_SOURCE_DIR}/vendor/json.hpp\"\n")
 set(JSV vendor/json-schema-validator/src)
@@ -331,7 +331,7 @@ if (ZONOS3_APP)
         target_sources(zonos3-app PRIVATE ${ZONOS3_APP_RESOURCES})
         set_source_files_properties(${ZONOS3_APP_RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         set(ZONOS3_REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-        file(GLOB ZONOS3_VOICE_RESOURCES ${ZONOS3_REPO_ROOT}/default_voices/*)
+        file(GLOB ZONOS3_VOICE_RESOURCES ${ZONOS3_REPO_ROOT}/assets/default_voices/*)
         target_sources(zonos3-app PRIVATE ${ZONOS3_VOICE_RESOURCES})
         set_source_files_properties(${ZONOS3_VOICE_RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/default_voices)
         file(GLOB_RECURSE ZONOS3_PYTHON_RESOURCES ${ZONOS3_REPO_ROOT}/model/src/zonos3/*)

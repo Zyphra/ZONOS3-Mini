@@ -2,10 +2,10 @@
 
 Both servers — the CUDA server (`servers/sgl/scripts/serve.sh`, `python -m zonos3_sgl`) and the ggml server
 (`servers/ggml`, `zonos3-server`) — implement one HTTP API. The schema of every request and response is
-[api/openapi.yaml](../api/openapi.yaml) (bundled into `api/openapi.json`); this page is the overview. Feature-specific
+[servers/api/openapi.yaml](../servers/api/openapi.yaml) (bundled into `servers/api/openapi.json`); this page is the overview. Feature-specific
 behavior (speech editing, steering, studio projects, plugins) is described in [guide.md](guide.md).
-`api/tests/conformance` checks a running server against the spec:
-`uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919`.
+`servers/api/tests/conformance` checks a running server against the spec:
+`uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919`.
 
 ## Routes
 

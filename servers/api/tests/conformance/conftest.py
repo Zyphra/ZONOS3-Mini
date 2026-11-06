@@ -1,6 +1,6 @@
 """Conformance suite of the ZONOS3 v2 HTTP API, run against a live server:
 
-    uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919 [--api-token T]
+    uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919 [--api-token T]
 
 Every test is skipped without --base-url (or ZONOS3_API_URL); feature tests skip when the server's capabilities say
 the feature is absent.
@@ -76,7 +76,7 @@ def session() -> dict:
 
 @pytest.fixture(scope="session")
 def voice_bytes() -> bytes:
-    return (REPO / "default_voices" / "AmericanFemale.mp3").read_bytes()
+    return (REPO / "assets" / "default_voices" / "AmericanFemale.mp3").read_bytes()
 
 
 @pytest.fixture(scope="session")

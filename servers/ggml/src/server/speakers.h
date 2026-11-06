@@ -1,4 +1,4 @@
-// Voices (api/openapi.yaml Speaker): default voices from --tts-default-voices-dir, session voices from
+// Voices (servers/api/openapi.yaml Speaker): default voices from --tts-default-voices-dir, session voices from
 // POST /v2/speakers, and the speaker prompt of a generation request (embedding, reference codes, blends).
 #pragma once
 

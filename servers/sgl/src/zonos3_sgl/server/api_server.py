@@ -929,7 +929,7 @@ async def lifespan(_: FastAPI):
     _FUSEALIGN.close()
 
 
-# The spec of this API is api/openapi.yaml; FastAPI's generated docs would describe a second one.
+# The spec of this API is servers/api/openapi.yaml; FastAPI's generated docs would describe a second one.
 app = FastAPI(
     title="Zonos3 API Server", version="2.0.0", lifespan=lifespan, openapi_url=None, docs_url=None, redoc_url=None
 )
@@ -1154,7 +1154,7 @@ async def tts_generate(
     req: GenerateRequest,
     x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID"),
 ):
-    """Synthesize speech (api/openapi.yaml GenerateRequest)."""
+    """Synthesize speech (servers/api/openapi.yaml GenerateRequest)."""
     logger.debug("Received TTS generate request: %s", req.text[:50])
     return await _generate_response(get_global_state(), req, x_tts_session_id)
 

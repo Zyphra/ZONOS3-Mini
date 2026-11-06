@@ -1,4 +1,4 @@
-"""Request bodies of the v2 HTTP API, transcribed from api/openapi.yaml (the contract: field names, types, defaults,
+"""Request bodies of the v2 HTTP API, transcribed from servers/api/openapi.yaml (the contract: field names, types, defaults,
 enums and ranges). Every model forbids unknown fields, so anything the schema can express fails with FastAPI's 422
 ``{"detail": [{loc, msg, type}]}``; state- or semantics-dependent checks stay in the handlers (400)."""
 
