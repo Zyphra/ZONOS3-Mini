@@ -1,4 +1,4 @@
-"""Accent adapter files (lingua ``apps.zonos.accent_adapter``, ``zonos-accent-lora/1`` and ``/2``).
+"""Accent adapter files (lingua ``apps.zonos.accent_adapter``, ``zonos-accent-lora/1``, ``/2`` and ``/3``).
 
 An adapter shifts linear weights by ``up @ down``, router balancing biases by a vector and, in ``/2``, every MoE
 expert weight by its own ``up_e @ down_e``. A request served with adapter strength alpha runs ``base + alpha *
@@ -9,10 +9,17 @@ Module names are the checkpoint's: ``tools/convert_lingua_checkpoint.py`` keeps 
 lingua key. ``TARGETS`` mirrors lingua's ``apps.zonos.lora.DEFAULT_TARGETS``. Exact shifts: ``<router>.balancing_biases``
 (float32 quantile thresholds); as in the converter, the legacy ZeroMean parametrization
 ``.parametrizations.balancing_biases.original`` maps to ``balancing_biases`` with its mean removed, and the training-only
-router metrics (``ent_denom``, ``normalized_entropy``) are dropped. Any other exact shift is refused.
+router metrics (``ent_denom``, ``normalized_entropy``) are dropped. Any other exact shift is refused, except in ``/3``.
 
 Expert factors (``/2``): ``layers.N.feed_forward.experts.{w13,w2}`` carry ``up`` [E, out, r] and ``down`` [E, r, in] in
 lingua's SonicExperts layout (w13 rows interleave gate/up), ``shape`` (E, out, in) and ``experts`` E.
+
+Grown vocabulary (``/3``, e.g. a speech-edit LoRA trained on a base grown with a span-end audio id and edit-marker text
+rows): ``/2`` plus ``grown`` = ``{"span_end_id", "text_extra_tokens", "rows"}``, the rows such a base adds to the base it
+came from (per audio embedder its span-end row [1, dim], for the text embedder its extra rows [extra, dim], for
+``multi_output`` each codebook block's span-end row [n_codebooks, dim]). A server grows its model with them once (plain
+requests never read or sample the new ids, so they run as before); the adapter's exact shifts may then also move the
+embedding tables and the output head (grown shapes), applied per request like its other shifts.
 """
 
 from __future__ import annotations
@@ -24,7 +31,8 @@ import torch
 
 FORMAT = "zonos-accent-lora/1"
 FORMAT_EXPERTS = "zonos-accent-lora/2"
-FORMATS = (FORMAT, FORMAT_EXPERTS)
+FORMAT_GROWN = "zonos-accent-lora/3"
+FORMATS = (FORMAT, FORMAT_EXPERTS, FORMAT_GROWN)
 # SonicExperts weights lingua's apps.zonos.lora adapts per expert.
 EXPERT_WEIGHTS = ("w13", "w2")
 
@@ -82,6 +90,15 @@ def list_accent_adapters(directory: str | Path) -> list[str]:
 
 
 @dataclass(frozen=True)
+class GrownVocabulary:
+    """The vocabulary a ``/3`` adapter needs: the span-end audio id, the extra text rows and the rows they add."""
+
+    span_end_id: int
+    text_extra_tokens: int
+    rows: dict[str, torch.Tensor]  # tensor name -> float32 new rows (see the module docstring)
+
+
+@dataclass(frozen=True)
 class AccentAdapter:
     """One parsed adapter.
 
@@ -89,9 +106,9 @@ class AccentAdapter:
     ``(x @ down.T) @ up`` on the flat ``[out, in]`` product; ``shapes``: the weight shape each linear shift was trained
     on. ``experts``: experts module (``layers.N.feed_forward.experts``) -> weight (``w13`` / ``w2``) -> (up [E, out, r],
     down [E, r, in]) float32 in the SonicExperts layout. ``router_bias``: router module (``layers.N.feed_forward.router``)
-    -> float32 [experts] added to its balancing biases. ``tables``: embedding / output-head weight
-    (``multi_embedder.embedders.<i>.weight``, ``multi_output.weight``) -> float32 shift of its rows, only in adapters
-    loaded with ``tables=True`` (an adapter trained with the vocabulary grown, e.g. a speech-edit LoRA)."""
+    -> float32 [experts] added to its balancing biases. ``/3`` only: ``grown``, the vocabulary to grow the model to, and
+    ``tables``, embedding / output-head weight (``multi_embedder.embedders.<i>.weight``, ``multi_output.weight``) ->
+    float32 shift of its rows in the grown shape."""
 
     name: str
     format: str
@@ -100,6 +117,7 @@ class AccentAdapter:
     experts: dict[str, dict[str, tuple[torch.Tensor, torch.Tensor]]] = field(default_factory=dict)
     router_bias: dict[str, torch.Tensor] = field(default_factory=dict)
     tables: dict[str, torch.Tensor] = field(default_factory=dict)
+    grown: GrownVocabulary | None = None
 
     @property
     def rank(self) -> int:
@@ -110,28 +128,31 @@ class AccentAdapter:
 TABLES = ("multi_embedder.embedders.", "multi_output.weight")
 
 
-def load_adapter(path: str | Path, *, tables: bool = False) -> AccentAdapter:
-    """Parse ``<accent>.pt``; raises ValueError for a file no server can apply. ``tables``: also take the adapter's
-    shifts of the embedding tables and the output head (a reference-only path: the sgl, ggml and MLX servers refuse
-    them)."""
+def load_adapter(path: str | Path) -> AccentAdapter:
+    """Parse ``<accent>.pt``; raises ValueError for a file no server can apply."""
     path = Path(path)
     adapter = torch.load(path, map_location="cpu", weights_only=True)
     fmt = adapter.get("format")
     if fmt not in FORMATS:
         raise ValueError(f"{path}: not a {' / '.join(FORMATS)} adapter")
+    grown = None
+    if fmt == FORMAT_GROWN:
+        g = adapter["grown"]
+        grown = GrownVocabulary(int(g["span_end_id"]), int(g["text_extra_tokens"]),
+                                {name: rows.float() for name, rows in g["rows"].items()})
     router_bias: dict[str, torch.Tensor] = {}
     table_shifts: dict[str, torch.Tensor] = {}
     for target, shift in adapter["exact"].items():
         served, zero_mean = served_exact_name(target)
         if served is None:
             continue
-        if tables and served.startswith(TABLES) and served.endswith(".weight"):
+        if grown is not None and served.startswith(TABLES) and served.endswith(".weight"):
             table_shifts[served] = shift.float()
             continue
         if not served.endswith(".router" + BALANCING_BIASES):
             raise ValueError(
                 f"{path}: shifts {target}; accent serving applies only linear "
-                "factors and router balancing biases"
+                f"factors and router balancing biases (embedding and output-head shifts need {FORMAT_GROWN})"
             )
         shift = shift.float()
         if zero_mean:
@@ -142,7 +163,7 @@ def load_adapter(path: str | Path, *, tables: bool = False) -> AccentAdapter:
     experts: dict[str, dict[str, tuple[torch.Tensor, torch.Tensor]]] = {}
     for target, pair in adapter["factors"].items():
         if ".experts." in target or "experts" in pair:
-            if fmt != FORMAT_EXPERTS:
+            if fmt == FORMAT:
                 raise ValueError(f"{path}: {FORMAT} adapter shifts MoE expert weights ({target})")
             module, _, weight = target.rpartition(".")
             if not module.endswith("feed_forward.experts") or weight not in EXPERT_WEIGHTS:
@@ -173,4 +194,14 @@ def load_adapter(path: str | Path, *, tables: bool = False) -> AccentAdapter:
             )
         linear[module] = (pair["down"].float(), pair["up"].float().T)
         shapes[module] = tuple(pair["shape"])
-    return AccentAdapter(path.stem, fmt, linear, shapes, experts, router_bias, table_shifts)
+    return AccentAdapter(path.stem, fmt, linear, shapes, experts, router_bias, table_shifts, grown)
+
+
+def grow_adapter(adapter: dict, grown: dict) -> dict:
+    """A ``/2`` adapter (as ``torch.load`` reads it) trained on a grown-vocabulary base, as a ``/3`` file's content:
+    ``grown`` is ``{"span_end_id", "text_extra_tokens", "rows"}`` (the rows that base added; see the docstring)."""
+    if adapter.get("format") != FORMAT_EXPERTS:
+        raise ValueError(f"grow_adapter takes a {FORMAT_EXPERTS} adapter, got {adapter.get('format')!r}")
+    return {**adapter, "format": FORMAT_GROWN,
+            "grown": {"span_end_id": int(grown["span_end_id"]), "text_extra_tokens": int(grown["text_extra_tokens"]),
+                      "rows": {name: rows.float().contiguous() for name, rows in grown["rows"].items()}}}

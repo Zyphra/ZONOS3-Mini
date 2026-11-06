@@ -4,8 +4,8 @@ A target linear adds ``strength * ((x @ down.T) @ up)`` to its flat ``[out, in]`
 ``strength * shift`` to its balancing biases, and each routed (token, expert) pair adds
 ``strength * up[e] @ (down[e] @ row)`` to its gate/up pre-activation (w13, SonicExperts interleaved rows) and its
 expert output (w2) -- zonos3_sgl.layers.accent ``accent_shift`` / ``accent_router_bias`` / ``expert_pair_shift``.
-An adapter loaded with its table shifts (``load_adapter(tables=True)``) also adds ``strength * shift[id]`` to the
-embedding rows a prompt reads and ``strength * normalized @ shift.T`` to the output head's logits.
+A ``/3`` adapter (zonos3.models.accent_format; the model grown to its vocabulary first) also adds ``strength *
+shift[id]`` to the embedding rows a prompt reads and ``strength * normalized @ shift.T`` to the output head's logits.
 """
 
 from __future__ import annotations

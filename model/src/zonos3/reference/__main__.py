@@ -71,6 +71,7 @@ def main(argv=None) -> int:
     lm = Zonos3LM.load(args.model, device=device, dtype=dtype)
     assets = ReferenceAssets.load(steer_bundle=args.steer_bundle, accent_adapters=args.accent_adapters,
                                   laci_heads=heads)
+    assets.grow(lm)
     if args.dump_prompt:
         plan = plan_prompt(lm, request, assets=assets, device=device)
         path = Path(args.dump_prompt)

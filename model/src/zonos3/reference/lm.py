@@ -405,29 +405,30 @@ class Zonos3LM(nn.Module):
         model.root = root
         return model.cast(dtype)
 
-    def grow(self, grown: dict[str, torch.Tensor], *, span_end_id: int, text_extra_tokens: int) -> "Zonos3LM":
-        """This model with the vocabulary of a checkpoint grown from it (span-end audio id, extra text rows: an edit
-        checkpoint's ``tools grow_vocabulary``). ``grown`` holds that checkpoint's new rows: per audio embedder (0 ..
-        n_codebooks - 1) its span-end row, for the text embedder its extra rows, for ``multi_output`` the span-end row
-        of every codebook block, keyed like the checkpoint (``multi_embedder.embedders.<i>.weight`` [rows, dim],
-        ``multi_output.weight`` [n_codebooks, dim]). The existing rows keep their values, so a request that never reads
-        or samples the new ids runs exactly as before (the sampler masks every special id but the request's stop id)."""
+    def grow(self, grown) -> "Zonos3LM":
+        """This model with a grown vocabulary (``zonos3.models.accent_format.GrownVocabulary`` of a ``/3`` adapter: a
+        span-end audio id, extra text rows and the rows they add). The existing rows keep their values, so a request
+        that never reads or samples the new ids runs exactly as before (the sampler masks every special id but the
+        request's stop id). Growing again to the same vocabulary is a no-op."""
         c = self.config
+        if (c.span_end_id, c.text_extra_tokens) == (grown.span_end_id, grown.text_extra_tokens):
+            return self
         if c.span_end_id is not None or c.text_extra_tokens:
-            raise ValueError("grow: the model already has a span-end id or extra text rows")
-        new = replace(c, span_end_id=int(span_end_id), text_extra_tokens=int(text_extra_tokens))
+            raise ValueError(f"grow: the model already has span_end_id {c.span_end_id} and {c.text_extra_tokens} extra "
+                             f"text rows; the adapter wants {grown.span_end_id} and {grown.text_extra_tokens}")
+        new = replace(c, span_end_id=int(grown.span_end_id), text_extra_tokens=int(grown.text_extra_tokens))
         if new.audio_vocab != c.audio_vocab + 1 or new.span_end_id != c.codebook_size + 2:
             raise ValueError("grow: the span-end id must be the one row after the audio pad id")
         embedders = self.multi_embedder.embedders
         for i in range(c.n_codebooks + 1):
             key = f"multi_embedder.embedders.{i}.weight"
             rows, width = (new.audio_vocab, c.audio_vocab) if i < c.n_codebooks else (new.text_rows, c.text_rows)
-            extra = grown[key].to(embedders[i].weight)
+            extra = grown.rows[key].to(embedders[i].weight)
             if tuple(extra.shape) != (rows - width, c.dim):
                 raise ValueError(f"grow: {key} new rows {tuple(extra.shape)} != {(rows - width, c.dim)}")
             embedders[i].weight = nn.Parameter(torch.cat((embedders[i].weight, extra)), requires_grad=False)
         head = self.multi_output.weight
-        extra = grown["multi_output.weight"].to(head)
+        extra = grown.rows["multi_output.weight"].to(head)
         if tuple(extra.shape) != (c.n_codebooks, c.dim):
             raise ValueError(f"grow: multi_output.weight new rows {tuple(extra.shape)} != {(c.n_codebooks, c.dim)}")
         blocks = head.view(c.n_codebooks, c.audio_vocab, c.dim)

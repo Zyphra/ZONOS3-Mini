@@ -100,18 +100,16 @@ STUDIO = ROOT / "studio"
 DEVICE = torch.device("cuda:0")
 CPU = torch.device("cpu")
 
-# The edit checkpoint's vocabulary: its span-end audio row and edit-marker text rows, which plain takes never read or
-# sample (so they run exactly as on the release LM). Edit regions add the edit LoRA per request (EDIT_LORA). Grown on
-# the CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with CPU ones in this process.
-_EDIT = f"{RELEASE_LM}/edit_lora"
-_GROWN = torch.load(resolve_file(f"{_EDIT}/grown_rows.pt"), map_location="cpu", weights_only=True)
-LM = Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32)
-LM.grow(_GROWN["rows"], span_end_id=_GROWN["span_end_id"], text_extra_tokens=_GROWN["text_extra_tokens"])
-LM = LM.to(DEVICE)
+# The edit LoRA (zonos-accent-lora/3) brings the vocabulary it was trained with: its span-end audio row and edit-marker
+# text rows, which plain takes never read or sample (so they run exactly as on the release LM). Edit regions add the
+# LoRA per request (EDIT_LORA). Grown on the CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with
+# CPU ones in this process.
+EDIT_ADAPTER = load_adapter(resolve_file(f"{RELEASE_LM}/edit_lora/z3m_omni3b_edit_lora.pt"))
+LM = Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32).grow(EDIT_ADAPTER.grown).to(DEVICE)
 CONFIG = LM.config
 ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k.json"))
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
-EDIT_LORA = AccentState.for_model(LM, load_adapter(resolve_file(f"{_EDIT}/z3m_omni3b_edit_lora.pt"), tables=True), 1.0)
+EDIT_LORA = AccentState.for_model(LM, EDIT_ADAPTER, 1.0)
 ASSETS.decoder(CONFIG.audio_codec, DEVICE)
 ASSETS.speaker_encoder(CONFIG.speaker_embedding_codec, CONFIG.speaker_embedding_dim, CPU)
 # A clip in reference mode is encoded by the dual codec inside the GPU call; fetch its teacher folder now.

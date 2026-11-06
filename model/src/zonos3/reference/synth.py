@@ -70,6 +70,13 @@ class ReferenceAssets:
         """The Full AttnRes bank sources hidden deltas steer, ascending (sgl Engine._init_steering)."""
         return () if self.steer_bundle is None else tuple(self.steer_bundle.hidden_sources)
 
+    def grow(self, lm: Zonos3LM) -> Zonos3LM:
+        """``lm`` grown to the vocabulary its ``/3`` adapters need (zonos3.models.accent_format), before any request."""
+        for adapter in self.accent_adapters.values():
+            if adapter.grown is not None:
+                lm.grow(adapter.grown)
+        return lm
+
     def accent_names(self) -> list[str]:
         return list(self.accent_adapters)
 
