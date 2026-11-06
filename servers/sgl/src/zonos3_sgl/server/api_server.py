@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -72,6 +72,9 @@ from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
 from zonos3_sgl.utils.logger import init_logger
 
 from .args import ServerArgs
+
+if TYPE_CHECKING:
+    from zonos3.tts.phonemes import PhonemeLexicon
 
 
 logger = init_logger(__name__, "FrontendAPI")

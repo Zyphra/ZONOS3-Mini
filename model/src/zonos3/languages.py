@@ -41,6 +41,8 @@ del _data
 CODES: tuple[str, ...] = tuple(lang.code for lang in SERVER)
 BY_CODE: dict[str, ServerLanguage] = {lang.code: lang for lang in SERVER}
 SPOKEN_BY_CODE: dict[str, SpokenLanguage] = {lang.code: lang for lang in SPOKEN}
+# Spoken codes of the languages written without spaces between words (ja, zh, yue).
+UNSPACED: frozenset[str] = frozenset(lang.code for lang in SPOKEN if lang.unspaced)
 
 
 def normalize(language: str) -> str:

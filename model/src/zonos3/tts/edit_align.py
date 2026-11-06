@@ -40,9 +40,8 @@ ASR_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'asr.py'
 FUSEALIGN_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'fusealign.py'
 LONG_FORM_SECONDS = 30.0  # fusealign_hub.aligner.MAX_SECONDS: one FuseAlign forward
 MAX_TEXT_BYTES = 1022  # fusealign_hub.longform.MAX_TEXT_BYTES
-# Qwen3-ASR names of the unspaced languages (zonos3.tts.align_text.UNSPACED: ja, zh, yue): their chunk texts join
-# with "".
-UNSPACED_LANGUAGES = frozenset(lang.name for lang in languages.SPOKEN if lang.unspaced)
+# Qwen3-ASR language name -> spoken code (zonos3.languages.UNSPACED: the chunk texts of ja, zh and yue join with "").
+_SPOKEN_CODES = {lang.name: lang.code for lang in languages.SPOKEN}
 
 
 # Server language codes (normalized, as /v2/generate) -> (the Whisper-style code the edit's words are tokenized by,
@@ -299,7 +298,7 @@ def transcribe_audio(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, langu
 
     Up to ``LONG_FORM_SECONDS`` one recognition of the whole file. Longer audio is transcribed chunk by chunk
     (``chunk_utterances``): the text is the chunk texts joined with " " (with "" when the language, the forced one or
-    else the first spoken chunk's first detected one, is unspaced: ``UNSPACED_LANGUAGES``), the reported language is
+    else the first spoken chunk's first detected one, is unspaced: ``zonos3.languages.UNSPACED``), the reported language is
     the first spoken chunk's ("" without speech), and the utterances are returned to anchor later alignments of the
     file (``align_words``)."""
     if audio_seconds(audio) <= LONG_FORM_SECONDS:
@@ -308,7 +307,7 @@ def transcribe_audio(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, langu
     utterances = chunk_utterances(asr, aligner, [audio], [language])[0]
     reported = utterances[0]['language'] if utterances else ''
     name = language or reported.split(',')[0].strip()
-    joiner = '' if name in UNSPACED_LANGUAGES else ' '
+    joiner = '' if _SPOKEN_CODES.get(name) in languages.UNSPACED else ' '
     return Transcript(joiner.join(u['text'] for u in utterances), reported,
                       [{k: u[k] for k in ('text', 'start', 'end')} for u in utterances])
 

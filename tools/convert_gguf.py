@@ -246,7 +246,7 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
     if config_path.exists():
         with config_path.open() as f:
             config = yaml.safe_load(f)
-        trained = config["model"]
+        trained = config.get("model", config)
         for key, value in params.items():
             if key in trained and trained[key] != value:
                 unsupported(f"params.json {key} (config.yaml has {trained[key]!r})", value)
@@ -1276,10 +1276,9 @@ def validate_spk_registry(entry):
 
 def cmd_speaker_encoder(args, parser):
     import torchaudio
-    from zonos3.models.mect_speaker import MECTFbankSpeakerEmbedding
+    from zonos3.models.mect_speaker import MECTFbankSpeakerEmbedding, registry_path
 
-    registry_path = args.registry or args.checkpoint.resolve().parent.parent.parent / "registries" / "speaker_encoder_registry.json"
-    entry = json.loads(registry_path.read_text())[ENCODER]
+    entry = json.loads((args.registry or registry_path()).read_text())[ENCODER]
     validate_spk_registry(entry)
     # strict load of the sha256-checked checkpoint
     module = MECTFbankSpeakerEmbedding({**entry, "codec": ENCODER, "checkpoint": str(args.checkpoint)}, device="cpu")
@@ -1571,7 +1570,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("checkpoint", type=Path, help=f"speaker_encoders/{ENCODER}/ckpt_0037.pth")
     p.add_argument("-o", "--out", type=Path, required=True)
     p.add_argument("--registry", type=Path, default=None,
-                   help="speaker_encoder_registry.json (default <ckpt_dir>/../../registries/...)")
+                   help="speaker_encoder_registry.json (default zonos3.models.mect_speaker.registry_path())")
 
     p = command("steer", STEER_DOC, cmd_steer)
     p.add_argument("bundle", type=Path)

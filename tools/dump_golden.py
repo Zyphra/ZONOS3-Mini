@@ -1029,10 +1029,9 @@ def add_speaker_encoder_arguments(ap):
 def run_speaker_encoder(args, parser):
     import soundfile as sf
     import torchaudio
-    from zonos3.models.mect_speaker import MECTFbankSpeakerEmbedding
+    from zonos3.models.mect_speaker import MECTFbankSpeakerEmbedding, registry_path
 
-    registry_path = args.registry or args.checkpoint.resolve().parent.parent.parent / "registries" / "speaker_encoder_registry.json"
-    entry = json.loads(registry_path.read_text())["ownmect_s2"]
+    entry = json.loads((args.registry or registry_path()).read_text())["ownmect_s2"]
     model = MECTFbankSpeakerEmbedding(dict(entry, codec="ownmect_s2", checkpoint=str(args.checkpoint)), device="cpu")
 
     sample_rate = model.sample_rate
