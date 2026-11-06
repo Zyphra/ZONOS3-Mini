@@ -19,14 +19,9 @@ from zonos3.generation import REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE, UPLOAD_M
 
 from zonos3_mlx.audio_io import polyphase_resample
 from zonos3_mlx.gguf_io import GGUFFile, Weight
-from zonos3_mlx.models.codec_decoder import (
-    Params,
-    bf16_round,
-    convnext_block,
-    moss_layer,
-    read_stages,
-)
+from zonos3_mlx.models.codec_decoder import Params, convnext_block, moss_layer, read_stages
 from zonos3_mlx.models.ssl_teacher import SSLTeacher
+from zonos3_mlx.numeric import bf16_round
 
 ARCH = "mossdual_encoder"
 LANE, CONTEXT, HOP, INTERNAL_HOP = 300, 150, 2940, 2944

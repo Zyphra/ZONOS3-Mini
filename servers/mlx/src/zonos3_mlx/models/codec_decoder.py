@@ -72,11 +72,6 @@ def _identity(x: mx.array) -> mx.array:
     return x
 
 
-def bf16_round(x: mx.array) -> mx.array:
-    """A BF16 tensor boundary of the autocast encoder recipe: round to bfloat16, keep computing in float32."""
-    return x.astype(mx.bfloat16).astype(mx.float32)
-
-
 def causal_depthwise(x: mx.array, w: mx.array, b: mx.array | None) -> mx.array:
     """x [T, C], w [C, K] (tap 0 oldest), zero history: h[t] = sum_k x[t + k - (K - 1)] * w[:, k]."""
     T, K = x.shape[0], w.shape[1]
