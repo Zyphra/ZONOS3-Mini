@@ -9,6 +9,9 @@
 // key order like std::map.
 import { GGUF_TYPE, type Gguf } from '../gguf';
 
+/** Why steering fields fail on a server without a bundle; each site adds its own suffix. */
+export const NO_STEERING = 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer)';
+
 export const STEER_RAMP_FRAMES = 3;
 export const STEER_FRAMES_PER_CHAR = 1.0;
 

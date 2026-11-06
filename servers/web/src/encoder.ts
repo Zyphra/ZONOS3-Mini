@@ -9,7 +9,7 @@
 // (ffn1 also after GELU), q/k round after RoPE, while attention, LayerNorm, layer scales and the MOSS residual stream
 // stay f32. ConvNeXt blocks round the depthwise input, its tap sum and its biased output, pw1/pw2 after bias (pw1 also
 // after GELU), and the semantic encoder's residual output. Snake and the RVQ are f32.
-import { EDIT_MAX_SECONDS, SAMPLE_RATE } from './generation';
+import { EDIT_MAX_SECONDS, HOP, SAMPLE_RATE } from './generation';
 import type { Gpu } from './gpu/device';
 import { ACT, attentionWin, dwconv, gemm, layernorm, patchDown, RND, ropeKv, snake, type Weight } from './gpu/ops';
 import { Builder, type Program } from './gpu/program';
@@ -19,7 +19,6 @@ import { Resampler } from './resample';
 import { LANE, poolSsl, Rvq } from './rvq';
 import { LANE_SAMPLES, SSL_FRAMES, SslTeacher } from './ssl';
 
-const HOP = 2940;
 const INTERNAL_HOP = 2944;
 const CONTEXT = 150;
 const NCB = 10;

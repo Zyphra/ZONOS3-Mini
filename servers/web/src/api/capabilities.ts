@@ -5,7 +5,7 @@
 import { ALIGN_MAX_SECONDS } from '../aligner/host';
 import languages from '../../../../model/src/zonos3/registries/languages.json';
 import {
-  DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES, TAG_CFG_MAX_SCALE,
+  DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES, TAG_CFG_MAX_SCALE,
   TAG_CFG_MIN_SCALE,
 } from '../generation';
 import { NONVERBAL_MARKUP_TAGS } from '../request/markup';
@@ -13,7 +13,6 @@ import type { Engine } from './engine';
 
 const AUDIO_CODEC = 'opus_dual_3n_600k_sched600k_r4096_step600000';
 const SPEAKER_EMBEDDING_CODEC = 'ownmect_s2';
-const HOP = 2940;
 /** The server language codes (zonos3.languages SERVER), in order. */
 export const TEXT_NORM_LANGUAGES = languages.server.map((l) => l.code);
 const DECODER_CHECKPOINT = 'zac-keep2.gguf';

@@ -2,6 +2,8 @@
 // RoPE tables and fusealign_hub's post-processing (fill_unplaced, zero-width punctuation). Mirrors
 // third_party/fusealign-multilingual/ggml/src/{resample,model,fusealign}.cpp and fusealign_hub/{aligner,longform}.py.
 
+import { bf16Round } from '../bf16';
+
 export const SAMPLE_RATE = 16000;
 /** Longest clip (seconds) one forward aligns; longer clips need long-form alignment (not available in the browser). */
 export const ALIGN_MAX_SECONDS = 30;
@@ -114,15 +116,6 @@ export function standardize(pcm: Float32Array): Float32Array {
   const denom = f(f(Math.sqrt(f(f(sq) / n))) + f(1e-5));
   for (let i = 0; i < n; i++) out[i] = f(out[i] / denom);
   return out;
-}
-
-/** Round to the nearest bf16 (ties to even), as torch's .to(torch.bfloat16). */
-export function bf16Round(x: number): number {
-  const b = new Float32Array([x]);
-  const u = new Uint32Array(b.buffer);
-  if ((u[0] & 0x7fffffff) > 0x7f800000) return x;
-  u[0] = ((u[0] + 0x7fff + ((u[0] >>> 16) & 1)) & 0xffff0000) >>> 0;
-  return b[0];
 }
 
 /** FuseAlign RotaryEmbedding inv_freq: theta ** (-(2i) / hd) in fp32. */

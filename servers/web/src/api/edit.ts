@@ -16,15 +16,15 @@ import {
   alignedWords, diffSpans, editWords, expectedFillSeconds, planEditWindows, secondsToSpans, wholeClipWindow, windowSpans,
   type EditWindow, type EditWord, type Span,
 } from '../edit/words';
-import { EDIT_MAX_SECONDS, MAX_FRAMES, SAMPLE_RATE, SAMPLING } from '../generation';
+import { CONTEXT_CAPACITY, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING } from '../generation';
 import { NCB, type Prompt } from '../prompt';
 import { stripNonverbalMarkup } from '../request/markup';
-import { resolveControls, STEER_FRAMES_PER_CHAR, textChars } from '../request/steer';
+import { NO_STEERING, resolveControls, STEER_FRAMES_PER_CHAR, textChars } from '../request/steer';
 import { defaultSampling, type Sampling } from '../sampler';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { editMaxSpans } from './capabilities';
 import type { EditModels, Engine } from './engine';
-import { as400, CONTEXT_CAPACITY, resolveConditionBuckets, resolveLanguage } from './generate';
+import { as400, resolveConditionBuckets, resolveLanguage } from './generate';
 import { bool, fail, HttpError, isSet, num, parseBody, str, type EngineRequest, type Sink, sendJson } from './http';
 
 type Body = Record<string, unknown>;
@@ -35,7 +35,6 @@ const SEND_ORIGINAL_TEXT = "send the clip's transcript as original_text";
 const SEND_TO_ALIGN = 'send the transcript to /v2/edit/align instead';
 const VERIFY_FALSE = 'set verify to false';
 /** The codec hop (samples per frame at SAMPLE_RATE) and its frame rate. */
-const HOP = 2940;
 const FRAME_RATE = SAMPLE_RATE / HOP;
 
 /** Server language code -> the Whisper-style code its words are tokenized by (edit_align.EDIT_LANGUAGES). */
@@ -114,8 +113,7 @@ function checkEdit(e: Engine, body: Body, targetText: string, doses: Doses[] | n
   if (doses) {
     const steer = e.steer;
     if (!steer)
-      fail(400, 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); ' +
-        '`controls` are unavailable.');
+      fail(400, `${NO_STEERING}; \`controls\` are unavailable.`);
     for (const region of doses) {
       as400(() => resolveControls(steer, region, [], 0, STEER_FRAMES_PER_CHAR, new Float32Array(e.hp.speakerDim)));
       for (const id of Object.keys(region)) if (!steer.dirs[steer.index.get(id)!].hidden) raw.add(id);

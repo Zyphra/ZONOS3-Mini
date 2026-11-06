@@ -9,7 +9,7 @@
 // the grown rows of edit/, and the speech-edit adapter applied at runtime (scripts/export_web_models.py "speech-edit
 // adapter"; zonos3-accent.h in the ggml server): rank-K side paths on the adapted linears, the routed experts'
 // factors in the MoE kernels and the shifted router biases.
-import { MAX_FRAMES } from './generation';
+import { ALIGN_PROBE_MAX_TEXT, CONTEXT_CAPACITY } from './generation';
 import type { Gpu } from './gpu/device';
 import {
   ACT, addRmsnorm, attention, attentionMasked, attnres, condRows, elementwise, EW, gdn, gemm, matvec, matvecGlu, moe,
@@ -39,11 +39,7 @@ export const N_EXP_FF = 1536;
 export const N_EXPERT = 64;
 export const TOPK = 2;
 export const NCB = 10;
-/** Rows per slot: native context_capacity = min(context_length, max_frames + 4096). */
-export const CAP = MAX_FRAMES + 4096;
 export const CHUNK = 256;
-/** Text rows the alignment probe reads (sgl --align-probe-max-text). */
-export const PROBE_LMAX = 2048;
 const SPK_DIM = 192;
 const N_COND = 3;
 /** Global attention layers in probe order. */
@@ -58,7 +54,7 @@ const ATTN_SCALE = 1 / Math.sqrt(HD);
 const RMS_EPS = 1e-5;
 const QK_EPS = 1e-6;
 const SOFTCAP = 15;
-const KV_BYTES = CAP * NKV * HD * 4;
+const KV_BYTES = CONTEXT_CAPACITY * NKV * HD * 4;
 const STATE_BYTES = GDN_H * GDN_S * GDN_S * 4;
 const HIST_BYTES = GDN_CONV * 3 * 4;
 
@@ -178,7 +174,7 @@ export class Backbone {
         throw new Error(`zonos3: steering sources must be ascending Full AttnRes bank indices in 0..${2 * N_LAYER}`);
     }
     this.steerSources = steerSources.slice();
-    this.rope = gpu.upload(ropeTable(CAP, Number(w.meta['rope.freq_base'] ?? 10000), HD), 'bb.rope');
+    this.rope = gpu.upload(ropeTable(CONTEXT_CAPACITY, Number(w.meta['rope.freq_base'] ?? 10000), HD), 'bb.rope');
     const state = (k: number): SlotGpuState => {
       const st: SlotGpuState = { kc: new Map(), vc: new Map(), gdnState: new Map(), gdnHist: new Map() };
       for (let L = 0; L < N_LAYER; L++) {
@@ -200,8 +196,8 @@ export class Backbone {
     this.spkIn = gpu.buffer(SPK_DIM * 4, 'bb.spkIn');
     this.steerBuf = gpu.buffer(Math.max(1, this.steerSources.length) * D * 4, 'bb.steer');
     this.probeBuf = gpu.buffer(PROBE_WORDS * 4, 'bb.probe');
-    this.probeSc = gpu.buffer(PROBE_LAYERS.length * NH * PROBE_LMAX * 4, 'bb.probeSc');
-    this.probeAcc = gpu.buffer(PROBE_LMAX * 4, 'bb.probeAcc');
+    this.probeSc = gpu.buffer(PROBE_LAYERS.length * NH * ALIGN_PROBE_MAX_TEXT * 4, 'bb.probeSc');
+    this.probeAcc = gpu.buffer(ALIGN_PROBE_MAX_TEXT * 4, 'bb.probeAcc');
     let b = new Builder(gpu);
     // Projected speaker row = speaker_proj.weight . speaker + bias into condBuf (zonos3-graph.cpp:515-521).
     matvec(b, this.spkIn, w.get('speaker_proj.weight'), this.condBuf, { O: D, I: SPK_DIM, y_off: COND_HDR },
@@ -268,7 +264,7 @@ export class Backbone {
       const k = this.steerSources.indexOf(s);
       if (decode && k >= 0) steerAdd(b, bank, this.steerBuf, D, src(s), k * D, dyn);
     };
-    const po: ProbeOpts = { nl: PROBE_LAYERS.length, nh: NH, nkv: NKV, hd: HD, ring: CAP, scale: ATTN_SCALE, lmax: PROBE_LMAX };
+    const po: ProbeOpts = { nl: PROBE_LAYERS.length, nh: NH, nkv: NKV, hd: HD, ring: CONTEXT_CAPACITY, scale: ATTN_SCALE, lmax: ALIGN_PROBE_MAX_TEXT };
 
     const emb = b.buf(n * D * 4, 'emb');
     if (ed) {
@@ -319,17 +315,17 @@ export class Backbone {
         const kc = st.kc.get(L)!, vc = st.vc.get(L)!;
         lin(cur, p + 'attn_qkvg.weight', qkvg, QKVG, D);
         ropeKv(b, qkvg, this.rope, q, kc, vc,
-          { n, nh: NH, nkv: NKV, hd: HD, in_stride: QKVG, qkNorm: true, eps: QK_EPS, ring: CAP, posDyn: true },
+          { n, nh: NH, nkv: NKV, hd: HD, in_stride: QKVG, qkNorm: true, eps: QK_EPS, ring: CONTEXT_CAPACITY, posDyn: true },
           { temp: T(p + 'attn_temp'), dyn });
         attention(b, q, kc, vc, attnH,
-          { n, nh: NH, nkv: NKV, hd: HD, window: 0xffffffff, ring: CAP, scale: ATTN_SCALE, posDyn: true,
+          { n, nh: NH, nkv: NKV, hd: HD, window: 0xffffffff, ring: CONTEXT_CAPACITY, scale: ATTN_SCALE, posDyn: true,
             gate_stride: QKVG, gate_off: GATE_OFF },
           { gate: qkvg, dyn });
         const pl = PROBE_LAYERS.indexOf(L);
         if (probing && pl >= 0) {
           probeReadout(b, q, kc, this.probeBuf, this.probeSc, pl, po);
           attentionMasked(b, q, kc, vc, qkvg, this.probeBuf, attnH, pl,
-            { nh: NH, nkv: NKV, hd: HD, ring: CAP, scale: ATTN_SCALE, gate_off: GATE_OFF }, dyn);
+            { nh: NH, nkv: NKV, hd: HD, ring: CONTEXT_CAPACITY, scale: ATTN_SCALE, gate_off: GATE_OFF }, dyn);
         }
         lin(attnH, p + 'attn_output.weight', bank, D, NH * HD, src(2 * L + 1));
       } else {
@@ -433,7 +429,7 @@ export class Backbone {
   async prefill(slot: 0 | 1, ids: Int32Array, cond: Conditioning, opts: PrefillOpts = {}): Promise<PrefillResult> {
     const n0 = ids.length / 11;
     if (!Number.isInteger(n0) || n0 < 1) throw new Error('empty prompt');
-    if (n0 > CAP) throw new Error(`prompt has ${n0} rows; maximum is ${CAP}`);
+    if (n0 > CONTEXT_CAPACITY) throw new Error(`prompt has ${n0} rows; maximum is ${CONTEXT_CAPACITY}`);
     checkConditioning(ids, n0, cond, this.hp);
     const gpu = this.gpu;
     const chunk = opts.capture ? n0 : Math.max(1, opts.chunk ?? CHUNK);
@@ -498,9 +494,9 @@ export class Backbone {
     if (on) {
       if (slot !== 0) throw new Error('backbone: the alignment probe runs on slot 0 only');
       const n = this.nPast[slot];
-      if (probe.textLen > PROBE_LMAX || probe.textStart < 0 || probe.textStart + probe.textLen > n)
+      if (probe.textLen > ALIGN_PROBE_MAX_TEXT || probe.textStart < 0 || probe.textStart + probe.textLen > n)
         throw new Error(`zonos3: alignment probe text span [${probe.textStart}, +${probe.textLen}) must lie in the slot's ${n} cached rows and ` +
-          `hold at most ${PROBE_LMAX} rows (zonos3_batch_features::probe_max_text)`);
+          `hold at most ${ALIGN_PROBE_MAX_TEXT} rows (zonos3_batch_features::probe_max_text)`);
       const at = (layer: number, head: number) => 4 + (PROBE_LAYERS.indexOf(layer) * NH + head) * 4;
       const headOk = (layer: number, head: number) => PROBE_LAYERS.includes(layer) && Number.isInteger(head) && head >= 0 && head < NH;
       for (const h of probe.heads) if (!headOk(h.layer, h.head))
@@ -526,7 +522,7 @@ export class Backbone {
 
   /** KV-full and steering-length checks of a decode step. */
   private checkStep(slot: 0 | 1, steer: Float32Array | null): void {
-    if (this.nPast[slot] >= CAP) throw new Error('KV cache full');
+    if (this.nPast[slot] >= CONTEXT_CAPACITY) throw new Error('KV cache full');
     const K = this.steerSources.length;
     if (steer && steer.length !== K * D)
       throw new Error(`zonos3: slot steering delta must hold ${K} sources x ${D} values`);

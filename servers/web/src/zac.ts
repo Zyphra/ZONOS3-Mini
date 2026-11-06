@@ -3,6 +3,7 @@
 // the full decoder, 2 each for the KEEP-2 pruned one), the causal ConvNeXt iSTFT head projecting two
 // spectrogram resolutions at 240 rows/s, then the host iSTFT + FIR mixer (44160 Hz) and sinc resampler (44100 Hz)
 // behind a SpecSink (this thread, or the codec worker). Mirrors decode_chunk + zac_stream_decode/flush (zac.cpp).
+import { HOP } from './generation';
 import type { Gpu } from './gpu/device';
 import { repackH8, tuneZacGemms, type GemmPlan } from './gpu/h8';
 import { ACT, attentionWin, dwconv, gemm, layernorm, patchUp, ropeKv, type GemmOpts, type Weight } from './gpu/ops';
@@ -11,11 +12,10 @@ import { ropeTable } from './gpu/rope';
 import type { Model } from './gpu/weights';
 import { LocalSpecSink, type HostParams, type SpecSink } from './spec-sink';
 
-export const HOP = 2940;
 export const BLOCK_FRAMES = 16;
 /** Stream frames per utterance: the registry's longest silence prefill (30), decode context (at most the 900-frame
  *  reference prefix) and frame budget (2000) fit. */
-export const MAX_FRAMES = 3072;
+export const ZAC_MAX_FRAMES = 3072;
 
 interface Stage { inDim: number; outDim: number; d: number; ff: number; ctx: number; patch: number }
 const STAGES: Stage[] = [
@@ -140,7 +140,7 @@ export class ZacStream {
     });
     this.idx = gpu.buffer(10 * BLOCK_FRAMES * 4, 'zac.idx');
     this.dyn = gpu.uniform(16, 'zac.dyn');
-    this.rope = gpu.upload(ropeTable((MAX_FRAMES + BLOCK_FRAMES) * CPF, 10000, HEAD_DIM), 'zac.rope');
+    this.rope = gpu.upload(ropeTable((ZAC_MAX_FRAMES + BLOCK_FRAMES) * CPF, 10000, HEAD_DIM), 'zac.rope');
     const b = new Builder(gpu);
     this.spec = this.record(b);
     this.prog = b.finish();
@@ -299,7 +299,7 @@ export class ZacStream {
    */
   chunk(idx: Int32Array, p0: number, n: number): Promise<Float32Array> {
     if (n < 1 || n > BLOCK_FRAMES) throw new Error(`zac chunk size ${n} out of range`);
-    if (p0 + n > MAX_FRAMES) throw new Error(`zac: utterance exceeds ${MAX_FRAMES} frames`);
+    if (p0 + n > ZAC_MAX_FRAMES) throw new Error(`zac: utterance exceeds ${ZAC_MAX_FRAMES} frames`);
     this.gpu.write(this.idx, 0, idx);
     this.dynData[0] = p0;
     this.dynData[1] = n;
