@@ -22,7 +22,7 @@ def resolve_model_path(model_path: str) -> str:
     Local paths are returned as-is. A Hugging Face repo id (e.g.
     ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k``) is downloaded to the local HF cache first.
     """
-    from zonos3.utils.release import is_hf, resolve_dir_or_local  # RELEASE_HF_20261021
+    from zonos3.utils.release import is_hf, resolve_dir_or_local
 
     if is_hf(model_path):
         return resolve_dir_or_local(model_path)
@@ -371,7 +371,7 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
             model_params = params["model"]
         else:
             model_params = params
-        spec = model_params.get("text_tokenizer_spec")  # RELEASE_HF_20261021: hf:// or checkpoint-relative tokenizer file
+        spec = model_params.get("text_tokenizer_spec")  # hf:// or checkpoint-relative tokenizer file
         if isinstance(spec, dict) and spec.get("path"):
             from zonos3.utils.release import resolve_tokenizer_path
 
@@ -480,7 +480,3 @@ def _load_config(model_path: str) -> Zonos3Config:
 def cached_load_checkpoint_config(model_path: str) -> Zonos3Config:
     config = _load_config(model_path)
     return Zonos3Config(**config.to_dict())
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# CONDITION_FLAG_RUNTIME_20261017

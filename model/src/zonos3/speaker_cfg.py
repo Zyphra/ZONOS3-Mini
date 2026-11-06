@@ -84,6 +84,3 @@ def guided_logits(conditional: torch.Tensor, unconditional: torch.Tensor, scale:
     if scale == 0.0:
         return unconditional.float()
     return unconditional.float() + scale * (conditional.float() - unconditional.float())
-# EMBEDDING_CFG_20261016
-
-# DECODE_CONTEXT_RUNTIME_20261017

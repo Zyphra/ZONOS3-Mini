@@ -1,4 +1,4 @@
-"""Request validation and plumbing for tagged-vs-plain TTS guidance (TAG_CFG_20261029)."""
+"""Request validation and plumbing for tagged-vs-plain TTS guidance."""
 import asyncio
 from types import SimpleNamespace
 

@@ -1,4 +1,4 @@
-"""Tag CFG (TAG_CFG_20261029): nonverbal markup helpers, markup-safe normalization, the tokenizer's plain-text twin
+"""Tag CFG: nonverbal markup helpers, markup-safe normalization, the tokenizer's plain-text twin
 and the scheduler's tagged-vs-plain pair. CPU only; the real NeMo grammar cases skip without pynini."""
 from __future__ import annotations
 

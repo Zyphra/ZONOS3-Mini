@@ -65,7 +65,7 @@ def payload_ids(text,spec):
 def text_ids(text,spec):
     return [2]+payload_ids(text,spec)+[3]
 def load_spec(model_path):
-    from zonos3.utils.release import resolve_dir_or_local,resolve_tokenizer_path  # RELEASE_HF_20261021
+    from zonos3.utils.release import resolve_dir_or_local,resolve_tokenizer_path
     model_dir=resolve_dir_or_local(str(model_path))
     model=json.loads((Path(model_dir)/'params.json').read_text())['model']
     spec=model.get('text_tokenizer_spec')

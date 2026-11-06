@@ -1,11 +1,11 @@
-"""hf:// locations for the ZONOS3 Mini release checkpoints (RELEASE_HF_20261021).
+"""hf:// locations for the ZONOS3 Mini release checkpoints.
 
 Registries, configs and the server's default --model-path may name files and folders in a Hugging Face repo as
 ``hf://<owner>/<repo>/<path inside the repo>``. ``resolve_file`` / ``resolve_dir_or_local`` fetch them into the local HF cache
 (``HF_HOME``; ``HF_TOKEN`` or a stored login is needed while the repo is private) and return local paths; plain local paths pass
 through unchanged, so the cluster servers keep running from their local registries. Default repo: ``ZONOS3_RELEASE_REPO``
-(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (R2GRPO_SWITCH_20261103: was ``lm/mect_60k``,
-which was ``lm/fullenc_120k`` before MECT60K_SWITCH_20261022).
+(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (was ``lm/mect_60k``,
+which was ``lm/fullenc_120k`` before).
 """
 from __future__ import annotations
 

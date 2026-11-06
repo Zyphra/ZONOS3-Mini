@@ -181,5 +181,3 @@ def test_request_fields_round_trip_through_the_pydantic_models():
     assert req.condition_buckets == {"loudness": 2, "fmax": None} and req.condition_values == [None, 8000.0, None]
     assert SpeechRequest(model="zonos3", input="hi").condition_buckets is None
     assert json.loads(json.dumps(api_server._condition_spec(cfg())))["layout"].startswith("[reference prefix")
-
-# CONDITION_FLAG_RUNTIME_20261017

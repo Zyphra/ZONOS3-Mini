@@ -30,7 +30,7 @@ MECT_FBANK = "mect_fbank"
 
 
 def registry_path() -> Path:
-    from zonos3.utils.release import resolve_file  # RELEASE_HF_20261021: the registry itself may live on hf://
+    from zonos3.utils.release import resolve_file  # the registry itself may live on hf://
 
     return Path(resolve_file(os.environ.get(REGISTRY_ENV) or str(DEFAULT_REGISTRY)))
 

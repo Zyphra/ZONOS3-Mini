@@ -580,7 +580,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# CONDITION_FLAG_RUNTIME_20261017

@@ -388,9 +388,3 @@ class TTSVocoderManager:
             self._prefix_mode.clear()
             self._prefix_emitted.clear()
             self._prefix_live.clear()
-
-# DECODE_CONTEXT_RUNTIME_20261017
-
-# DECODE_CONTEXT_RUNTIME2_20261017
-
-# SILENCE_DEFAULT_RUNTIME_20261017

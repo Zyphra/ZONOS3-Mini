@@ -1818,12 +1818,3 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
         uvicorn.run(app, host=host, port=port, access_log=access_log_enabled())
     else:
         asyncio.run(tts_shell())
-
-# CONDITION_ROWS_RUNTIME_20261016
-# EMBEDDING_CFG_20261016
-
-# CONDITION_FLAG_RUNTIME_20261017
-
-# DECODE_CONTEXT_RUNTIME_20261017
-
-# SILENCE_DEFAULT_RUNTIME_20261017

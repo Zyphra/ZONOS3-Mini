@@ -312,4 +312,3 @@ def create_speaker_embedder(
     if entry is not None:
         return create_registry_speaker_embedder(entry, device=device)
     raise AssertionError(f"Unhandled speaker embedding backend: {backend}")
-# MECT_SPEAKER_ENCODER_20261016

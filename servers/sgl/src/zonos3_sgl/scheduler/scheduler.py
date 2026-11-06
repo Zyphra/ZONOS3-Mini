@@ -1340,8 +1340,3 @@ class TTSScheduler(SchedulerIOMixin):
         torch.cuda.synchronize(self.device)
         self.sync_all_ranks()
         self.engine.shutdown()
-
-# CONDITION_ROWS_RUNTIME_20261016
-# EMBEDDING_CFG_20261016
-
-# DECODE_CONTEXT_RUNTIME2_20261017

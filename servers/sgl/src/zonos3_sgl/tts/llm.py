@@ -800,9 +800,3 @@ class TTSLLM(TTSScheduler):
         from zonos3.tts.audio import write_pcm16_wav
 
         write_pcm16_wav(path, np.frombuffer(audio_bytes, np.float32), sample_rate)
-
-
-# CONDITION_ROWS_RUNTIME_20261016
-# EMBEDDING_CFG_20261016
-
-# LLM_AUDIO_PREFILL_20261017

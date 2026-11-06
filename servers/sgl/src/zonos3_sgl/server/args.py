@@ -109,7 +109,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
 
     parser = argparse.ArgumentParser(description="Zonos3 Server Arguments")
 
-    from zonos3.utils.release import RELEASE_LM  # RELEASE_HF_20261021
+    from zonos3.utils.release import RELEASE_LM
 
     parser.add_argument(
         "--model-path",

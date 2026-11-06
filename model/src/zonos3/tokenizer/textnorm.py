@@ -49,7 +49,7 @@ _SPACE_PUNCT_RE = re.compile(r" +([.!?,;:])(?=\s|$)")
 # collapse the spacing we introduced ourselves.
 _MOSES_POSTPROCESS_LANGS = {"en", "zh", "ja", "ko"}
 
-# Line breaks (LINE_BREAKS_20261019). NeMo's tagger treats "\n" as whitespace, but post_process_punct (the Moses path
+# Line breaks. NeMo's tagger treats "\n" as whitespace, but post_process_punct (the Moses path
 # above) re-matches the spacing around every ASCII punctuation mark to the ORIGINAL input and only knows " ": a period
 # followed by a newline came back glued to the next word ("spend less.\n\nHunt" -> "spend less.Hunt", a bare "." token
 # that the model speaks as "dot"), and after a digit the re-attach below failed too ("$5.\nNext" -> "five dollars .Next").
@@ -70,7 +70,7 @@ _PHONEME_OPEN = "\ue000"
 _PHONEME_GROUP_RE = re.compile("(\ue000[^\ue000\ue001]*\ue001)")
 
 
-# Per-language pre-passes (TEXTNORM_PREPASS_20261019). Each one works around a reproduced upstream r1.2.0 grammar
+# Per-language pre-passes. Each one works around a reproduced upstream r1.2.0 grammar
 # behaviour; single-line text in every other language is byte-identical to before.
 #
 # ja / zh: the ja grammar raises FstOpError on an ASCII space after sentence punctuation ("です。 次" -> the whole request
@@ -247,12 +247,12 @@ class TTSTextNormalizer:
         checkpoints) are kept as typed; the text between them is normalized stretch by stretch.
 
         Nonverbal markup ("<laugh/>", "<shouting>...</shouting>") is never handed to a grammar either (the source
-        NV runtime's rule, TAG_CFG_20261029): the text between the markers is normalized piece by piece (each piece
+        NV runtime's rule): the text between the markers is normalized piece by piece (each piece
         with its pronunciation groups as above) and re-joined around the unchanged markers, keeping a single space on
         each side of a marker where the input had whitespace (the ja grammar raises on an ASCII space next to a
         marker, which left the whole sentence unnormalized). Text without markup takes the unchanged path.
         """
-        text = collapse_line_breaks(text)  # LINE_BREAKS_20261019: every return path hands back single-line text
+        text = collapse_line_breaks(text)  # every return path hands back single-line text
         if SERVER_TO_NEMO_LANG.get(language) is None or not has_nonverbal_markup(text):
             return self._normalize_groups(text, language)
         out = []
@@ -282,7 +282,7 @@ class TTSTextNormalizer:
 
     def _normalize_text(self, text: str, language: str) -> str:
         lang = SERVER_TO_NEMO_LANG.get(language)
-        text = collapse_line_breaks(text)  # LINE_BREAKS_20261019: every return path below hands back single-line text
+        text = collapse_line_breaks(text)  # every return path below hands back single-line text
         if lang is None or not text.strip():
             return text
         try:

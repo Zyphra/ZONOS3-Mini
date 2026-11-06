@@ -356,7 +356,3 @@ class ModelConfig:
             or None,
             quality_dropout=dict(getattr(config, "quality_dropout", None) or {}) or None,
         )
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# CONDITION_FLAG_RUNTIME_20261017

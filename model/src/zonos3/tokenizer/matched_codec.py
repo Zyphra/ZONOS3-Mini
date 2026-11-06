@@ -8,7 +8,7 @@ import functools,json,os,time
 from pathlib import Path
 import torch
 from zonos3.utils.hashing import sha256_file
-from zonos3.utils.release import hf_join,resolve_file  # RELEASE_HF_20261021
+from zonos3.utils.release import hf_join,resolve_file
 REGISTRY=Path(__file__).resolve().parents[1]/'registries'/'codec_registry_keep2_plain.json'
 _CACHE={}
 _INFO={}

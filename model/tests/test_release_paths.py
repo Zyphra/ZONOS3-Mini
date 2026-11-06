@@ -1,4 +1,4 @@
-"""RELEASE_HF_20261021: hf:// location handling without network access."""
+"""hf:// location handling without network access."""
 import json
 from pathlib import Path
 
@@ -55,5 +55,5 @@ def test_release_registries_are_consistent():
     assert e["checkpoint_sha256"] == "1cedeb12d7d964026c0a16afc32abd1de23dc484533111f24c950775f1941172"
     assert e["decoder"]["campaign"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/heads/")
     spk = json.loads((root / "speaker_encoder_registry.json").read_text())
-    assert spk["ownmect_s2"]["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/speaker_encoders/ownmect_s2/")   # MECT60K_SWITCH_20261022
-    assert release.RELEASE_LM.endswith("/lm/rate30_20k_r2grpo")   # R2GRPO_SWITCH_20261103
+    assert spk["ownmect_s2"]["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/speaker_encoders/ownmect_s2/")
+    assert release.RELEASE_LM.endswith("/lm/rate30_20k_r2grpo")

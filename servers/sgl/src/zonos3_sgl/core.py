@@ -315,7 +315,3 @@ class TTSBatch:
     @property
     def padded_size(self) -> int:
         return len(self.padded_reqs)
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# DECODE_CONTEXT_RUNTIME2_20261017

@@ -98,6 +98,3 @@ def test_trailing_prefilled_audio_rows_stay_in_both_branches():
     ids = torch.cat((prompt(reference_frames=4), opening))
     twin = unconditional_prompt(msg(ids, prefix=4), n_codebooks=C, audio_pad_id=PAD)
     assert torch.equal(twin, ids[4:]) and torch.equal(twin[-2:], opening)
-# EMBEDDING_CFG_20261016
-
-# DECODE_CONTEXT_RUNTIME_20261017

@@ -466,7 +466,3 @@ class TTSPromptBuilder:
 
     def speaker_reference_prefix(self, codes: torch.Tensor) -> torch.Tensor:
         return speaker_reference_prefix_tokens(codes, self.config)
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# DECODE_CONTEXT_RUNTIME_20261017
