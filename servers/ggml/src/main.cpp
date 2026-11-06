@@ -9,6 +9,8 @@
 #include "ssl-encoder.h"
 #include "spk-encoder.h"
 #include "audio-decode.h"
+#include "wav.h"
+#include "zonos3-text.h"
 #include "npy.h"
 #include "ggml.h"
 #include "prune-stats.h"
@@ -38,54 +40,50 @@
 
 static void usage(const char * a0) {
     fprintf(stderr,
-        "usage: %s <model.gguf> [--cpu|--gpu] [mode]\n"
-        "  --validate <input_ids.npy> <out_dir> [--layers N]\n"
-        "  --generate <input_ids.npy> <out.{npy,wav}>\n"
-        "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
-        "  --request <req.json> --build-prompt <ids.npy> [--worker-python PY [--python-src DIR]] [--steer F]\n"
-        "                      [--accent-adapters F] (accents.gguf auto-detected next to the backbone)\n"
-        "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
-        "      ids.twin.npy + ids.twin.cond.json for a speaker / tag / controls CFG twin); no generation\n"
-        "  --batch-test <t1|t2|...> | --decode-bench <text> [--slots N]\n"
-        "  --clone <ref_audio> | --reference-codes <codes.npy> | --speaker-embedding <emb.npy>\n"
-        "      mutually exclusive speaker sources; reference codes are ordinary [T,10], IDs 0..4095;\n"
-        "      the embedding is a float32 [192] npy (spk-encoder-cli output)\n"
-        "  --speaker-mode embedding|reference   how --clone conditions the prompt (default embedding)\n"
-        "  --spk-encoder <spk-encoder.gguf> --zac-encoder <zac-encoder.gguf> --ssl-teacher <ssl-teacher.gguf>\n"
-        "      (--clone only; companions auto-discover next to the backbone)\n"
-        "  --save-speaker-embedding <out.npy> saves the [192] embedding (--clone or --speaker-embedding)\n"
-        "  --save-reference <out.npy> saves encoded reference codes\n"
-        "  --loudness <LUFS> --fmax <Hz> --speaking-rate <bytes/s>  condition values (bucketed by the model)\n"
-        "  --condition-buckets <a,b,c> explicit buckets per condition, 0..count-1 (count = unknown) with the model's counts\n"
-        "      for loudness,fmax,speaking-rate; wins per name over the values above; omitted conditions are unknown\n"
-        "  --cfg-scale <s> speaker CFG scale, default 1 (off; needs a speaker source; --tts only)\n"
-        "  --silence-prefill <n> codec-silence frames appended to the prompt, 0..%d (default %d)\n"
-        "  --headroom-db <db> output attenuation 0..24 for decoded wavs (default: decoder's value; --tts only)\n"
-        "  --steer <steer.gguf> steering directions (auto-detected next to backbone when a control flag is given; --tts only)\n"
-        "  --control ID=DOSE (repeatable) --control-span START:END:ID=DOSE[,ID=DOSE...] (repeatable, hidden-space controls over\n"
-        "    code-point range [START,END) of the --tts text) --control-span-rate R (frames per character, default 1)\n"
-        "  --zac <zac.gguf> decodes output (default zac-keep2.gguf next to the backbone; zac.gguf = full-size decoder);\n"
-        "    companions auto-discover next to backbone\n"
-        "  --max N --seed N --greedy --recompute\n"
-        "  --dump-ids <ids.npy> saves the full teacher-forcing sequence for calibration\n"
-        "  --probe-heads <heads.json> alignment probe of the decode steps (a laci_heads/ JSON: its heads, weight 1) over\n"
-        "      the prompt's BOS..EOS text rows; --probe-window LAYER:HEAD:LO:HI (repeatable) masks that head to text\n"
-        "      indices [LO,HI] (ACI hard mask); --dump-probe <probe.npy> saves float32 [steps,2] (argmax, centroid)\n"
-        "      per decode step (--generate/--tts, KV path)\n"
-        "  --accents <accents.gguf> --accent NAME [--accent-strength S] accent adapter (default strength 1;\n"
-        "      accents.gguf auto-discovers next to the backbone; --generate/--tts)\n"
-        "  --dump-logits <logits.npy> saves float32 [1+steps,10,4098] conditional logits: the prompt's last row, then\n"
-        "      every decode step (--generate/--tts, KV path)\n"
-        "  --prune-mask <stats.bin> (--keep N | --mass-eps E | --drop-below-hits H)\n"
-        "   or: %s --phonemize <lexicon dir> --language L [--no-guess] [--symbols <symbols.json>] --text T\n"
-        "      prints the /v2/phonemize JSON (gold LMDB lexicon; espeak-ng guesses via ZONOS3_ESPEAK_NG_LIBRARY);\n"
-        "      --symbols (a JSON array of phoneme-token symbols) marks other pronunciations \"unsupported\"\n", a0,
-        zonos3_generation().silence_prefill_max_frames, zonos3_generation().silence_prefill_default_frames, a0);
-}
-
-static bool ends_with(const std::string & s, const char * suf) {
-    const size_t n = strlen(suf);
-    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+            "usage: %s <model.gguf> [--cpu|--gpu] [mode]\n"
+            "  --validate <input_ids.npy> <out_dir> [--layers N]\n"
+            "  --generate <input_ids.npy> <out.{npy,wav}>\n"
+            "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
+            "  --request <req.json> --build-prompt <ids.npy> [--worker-python PY [--python-src DIR]] [--steer F]\n"
+            "                      [--accent-adapters F] (accents.gguf auto-detected next to the backbone)\n"
+            "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
+            "      ids.twin.npy + ids.twin.cond.json for a speaker / tag / controls CFG twin); no generation\n"
+            "  --batch-test <t1|t2|...> | --decode-bench <text> [--slots N]\n"
+            "  --clone <ref_audio> | --reference-codes <codes.npy> | --speaker-embedding <emb.npy>\n"
+            "      mutually exclusive speaker sources; reference codes are ordinary [T,10], IDs 0..4095;\n"
+            "      the embedding is a float32 [192] npy (spk-encoder-cli output)\n"
+            "  --speaker-mode embedding|reference   how --clone conditions the prompt (default embedding)\n"
+            "  --spk-encoder <spk-encoder.gguf> --zac-encoder <zac-encoder.gguf> --ssl-teacher <ssl-teacher.gguf>\n"
+            "      (--clone only; companions auto-discover next to the backbone)\n"
+            "  --save-speaker-embedding <out.npy> saves the [192] embedding (--clone or --speaker-embedding)\n"
+            "  --save-reference <out.npy> saves encoded reference codes\n"
+            "  --loudness <LUFS> --fmax <Hz> --speaking-rate <bytes/s>  condition values (bucketed by the model)\n"
+            "  --condition-buckets <a,b,c> explicit buckets per condition, 0..count-1 (count = unknown) with the model's counts\n"
+            "      for loudness,fmax,speaking-rate; wins per name over the values above; omitted conditions are unknown\n"
+            "  --cfg-scale <s> speaker CFG scale, default 1 (off; needs a speaker source; --tts only)\n"
+            "  --silence-prefill <n> codec-silence frames appended to the prompt, 0..%d (default %d)\n"
+            "  --headroom-db <db> output attenuation 0..24 for decoded wavs (default: decoder's value; --tts only)\n"
+            "  --steer <steer.gguf> steering directions (auto-detected next to backbone when a control flag is given; --tts only)\n"
+            "  --control ID=DOSE (repeatable) --control-span START:END:ID=DOSE[,ID=DOSE...] (repeatable, hidden-space controls over\n"
+            "    code-point range [START,END) of the --tts text) --control-span-rate R (frames per character, default 1)\n"
+            "  --zac <zac.gguf> decodes output (default zac-keep2.gguf next to the backbone; zac.gguf = full-size decoder);\n"
+            "    companions auto-discover next to backbone\n"
+            "  --max N --seed N --greedy --recompute\n"
+            "  --dump-ids <ids.npy> saves the full teacher-forcing sequence for calibration\n"
+            "  --probe-heads <heads.json> alignment probe of the decode steps (a laci_heads/ JSON: its heads, weight 1) over\n"
+            "      the prompt's BOS..EOS text rows; --probe-window LAYER:HEAD:LO:HI (repeatable) masks that head to text\n"
+            "      indices [LO,HI] (ACI hard mask); --dump-probe <probe.npy> saves float32 [steps,2] (argmax, centroid)\n"
+            "      per decode step (--generate/--tts, KV path)\n"
+            "  --accents <accents.gguf> --accent NAME [--accent-strength S] accent adapter (default strength 1;\n"
+            "      accents.gguf auto-discovers next to the backbone; --generate/--tts)\n"
+            "  --dump-logits <logits.npy> saves float32 [1+steps,10,4098] conditional logits: the prompt's last row, then\n"
+            "      every decode step (--generate/--tts, KV path)\n"
+            "  --prune-mask <stats.bin> (--keep N | --mass-eps E | --drop-below-hits H)\n"
+            "   or: %s --phonemize <lexicon dir> --language L [--no-guess] [--symbols <symbols.json>] --text T\n"
+            "      prints the /v2/phonemize JSON (gold LMDB lexicon; espeak-ng guesses via ZONOS3_ESPEAK_NG_LIBRARY);\n"
+            "      --symbols (a JSON array of phoneme-token symbols) marks other pronunciations \"unsupported\"\n",
+            a0,
+            zonos3_generation().silence_prefill_max_frames, zonos3_generation().silence_prefill_default_frames, a0);
 }
 
 // Conditioning sidecar next to a prompt npy. A missing sidecar means "no replaced rows" (the
@@ -110,9 +108,9 @@ static bool emit_output(const std::string & out, const zonos3_model & model, con
     const bool want_wav = ends_with(out, ".wav");
     if (!want_wav) {
         std::vector<float> cf(codes.begin(), codes.end());
-        if (!npy::save_f32(out, cf.data(), { (int64_t) total, (int64_t) ncb })) return false;
-        const float ef[2] = { (float) eos_frame, (float) prefill };
-        if (!npy::save_f32(out + ".eos.npy", ef, { (int64_t) 2 })) return false;
+        if (!npy::save_f32(out, cf.data(), {(int64_t) total, (int64_t) ncb})) return false;
+        const float ef[2] = {(float) eos_frame, (float) prefill};
+        if (!npy::save_f32(out + ".eos.npy", ef, {(int64_t) 2})) return false;
         printf("wrote %s\n", out.c_str());
     }
     if (want_wav && zac_path.empty()) {
@@ -122,7 +120,10 @@ static bool emit_output(const std::string & out, const zonos3_model & model, con
     if (!zac_path.empty() && n_frames > 0) {
         const std::string wav = want_wav ? out : out + ".wav";
         zac_model dm;
-        if (!zac_load(dm, zac_path.c_str(), use_gpu)) { zac_free(dm); return false; }
+        if (!zac_load(dm, zac_path.c_str(), use_gpu)) {
+            zac_free(dm);
+            return false;
+        }
         std::vector<float> audio;
         bool decoded = zac_decode(dm, codes.data(), total, ncb, eos_frame, audio);
         if (decoded) {
@@ -131,7 +132,7 @@ static bool emit_output(const std::string & out, const zonos3_model & model, con
             const float gain = zac_output_gain(dm, headroom_db);
             for (float & v : audio) v *= gain;
         }
-        const bool written = decoded && zac_write_wav(wav.c_str(), audio, dm.sample_rate);
+        const bool written = decoded && wav_pcm16_write(wav.c_str(), audio, dm.sample_rate);
         zac_free(dm);
         if (!written) return false;
     }
@@ -139,7 +140,10 @@ static bool emit_output(const std::string & out, const zonos3_model & model, con
 }
 
 static void pr(const char * nm, const ggml_tensor * t) {
-    if (!t) { printf("  %-22s <null>\n", nm); return; }
+    if (!t) {
+        printf("  %-22s <null>\n", nm);
+        return;
+    }
     printf("  %-22s ne=[%5lld,%5lld,%4lld,%2lld] %s\n", nm,
            (long long) t->ne[0], (long long) t->ne[1],
            (long long) t->ne[2], (long long) t->ne[3], ggml_type_name(t->type));
@@ -168,31 +172,39 @@ static int run_decode_bench(zonos3_model & model, const std::string & text, int 
     zonos3_prompt prompt;
     if (!zonos3_build_prompt(model, text, opt, prompt) || n_steps < 1 ||
         (int64_t) prompt.n_rows + n_steps + 8 > model.hp.n_ctx_train) {
-        fprintf(stderr, "decode-bench: prompt and decode steps exceed model context\n"); return 1;
+        fprintf(stderr, "decode-bench: prompt and decode steps exceed model context\n");
+        return 1;
     }
     const int n0 = prompt.n_rows;
     std::vector<float> idf(prompt.ids.begin(), prompt.ids.end());
 
     zonos3_batch_ctx bc;
     if (!zonos3_batch_init(bc, model, n_slots, n0 + n_steps + 8)) {
-        fprintf(stderr, "decode-bench: batch init failed\n"); return 1;
+        fprintf(stderr, "decode-bench: batch init failed\n");
+        return 1;
     }
-    zonos3_sampling sp; sp.greedy = true;            // argmax feedback; values don't affect timing
+    zonos3_sampling sp;
+    sp.greedy = true; // argmax feedback; values don't affect timing
     std::vector<zonos3_sampler> smp(n_slots, zonos3_sampler(sp, model.hp));
     std::vector<zonos3_slot> slots(n_slots);
     std::vector<std::vector<float>> lo(n_slots, std::vector<float>((size_t) av * ncb));
-    std::vector<int32_t> sink;                        // throwaway codes
+    std::vector<int32_t> sink; // throwaway codes
     std::vector<zonos3_slot *> active(n_slots);
     for (int i = 0; i < n_slots; ++i) {
-        slots[i] = zonos3_slot{}; slots[i].index = i; slots[i].active = true; slots[i].n_past = n0;
+        slots[i] = zonos3_slot{};
+        slots[i].index = i;
+        slots[i].active = true;
+        slots[i].n_past = n0;
         slots[i].prefill = prompt.prefill_frames;
         if (!zonos3_batch_slot_prefill(bc, i, idf.data(), n0, prompt.cond, lo[i].data())) {
-            fprintf(stderr, "decode-bench: prefill slot %d failed\n", i); zonos3_batch_free(bc); return 1;
+            fprintf(stderr, "decode-bench: prefill slot %d failed\n", i);
+            zonos3_batch_free(bc);
+            return 1;
         }
         active[i] = &slots[i];
     }
     auto step_once = [&]() {
-        for (int i = 0; i < n_slots; ++i) {          // sample -> next_ids (ignore done/eos)
+        for (int i = 0; i < n_slots; ++i) { // sample -> next_ids (ignore done/eos)
             sink.clear();
             zonos3_slot_sample(model, slots[i], smp[i], lo[i].data(), sink, n_steps + n0 + 16, {});
             slots[i].done = false;
@@ -205,19 +217,23 @@ static int run_decode_bench(zonos3_model & model, const std::string & text, int 
 
     for (int w = 0; w < 8; ++w) {
         if (!step_once()) {
-            fprintf(stderr, "decode-bench: warmup step failed\n"); zonos3_batch_free(bc); return 1;
+            fprintf(stderr, "decode-bench: warmup step failed\n");
+            zonos3_batch_free(bc);
+            return 1;
         }
     }
     auto t0 = std::chrono::steady_clock::now();
     for (int s = 0; s < n_steps; ++s) {
         if (!step_once()) {
-            fprintf(stderr, "decode-bench: decode step failed\n"); zonos3_batch_free(bc); return 1;
+            fprintf(stderr, "decode-bench: decode step failed\n");
+            zonos3_batch_free(bc);
+            return 1;
         }
     }
     const double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     const double fps = (double) n_slots * n_steps / dt;
-    const double rt  = fps / ZONOS3_FRAME_RATE;
+    const double rt = fps / ZONOS3_FRAME_RATE;
     printf("decode-bench: slots=%d steps=%d  %.3fs  %.0f frames/s  %.1fx real-time  (%.1f frames/s/slot)\n",
            n_slots, n_steps, dt, fps, rt, fps / n_slots);
     zonos3_batch_free(bc);
@@ -231,9 +247,10 @@ static int run_decode_bench(zonos3_model & model, const std::string & text, int 
 // persistent tensors, including paused and reused slots, on CPU or GPU.
 static int run_batch_test(zonos3_model & model, const std::string & texts_joined, int n_slots,
                           int max_frames, const zonos3_sampling & sp_in,
-                          const std::string & zac_path, bool use_gpu, const zonos3_prompt_options & opt) {
+                          bool use_gpu, const zonos3_prompt_options & opt) {
     if (use_gpu && !model.is_gpu) {
-        fprintf(stderr, "batch-test: --gpu requested but no GPU backend loaded\n"); return 1;
+        fprintf(stderr, "batch-test: --gpu requested but no GPU backend loaded\n");
+        return 1;
     }
     const int ncb = (int) model.hp.n_codebooks, av = (int) model.hp.audio_vocab;
     std::vector<std::string> texts = split_pipe(texts_joined);
@@ -243,11 +260,11 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
     struct Job {
         std::string text;
         zonos3_prompt prompt;
-        std::vector<float> idf;          // prompt ids [n0*W] floats
+        std::vector<float> idf; // prompt ids [n0*W] floats
         int n0 = 0;
         std::unique_ptr<zonos3_sampler> smp;
         zonos3_slot slot;
-        std::vector<float> logits;       // [av*ncb] current sampling source
+        std::vector<float> logits; // [av*ncb] current sampling source
         std::vector<int32_t> codes;
         int eos_frame = -1;
     };
@@ -256,7 +273,8 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
     for (int i = 0; i < n_req; ++i) {
         if (!zonos3_build_prompt(model, texts[i], opt, jobs[i].prompt) ||
             (int64_t) jobs[i].prompt.n_rows + max_frames > model.hp.n_ctx_train) {
-            fprintf(stderr, "batch-test: prompt and generation exceed model context\n"); return 1;
+            fprintf(stderr, "batch-test: prompt and generation exceed model context\n");
+            return 1;
         }
         const int n0 = jobs[i].prompt.n_rows;
         jobs[i].text = texts[i];
@@ -278,25 +296,27 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
 
     zonos3_batch_ctx bc;
     if (!zonos3_batch_init(bc, model, n_slots, max_n0 + max_frames)) {
-        fprintf(stderr, "batch-test: batch init failed\n"); return 1;
+        fprintf(stderr, "batch-test: batch init failed\n");
+        return 1;
     }
 
     for (int i = 0; i < n_req; ++i) {
         jobs[i].smp = std::make_unique<zonos3_sampler>(sp_in, model.hp);
         jobs[i].slot = zonos3_slot{};
-        jobs[i].slot.index  = i;
+        jobs[i].slot.index = i;
         jobs[i].slot.active = true;
         jobs[i].slot.n_past = jobs[i].n0;
         jobs[i].slot.prefill = jobs[i].prompt.prefill_frames;
         jobs[i].logits.assign((size_t) av * ncb, 0.0f);
         if (!zonos3_batch_slot_prefill(bc, i, jobs[i].idf.data(), jobs[i].n0, jobs[i].prompt.cond, jobs[i].logits.data())) {
             fprintf(stderr, "batch-test: prefill slot %d failed\n", i);
-            zonos3_batch_free(bc); return 1;
+            zonos3_batch_free(bc);
+            return 1;
         }
     }
 
     for (;;) {
-        bool any = false;                         // sample phase
+        bool any = false; // sample phase
         for (int i = 0; i < n_req; ++i) {
             Job & j = jobs[i];
             if (!j.slot.active || j.slot.done) continue;
@@ -305,12 +325,14 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
             any = true;
         }
         if (!any) break;
-        std::vector<zonos3_slot *> step_list;     // step phase
+        std::vector<zonos3_slot *> step_list; // step phase
         for (int i = 0; i < n_req; ++i)
             if (jobs[i].slot.active && !jobs[i].slot.done) step_list.push_back(&jobs[i].slot);
         if (step_list.empty()) break;
         if (!zonos3_batch_step(bc, step_list)) {
-            fprintf(stderr, "batch-test: decode step failed\n"); zonos3_batch_free(bc); return 1;
+            fprintf(stderr, "batch-test: decode step failed\n");
+            zonos3_batch_free(bc);
+            return 1;
         }
         for (zonos3_slot * sp : step_list)
             memcpy(jobs[sp->index].logits.data(), zonos3_batch_slot_logits(bc, sp->index),
@@ -328,8 +350,12 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
         for (int f = 0; f < cmp; ++f) {
             bool eq = true;
             for (int cb = 0; cb < ncb; ++cb)
-                if (b[(size_t) f * ncb + cb] != r[(size_t) f * ncb + cb]) { eq = false; break; }
-            if (eq) ++agree; else if (first_div < 0) first_div = f;
+                if (b[(size_t) f * ncb + cb] != r[(size_t) f * ncb + cb]) {
+                    eq = false;
+                    break;
+                }
+            if (eq) ++agree;
+            else if (first_div < 0) first_div = f;
         }
         const bool exact = (nb == nr && agree == cmp && jobs[i].eos_frame == ref_eos[i]);
         printf("  req %d \"%.28s\": batch=%d(eos=%d) ref=%d(eos=%d)  agree=%d/%d first_div=%d %s\n",
@@ -345,26 +371,6 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
                 if (!same) ++fails;
             }
 
-    if (!zac_path.empty() && n_req > 0 && !jobs[0].codes.empty()) {
-        zac_model dm;
-        if (zac_load(dm, zac_path.c_str(), use_gpu)) {
-            std::vector<float> audio;
-            const int prefill = jobs[0].prompt.prefill_frames;
-            std::vector<int32_t> stream = zonos3_prefill_codes(model, jobs[0].prompt);
-            stream.insert(stream.end(), jobs[0].codes.begin(), jobs[0].codes.end());
-            const int nf = prefill + (int) jobs[0].codes.size() / ncb;
-            if (zac_decode(dm, stream.data(), nf, ncb, jobs[0].eos_frame, audio)) {
-                const size_t drop = std::min(audio.size(), (size_t) prefill * zac_samples_per_frame(dm));
-                audio.erase(audio.begin(), audio.begin() + drop);
-                const float gain = zac_output_gain(dm, -1.0);
-                for (float & v : audio) v *= gain;
-                zac_write_wav("/tmp/batch_slot0.wav", audio, dm.sample_rate);
-            }
-            zac_free(dm);
-            printf("  wrote /tmp/batch_slot0.wav\n");
-        }
-    }
-
     zonos3_batch_free(bc);
     if (sp_in.greedy) {
         printf("batch-test greedy sequence parity: %s (all %d requests; logits/state not qualified by this check)\n",
@@ -375,7 +381,6 @@ static int run_batch_test(zonos3_model & model, const std::string & texts_joined
     }
     return fails ? 1 : 0;
 }
-
 
 // strtod that rejects empty/trailing text and non-finite values.
 static bool parse_finite(const char * s, double & v) {
@@ -431,7 +436,10 @@ static bool parse_probe_window(const std::string & s, zonos3_align_probe::window
     int layer, head, lo, hi;
     char tail;
     if (sscanf(s.c_str(), "%d:%d:%d:%d%c", &layer, &head, &lo, &hi, &tail) != 4) return false;
-    w.layer = layer; w.head = head; w.lo = lo; w.hi = hi;
+    w.layer = layer;
+    w.head = head;
+    w.lo = lo;
+    w.hi = hi;
     return true;
 }
 
@@ -447,17 +455,22 @@ struct cli_extras {
 };
 
 static bool cli_prepare_extras(const zonos3_model & model, zonos3_prompt & prompt, cli_extras & x) {
-    if (x.accent >= 0) { prompt.cond.accent = x.accent; prompt.cond.accent_strength = x.accent_strength; }
+    if (x.accent >= 0) {
+        prompt.cond.accent = x.accent;
+        prompt.cond.accent_strength = x.accent_strength;
+    }
     if (!x.heads_path.empty()) {
         zonos3_align_probe & p = x.features.probe;
         try {
             for (const auto & h : zonos3_laci::LaciHeads::load(x.heads_path).heads) p.heads.push_back({h.layer, h.head});
         } catch (const std::exception & e) {
-            fprintf(stderr, "probe: %s\n", e.what()); return false;
+            fprintf(stderr, "probe: %s\n", e.what());
+            return false;
         }
         p.windows = x.windows;
         if (!zonos3_locate_text_span(model, prompt.ids.data(), prompt.n_rows, p.text_start, p.text_len)) {
-            fprintf(stderr, "probe: the prompt has no BOS..EOS text span\n"); return false;
+            fprintf(stderr, "probe: the prompt has no BOS..EOS text span\n");
+            return false;
         }
         x.features.readouts = &x.readouts;
     }
@@ -468,7 +481,10 @@ static bool cli_prepare_extras(const zonos3_model & model, zonos3_prompt & promp
 static bool cli_save_extras(const zonos3_model & model, const cli_extras & x) {
     if (!x.probe_out.empty()) {
         std::vector<float> v;
-        for (const auto & r : x.readouts) { v.push_back((float) r.argmax); v.push_back(r.centroid); }
+        for (const auto & r : x.readouts) {
+            v.push_back((float) r.argmax);
+            v.push_back(r.centroid);
+        }
         if (!npy::save_f32(x.probe_out, v.data(), {(int64_t) x.readouts.size(), 2})) return false;
         printf("dump-probe: %zu steps -> %s\n", x.readouts.size(), x.probe_out.c_str());
     }
@@ -487,21 +503,38 @@ static int phonemize_main(int argc, char ** argv) {
     std::string lexicon_dir = argv[2], language, text, symbols_path;
     bool guess = true, have_text = false;
     for (int i = 3; i < argc; ++i) {
-        if      (!strcmp(argv[i], "--language") && i + 1 < argc) language = argv[++i];
-        else if (!strcmp(argv[i], "--text") && i + 1 < argc) { text = argv[++i]; have_text = true; }
-        else if (!strcmp(argv[i], "--symbols") && i + 1 < argc) symbols_path = argv[++i];
+        if (!strcmp(argv[i], "--language") && i + 1 < argc) language = argv[++i];
+        else if (!strcmp(argv[i], "--text") && i + 1 < argc) {
+            text = argv[++i];
+            have_text = true;
+        } else if (!strcmp(argv[i], "--symbols") && i + 1 < argc) symbols_path = argv[++i];
         else if (!strcmp(argv[i], "--no-guess")) guess = false;
-        else { usage(argv[0]); return 1; }
+        else {
+            usage(argv[0]);
+            return 1;
+        }
     }
-    if (language.empty() || !have_text) { usage(argv[0]); return 1; }
+    if (language.empty() || !have_text) {
+        usage(argv[0]);
+        return 1;
+    }
     std::string err;
     auto lexicon = zonos3_phoneme_lexicon::open(lexicon_dir, err);
-    if (!lexicon) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    if (!lexicon) {
+        fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
     zonos3_phonemize_result result;
-    if (!lexicon->phonemize(text, language, guess, result, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 2; }
+    if (!lexicon->phonemize(text, language, guess, result, err)) {
+        fprintf(stderr, "error: %s\n", err.c_str());
+        return 2;
+    }
     if (!symbols_path.empty()) {
         std::ifstream f(symbols_path);
-        if (!f) { fprintf(stderr, "error: cannot read %s\n", symbols_path.c_str()); return 1; }
+        if (!f) {
+            fprintf(stderr, "error: cannot read %s\n", symbols_path.c_str());
+            return 1;
+        }
         zonos3_phonemize_restrict(result, nlohmann::json::parse(f).get<std::vector<std::string>>());
     }
     printf("%s\n", zonos3_phonemize_json(result).c_str());
@@ -516,10 +549,10 @@ static int request_prompt_main(int argc, char ** argv) {
     const std::string path = argv[1];
     std::string request_path, out, zac_encoder, ssl_teacher, spk_encoder, steer_path;
     zs::ServerState s;
-    s.default_voice_dir.clear();   // speaker ids need the server's voices
+    s.default_voice_dir.clear(); // speaker ids need the server's voices
     for (int i = 2; i < argc; ++i) {
         const bool v = i + 1 < argc;
-        if      (!strcmp(argv[i], "--request") && v) request_path = argv[++i];
+        if (!strcmp(argv[i], "--request") && v) request_path = argv[++i];
         else if (!strcmp(argv[i], "--build-prompt") && v) out = argv[++i];
         else if (!strcmp(argv[i], "--gpu")) s.use_gpu = true;
         else if (!strcmp(argv[i], "--cpu")) s.use_gpu = false;
@@ -530,22 +563,33 @@ static int request_prompt_main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--ssl-teacher") && v) ssl_teacher = argv[++i];
         else if (!strcmp(argv[i], "--steer") && v) steer_path = argv[++i];
         else if (!strcmp(argv[i], "--accent-adapters") && v) s.accent_adapters_path = argv[++i];
-        else { usage(argv[0]); return 1; }
+        else {
+            usage(argv[0]);
+            return 1;
+        }
     }
     if (request_path.empty() || out.empty()) {
-        fprintf(stderr, "error: --request needs --build-prompt <ids.npy>\n"); return 1;
+        fprintf(stderr, "error: --request needs --build-prompt <ids.npy>\n");
+        return 1;
     }
     nlohmann::json body;
     {
         std::ifstream f(request_path, std::ios::binary);
         body = nlohmann::json::parse(f, nullptr, /*allow_exceptions=*/false);
-        if (!f || body.is_discarded()) { fprintf(stderr, "error: cannot read JSON request %s\n", request_path.c_str()); return 1; }
+        if (!f || body.is_discarded()) {
+            fprintf(stderr, "error: cannot read JSON request %s\n", request_path.c_str());
+            return 1;
+        }
     }
     if (const auto detail = zs::schema::validate("GenerateRequest", body)) {
-        fprintf(stderr, "422 %s\n", nlohmann::json{{"detail", *detail}}.dump().c_str()); return 2;
+        fprintf(stderr, "422 %s\n", nlohmann::json{{"detail", *detail}}.dump().c_str());
+        return 2;
     }
     std::string err;
-    if (!zs::configure_silence_prefill(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    if (!zs::configure_silence_prefill(s, err)) {
+        fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
     s.spk_path = spk_encoder.empty() ? mp_find_companion(path, "spk-encoder.gguf") : spk_encoder;
     s.encoder_path = zac_encoder.empty() ? mp_find_companion(path, "zac-encoder.gguf") : zac_encoder;
     s.teacher_path = ssl_teacher.empty() ? mp_find_companion(path, "ssl-teacher.gguf") : ssl_teacher;
@@ -562,20 +606,28 @@ static int request_prompt_main(int argc, char ** argv) {
     if (!zonos3_model_load(s.model, path.c_str(), s.use_gpu)) return 1;
     s.model_path = path;
     // The server's default --max and slot capacity, so R5 refuses what the server refuses.
-    if (!zs::configure_frame_budget(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    if (!zs::configure_frame_budget(s, err)) {
+        fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
     if (!steer_path.empty()) {
         if (!zonos3_steer_load(s.steer, steer_path.c_str(), s.model, err)) {
-            fprintf(stderr, "error: --steer %s: %s\n", steer_path.c_str(), err.c_str()); return 1;
+            fprintf(stderr, "error: --steer %s: %s\n", steer_path.c_str(), err.c_str());
+            return 1;
         }
         s.steer_path = steer_path;
         s.steer_loaded = true;
     }
-    if (!zs::load_accent_adapters(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+    if (!zs::load_accent_adapters(s, err)) {
+        fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
     zs::GeneratePlan plan;
     try {
         plan = zs::plan_generate(s, body, std::nullopt);
     } catch (const zs::HttpError & e) {
-        fprintf(stderr, "%d %s\n", e.status, e.body.dump().c_str()); return 2;
+        fprintf(stderr, "%d %s\n", e.status, e.body.dump().c_str());
+        return 2;
     }
     const int64_t W = (int64_t) s.model.hp.n_codebooks + 1;
     auto save = [&](const std::string & ids_path, const zonos3_prompt & p) {
@@ -597,7 +649,10 @@ static int request_prompt_main(int argc, char ** argv) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc < 2) { usage(argv[0]); return 1; }
+    if (argc < 2) {
+        usage(argv[0]);
+        return 1;
+    }
     if (!strcmp(argv[1], "--phonemize") && argc >= 3) return phonemize_main(argc, argv);
     for (int i = 2; i < argc; ++i)
         if (!strcmp(argv[i], "--request")) return request_prompt_main(argc, argv);
@@ -608,7 +663,7 @@ int main(int argc, char ** argv) {
     std::string clone_path, encoder_path, teacher_path, save_reference_path;
     std::string speaker_mode, speaker_embedding_path, save_speaker_embedding_path, spk_encoder_path;
     std::string loudness_arg, fmax_arg, rate_arg, buckets_arg, cfg_arg, silence_arg, headroom_arg;
-    std::string prune_mask_path;                             // --prune-mask: runtime expert pruning
+    std::string prune_mask_path; // --prune-mask: runtime expert pruning
     int mask_keep = -1, mask_drop_hits = -1;
     double mask_mass_eps = -1.0;
     int n_layer_limit = -1, max_frames = 450, n_slots = 1;
@@ -620,29 +675,33 @@ int main(int argc, char ** argv) {
     std::string accents_path, accent_name, accent_strength_arg;
     std::vector<std::string> window_args;
     for (int i = 2; i < argc; ++i) {
-        if      (!strcmp(argv[i], "--gpu")) use_gpu = true;
+        if (!strcmp(argv[i], "--gpu")) use_gpu = true;
         else if (!strcmp(argv[i], "--cpu")) use_gpu = false;
         else if (!strcmp(argv[i], "--validate") && i + 2 < argc) {
-            validate = true; ids_path = argv[++i]; out_dir = argv[++i];
-        }
-        else if (!strcmp(argv[i], "--generate") && i + 2 < argc) {
-            generate = true; ids_path = argv[++i]; out_codes = argv[++i];
-        }
-        else if (!strcmp(argv[i], "--tts") && i + 2 < argc) {
-            do_tts = true; text = argv[++i]; out_codes = argv[++i];
-        }
-        else if (!strcmp(argv[i], "--build-prompt") && i + 2 < argc) {
-            do_build_prompt = true; text = argv[++i]; prompt_out = argv[++i];
-        }
-        else if (!strcmp(argv[i], "--batch-test") && i + 1 < argc) {
-            do_batch_test = true; text = argv[++i];
-        }
-        else if (!strcmp(argv[i], "--decode-bench") && i + 1 < argc) {
-            do_decode_bench = true; text = argv[++i];
-        }
-        else if (!strcmp(argv[i], "--slots")  && i + 1 < argc) n_slots = atoi(argv[++i]);
+            validate = true;
+            ids_path = argv[++i];
+            out_dir = argv[++i];
+        } else if (!strcmp(argv[i], "--generate") && i + 2 < argc) {
+            generate = true;
+            ids_path = argv[++i];
+            out_codes = argv[++i];
+        } else if (!strcmp(argv[i], "--tts") && i + 2 < argc) {
+            do_tts = true;
+            text = argv[++i];
+            out_codes = argv[++i];
+        } else if (!strcmp(argv[i], "--build-prompt") && i + 2 < argc) {
+            do_build_prompt = true;
+            text = argv[++i];
+            prompt_out = argv[++i];
+        } else if (!strcmp(argv[i], "--batch-test") && i + 1 < argc) {
+            do_batch_test = true;
+            text = argv[++i];
+        } else if (!strcmp(argv[i], "--decode-bench") && i + 1 < argc) {
+            do_decode_bench = true;
+            text = argv[++i];
+        } else if (!strcmp(argv[i], "--slots") && i + 1 < argc) n_slots = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--layers") && i + 1 < argc) n_layer_limit = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--max")    && i + 1 < argc) max_frames = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--max") && i + 1 < argc) max_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--zac") && i + 1 < argc) zac_path = argv[++i];
         else if (!strcmp(argv[i], "--reference-codes") && i + 1 < argc) reference_path = argv[++i];
         else if (!strcmp(argv[i], "--clone") && i + 1 < argc) clone_path = argv[++i];
@@ -660,7 +719,7 @@ int main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--cfg-scale") && i + 1 < argc) cfg_arg = argv[++i];
         else if (!strcmp(argv[i], "--silence-prefill") && i + 1 < argc) silence_arg = argv[++i];
         else if (!strcmp(argv[i], "--headroom-db") && i + 1 < argc) headroom_arg = argv[++i];
-        else if (!strcmp(argv[i], "--seed")   && i + 1 < argc) sp.seed = (uint32_t) atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--seed") && i + 1 < argc) sp.seed = (uint32_t) atoi(argv[++i]);
         else if (!strcmp(argv[i], "--greedy")) sp.greedy = true;
         else if (!strcmp(argv[i], "--recompute")) use_kv = false;
         else if (!strcmp(argv[i], "--steer") && i + 1 < argc) steer_path = argv[++i];
@@ -675,40 +734,56 @@ int main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--accents") && i + 1 < argc) accents_path = argv[++i];
         else if (!strcmp(argv[i], "--accent") && i + 1 < argc) accent_name = argv[++i];
         else if (!strcmp(argv[i], "--accent-strength") && i + 1 < argc) accent_strength_arg = argv[++i];
-        else if (!strcmp(argv[i], "--prune-mask")      && i + 1 < argc) prune_mask_path = argv[++i];
-        else if (!strcmp(argv[i], "--keep")            && i + 1 < argc) mask_keep      = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--prune-mask") && i + 1 < argc) prune_mask_path = argv[++i];
+        else if (!strcmp(argv[i], "--keep") && i + 1 < argc) mask_keep = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--drop-below-hits") && i + 1 < argc) mask_drop_hits = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--mass-eps")        && i + 1 < argc) mask_mass_eps  = atof(argv[++i]);
-        else { usage(argv[0]); return 1; }
+        else if (!strcmp(argv[i], "--mass-eps") && i + 1 < argc) mask_mass_eps = atof(argv[++i]);
+        else {
+            usage(argv[0]);
+            return 1;
+        }
     }
     if (max_frames < 1 || n_slots < 1) {
-        fprintf(stderr, "error: --max and --slots must be positive\n"); return 1;
+        fprintf(stderr, "error: --max and --slots must be positive\n");
+        return 1;
     }
     if ((int) validate + (int) generate + (int) do_tts + (int) do_build_prompt +
-        (int) do_batch_test + (int) do_decode_bench > 1) {
-        fprintf(stderr, "error: select exactly one execution mode\n"); return 1;
+            (int) do_batch_test + (int) do_decode_bench >
+        1) {
+        fprintf(stderr, "error: select exactly one execution mode\n");
+        return 1;
     }
     for (const auto & a : window_args) {
         zonos3_align_probe::window w;
-        if (!parse_probe_window(a, w)) { fprintf(stderr, "error: --probe-window expects LAYER:HEAD:LO:HI\n"); return 1; }
+        if (!parse_probe_window(a, w)) {
+            fprintf(stderr, "error: --probe-window expects LAYER:HEAD:LO:HI\n");
+            return 1;
+        }
         extras.windows.push_back(w);
     }
     if ((!window_args.empty() || !extras.probe_out.empty()) && extras.heads_path.empty()) {
-        fprintf(stderr, "error: --probe-window and --dump-probe need --probe-heads\n"); return 1;
+        fprintf(stderr, "error: --probe-window and --dump-probe need --probe-heads\n");
+        return 1;
     }
     if ((!accents_path.empty() || !accent_strength_arg.empty()) && accent_name.empty()) {
-        fprintf(stderr, "error: --accents and --accent-strength need --accent\n"); return 1;
+        fprintf(stderr, "error: --accents and --accent-strength need --accent\n");
+        return 1;
     }
     if (!accent_strength_arg.empty()) {
         double v;
-        if (!parse_finite(accent_strength_arg.c_str(), v)) { fprintf(stderr, "error: --accent-strength must be finite\n"); return 1; }
+        if (!parse_finite(accent_strength_arg.c_str(), v)) {
+            fprintf(stderr, "error: --accent-strength must be finite\n");
+            return 1;
+        }
         extras.accent_strength = (float) v;
     }
     if ((!extras.heads_path.empty() || !accent_name.empty() || !extras.logits_out.empty()) && !generate && !do_tts) {
-        fprintf(stderr, "error: --probe-heads, --accent and --dump-logits require --generate or --tts\n"); return 1;
+        fprintf(stderr, "error: --probe-heads, --accent and --dump-logits require --generate or --tts\n");
+        return 1;
     }
     if ((!extras.heads_path.empty() || !extras.logits_out.empty()) && !use_kv) {
-        fprintf(stderr, "error: --probe-heads and --dump-logits need the KV decode path; drop --recompute\n"); return 1;
+        fprintf(stderr, "error: --probe-heads and --dump-logits need the KV decode path; drop --recompute\n");
+        return 1;
     }
 
     if (!mp_file_exists(path)) {
@@ -731,39 +806,46 @@ int main(int argc, char ** argv) {
     }
     const bool clone = !clone_path.empty();
     if ((int) clone + (int) !reference_path.empty() + (int) !speaker_embedding_path.empty() > 1) {
-        fprintf(stderr, "error: --clone, --reference-codes and --speaker-embedding are mutually exclusive\n"); return 1;
+        fprintf(stderr, "error: --clone, --reference-codes and --speaker-embedding are mutually exclusive\n");
+        return 1;
     }
     if (!speaker_mode.empty() && !clone) {
-        fprintf(stderr, "error: --speaker-mode requires --clone\n"); return 1;
+        fprintf(stderr, "error: --speaker-mode requires --clone\n");
+        return 1;
     }
     if (!speaker_mode.empty() && speaker_mode != "embedding" && speaker_mode != "reference") {
-        fprintf(stderr, "error: --speaker-mode must be embedding or reference\n"); return 1;
+        fprintf(stderr, "error: --speaker-mode must be embedding or reference\n");
+        return 1;
     }
     const bool have_speaker = clone || !reference_path.empty() || !speaker_embedding_path.empty();
-    double cond_value[3] = {};                       // loudness, fmax, speaking-rate
+    double cond_value[3] = {}; // loudness, fmax, speaking-rate
     bool cond_have[3] = {};
-    const std::string * cond_arg[3] = { &loudness_arg, &fmax_arg, &rate_arg };
-    const char * cond_flag[3] = { "--loudness", "--fmax", "--speaking-rate" };
+    const std::string * cond_arg[3] = {&loudness_arg, &fmax_arg, &rate_arg};
+    const char * cond_flag[3] = {"--loudness", "--fmax", "--speaking-rate"};
     for (int k = 0; k < 3; ++k) {
         if (cond_arg[k]->empty()) continue;
         if (!parse_finite(cond_arg[k]->c_str(), cond_value[k])) {
-            fprintf(stderr, "error: %s must be a finite number\n", cond_flag[k]); return 1;
+            fprintf(stderr, "error: %s must be a finite number\n", cond_flag[k]);
+            return 1;
         }
         cond_have[k] = true;
     }
-    int bucket_id[3] = { -1, -1, -1 };
+    int bucket_id[3] = {-1, -1, -1};
     if (!buckets_arg.empty() && !parse_condition_buckets(buckets_arg, bucket_id)) {
-        fprintf(stderr, "error: --condition-buckets needs 3 comma-separated non-negative integers\n"); return 1;
+        fprintf(stderr, "error: --condition-buckets needs 3 comma-separated non-negative integers\n");
+        return 1;
     }
     float cfg_scale = 1.0f;
     if (!cfg_arg.empty()) {
         double v;
         if (!parse_finite(cfg_arg.c_str(), v) || v < 0.0) {
-            fprintf(stderr, "error: --cfg-scale must be finite and >= 0\n"); return 1;
+            fprintf(stderr, "error: --cfg-scale must be finite and >= 0\n");
+            return 1;
         }
         cfg_scale = (float) v;
         if (cfg_scale != 1.0f && !have_speaker) {
-            fprintf(stderr, "error: --cfg-scale needs a speaker prompt (--clone, --reference-codes or --speaker-embedding)\n"); return 1;
+            fprintf(stderr, "error: --cfg-scale needs a speaker prompt (--clone, --reference-codes or --speaker-embedding)\n");
+            return 1;
         }
     }
     const zonos3_generation_registry & limits = zonos3_generation();
@@ -771,51 +853,64 @@ int main(int argc, char ** argv) {
     if (!silence_arg.empty()) {
         double v;
         if (!parse_finite(silence_arg.c_str(), v) || v != std::floor(v) || v < 0 || v > limits.silence_prefill_max_frames) {
-            fprintf(stderr, "error: --silence-prefill must be 0..%d\n", limits.silence_prefill_max_frames); return 1;
+            fprintf(stderr, "error: --silence-prefill must be 0..%d\n", limits.silence_prefill_max_frames);
+            return 1;
         }
         silence_prefill = (int) v;
     }
-    double headroom_db = -1.0;                       // < 0: the decoder's own value
+    double headroom_db = -1.0; // < 0: the decoder's own value
     if (!headroom_arg.empty() && (!parse_finite(headroom_arg.c_str(), headroom_db) || headroom_db < 0.0 || headroom_db > 24.0)) {
-        fprintf(stderr, "error: --headroom-db must be 0..24\n"); return 1;
+        fprintf(stderr, "error: --headroom-db must be 0..24\n");
+        return 1;
     }
     const bool have_conditions = !buckets_arg.empty() || cond_have[0] || cond_have[1] || cond_have[2];
     const bool text_mode = do_tts || do_build_prompt || do_batch_test || do_decode_bench;
     if ((have_speaker || have_conditions || !silence_arg.empty() || !save_reference_path.empty() ||
-         !save_speaker_embedding_path.empty()) && !text_mode) {
-        fprintf(stderr, "error: speaker, condition and silence-prefill flags require a text/prompt mode; --generate/--validate already contain full prompts\n"); return 1;
+         !save_speaker_embedding_path.empty()) &&
+        !text_mode) {
+        fprintf(stderr, "error: speaker, condition and silence-prefill flags require a text/prompt mode; --generate/--validate already contain full prompts\n");
+        return 1;
     }
     if ((!cfg_arg.empty() || !headroom_arg.empty()) && !do_tts) {
-        fprintf(stderr, "error: --cfg-scale and --headroom-db require --tts\n"); return 1;
+        fprintf(stderr, "error: --cfg-scale and --headroom-db require --tts\n");
+        return 1;
     }
     // Steering: raw controls move the speaker embedding, hidden controls (and spans) add to AttnRes bank sources.
     std::map<std::string, double> controls;
     std::vector<zonos3_control_span> control_spans;
     double span_rate = 0.0;
     if ((!steer_path.empty() || !control_args.empty() || !span_args.empty() || !span_rate_arg.empty()) && !do_tts) {
-        fprintf(stderr, "error: --steer, --control, --control-span and --control-span-rate require --tts\n"); return 1;
+        fprintf(stderr, "error: --steer, --control, --control-span and --control-span-rate require --tts\n");
+        return 1;
     }
     for (const auto & a : control_args) {
         const size_t eq = a.rfind('=');
         double dose = 0;
         if (eq == std::string::npos || eq == 0 || !parse_finite(a.c_str() + eq + 1, dose)) {
-            fprintf(stderr, "error: --control expects ID=DOSE\n"); return 1;
+            fprintf(stderr, "error: --control expects ID=DOSE\n");
+            return 1;
         }
         if (!controls.emplace(a.substr(0, eq), dose).second) {
-            fprintf(stderr, "error: duplicate --control %s\n", a.substr(0, eq).c_str()); return 1;
+            fprintf(stderr, "error: duplicate --control %s\n", a.substr(0, eq).c_str());
+            return 1;
         }
     }
     for (const auto & a : span_args) {
         zonos3_control_span span;
         if (!parse_control_span(a, span)) {
-            fprintf(stderr, "error: --control-span expects START:END:ID=DOSE[,ID=DOSE...]\n"); return 1;
+            fprintf(stderr, "error: --control-span expects START:END:ID=DOSE[,ID=DOSE...]\n");
+            return 1;
         }
         control_spans.push_back(std::move(span));
     }
     if (!span_rate_arg.empty()) {
-        if (span_args.empty()) { fprintf(stderr, "error: --control-span-rate needs --control-span\n"); return 1; }
+        if (span_args.empty()) {
+            fprintf(stderr, "error: --control-span-rate needs --control-span\n");
+            return 1;
+        }
         if (!parse_finite(span_rate_arg.c_str(), span_rate) || span_rate <= 0.0) {
-            fprintf(stderr, "error: --control-span-rate must be a positive number\n"); return 1;
+            fprintf(stderr, "error: --control-span-rate must be a positive number\n");
+            return 1;
         }
     }
     if (steer_path.empty() && (!controls.empty() || !control_spans.empty())) {
@@ -827,13 +922,16 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "zonos3-cli: using steer.gguf found next to model: %s\n", steer_path.c_str());
     }
     if (!save_reference_path.empty() && !clone && reference_path.empty()) {
-        fprintf(stderr, "error: --save-reference requires --clone or --reference-codes\n"); return 1;
+        fprintf(stderr, "error: --save-reference requires --clone or --reference-codes\n");
+        return 1;
     }
     if (!save_speaker_embedding_path.empty() && !clone && speaker_embedding_path.empty()) {
-        fprintf(stderr, "error: --save-speaker-embedding requires --clone or --speaker-embedding\n"); return 1;
+        fprintf(stderr, "error: --save-speaker-embedding requires --clone or --speaker-embedding\n");
+        return 1;
     }
     if (!clone && (!encoder_path.empty() || !teacher_path.empty() || !spk_encoder_path.empty())) {
-        fprintf(stderr, "error: --spk-encoder, --zac-encoder and --ssl-teacher overrides require --clone\n"); return 1;
+        fprintf(stderr, "error: --spk-encoder, --zac-encoder and --ssl-teacher overrides require --clone\n");
+        return 1;
     }
     // --clone computes the speaker embedding (embedding mode, or --save-speaker-embedding) and/or the
     // reference codes (reference mode, or --save-reference); each needs its own companion models.
@@ -872,31 +970,45 @@ int main(int argc, char ** argv) {
     if (!prune_mask_path.empty()) {
         if (mask_keep < 0 && mask_drop_hits < 0 && mask_mass_eps < 0.0) {
             fprintf(stderr, "error: --prune-mask needs --keep N, --mass-eps E, or --drop-below-hits H\n");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         std::map<int, prune_stats::layer> st;
-        if (!prune_stats::load(prune_mask_path, st)) { zonos3_model_free(model); return 1; }
-        const auto keep = prune_policy::select(st, { mask_keep, mask_drop_hits, mask_mass_eps });
-        if (!zonos3_set_expert_mask(model, keep)) { zonos3_model_free(model); return 1; }
+        if (!prune_stats::load(prune_mask_path, st)) {
+            zonos3_model_free(model);
+            return 1;
+        }
+        const auto keep = prune_policy::select(st, {mask_keep, mask_drop_hits, mask_mass_eps});
+        if (!zonos3_set_expert_mask(model, keep)) {
+            zonos3_model_free(model);
+            return 1;
+        }
     }
     // --accent: the bank outlives every use of model.accents (freed at exit).
-    struct accent_holder { zonos3_accents bank; ~accent_holder() { zonos3_accents_free(bank); } } accents;
+    struct accent_holder {
+        zonos3_accents bank;
+        ~accent_holder() { zonos3_accents_free(bank); }
+    } accents;
     if (!accent_name.empty()) {
         if (accents_path.empty()) accents_path = mp_find_companion(path, "accents.gguf");
         if (accents_path.empty()) {
             fprintf(stderr, "error: --accent needs accents.gguf (--accents or next to the backbone)\n");
             mp_print_missing_hint("accents.gguf", mp_parent_dir(path) + "/accents.gguf");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         std::string err;
         if (!zonos3_accents_load(accents.bank, accents_path.c_str(), model, err)) {
-            fprintf(stderr, "accents: %s\n", err.c_str()); zonos3_model_free(model); return 1;
+            fprintf(stderr, "accents: %s\n", err.c_str());
+            zonos3_model_free(model);
+            return 1;
         }
         extras.accent = zonos3_accent_index(accents.bank, accent_name);
         if (extras.accent < 0 || extras.accent == accents.bank.edit) {
             fprintf(stderr, "error: unknown accent '%s'%s\n", accent_name.c_str(),
                     extras.accent >= 0 ? " (the speech-edit adapter is not an accent)" : "");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         model.accents = &accents.bank;
     }
@@ -908,7 +1020,8 @@ int main(int argc, char ** argv) {
         auto pcm = audio_decode_file(clone_path.c_str(), 44100, (int) limits.reference_audio_max_seconds);
         if (pcm.empty()) {
             fprintf(stderr, "clone: failed to decode %s\n", clone_path.c_str());
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         if (need_spk) {
             spk_model spk;
@@ -917,7 +1030,8 @@ int main(int argc, char ** argv) {
             spk_free(spk);
             if (!ok || speaker_embedding.size() != model.hp.speaker_dim) {
                 fprintf(stderr, "clone: failed to load the speaker encoder or embed %s\n", clone_path.c_str());
-                zonos3_model_free(model); return 1;
+                zonos3_model_free(model);
+                return 1;
             }
         }
         if (need_codec) {
@@ -931,7 +1045,8 @@ int main(int argc, char ** argv) {
             ssl_free(teacher);
             if (!encoded || reference_codes.empty()) {
                 fprintf(stderr, "clone: failed to load companions, decode or encode %s\n", clone_path.c_str());
-                zonos3_model_free(model); return 1;
+                zonos3_model_free(model);
+                return 1;
             }
         }
         // Like the server: a reference keeps its first reference_max_frames frames.
@@ -940,26 +1055,33 @@ int main(int argc, char ** argv) {
     } else if (!reference_path.empty()) {
         std::string err;
         if (!mp_load_reference_codes(reference_path, reference_codes, err, limits.reference_max_frames)) {
-            fprintf(stderr, "reference: %s\n", err.c_str()); zonos3_model_free(model); return 1;
+            fprintf(stderr, "reference: %s\n", err.c_str());
+            zonos3_model_free(model);
+            return 1;
         }
     } else if (!speaker_embedding_path.empty()) {
         std::string err;
         if (!mp_load_speaker_embedding(speaker_embedding_path, speaker_embedding, err)) {
-            fprintf(stderr, "speaker embedding: %s\n", err.c_str()); zonos3_model_free(model); return 1;
+            fprintf(stderr, "speaker embedding: %s\n", err.c_str());
+            zonos3_model_free(model);
+            return 1;
         }
         if (speaker_embedding.size() != model.hp.speaker_dim) {
             fprintf(stderr, "speaker embedding: expected %u values, got %zu\n", model.hp.speaker_dim, speaker_embedding.size());
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
     }
     if (!save_reference_path.empty() && !mp_save_reference_codes(save_reference_path, reference_codes)) {
         fprintf(stderr, "failed to save reference codes: %s\n", save_reference_path.c_str());
-        zonos3_model_free(model); return 1;
+        zonos3_model_free(model);
+        return 1;
     }
     if (!save_speaker_embedding_path.empty()) {
         if (!mp_save_speaker_embedding(save_speaker_embedding_path, speaker_embedding)) {
             fprintf(stderr, "failed to save speaker embedding: %s\n", save_speaker_embedding_path.c_str());
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         printf("wrote %s\n", save_speaker_embedding_path.c_str());
     }
@@ -973,14 +1095,16 @@ int main(int argc, char ** argv) {
         zonos3_steer_bundle bundle;
         std::string err;
         if (!zonos3_steer_load(bundle, steer_path.c_str(), model, err) ||
-            !zonos3_steer_resolve(bundle, controls, control_spans, zonos3_steer_text_chars(text), span_rate,
+            !zonos3_steer_resolve(bundle, controls, control_spans, (int) utf8_length(text), span_rate,
                                   use_embedding ? &speaker_embedding : nullptr, steering, err)) {
             fprintf(stderr, "steering: %s\n", err.c_str());
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         if (steering.hidden_active() && !use_kv) {
             fprintf(stderr, "error: hidden-space controls need the KV decode path; drop --recompute\n");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
     }
     if (use_reference) {
@@ -991,21 +1115,29 @@ int main(int argc, char ** argv) {
     reference_opt.silence_prefill_frames = silence_prefill;
     if (have_conditions) {
         // Per name: an explicit bucket wins; otherwise the value flag is bucketed; otherwise unknown.
-        static const char * const names[3] = { "loudness", "fmax", "speaking_rate" };
+        static const char * const names[3] = {"loudness", "fmax", "speaking_rate"};
         reference_opt.condition_buckets.assign(model.hp.cond_bucket_counts.begin(), model.hp.cond_bucket_counts.end());
         for (int k = 0; k < 3; ++k) {
             const int idx = zonos3_condition_index(model, names[k]);
-            if (idx < 0) { fprintf(stderr, "error: model has no '%s' condition\n", names[k]); zonos3_model_free(model); return 1; }
+            if (idx < 0) {
+                fprintf(stderr, "error: model has no '%s' condition\n", names[k]);
+                zonos3_model_free(model);
+                return 1;
+            }
             int b = (int) model.hp.cond_bucket_counts[idx];
             if (bucket_id[k] >= 0) b = bucket_id[k];
             else if (cond_have[k]) b = zonos3_condition_bucket(model, idx, cond_value[k]);
-            if (b < 0) { fprintf(stderr, "error: %s must be a finite number\n", cond_flag[k]); zonos3_model_free(model); return 1; }
+            if (b < 0) {
+                fprintf(stderr, "error: %s must be a finite number\n", cond_flag[k]);
+                zonos3_model_free(model);
+                return 1;
+            }
             reference_opt.condition_buckets[idx] = b;
         }
     }
 
     if (do_batch_test) {
-        const int rc = run_batch_test(model, text, n_slots, max_frames, sp, zac_path, use_gpu, reference_opt);
+        const int rc = run_batch_test(model, text, n_slots, max_frames, sp, use_gpu, reference_opt);
         zonos3_model_free(model);
         return rc;
     }
@@ -1022,10 +1154,14 @@ int main(int argc, char ** argv) {
         if (!npy::load_f32(ids_path, ids, shape) || shape.size() != 2 ||
             shape[0] < 1 || shape[0] > model.hp.n_ctx_train || shape[1] != model.hp.n_codebooks + 1) {
             fprintf(stderr, "validate: expected input_ids [T,11] within model context\n");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         zonos3_prompt meta;
-        if (!load_cond_sidecar(ids_path, meta)) { zonos3_model_free(model); return 1; }
+        if (!load_cond_sidecar(ids_path, meta)) {
+            zonos3_model_free(model);
+            return 1;
+        }
         const int n_tokens = (int) shape[0];
         printf("validate: input_ids [%lld, %lld], n_tokens=%d\n",
                (long long) shape[0], (long long) shape[1], n_tokens);
@@ -1041,14 +1177,21 @@ int main(int argc, char ** argv) {
             shape[1] != model.hp.n_codebooks + 1 ||
             shape[0] + max_frames > model.hp.n_ctx_train) {
             fprintf(stderr, "generate: expected prompt [T,11] with space for generation in model context\n");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         zonos3_prompt prompt;
-        if (!load_cond_sidecar(ids_path, prompt)) { zonos3_model_free(model); return 1; }
+        if (!load_cond_sidecar(ids_path, prompt)) {
+            zonos3_model_free(model);
+            return 1;
+        }
         const int n0 = (int) shape[0];
         prompt.n_rows = n0;
         prompt.ids.assign(ids.begin(), ids.end());
-        if (!cli_prepare_extras(model, prompt, extras)) { zonos3_model_free(model); return 1; }
+        if (!cli_prepare_extras(model, prompt, extras)) {
+            zonos3_model_free(model);
+            return 1;
+        }
         printf("generate: prompt [%d, %lld], max=%d, %s, seed=%u, %s\n",
                n0, (long long) shape[1], max_frames, sp.greedy ? "greedy" : "sampling", sp.seed,
                use_kv ? "kv-cache" : "recompute");
@@ -1058,17 +1201,24 @@ int main(int argc, char ** argv) {
                                              use_kv, dump_ids_path.empty() ? nullptr : &full_ids, {}, nullptr,
                                              &extras.features);
         const int ncb = (int) model.hp.n_codebooks;
-        if (n_frames < 0) { zonos3_model_free(model); return 1; }
+        if (n_frames < 0) {
+            zonos3_model_free(model);
+            return 1;
+        }
         if (!dump_ids_path.empty()) {
             const int W = ncb + 1;
             std::vector<float> ff(full_ids.begin(), full_ids.end());
-            if (!npy::save_f32(dump_ids_path, ff.data(), { (int64_t) (full_ids.size() / W), (int64_t) W }) ||
+            if (!npy::save_f32(dump_ids_path, ff.data(), {(int64_t) (full_ids.size() / W), (int64_t) W}) ||
                 !zonos3_cond_save(zonos3_cond_path(dump_ids_path), prompt)) {
-                zonos3_model_free(model); return 1;
+                zonos3_model_free(model);
+                return 1;
             }
             printf("dump-ids: %zu rows x %d -> %s\n", full_ids.size() / W, W, dump_ids_path.c_str());
         }
-        if (!cli_save_extras(model, extras)) { zonos3_model_free(model); return 1; }
+        if (!cli_save_extras(model, extras)) {
+            zonos3_model_free(model);
+            return 1;
+        }
         printf("generate: %d frames, eos_frame=%d\n", n_frames, eos_frame);
         if (n_frames > 0) {
             printf("  frame0:");
@@ -1084,11 +1234,12 @@ int main(int argc, char ** argv) {
         zonos3_prompt prompt;
         if (!zonos3_build_prompt(model, text, reference_opt, prompt)) {
             fprintf(stderr, "build-prompt: failed\n");
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
         const int W = (int) model.hp.n_codebooks + 1;
         std::vector<float> idf(prompt.ids.begin(), prompt.ids.end());
-        const bool saved = npy::save_f32(prompt_out, idf.data(), { (int64_t) prompt.n_rows, (int64_t) W }) &&
+        const bool saved = npy::save_f32(prompt_out, idf.data(), {(int64_t) prompt.n_rows, (int64_t) W}) &&
                            zonos3_cond_save(zonos3_cond_path(prompt_out), prompt);
         printf("build-prompt: \"%s\" -> %d rows x %d -> %s\n",
                text.c_str(), prompt.n_rows, W, prompt_out.c_str());
@@ -1099,14 +1250,19 @@ int main(int argc, char ** argv) {
     if (do_tts) {
         zonos3_prompt prompt;
         if (!zonos3_build_prompt(model, text, reference_opt, prompt)) {
-            zonos3_model_free(model); return 1;       // build_prompt reported the reason
+            zonos3_model_free(model);
+            return 1; // build_prompt reported the reason
         }
         if ((int64_t) prompt.n_rows + max_frames > model.hp.n_ctx_train) {
             fprintf(stderr, "tts: prompt (%d rows) and %d generated frames exceed the %u-position context\n",
                     prompt.n_rows, max_frames, model.hp.n_ctx_train);
-            zonos3_model_free(model); return 1;
+            zonos3_model_free(model);
+            return 1;
         }
-        if (!cli_prepare_extras(model, prompt, extras)) { zonos3_model_free(model); return 1; }
+        if (!cli_prepare_extras(model, prompt, extras)) {
+            zonos3_model_free(model);
+            return 1;
+        }
         const int n0 = prompt.n_rows;
         const int ncb = (int) model.hp.n_codebooks;
         printf("tts: \"%s\" -> prompt [%d, %d] (speaker_rows=%d, silence_prefill=%d), max=%d, %s, %s, cfg=%g\n",
@@ -1117,17 +1273,24 @@ int main(int argc, char ** argv) {
         const int n_frames = zonos3_generate(model, prompt, max_frames, sp, cfg_scale, codes,
                                              eos_frame, use_kv, dump_ids_path.empty() ? nullptr : &full_ids, {}, &steering,
                                              &extras.features);
-        if (n_frames < 0) { zonos3_model_free(model); return 1; }
+        if (n_frames < 0) {
+            zonos3_model_free(model);
+            return 1;
+        }
         if (!dump_ids_path.empty()) {
             const int W = ncb + 1;
             std::vector<float> ff(full_ids.begin(), full_ids.end());
-            if (!npy::save_f32(dump_ids_path, ff.data(), { (int64_t) (full_ids.size() / W), (int64_t) W }) ||
+            if (!npy::save_f32(dump_ids_path, ff.data(), {(int64_t) (full_ids.size() / W), (int64_t) W}) ||
                 !zonos3_cond_save(zonos3_cond_path(dump_ids_path), prompt)) {
-                zonos3_model_free(model); return 1;
+                zonos3_model_free(model);
+                return 1;
             }
             printf("dump-ids: %zu rows x %d -> %s\n", full_ids.size() / W, W, dump_ids_path.c_str());
         }
-        if (!cli_save_extras(model, extras)) { zonos3_model_free(model); return 1; }
+        if (!cli_save_extras(model, extras)) {
+            zonos3_model_free(model);
+            return 1;
+        }
         printf("tts: %d frames, eos_frame=%d\n", n_frames, eos_frame);
         if (n_frames > 0) {
             printf("  frame0:");
@@ -1142,7 +1305,11 @@ int main(int argc, char ** argv) {
     const auto & hp = model.hp;
     printf("\n=== %s backbone ===\n", "bingua2 GDN FullAttnRes rawclone");
     const zonos3_layer * moe_ly = nullptr;
-    for (const auto & ly : model.layers) if (ly.is_moe) { moe_ly = &ly; break; }
+    for (const auto & ly : model.layers)
+        if (ly.is_moe) {
+            moe_ly = &ly;
+            break;
+        }
     printf("layers=%u  embd=%u  head_dim=%u  heads=%u/%u  ff=%u  experts=%u  ctx=%u  moe_latent=%lld  residual=full_attnres\n",
            hp.n_layer, hp.n_embd, hp.head_dim, hp.n_head, hp.n_head_kv, hp.n_ff,
            hp.n_expert, hp.n_ctx_train, moe_ly ? (long long) moe_ly->latent_down->ne[1] : 0LL);
@@ -1156,24 +1323,24 @@ int main(int argc, char ** argv) {
     printf("dense=%d  moe=%d (top%d)\n", n_dense, n_moe, moe_ly ? moe_ly->top_k : 0);
 
     printf("spot-check tensors:\n");
-    pr("audio_embd[0]",  model.audio_embd[0]);
-    pr("text_embd",      model.text_embd);
-    pr("output",         model.output);
-    pr("output_norm",    model.output_norm);
-    pr("attnres_q",      model.attnres_q);
-    pr("blk0.attn_q",    model.layers[0].wq);
-    pr("blk0.attn_k",    model.layers[0].wk);
+    pr("audio_embd[0]", model.audio_embd[0]);
+    pr("text_embd", model.text_embd);
+    pr("output", model.output);
+    pr("output_norm", model.output_norm);
+    pr("attnres_q", model.attnres_q);
+    pr("blk0.attn_q", model.layers[0].wq);
+    pr("blk0.attn_k", model.layers[0].wk);
     pr("blk0.attn_temp", model.layers[0].attn_temp);
-    pr("blk0.gdn_in",    model.layers[0].gdn_in);
-    pr("blk0.gdn_conv",  model.layers[0].gdn_conv);
-    pr("blk0.gdn_norm",  model.layers[0].gdn_norm);
-    pr("blk0.gater",     model.layers[0].gater);
-    pr("blk0.ffn_gate",  model.layers[0].ffn_gate);
+    pr("blk0.gdn_in", model.layers[0].gdn_in);
+    pr("blk0.gdn_conv", model.layers[0].gdn_conv);
+    pr("blk0.gdn_norm", model.layers[0].gdn_norm);
+    pr("blk0.gater", model.layers[0].gater);
+    pr("blk0.ffn_gate", model.layers[0].ffn_gate);
     if (moe_ly) {
-        pr("moe.gate_exps",   moe_ly->ffn_gate_exps);
-        pr("moe.down_exps",   moe_ly->ffn_down_exps);
+        pr("moe.gate_exps", moe_ly->ffn_gate_exps);
+        pr("moe.down_exps", moe_ly->ffn_down_exps);
         pr("moe.latent_down", moe_ly->latent_down);
-        pr("moe.router",      moe_ly->router_w);
+        pr("moe.router", moe_ly->router_w);
     }
 
     zonos3_model_free(model);

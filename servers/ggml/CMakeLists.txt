@@ -89,6 +89,10 @@ function(zonos3_embed_json source symbol header)
     configure_file(src/embed-json.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/${header} @ONLY)
 endfunction()
 
+# The UTF-8 codec (and small string helpers) shared by every C++ target.
+add_library(zonos3-text STATIC src/zonos3-text.cpp)
+target_include_directories(zonos3-text PUBLIC src)
+
 # Backbone and native audio paths are shared by CLI, server, and desktop.
 add_library(zonos3 STATIC
     src/zonos3.cpp src/zonos3-graph.cpp src/zonos3-sampler.cpp
@@ -102,12 +106,12 @@ zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/
 # src/zonos3-generation.cpp.
 zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/generation.json
     zonos3_generation_json zonos3-generation-json.h)
-target_link_libraries(zonos3 PUBLIC ggml)
+target_link_libraries(zonos3 PUBLIC ggml zonos3-text)
 
 add_library(zonos3-audio STATIC
-    src/zac.cpp src/zac-encoder.cpp src/ssl-encoder.cpp src/spk-encoder.cpp src/audio-decode.cpp)
+    src/zac.cpp src/zac-encoder.cpp src/ssl-encoder.cpp src/spk-encoder.cpp src/audio-decode.cpp src/wav.cpp)
 target_include_directories(zonos3-audio PUBLIC src ggml/include PRIVATE vendor)
-target_link_libraries(zonos3-audio PUBLIC ggml)
+target_link_libraries(zonos3-audio PUBLIC ggml zonos3-text)
 zonos3_use_zac(zonos3-audio)
 
 # --- Pronunciation lexicon (plan 7.9): vendored LMDB 0.9.36 (OpenLDAP libraries/liblmdb, tag LMDB_0.9.36)
@@ -236,6 +240,10 @@ if (BUILD_TESTING)
             $<TARGET_FILE:quantize-cli> $<TARGET_FILE:prune-cli>)
         set_tests_properties(tokenizer evaluation-tools PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
+    add_executable(text-wav tests/text-wav.cpp)
+    target_link_libraries(text-wav PRIVATE zonos3-text zonos3-audio)
+    add_test(NAME text-wav COMMAND text-wav)
+    set_tests_properties(text-wav PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
 endif()
 
 # --- Graph features (plan 7.5/7.6/7.8): CPU invariants of the alignment probe and accent adapters.

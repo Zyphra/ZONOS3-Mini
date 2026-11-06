@@ -1,6 +1,7 @@
 // Accent adapter bank: accents.gguf -> stacked per-module factors (see zonos3-accent.h).
 #include "zonos3-accent.h"
 #include "zonos3.h"
+#include "zonos3-text.h"
 
 #include "ggml-alloc.h"
 #include "gguf.h"
@@ -16,10 +17,6 @@ const char * const LINEAR_BASES[] = {"attn_q", "attn_k", "attn_v", "attn_output"
                                      "ffn_gate", "ffn_down", "ffn_latent_down", "ffn_latent_up", "router"};
 const char * const EXPERT_BASES[] = {"ffn_gate_exps", "ffn_up_exps", "ffn_down_exps"};
 
-bool ends_with(const std::string & s, const std::string & suffix) {
-    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 // "blk.<L>.<leaf>" -> (L, leaf); false otherwise.
 bool split_block(const std::string & base, int & layer, std::string & leaf) {
     if (base.compare(0, 4, "blk.") != 0) return false;
@@ -32,9 +29,11 @@ bool split_block(const std::string & base, int & layer, std::string & leaf) {
     return true;
 }
 
-struct host_factor { const ggml_tensor * down = nullptr, * up = nullptr; };
+struct host_factor {
+    const ggml_tensor *down = nullptr, *up = nullptr;
+};
 
-}  // namespace
+} // namespace
 
 void zonos3_accents_free(zonos3_accents & bank) {
     if (bank.buf) ggml_backend_buffer_free(bank.buf);
@@ -58,7 +57,10 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
     zonos3_accents_free(bank);
     ggml_context * data = nullptr;
     gguf_context * gf = gguf_init_from_file(path, {false, &data});
-    if (!gf) { err = std::string("cannot read accent adapters '") + path + "'"; return false; }
+    if (!gf) {
+        err = std::string("cannot read accent adapters '") + path + "'";
+        return false;
+    }
     auto fail = [&](const std::string & message) {
         err = std::string(path) + ": " + message;
         gguf_free(gf);
@@ -104,7 +106,7 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
             if (bank.edit >= 0) return fail("more than one zonos-accent-lora/3 (speech-edit) adapter");
             if (model.hp.span_end_id < 0)
                 return fail("adapter " + bank.names[i] + " is a speech-edit adapter; the backbone lacks its vocabulary "
-                            "(convert it with tools/convert_gguf.py lm --edit-adapter)");
+                                                         "(convert it with tools/convert_gguf.py lm --edit-adapter)");
             bank.edit = i;
         } else if (f != "zonos-accent-lora/1" && f != "zonos-accent-lora/2") {
             return fail("unsupported adapter format " + f);
@@ -141,7 +143,8 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
         bool expert = false, known = base == "output";
         if (split_block(base, layer, leaf)) {
             for (const char * b : LINEAR_BASES) known = known || leaf == b;
-            for (const char * b : EXPERT_BASES) if (leaf == b) known = expert = true;
+            for (const char * b : EXPERT_BASES)
+                if (leaf == b) known = expert = true;
         }
         if (!known) return fail("tensor " + name + " adapts an unsupported module");
         auto & v = (expert ? experts : linear)[base];
@@ -195,11 +198,12 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
         const int64_t E = model.layers[L].router_bias->ne[0];
         auto & shifts = bank.router_bias[L];
         shifts.resize(bank.n);
-        for (int a = 0; a < bank.n; ++a) if (const ggml_tensor * t = entry.second[a]) {
-            if (ggml_n_dims(t) != 1 || t->ne[0] != E) return fail(bank.names[a] + ": router shift size mismatch");
-            const float * v = (const float *) t->data;
-            shifts[a].assign(v, v + E);
-        }
+        for (int a = 0; a < bank.n; ++a)
+            if (const ggml_tensor * t = entry.second[a]) {
+                if (ggml_n_dims(t) != 1 || t->ne[0] != E) return fail(bank.names[a] + ": router shift size mismatch");
+                const float * v = (const float *) t->data;
+                shifts[a].assign(v, v + E);
+            }
     }
 
     // Stack: adapter a owns columns [a*K, a*K + k_a) of a linear (and [a*R, a*R + r_a) of an expert stack).
@@ -220,7 +224,7 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
             const host_factor & f = entry.second[a];
             if (!f.down) continue;
             const int64_t k = f.down->ne[1];
-            const float * d = (const float *) f.down->data, * u = (const float *) f.up->data;
+            const float *d = (const float *) f.down->data, *u = (const float *) f.up->data;
             for (int64_t j = 0; j < k; ++j)
                 memcpy(hd.data() + ((size_t) a * bank.K + j) * in, d + (size_t) j * in, (size_t) in * sizeof(float));
             // Factor row o -> model row (an ungrown head factor skips each block's last, span-end, row).
@@ -246,7 +250,7 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
             const host_factor & f = entry.second[a];
             if (!f.down) continue;
             const int64_t r = f.down->ne[1];
-            const float * d = (const float *) f.down->data, * u = (const float *) f.up->data;
+            const float *d = (const float *) f.down->data, *u = (const float *) f.up->data;
             for (int64_t e = 0; e < E; ++e) {
                 for (int64_t j = 0; j < r; ++j)
                     memcpy(hd.data() + ((size_t) e * NR + (size_t) a * bank.R + j) * in, d + ((size_t) e * r + j) * in,
@@ -262,14 +266,20 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
     }
     gguf_free(gf);
     ggml_free(data);
-    gf = nullptr; data = nullptr;
+    gf = nullptr;
+    data = nullptr;
     if (!staged.empty()) {
         bank.buf = ggml_backend_alloc_ctx_tensors_from_buft(bank.ctx, model.buft);
-        if (!bank.buf) { err = std::string(path) + ": accent factor allocation failed"; zonos3_accents_free(bank); return false; }
+        if (!bank.buf) {
+            err = std::string(path) + ": accent factor allocation failed";
+            zonos3_accents_free(bank);
+            return false;
+        }
         for (const auto & s : staged) ggml_backend_tensor_set(s.first, s.second.data(), 0, s.second.size() * sizeof(float));
     }
     fprintf(stderr, "zonos3: accent adapters %s: %d adapters, %zu linear modules (K=%d), %zu expert stacks (R=%d), "
-            "%zu router shifts\n", path, bank.n, bank.linear.size(), bank.K, bank.experts.size(), bank.R,
+                    "%zu router shifts\n",
+            path, bank.n, bank.linear.size(), bank.K, bank.experts.size(), bank.R,
             bank.router_bias.size());
     return true;
 }

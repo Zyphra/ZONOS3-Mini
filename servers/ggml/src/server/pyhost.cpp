@@ -29,7 +29,9 @@ namespace E = zonos3_edit;
 
 namespace {
 
-bool set(const json & j, const char * key) { return j.is_object() && j.contains(key) && !j[key].is_null(); }
+bool set(const json & j, const char * key) {
+    return j.is_object() && j.contains(key) && !j[key].is_null();
+}
 
 // soundfile.write(path, audio, sr, subtype="FLOAT"): a mono IEEE-float WAV.
 void write_float_wav(const std::string & path, const std::vector<float> & audio, int sr) {
@@ -39,9 +41,19 @@ void write_float_wav(const std::string & path, const std::vector<float> & audio,
     auto w16 = [&](uint16_t v) { bytes(&v, 2); };
     const uint32_t data = (uint32_t) (audio.size() * 4);
     out.reserve(44 + data);
-    bytes("RIFF", 4); w32(36 + data); bytes("WAVE", 4);
-    bytes("fmt ", 4); w32(16); w16(3); w16(1); w32((uint32_t) sr); w32((uint32_t) sr * 4); w16(4); w16(32);
-    bytes("data", 4); w32(data);
+    bytes("RIFF", 4);
+    w32(36 + data);
+    bytes("WAVE", 4);
+    bytes("fmt ", 4);
+    w32(16);
+    w16(3);
+    w16(1);
+    w32((uint32_t) sr);
+    w32((uint32_t) sr * 4);
+    w16(4);
+    w16(32);
+    bytes("data", 4);
+    w32(data);
     bytes(audio.data(), audio.size() * 4);
     FILE * f = fopen(path.c_str(), "wb");
     if (!f) throw std::runtime_error("cannot write " + path);
@@ -56,7 +68,7 @@ std::vector<float> decode_file(const std::string & path) {
     std::vector<float> pcm = audio_decode_file(path.c_str(), zonos3_generation().sample_rate, max_seconds);
     if (pcm.empty())
         fail(400, "could not decode the reference audio (any container ffmpeg reads, at most " +
-                  std::to_string(max_seconds) + " seconds)");
+                      std::to_string(max_seconds) + " seconds)");
     return pcm;
 }
 
@@ -78,7 +90,9 @@ json rows_json(const std::vector<int32_t> & flat, int k) {
     return out;
 }
 
-double frame_rate(const ServerState & s) { return (double) s.zac.sample_rate / zac_samples_per_frame(s.zac); }
+double frame_rate(const ServerState & s) {
+    return (double) s.zac.sample_rate / zac_samples_per_frame(s.zac);
+}
 
 // ---------------------------------------------------------------------------------------------------- init facts
 
@@ -97,9 +111,10 @@ std::vector<double> speaking_rate_edges(const ServerState & s) {
 // zonos3.server.plugins.HostFacts of the server (rate_extension: the steering bundle's, as
 // zonos3.tts.steering.RateExtension).
 json host_facts(const ServerState & s) {
-    json raw = json::array();   // steering ids that move the speaker embedding
+    json raw = json::array(); // steering ids that move the speaker embedding
     if (s.steer_loaded)
-        for (const auto & d : s.steer.dirs) if (!d.hidden) raw.push_back(d.id);
+        for (const auto & d : s.steer.dirs)
+            if (!d.hidden) raw.push_back(d.id);
     json extension = nullptr;
     if (s.steer_loaded && s.steer.rate_extension) {
         const auto & e = *s.steer.rate_extension;
@@ -109,25 +124,23 @@ json host_facts(const ServerState & s) {
             for (const auto & [b, dose] : by_bucket) d[std::to_string(b)] = dose;
             doses[lang] = d;
         }
-        extension = {{"direction", e.direction}, {"row_edges", e.row_edges}, {"below", e.below}, {"above", e.above},
-                     {"doses", doses}, {"reference_sides", e.reference_sides}};
+        extension = {{"direction", e.direction}, {"row_edges", e.row_edges}, {"below", e.below}, {"above", e.above}, {"doses", doses}, {"reference_sides", e.reference_sides}};
     }
-    int rate_buckets = 0;   // the speaking-rate table's bucket count (0 without that row)
+    int rate_buckets = 0; // the speaking-rate table's bucket count (0 without that row)
     const auto & hp = s.model.hp;
     for (size_t i = 0; i < hp.cond_names.size() && i < hp.cond_bucket_counts.size(); ++i)
         if (hp.cond_names[i] == "speaking_rate") rate_buckets = (int) hp.cond_bucket_counts[i];
-    return {{"model_name", fs::path(s.model_path).filename().string()}, {"rate_edges", speaking_rate_edges(s)},
-            {"rate_buckets", rate_buckets}, {"laci_languages", laci_languages(s)},
-            {"speaker_modes", checkpoint_speaker_modes(s)}, {"raw_controls", raw},
-            {"phoneme_tokens", !phoneme_capabilities(s)["phoneme_tokens"].is_null()}, {"rate_extension", extension},
-            {"worker_device", nullptr}};
+    return {{"model_name", fs::path(s.model_path).filename().string()}, {"rate_edges", speaking_rate_edges(s)}, {"rate_buckets", rate_buckets}, {"laci_languages", laci_languages(s)}, {"speaker_modes", checkpoint_speaker_modes(s)}, {"raw_controls", raw}, {"phoneme_tokens", !phoneme_capabilities(s)["phoneme_tokens"].is_null()}, {"rate_extension", extension}, {"worker_device", nullptr}};
 }
 
 // -------------------------------------------------------------------------------------------------- engine calls
 
 // One span-end-terminated infill generation through the scheduler: the generated delayed rows (without the finishing
 // row) and the aligned eos frame (-1 = none).
-struct Generated { std::vector<int32_t> rows; int eos_frame = -1; };
+struct Generated {
+    std::vector<int32_t> rows;
+    int eos_frame = -1;
+};
 Generated generate_fill(ServerState & s, const std::string & text, const std::vector<float> & speaker_embedding,
                         const zonos3_steering & steering, const std::vector<int32_t> & condition_ids,
                         const std::vector<int32_t> & window_codes, const std::vector<E::Span> & window_spans,
@@ -177,7 +190,7 @@ Generated generate_fill(ServerState & s, const std::string & text, const std::ve
         out.rows = job->codes;
         out.eos_frame = job->eos_frame;
     }
-    if (out.rows.size() >= (size_t) K) out.rows.resize(out.rows.size() - K);   // the finishing row is not emitted
+    if (out.rows.size() >= (size_t) K) out.rows.resize(out.rows.size() - K); // the finishing row is not emitted
     return out;
 }
 
@@ -230,8 +243,7 @@ json call_check(const ServerState & s, const json & c) {
     std::vector<std::string> raw;
     if (set(c, "doses")) {
         if (!s.steer_loaded)
-            fail(400, "This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); "
-                      "`controls` are unavailable.");
+            fail(400, std::string(NO_STEERING) + "; `controls` are unavailable.");
         for (const auto & region : c["doses"]) {
             const auto doses = region.get<std::map<std::string, double>>();
             std::vector<float> probe(s.steer.speaker_dim, 0.0f);
@@ -262,17 +274,16 @@ json call_fill(ServerState & s, const json & c) {
     zonos3_steering steering;
     if (set(c, "controls")) {
         if (!s.steer_loaded)
-            fail(400, "This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); "
-                      "`controls` are unavailable.");
+            fail(400, std::string(NO_STEERING) + "; `controls` are unavailable.");
         std::string err;
         if (!zonos3_steer_resolve(s.steer, c["controls"].get<std::map<std::string, double>>(), {},
-                                  zonos3_steer_text_chars(c.value("controls_text", std::string())),
+                                  (int) utf8_length(c.value("controls_text", std::string())),
                                   ZONOS3_STEER_FRAMES_PER_CHAR, speaker_embedding.empty() ? nullptr : &speaker_embedding,
                                   steering, err))
             fail(400, err);
     }
     const json & sampling = c.at("sampling");
-    zonos3_sampling sp;   // the registry's sampling defaults; the call's sampling overrides what it sets
+    zonos3_sampling sp; // the registry's sampling defaults; the call's sampling overrides what it sets
     if (set(sampling, "temperature")) sp.temperature = (float) sampling["temperature"].get<double>();
     if (set(sampling, "topk")) sp.top_k = sampling["topk"].get<int>();
     if (set(sampling, "top_p")) sp.top_p = (float) sampling["top_p"].get<double>();
@@ -338,7 +349,7 @@ json call_laci_takes(ServerState & s, PyHost & host, const json & c) {
         for (;;) {
             const size_t i = next++;
             if (i >= planned.size()) return;
-            if (failed) continue;   // a take failed: the rest are never queued
+            if (failed) continue; // a take failed: the rest are never queued
             host.acquire_laci_slot();
             try {
                 submit_job(s, planned[i]);
@@ -354,7 +365,8 @@ json call_laci_takes(ServerState & s, PyHost & host, const json & c) {
     std::vector<std::thread> threads;
     for (size_t t = 0; t < n_threads; ++t) threads.emplace_back(run);
     for (auto & t : threads) t.join();
-    for (auto & e : errors) if (e) std::rethrow_exception(e);
+    for (auto & e : errors)
+        if (e) std::rethrow_exception(e);
 
     json takes = json::array();
     for (size_t i = 0; i < results.size(); ++i) {
@@ -378,18 +390,18 @@ json engine_call(ServerState & s, PyHost & host, const std::string & op, const j
 
 const char * const EXITED = "the Python host exited";
 
-}  // namespace
+} // namespace
 
 // ------------------------------------------------------------------------------------------------------- client
 
 struct PyHost::Run {
     std::unique_ptr<ChildProcess> process;
-    std::mutex write_m;                                  // serializes writes and the closing of stdin
-    std::mutex m;                                        // guards replies, exited
+    std::mutex write_m; // serializes writes and the closing of stdin
+    std::mutex m;       // guards replies, exited
     std::condition_variable cv;
-    std::map<int64_t, std::optional<json>> replies;      // waiting request id -> its reply once read
-    bool exited = false;                                 // the reader met the end of the host's stdout
-    std::vector<std::string> keepalive_paths;            // the plugins' (init reply)
+    std::map<int64_t, std::optional<json>> replies; // waiting request id -> its reply once read
+    bool exited = false;                            // the reader met the end of the host's stdout
+    std::vector<std::string> keepalive_paths;       // the plugins' (init reply)
     std::thread reader;
 
     bool send(const json & message) {
@@ -423,7 +435,9 @@ PyHost::PyHost(ServerState & s) : s_(s), free_slots_(std::max(1, 2 * s.batch_slo
     env_ = pyhost_environment(s);
 }
 
-PyHost::~PyHost() { close(); }
+PyHost::~PyHost() {
+    close();
+}
 
 void PyHost::acquire_laci_slot() {
     std::unique_lock<std::mutex> lk(slots_m_);
@@ -462,7 +476,7 @@ std::shared_ptr<PyHost::Run> PyHost::ensure_run() {
             for (const json & p : reply["plugins"])
                 for (const json & path : p.at("keepalive_paths")) run->keepalive_paths.push_back(path.get<std::string>());
     } catch (...) {
-        run->close_input();   // the next request starts a fresh host
+        run->close_input(); // the next request starts a fresh host
         run->reader.join();
         throw;
     }
@@ -479,7 +493,7 @@ json PyHost::exchange(Run & run, const std::string & op, json payload) {
         if (run.exited) fail(503, EXITED);
         run.replies[id];
     }
-    run.send(payload);   // a broken pipe: the reader meets the exit
+    run.send(payload); // a broken pipe: the reader meets the exit
     json reply;
     {
         std::unique_lock<std::mutex> lk(run.m);
@@ -520,7 +534,7 @@ bool PyHost::keepalive(const std::string & path) {
 
 // Routes the host's lines: replies to the waiting requests, engine calls to threads of their own.
 void PyHost::read_loop(std::weak_ptr<Run> weak) {
-    Run & run = *weak.lock();   // the owner keeps the run alive until it joins this thread
+    Run & run = *weak.lock(); // the owner keeps the run alive until it joins this thread
     std::string line;
     while (run.process->read_line(line)) {
         json message = json::parse(line, nullptr, false);
@@ -591,7 +605,7 @@ void PyHost::close() {
         calls_cv_.wait(lk, [&] { return calls_ == 0; });
     }
     std::lock_guard<std::mutex> lk(start_m_);
-    run_.reset();   // waits for the process
+    run_.reset(); // waits for the process
 }
 
 // ------------------------------------------------------------------------------------------------------- helpers
@@ -599,10 +613,7 @@ void PyHost::close() {
 json edit_model(const ServerState & s) {
     const auto & hp = s.model.hp;
     const int k = (int) hp.n_codebooks;
-    return {{"frame_rate", frame_rate(s)}, {"n_codebooks", k}, {"audio_pad_id", (int) hp.audio_pad_id},
-            {"codebook_sizes", std::vector<int>(k, (int) hp.codebook_size)},
-            {"max_spans", zonos3_supports_editing(s.model) ? std::max(0, zonos3_edit_marker_rows(s.model)) : 0},
-            {"speaker_row", hp.speaker_dim > 0}};
+    return {{"frame_rate", frame_rate(s)}, {"n_codebooks", k}, {"audio_pad_id", (int) hp.audio_pad_id}, {"codebook_sizes", std::vector<int>(k, (int) hp.codebook_size)}, {"max_spans", zonos3_supports_editing(s.model) ? std::max(0, zonos3_edit_marker_rows(s.model)) : 0}, {"speaker_row", hp.speaker_dim > 0}};
 }
 
 bool asr_installed(const ServerState & s) {
@@ -613,4 +624,4 @@ bool asr_installed(const ServerState & s) {
     return fs::is_regular_file(python, ec);
 }
 
-}  // namespace zs
+} // namespace zs

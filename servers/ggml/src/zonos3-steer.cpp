@@ -16,7 +16,8 @@ void zonos3_steer_index(zonos3_steer_bundle & b) {
     b.index.clear();
     for (size_t i = 0; i < b.dirs.size(); i++) b.index[b.dirs[i].id] = i;
     std::set<int> src;
-    for (const auto & d : b.dirs) if (d.hidden) src.insert(d.source);
+    for (const auto & d : b.dirs)
+        if (d.hidden) src.insert(d.source);
     b.sources.assign(src.begin(), src.end());
 }
 
@@ -25,7 +26,10 @@ namespace {
 struct gguf_guard {
     gguf_context * g = nullptr;
     ggml_context * c = nullptr;
-    ~gguf_guard() { if (g) gguf_free(g); if (c) ggml_free(c); }
+    ~gguf_guard() {
+        if (g) gguf_free(g);
+        if (c) ggml_free(c);
+    }
 };
 
 std::string invalid(const char * path, const std::string & why) {
@@ -51,11 +55,17 @@ bool lookup(const zonos3_steer_calibration & c, const std::string & speaker, con
         const auto s = c.by_speaker.find(speaker);
         if (s != c.by_speaker.end()) {
             const auto e = s->second.find(key);
-            if (e != s->second.end()) { out = e->second; return true; }
+            if (e != s->second.end()) {
+                out = e->second;
+                return true;
+            }
         }
     }
     const auto e = c.defaults.find(key);
-    if (e != c.defaults.end()) { out = e->second; return true; }
+    if (e != c.defaults.end()) {
+        out = e->second;
+        return true;
+    }
     return false;
 }
 
@@ -98,8 +108,7 @@ bool zonos3_steer_calibration::parse(const std::string & json_text, zonos3_steer
                 defaults[e.key()] = v;
             }
         out.global_default = data.contains("global_default") ? data.at("global_default").get<double>() : 1.0;
-        out.document_json = ojson{{"default", defaults}, {"by_speaker", by_speaker},
-                                  {"global_default", out.global_default}}.dump();
+        out.document_json = ojson{{"default", defaults}, {"by_speaker", by_speaker}, {"global_default", out.global_default}}.dump();
     } catch (const std::exception & e) {
         err = std::string("invalid calibration: ") + e.what();
         return false;
@@ -110,8 +119,11 @@ bool zonos3_steer_calibration::parse(const std::string & json_text, zonos3_steer
 bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_model & model, std::string & err) {
     b = zonos3_steer_bundle{};
     gguf_guard G;
-    G.g = gguf_init_from_file(path, { /*no_alloc=*/ false, &G.c });
-    if (!G.g) { err = invalid(path, "cannot read the file"); return false; }
+    G.g = gguf_init_from_file(path, {/*no_alloc=*/false, &G.c});
+    if (!G.g) {
+        err = invalid(path, "cannot read the file");
+        return false;
+    }
     gguf_context * g = G.g;
 
     auto key = [&](const char * k, int64_t & id) { id = gguf_find_key(g, k); return id >= 0; };
@@ -146,7 +158,10 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
     {
         int64_t i;
         if (!key("zonos3_steer.set.sources", i) || gguf_get_kv_type(g, i) != GGUF_TYPE_ARRAY ||
-            gguf_get_arr_type(g, i) != GGUF_TYPE_INT32) { err = invalid(path, "missing zonos3_steer.set.sources"); return false; }
+            gguf_get_arr_type(g, i) != GGUF_TYPE_INT32) {
+            err = invalid(path, "missing zonos3_steer.set.sources");
+            return false;
+        }
         const int32_t * p = (const int32_t *) gguf_get_arr_data(g, i);
         set_sources.assign(p, p + gguf_get_arr_n(g, i));
     }
@@ -178,7 +193,10 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
         if (set_spaces[i] == "attnres_source") {
             s.hidden = true;
             s.source = set_sources[i];
-            if (s.source < 0) { err = invalid(path, "set '" + s.name + "' has a negative source"); return false; }
+            if (s.source < 0) {
+                err = invalid(path, "set '" + s.name + "' has a negative source");
+                return false;
+            }
             any_hidden = true;
         } else if (set_spaces[i] == "raw") {
             any_raw = true;
@@ -207,12 +225,21 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
         zonos3_steer_direction d;
         d.id = ids[i];
         const size_t dot = d.id.find('.');
-        if (dot == std::string::npos || dot + 1 >= d.id.size()) { err = invalid(path, "bad direction id '" + d.id + "'"); return false; }
+        if (dot == std::string::npos || dot + 1 >= d.id.size()) {
+            err = invalid(path, "bad direction id '" + d.id + "'");
+            return false;
+        }
         d.set = d.id.substr(0, dot);
         d.name = d.id.substr(dot + 1);
         auto it = set_index.find(d.set);
-        if (it == set_index.end()) { err = invalid(path, "direction '" + d.id + "' names an unknown set"); return false; }
-        if (kinds[i] != "named" && kinds[i] != "axis") { err = invalid(path, "direction '" + d.id + "' has unknown kind"); return false; }
+        if (it == set_index.end()) {
+            err = invalid(path, "direction '" + d.id + "' names an unknown set");
+            return false;
+        }
+        if (kinds[i] != "named" && kinds[i] != "axis") {
+            err = invalid(path, "direction '" + d.id + "' has unknown kind");
+            return false;
+        }
         d.axis = kinds[i] == "axis";
         d.hidden = b.sets[it->second].hidden;
         d.source = b.sets[it->second].source;
@@ -224,18 +251,28 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
             return false;
         }
         d.vec.assign((const float *) t->data, (const float *) t->data + dim);
-        for (float v : d.vec) if (!std::isfinite(v)) { err = invalid(path, "tensor " + tname + " has non-finite values"); return false; }
+        for (float v : d.vec)
+            if (!std::isfinite(v)) {
+                err = invalid(path, "tensor " + tname + " has non-finite values");
+                return false;
+            }
         b.dirs.push_back(std::move(d));
     }
     zonos3_steer_index(b);
-    if (b.index.size() != b.dirs.size()) { err = invalid(path, "duplicate direction ids"); return false; }
+    if (b.index.size() != b.dirs.size()) {
+        err = invalid(path, "duplicate direction ids");
+        return false;
+    }
 
     // timing: { id: [[dose, factor], ...] }
     try {
         const nlohmann::json tj = nlohmann::json::parse(b.timing_json);
         if (!tj.is_object()) throw std::runtime_error("timing is not an object");
         for (auto it = tj.begin(); it != tj.end(); ++it) {
-            if (!b.index.count(it.key())) { err = invalid(path, "timing for unknown direction '" + it.key() + "'"); return false; }
+            if (!b.index.count(it.key())) {
+                err = invalid(path, "timing for unknown direction '" + it.key() + "'");
+                return false;
+            }
             if (!it.value().is_array() || it.value().empty()) throw std::runtime_error("empty timing table");
             std::vector<std::pair<double, double>> table;
             for (const auto & p : it.value()) {
@@ -307,7 +344,8 @@ std::vector<std::string> zonos3_steer_disabled_controls(const zonos3_steer_bundl
     for (const auto & s : b.sets) {
         if (!s.calibration) continue;
         std::vector<std::string> names;
-        for (const auto & d : b.dirs) if (d.set == s.name) names.push_back(d.name);
+        for (const auto & d : b.dirs)
+            if (d.set == s.name) names.push_back(d.name);
         for (const auto & n : s.calibration->disabled(speaker, names)) out.push_back(s.name + "." + n);
     }
     return out;
@@ -355,16 +393,14 @@ double zonos3_steer_duration_factor(const zonos3_steer_bundle & b, const std::ma
     return factor;
 }
 
-int zonos3_steer_text_chars(const std::string & s) {
-    int n = 0;
-    for (unsigned char c : s) if ((c & 0xC0) != 0x80) n++;
-    return n;
-}
-
 void zonos3_steering::delta_at(int frames, std::vector<float> & out) const {
-    if (!hidden_active()) { out.clear(); return; }
+    if (!hidden_active()) {
+        out.clear();
+        return;
+    }
     const size_t n = sources.size() * (size_t) hidden_size;
-    if (hidden.empty()) out.assign(n, 0.0f); else out.assign(hidden.begin(), hidden.end());
+    if (hidden.empty()) out.assign(n, 0.0f);
+    else out.assign(hidden.begin(), hidden.end());
     bool any = !hidden.empty();
     const float f = (float) frames;
     for (const auto & s : spans) {
@@ -385,15 +421,27 @@ bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::str
     out.hidden_size = (int) b.hidden_size;
 
     std::map<std::string, double> doses;
-    for (const auto & [id, v] : controls) if (v != 0.0) doses[id] = v;
+    for (const auto & [id, v] : controls)
+        if (v != 0.0) doses[id] = v;
     auto unknown = [&](const std::string & id) {
         err = "Unknown control '" + id + "'; see /v2/controls.";
     };
-    for (const auto & [id, v] : doses) if (!b.index.count(id)) { unknown(id); return false; }
-    for (const auto & s : spans)
-        for (const auto & [id, v] : s.controls) if (!b.index.count(id)) { unknown(id); return false; }
     for (const auto & [id, v] : doses)
-        if (!std::isfinite(v)) { err = "Control '" + id + "' must be finite."; return false; }
+        if (!b.index.count(id)) {
+            unknown(id);
+            return false;
+        }
+    for (const auto & s : spans)
+        for (const auto & [id, v] : s.controls)
+            if (!b.index.count(id)) {
+                unknown(id);
+                return false;
+            }
+    for (const auto & [id, v] : doses)
+        if (!std::isfinite(v)) {
+            err = "Control '" + id + "' must be finite.";
+            return false;
+        }
 
     const size_t K = b.sources.size(), D = b.hidden_size;
     auto slot_of = [&](int source) { return (size_t) (std::lower_bound(b.sources.begin(), b.sources.end(), source) - b.sources.begin()); };
@@ -413,7 +461,8 @@ bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::str
     };
 
     std::vector<std::string> raw;
-    for (const auto & [id, v] : doses) if (!b.dirs[b.index.at(id)].hidden) raw.push_back(id);
+    for (const auto & [id, v] : doses)
+        if (!b.dirs[b.index.at(id)].hidden) raw.push_back(id);
     if (!raw.empty()) {
         if (!speaker_embedding) {
             std::string names;
@@ -435,7 +484,7 @@ bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::str
         }
         double nb = 0, nm = 0;
         for (size_t i = 0; i < base.size(); i++) {
-            delta[i] += base[i];  // moved
+            delta[i] += base[i]; // moved
             nb += (double) base[i] * base[i];
             nm += (double) delta[i] * delta[i];
         }
@@ -448,23 +497,33 @@ bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::str
     if (spans.empty()) return true;
     const double rate = (frames_per_char > 0 ? frames_per_char : ZONOS3_STEER_FRAMES_PER_CHAR) *
                         zonos3_steer_duration_factor(b, doses);
-    if (!(rate > 0)) { err = "control_span_rate must be positive."; return false; }
+    if (!(rate > 0)) {
+        err = "control_span_rate must be positive.";
+        return false;
+    }
 
-    struct clean { int start, end; std::map<std::string, double> doses; };
+    struct clean {
+        int start, end;
+        std::map<std::string, double> doses;
+    };
     std::vector<clean> cleaned;
     for (const auto & s : spans) {
-        clean c{ s.start, s.end, {} };
-        for (const auto & [id, v] : s.controls) if (v != 0.0) c.doses[id] = v;
+        clean c{s.start, s.end, {}};
+        for (const auto & [id, v] : s.controls)
+            if (v != 0.0) c.doses[id] = v;
         if (!(0 <= s.start && s.start < s.end && s.end <= text_chars)) {
             err = "control span [" + std::to_string(s.start) + ", " + std::to_string(s.end) + ") is outside the text (0.." +
                   std::to_string(text_chars) + ").";
             return false;
         }
         for (const auto & [id, v] : c.doses) {
-            if (!std::isfinite(v)) { err = "Control '" + id + "' must be finite."; return false; }
+            if (!std::isfinite(v)) {
+                err = "Control '" + id + "' must be finite.";
+                return false;
+            }
             if (!b.dirs[b.index.at(id)].hidden) {
                 err = "Control '" + id + "' moves the speaker embedding and cannot vary inside a request; "
-                      "only hidden-space controls take spans.";
+                                         "only hidden-space controls take spans.";
                 return false;
             }
         }

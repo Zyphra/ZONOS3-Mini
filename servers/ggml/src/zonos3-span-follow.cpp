@@ -1,5 +1,6 @@
 // Exact port of model/src/zonos3/tts/span_follow.py (see zonos3-span-follow.h).
 #include "zonos3-span-follow.h"
+#include "zonos3-text.h"
 
 #include <algorithm>
 #include <array>
@@ -13,16 +14,16 @@ namespace zonos3_follow {
 namespace {
 
 template <typename T>
-double median(std::vector<T> v) {  // statistics.median
+double median(std::vector<T> v) { // statistics.median
     std::sort(v.begin(), v.end());
     const size_t n = v.size(), i = n / 2;
-    if (n % 2 == 1) return (double)v[i];
-    return ((double)v[i - 1] + (double)v[i]) / 2;
+    if (n % 2 == 1) return (double) v[i];
+    return ((double) v[i - 1] + (double) v[i]) / 2;
 }
 
-int utf8_len(char32_t c) { return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; }
-
-struct Match { int i, j, k; };
+struct Match {
+    int i, j, k;
+};
 
 // difflib.SequenceMatcher with isjunk=None, autojunk=False: no junk and no popular elements.
 struct Matcher {
@@ -31,7 +32,7 @@ struct Matcher {
     std::unordered_map<char32_t, std::vector<int>> b2j;
 
     Matcher(const std::u32string & a_, const std::u32string & b_) : a(a_), b(b_) {
-        for (int i = 0; i < (int)b.size(); i++) b2j[b[i]].push_back(i);
+        for (int i = 0; i < (int) b.size(); i++) b2j[b[i]].push_back(i);
     }
 
     Match find_longest_match(int alo, int ahi, int blo, int bhi) const {
@@ -66,7 +67,7 @@ struct Matcher {
     }
 
     std::vector<Match> matching_blocks() const {
-        const int la = (int)a.size(), lb = (int)b.size();
+        const int la = (int) a.size(), lb = (int) b.size();
         std::vector<std::array<int, 4>> queue = {{0, la, 0, lb}};
         std::vector<Match> blocks;
         while (!queue.empty()) {
@@ -100,7 +101,7 @@ struct Matcher {
     }
 };
 
-}  // namespace
+} // namespace
 
 bool py_isspace(char32_t c) {
     return (c >= 0x09 && c <= 0x0D) || (c >= 0x1C && c <= 0x20) || c == 0x85 || c == 0xA0 || c == 0x1680 ||
@@ -134,8 +135,8 @@ std::vector<int> map_offsets(const std::u32string & original, const std::u32stri
     std::vector<int> out;
     out.reserve(offsets.size());
     for (int o : offsets) {
-        if (o >= (int)original.size()) {
-            out.push_back((int)final_.size());
+        if (o >= (int) original.size()) {
+            out.push_back((int) final_.size());
             continue;
         }
         // blocks[bisect_right(starts, o) - 1]
@@ -145,8 +146,8 @@ std::vector<int> map_offsets(const std::u32string & original, const std::u32stri
         if (std::string(op.tag) == "equal") {
             out.push_back(op.j1 + o - op.i1);
         } else {
-            const double x = op.j1 + (double)(o - op.i1) * (op.j2 - op.j1) / (op.i2 - op.i1);
-            out.push_back(end ? (int)std::ceil(x) : (int)x);
+            const double x = op.j1 + (double) (o - op.i1) * (op.j2 - op.j1) / (op.i2 - op.i1);
+            out.push_back(end ? (int) std::ceil(x) : (int) x);
         }
     }
     return out;
@@ -154,11 +155,11 @@ std::vector<int> map_offsets(const std::u32string & original, const std::u32stri
 
 std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffsets & bpe,
                                      const std::optional<PhonemeMarkers> & phonemes) {
-    const int n = (int)text.size();
+    const int n = (int) text.size();
     std::vector<Range> ranges = {{0, 0}};
     if (!bpe) {
         for (int i = 0; i < n; i++)
-            for (int b = 0; b < utf8_len(text[i]); b++) ranges.push_back({i, i + 1});
+            for (int b = 0; b < (int) utf8_encoded_length(text[i]); b++) ranges.push_back({i, i + 1});
     } else {
         auto stretch = [&](const std::u32string & s, int base) {
             if (s.empty()) return;
@@ -171,10 +172,10 @@ std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffse
             size_t pos = 0;
             while (pos < text.size()) {
                 const size_t start = text.find(phonemes->open, pos);
-                stretch(start == std::u32string::npos ? text.substr(pos) : text.substr(pos, start - pos), (int)pos);
+                stretch(start == std::u32string::npos ? text.substr(pos) : text.substr(pos, start - pos), (int) pos);
                 if (start == std::u32string::npos) break;
-                const size_t end = text.find(phonemes->close, start + 1);  // superbpe.payload_ids validated the groups
-                for (size_t i = start; i <= end; i++) ranges.push_back({(int)i, (int)i + 1});
+                const size_t end = text.find(phonemes->close, start + 1); // superbpe.payload_ids validated the groups
+                for (size_t i = start; i <= end; i++) ranges.push_back({(int) i, (int) i + 1});
                 pos = end + 1;
             }
         }
@@ -207,7 +208,7 @@ std::vector<Range> span_token_ranges(const std::u32string & text, const std::u32
         while (end > start && py_isspace(text[end - 1])) end--;
         const int s = map_offsets(text, final_, {start})[0], e = map_offsets(text, final_, {end}, true)[0];
         std::vector<int> hit, spoken;
-        for (int i = 0; i < (int)trimmed.size(); i++) {
+        for (int i = 0; i < (int) trimmed.size(); i++) {
             const auto [a, b] = trimmed[i];
             if (a < b && a < e && s < b) {
                 hit.push_back(i);
@@ -219,8 +220,8 @@ std::vector<Range> span_token_ranges(const std::u32string & text, const std::u32
         } else if (!hit.empty()) {
             out.push_back({hit.front(), hit.back() + 1});
         } else {
-            int first = (int)ranges.size() - 1;
-            for (int i = 0; i < (int)trimmed.size(); i++)
+            int first = (int) ranges.size() - 1;
+            for (int i = 0; i < (int) trimmed.size(); i++)
                 if (trimmed[i].first < trimmed[i].second && trimmed[i].second > s) {
                     first = i;
                     break;
@@ -259,7 +260,7 @@ void SpanFollower::observe(int frame, int pos) {
 }
 
 void SpanFollower::advance(size_t n) {
-    const size_t lo = n > (size_t)cfg.smooth ? n - cfg.smooth : 0;
+    const size_t lo = n > (size_t) cfg.smooth ? n - cfg.smooth : 0;
     const double med = median(std::vector<int>(pos_.begin() + lo, pos_.begin() + n));
     best_ = std::min(std::max(best_, med), best_ + 1.0);
 }
@@ -283,8 +284,8 @@ const std::vector<double> & SpanFollower::weights(int frame) {
             w.push_back(0.0);
             continue;
         }
-        const double up = (double)(frame - enter_[k]->second + 1) / cfg.ramp;
-        const double down = !exit_[k] ? 1.0 : (double)(exit_[k]->second + cfg.ramp - 1 - frame) / cfg.ramp;
+        const double up = (double) (frame - enter_[k]->second + 1) / cfg.ramp;
+        const double down = !exit_[k] ? 1.0 : (double) (exit_[k]->second + cfg.ramp - 1 - frame) / cfg.ramp;
         w.push_back(std::min(1.0, std::max(0.0, std::min(up, down))));
     }
     return weights_.emplace(frame, std::move(w)).first->second;
@@ -296,7 +297,7 @@ bool SpanFollower::delta(int frame, std::vector<float> & out) {
     const size_t dim = deltas.empty() ? 0 : deltas.front().size();
     out.assign(dim, 0.0f);
     for (size_t k = 0; k < w.size(); k++) {
-        const float wk = (float)w[k];
+        const float wk = (float) w[k];
         for (size_t d = 0; d < dim; d++) out[d] += wk * deltas[k][d];
     }
     return true;
@@ -314,4 +315,4 @@ void SpanFollower::truncate(int frame) {
     weights_.erase(weights_.lower_bound(frame), weights_.end());
 }
 
-}  // namespace zonos3_follow
+} // namespace zonos3_follow
