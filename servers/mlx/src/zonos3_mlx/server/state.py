@@ -48,7 +48,7 @@ class ServerState:
     asr: AsrWorker = field(default_factory=AsrWorker)
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     edit_runtime: object | None = None  # zonos3.tts.edit_runtime.EditRuntime (zonos3_mlx.server.edit.runtime)
-    laci_slots: asyncio.Semaphore | None = None  # LACI takes in flight (zonos3_mlx.server.host)
+    laci_slots: asyncio.Semaphore | None = None  # LACI takes in flight (zonos3.server.host.laci_slots, on first use)
     plugins: list = field(default_factory=list)  # loaded zonos3.server.plugins.Plugin
 
     @property

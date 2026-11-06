@@ -7,7 +7,6 @@ import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from zonos3.generation import SAMPLE_RATE
 from zonos3.server.capabilities import (
     CapabilityFacts,
     capabilities_document,
@@ -42,13 +41,7 @@ def edit_model(state: ServerState) -> EditModel:
 
     c = state.config
     max_spans = edit_marker_rows(c.text_extra_tokens, c.text_tokenizer_spec or None) if c.span_end_id is not None else 0
-    return EditModel(frame_rate=SAMPLE_RATE / state.engine.decoder.hop, n_codebooks=c.n_codebooks,
-                     audio_pad_id=c.audio_pad_id, codebook_sizes=tuple(int(s) for s in c.codebook_sizes),
-                     max_spans=max_spans, speaker_row=c.speaker_embedding_dim > 0)
-
-
-def speaking_rate_edges(state: ServerState) -> list[float]:
-    return [float(v) for v in state.config.condition_edges.get("speaking_rate", ())]
+    return EditModel.from_config(c, hop=state.engine.decoder.hop, max_spans=max_spans)
 
 
 def facts(state: ServerState) -> CapabilityFacts:

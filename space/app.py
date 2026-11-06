@@ -147,10 +147,8 @@ ASSETS.normalizer().warmup()
 # --------------------------------------------------------------------------------------------- capabilities
 
 
-EDIT_MODEL = EditModel(
-    frame_rate=SAMPLE_RATE / int(matched_codec.entry(CONFIG.audio_codec)["hop"]), n_codebooks=CONFIG.n_codebooks,
-    audio_pad_id=CONFIG.audio_pad_id, codebook_sizes=CONFIG.codebook_sizes,
-    max_spans=edit_marker_rows(CONFIG.text_extra_tokens, CONTEXT.text_tokenizer_spec), speaker_row=True)
+EDIT_MODEL = EditModel.from_config(CONFIG, hop=int(matched_codec.entry(CONFIG.audio_codec)["hop"]),
+                                   max_spans=edit_marker_rows(CONFIG.text_extra_tokens, CONTEXT.text_tokenizer_spec))
 
 
 def capabilities() -> dict:

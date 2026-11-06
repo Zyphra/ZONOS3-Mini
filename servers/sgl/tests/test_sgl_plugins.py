@@ -10,9 +10,8 @@ api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
 import torch  # noqa: E402
 from fastapi import APIRouter  # noqa: E402
-from zonos3.server import plugins  # noqa: E402
+from zonos3.server import host, plugins  # noqa: E402
 from zonos3.server.schemas import GenerateRequest  # noqa: E402
-from zonos3_sgl.message.tts import TTSSamplingParams, TTSTokenizeMsg  # noqa: E402
 
 ROW_EDGES = (10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208)
 # fr_fr's extended scale: bucket -1 below the row (slower), 10 and 11 above it (faster)
@@ -31,32 +30,22 @@ def _take(bucket: int, scaled: bool = True) -> plugins.LaciTakeRequest:
 def test_take_on_an_extended_scale_carries_its_bucket_and_deltas(monkeypatch):
     """A take in a steered bucket: the bucket's tempo dose on top of its own steering delta, and the scale with its
     bucket on it (pinned takes too: LACI reports the bucket from it, not the unknown row id)."""
-    monkeypatch.setattr(api_server, "_steer_bundle",
-                        lambda config: SimpleNamespace(rate_extension=SimpleNamespace(direction="d")))
-    monkeypatch.setattr(api_server, "_steering_sources", lambda config: (0,))
-    monkeypatch.setattr(api_server, "resolve_controls", lambda bundle, controls, spans, **kw: SimpleNamespace(
+    bundle = SimpleNamespace(rate_extension=SimpleNamespace(direction="d"))
+    monkeypatch.setattr(host, "resolve_controls", lambda bundle, controls, spans, **kw: SimpleNamespace(
         hidden_delta=torch.full((4,), controls["d"])))
-    config = SimpleNamespace(model_config=SimpleNamespace(hidden_size=4))
-    for adjust in (True, False):
-        base = torch.ones(4)
-        msg = TTSTokenizeMsg(uid=1, text="Oui.", sampling_params=TTSSamplingParams(), steering_delta=base,
-                             laci_adjust_rate=adjust)
-        api_server._laci_take_rate_scale(config, msg, _take(-1))
-        assert (msg.laci_rate_first, msg.laci_rate_bucket, msg.laci_rate_edges) == (-1, -1, list(EDGES))
-        assert torch.allclose(msg.steering_delta, torch.full((4,), 1 - 0.99))
-        assert len(msg.laci_rate_deltas) == 13 and msg.laci_rate_deltas[1 + 5] is base  # row buckets: own delta only
-        assert torch.allclose(msg.laci_rate_deltas[1 + 11], torch.full((4,), 1 + 1.93))
-    row_only = TTSTokenizeMsg(uid=2, text="Oui.", sampling_params=TTSSamplingParams())
-    api_server._laci_take_rate_scale(config, row_only, _take(5, scaled=False))
-    assert row_only.laci_rate_edges is None and row_only.steering_delta is None
+    base = torch.ones(4)
+    scale = host.rate_scale(_take(-1), bundle, text="Oui.", base_delta=base, sources=(0,), hidden_size=4)
+    assert (scale.first, scale.bucket, scale.edges) == (-1, -1, EDGES)
+    assert torch.allclose(scale.delta, torch.full((4,), 1 - 0.99))
+    assert len(scale.deltas) == 13 and scale.deltas[1 + 5] is base  # row buckets: own delta only
+    assert torch.allclose(scale.deltas[1 + 11], torch.full((4,), 1 + 1.93))
+    assert host.rate_scale(_take(5, scaled=False), bundle, text="Oui.", base_delta=None, sources=(0,),
+                           hidden_size=4) is None
 
 
-def test_take_doses_need_a_rate_extension(monkeypatch):
-    monkeypatch.setattr(api_server, "_steer_bundle", lambda config: None)
-    config = SimpleNamespace(model_config=SimpleNamespace(hidden_size=4))
-    msg = TTSTokenizeMsg(uid=1, text="Oui.", sampling_params=TTSSamplingParams())
+def test_take_doses_need_a_rate_extension():
     with pytest.raises(ValueError):
-        api_server._laci_take_rate_scale(config, msg, _take(-1))
+        host.rate_scale(_take(-1), None, text="Oui.", base_delta=None, sources=(), hidden_size=4)
 
 
 class _FakePlugin:

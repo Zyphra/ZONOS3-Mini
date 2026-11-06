@@ -60,9 +60,9 @@ from zonos3.server.capabilities import (
     decoder_capability,
     dual_codec_hop,
     models_document,
-    phoneme_capabilities,
 )
 from zonos3.server.edit import make_router as _edit_router
+from zonos3.server.host import host_facts, laci_slots, rate_scale
 from zonos3.server.keepalive import KEEPALIVE_PATHS, KeepaliveMiddleware
 from zonos3.server.middleware import access_log_enabled, install_cors, install_private_access
 from zonos3.server.projects import ProjectStore, make_router as _projects_router
@@ -1393,17 +1393,6 @@ def _edit_max_spans(config: ServerArgs) -> int:
     )
 
 
-def _edit_frame_rate(config: ServerArgs) -> float:
-    from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
-
-    manager = TTSVocoderManager(
-        n_codebooks=config.tts_n_codebooks,
-        audio_pad_id=config.tts_audio_pad_id,
-        audio_codec=config.tts_audio_codec,
-    )
-    return manager.sample_rate / manager.hop_length
-
-
 async def _backend_reply(state: FrontendManager, make_msg: Callable[[int], BaseTokenizerMsg]):
     """Send one tokenizer message and return its finished reply."""
     uid = state.new_user()
@@ -1427,16 +1416,11 @@ class _SglEditEngine:
 
     @property
     def model(self) -> EditModel:
+        from zonos3.tokenizer.matched_codec import entry
+
         config = get_global_state().config
-        max_spans = _edit_max_spans(config)
-        return EditModel(
-            frame_rate=_edit_frame_rate(config) if max_spans > 0 else 0.0,
-            n_codebooks=int(config.tts_n_codebooks),
-            audio_pad_id=int(config.tts_audio_pad_id),
-            codebook_sizes=tuple(int(size) for size in config.model_config.codebook_sizes),
-            max_spans=max_spans,
-            speaker_row=_model_supports_speaker_embedding(config),
-        )
+        return EditModel.from_config(config.model_config, hop=int(entry(str(config.tts_audio_codec))["hop"]),
+                                     max_spans=_edit_max_spans(config))
 
     async def decode_audio(self, audio: bytes) -> tuple[np.ndarray, int]:
         waveform, sample_rate = _decode_audio_bytes(audio)
@@ -1529,41 +1513,6 @@ _PLUGINS: list = []
 _LACI_TAKE_SLOTS: asyncio.Semaphore | None = None
 
 
-def _speaking_rate_edges(config: ServerArgs) -> list[float]:
-    spec = _condition_spec(config)
-    return [] if spec is None else list(spec["edges"].get("speaking_rate") or [])
-
-
-def _laci_take_rate_scale(config: ServerArgs, msg: TTSTokenizeMsg, take: plugins.LaciTakeRequest) -> None:
-    """Put a LACI take on an extended speaking-rate scale (take.rate_edges, README "Extended speaking-rate buckets"): in
-    a steered bucket the take's steering delta gains the bucket's tempo dose (on top of the take's own controls). The
-    take carries the scale, its bucket on it and its delta in every bucket: LACI reports the bucket on the scale (a
-    steered one's row id is only "unknown"), and a rate-adjustable take's retakes switch to another bucket's delta
-    (row bucket <-> rate row unknown + tempo)."""
-    if take.rate_edges is None:
-        return
-    bundle = _steer_bundle(config)
-    if take.rate_doses and (bundle is None or bundle.rate_extension is None):
-        raise ValueError("rate_doses need a steering bundle with a rate_extension")
-    sources, hidden = _steering_sources(config), int(config.model_config.hidden_size)
-    base = msg.steering_delta
-
-    def delta(b: int) -> torch.Tensor | None:
-        if b not in take.rate_doses:
-            return base
-        tempo = resolve_controls(bundle, {bundle.rate_extension.direction: take.rate_doses[b]}, None, text=msg.text,
-                                 speaker_embedding=None, sources=sources, hidden_size=hidden).hidden_delta
-        return tempo if base is None else base + tempo
-
-    if take.rate_bucket is None:
-        raise ValueError("a LACI take on an extended speaking-rate scale needs its rate_bucket")
-    first, bucket = int(take.rate_first), int(take.rate_bucket)
-    deltas = [delta(b) for b in range(first, first + len(take.rate_edges) + 1)]
-    msg.steering_delta = deltas[bucket - first]
-    msg.laci_rate_edges, msg.laci_rate_first, msg.laci_rate_bucket = list(take.rate_edges), first, bucket
-    msg.laci_rate_deltas = deltas
-
-
 class _SglHost:
     """zonos3.server.plugins.Host over this server."""
 
@@ -1572,19 +1521,10 @@ class _SglHost:
 
     def facts(self) -> plugins.HostFacts:
         config = get_global_state().config
-        spec = _condition_spec(config)
-        bundle = _steer_bundle(config)
-        return plugins.HostFacts(
-            model_name=Path(str(config.model_path)).name,
-            rate_edges=tuple(_speaking_rate_edges(config)),
-            rate_buckets=int(spec["bucket_counts"].get("speaking_rate", 0)) if spec else 0,
-            laci_languages=frozenset(getattr(config, "laci_heads", None) or {}),
-            speaker_modes=tuple(_speaker_modes(config)),
-            raw_controls=frozenset(
-                did for did, d in (bundle.directions.items() if bundle is not None else ()) if d.space == RAW_SPACE
-            ),
-            phoneme_tokens=phoneme_capabilities(_text_tokenizer_spec(config), None)["phoneme_tokens"] is not None,
-            rate_extension=bundle.rate_extension if bundle is not None else None,
+        return host_facts(
+            model_path=config.model_path, condition_tokens=_condition_spec(config),
+            speaker_modes=_speaker_modes(config), bundle=_steer_bundle(config),
+            laci_languages=getattr(config, "laci_heads", None) or {}, text_tokenizer_spec=_text_tokenizer_spec(config),
         )
 
     async def synthesize_laci(
@@ -1595,7 +1535,7 @@ class _SglHost:
         global _LACI_TAKE_SLOTS
         state = get_global_state()
         if _LACI_TAKE_SLOTS is None:
-            _LACI_TAKE_SLOTS = asyncio.Semaphore(max(1, 2 * int(getattr(state.config, "max_running_req", 1) or 1)))
+            _LACI_TAKE_SLOTS = laci_slots(getattr(state.config, "max_running_req", 1))
         gain = _output_gain(state.config, None)
         msgs = []
         try:
@@ -1605,7 +1545,14 @@ class _SglHost:
                     laci_target_frames=float(take.target_frames), laci_adjust_rate=bool(take.adjust_rate),
                 )
                 msgs.append(msg)
-                _laci_take_rate_scale(state.config, msg, take)
+                scale = rate_scale(take, _steer_bundle(state.config), text=msg.text, base_delta=msg.steering_delta,
+                                   sources=_steering_sources(state.config),
+                                   hidden_size=int(state.config.model_config.hidden_size))
+                if scale is not None:
+                    msg.steering_delta = scale.delta
+                    msg.laci_rate_edges, msg.laci_rate_first, msg.laci_rate_bucket = (
+                        list(scale.edges), scale.first, scale.bucket)
+                    msg.laci_rate_deltas = scale.deltas
         except BaseException:
             for msg in msgs:
                 state.ack_map.pop(msg.uid, None)

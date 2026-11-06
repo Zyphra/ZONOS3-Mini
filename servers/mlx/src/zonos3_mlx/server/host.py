@@ -11,44 +11,18 @@ from __future__ import annotations
 import asyncio
 import io
 from collections.abc import Sequence
-from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from zonos3.server.capabilities import phoneme_capabilities
+from zonos3.server.host import host_facts, laci_slots, rate_scale
 from zonos3.server.plugins import HostFacts, LaciTakeRequest, TakeResult
-from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_align import asr_device
-from zonos3.tts.steering import resolve_controls
 
 from zonos3_mlx.engine import LaciTake
 from zonos3_mlx.server import capabilities as caps
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.generate import JobRun, plan_generate
 from zonos3_mlx.server.state import ServerState
-
-
-def rate_scale(state: ServerState, take: LaciTakeRequest, text: str, base_delta) -> LaciTake | None:
-    """The take on its extended speaking-rate scale (``take.rate_*``; sgl _laci_take_rate_scale): its bucket on the
-    scale and the steering delta of every bucket (a steered bucket adds its tempo dose to the take's own delta)."""
-    if take.rate_edges is None:
-        return None
-    bundle, engine = state.engine.steer_bundle, state.engine
-    if take.rate_doses and (bundle is None or bundle.rate_extension is None):
-        raise ValueError("rate_doses need a steering bundle with a rate_extension")
-
-    def delta(b: int):
-        if b not in take.rate_doses:
-            return base_delta
-        tempo = resolve_controls(bundle, {bundle.rate_extension.direction: take.rate_doses[b]}, None, text=text,
-                                 speaker_embedding=None, sources=engine.steering_sources,
-                                 hidden_size=engine.hidden_size).hidden_delta
-        return tempo if base_delta is None else base_delta + tempo
-
-    first = int(take.rate_first)
-    last = first + len(take.rate_edges)
-    return LaciTake(float(take.target_frames), bool(take.adjust_rate), tuple(float(e) for e in take.rate_edges),
-                    first, int(take.rate_bucket), [delta(b) for b in range(first, last + 1)])
 
 
 class MlxHost:
@@ -61,36 +35,29 @@ class MlxHost:
 
     def facts(self) -> HostFacts:
         state = self.state
-        bundle = state.engine.steer_bundle
-        names = state.config.condition_names
-        return HostFacts(
-            model_name=Path(state.options.model_path).name,
-            rate_edges=tuple(caps.speaking_rate_edges(state)),
-            rate_buckets=(state.config.condition_bucket_counts[names.index("speaking_rate")]
-                          if "speaking_rate" in names else 0),
-            laci_languages=frozenset(state.engine.laci_languages),
-            speaker_modes=tuple(m for m in ("reference", "embedding") if m in state.engine.speaker_modes),
-            raw_controls=frozenset(did for did, d in (bundle.directions.items() if bundle is not None else ())
-                                   if d.space == RAW_SPACE),
-            phoneme_tokens=phoneme_capabilities(state.config.text_tokenizer_spec, None)["phoneme_tokens"] is not None,
-            rate_extension=None if bundle is None else bundle.rate_extension,
-            worker_device=asr_device())
+        return host_facts(model_path=state.options.model_path, condition_tokens=caps.condition_tokens(state),
+                          speaker_modes=state.engine.speaker_modes, bundle=state.engine.steer_bundle,
+                          laci_languages=state.engine.laci_languages,
+                          text_tokenizer_spec=state.config.text_tokenizer_spec, worker_device=asr_device())
 
     async def synthesize_laci(self, takes: Sequence[LaciTakeRequest], session_id: str | None) -> list[TakeResult]:
         """Every take through the scheduler, at most twice --batch in flight so studio requests interleave. All
         requests are planned before the first is queued (ValueError for a bad voice / control / text)."""
         state = self.state
         if state.laci_slots is None:
-            state.laci_slots = asyncio.Semaphore(max(1, 2 * state.options.batch))
+            state.laci_slots = laci_slots(state.options.batch)
         gain = np.float32(state.engine.output_gain(None))
+        engine = state.engine
         plans = []
         for take in takes:
             plan = await plan_generate(state, take.request, session_id,
                                        laci_take=LaciTake(float(take.target_frames), bool(take.adjust_rate)))
-            scaled = rate_scale(state, take, plan.text, plan.hidden_delta)
-            if scaled is not None:
-                plan.laci_take = scaled
-                plan.hidden_delta = scaled.rate_deltas[scaled.rate_bucket - scaled.rate_first]
+            scale = rate_scale(take, engine.steer_bundle, text=plan.text, base_delta=plan.hidden_delta,
+                               sources=engine.steering_sources, hidden_size=engine.hidden_size)
+            if scale is not None:
+                plan.laci_take = LaciTake(float(take.target_frames), bool(take.adjust_rate), scale.edges, scale.first,
+                                          scale.bucket, scale.deltas)
+                plan.hidden_delta = scale.delta
             plans.append(plan)
 
         async def run(plan):

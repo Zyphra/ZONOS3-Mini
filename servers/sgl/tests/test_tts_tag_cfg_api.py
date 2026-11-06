@@ -22,7 +22,7 @@ class _Frontend:
                 speaker_embedding_enabled=False, speaker_reference_prefix_enabled=False,
                 speaking_rate_num_buckets=0, quality_features=(), quality_num_buckets=0,
                 condition_tokens_enabled=False, condition_count=0, span_end_id=1026, text_extra_tokens=4,
-                max_seq_len=4096, codebook_sizes=(4096,) * 10,
+                max_seq_len=4096, n_codebooks=10, audio_pad_id=4097, codebook_sizes=(4096,) * 10,
             ),
             max_seq_len=4096, tts_n_codebooks=10, tts_audio_pad_id=4097,
             tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000", accent_adapters=None, laci_heads={},

@@ -61,6 +61,20 @@ class EditModel:
     max_spans: int  # edit marker rows; 0 when the checkpoint cannot edit (no span_end_id or no marker rows)
     speaker_row: bool  # the checkpoint has a speaker-embedding row
 
+    @classmethod
+    def from_config(cls, config, *, hop: int, max_spans: int) -> EditModel:
+        """The edit model of a checkpoint config (zonos3.models.config.ModelConfig, or the reference / MLX LMConfig
+        without ``speaker_enabled``: a speaker row when it has a speaker-embedding dimension) at codec ``hop``."""
+        speaker_row = getattr(config, "speaker_enabled", None)
+        return cls(
+            frame_rate=SAMPLE_RATE / int(hop),
+            n_codebooks=int(config.n_codebooks),
+            audio_pad_id=int(config.audio_pad_id),
+            codebook_sizes=tuple(int(size) for size in config.codebook_sizes),
+            max_spans=int(max_spans),
+            speaker_row=bool(config.speaker_embedding_dim > 0 if speaker_row is None else speaker_row),
+        )
+
 
 @dataclass
 class FillJob:

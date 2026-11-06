@@ -57,7 +57,7 @@ def _capabilities(lm, assets) -> set[str]:
     from zonos3.tts.superbpe import load_spec
 
     spec = load_spec(lm.root)
-    caps = {"tag_cfg"}  # every checkpoint serves tag CFG (api_server _tag_cfg_capabilities)
+    caps = {"tag_cfg"}  # every checkpoint serves tag CFG (the sgl facts' tag_cfg_available)
     if spec is not None and spec.get("phonemes") is not None:
         caps.add("phoneme_tokens")
     if assets.steer_bundle is not None:
