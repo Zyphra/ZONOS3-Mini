@@ -8,7 +8,6 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zonos3.generation import MAX_FRAMES
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
 from zonos3.tts.stream import StreamSettings
 
@@ -20,12 +19,9 @@ from zonos3_mlx.scheduler import Scheduler
 class ServerOptions:
     model_path: str
     batch: int = 4
-    max_frames: int = MAX_FRAMES
-    stream_decode_default: str = "prefix"  # "prefix" | "whole"
     default_voices_dir: Path | None = None
     studio_dir: Path | None = None
     phoneme_lexicon: str | None = None
-    text_normalization: bool = False
     prefix: StreamSettings = field(default_factory=StreamSettings)  # ZONOS3_PREFIX_STREAM_*
     # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and plugins need it)
     fusealign: bool = field(default_factory=fusealign_installed)

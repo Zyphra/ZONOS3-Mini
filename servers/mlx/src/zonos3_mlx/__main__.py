@@ -40,11 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="concurrent generation slots (default 4); a CFG request takes two")
     p.add_argument("--reference-idle-unload", type=float, default=60.0,
                    help="free the reference encoder + SSL teacher after N idle seconds (default 60; 0 keeps them)")
-    p.add_argument("--stream-decode-default", choices=("prefix", "whole"),
-                   default=os.environ.get("ZONOS3_STREAM_DECODE_DEFAULT", "prefix").strip().lower() or "prefix",
-                   help="streaming decode of requests without stream_decode (default prefix: chunks of "
-                        "ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3 "
-                        "hold-back; whole: one exact chunk at EOS)")
     p.add_argument("--tts-default-voices-dir", default=str(paths.DEFAULT_VOICES),
                    help="default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy "
                         "speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)")
@@ -118,11 +113,10 @@ def main(argv=None) -> int:
                          laci_heads=laci, max_frames=args.max, normalizer=normalizer,
                          reference_idle_unload=args.reference_idle_unload)
     voices = Path(args.tts_default_voices_dir) if args.tts_default_voices_dir else None
-    options = ServerOptions(model_path=args.model, batch=args.batch, max_frames=args.max,
-                            stream_decode_default=args.stream_decode_default, default_voices_dir=voices,
+    options = ServerOptions(model_path=args.model, batch=args.batch, default_voices_dir=voices,
                             studio_dir=Path(args.studio_dir) if args.studio_dir else None,
-                            phoneme_lexicon=args.tts_phoneme_lexicon, text_normalization=normalizer is not None,
-                            prefix=prefix, fusealign=fusealign_available(worker_python), plugins=tuple(args.plugins))
+                            phoneme_lexicon=args.tts_phoneme_lexicon, prefix=prefix,
+                            fusealign=fusealign_available(worker_python), plugins=tuple(args.plugins))
     scheduler = Scheduler(engine, batch=args.batch)
     state = ServerState(engine, scheduler, options, aligner=FuseAlignWorker(python=worker_python))
     if args.studio_projects_dir:

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from zonos3.server.capabilities import phoneme_capabilities
 from zonos3.server.plugins import HostFacts, LaciTakeRequest, TakeResult
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_align import asr_device
@@ -71,7 +72,7 @@ class MlxHost:
             speaker_modes=tuple(m for m in ("reference", "embedding") if m in state.engine.speaker_modes),
             raw_controls=frozenset(did for did, d in (bundle.directions.items() if bundle is not None else ())
                                    if d.space == RAW_SPACE),
-            phoneme_tokens=caps.phonemes(state)["phoneme_tokens"] is not None,
+            phoneme_tokens=phoneme_capabilities(state.config.text_tokenizer_spec, None)["phoneme_tokens"] is not None,
             rate_extension=None if bundle is None else bundle.rate_extension,
             worker_device=asr_device())
 

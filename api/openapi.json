@@ -1059,7 +1059,7 @@
                 },
                 "root": {
                   "type": "string",
-                  "description": "The served checkpoint path or GGUF file name."
+                  "description": "The served checkpoint's base name (its directory or GGUF file name)."
                 }
               }
             }

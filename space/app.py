@@ -41,13 +41,7 @@ from fusealign_hub.aligner import CHECKPOINT_FILE as FUSEALIGN_CHECKPOINT
 from fusealign_hub.aligner import HF_REPO as FUSEALIGN_REPO
 from gradio.context import LocalContext
 from qwen_asr.inference.utils import SUPPORTED_LANGUAGES
-from zonos3 import languages
-from zonos3.generation import (
-    DECODE_CONTEXT_FRAMES,
-    SAMPLE_RATE,
-    TAG_CFG_MAX_SCALE,
-    TAG_CFG_MIN_SCALE,
-)
+from zonos3.generation import SAMPLE_RATE
 from zonos3.models.accent_format import load_adapter
 from zonos3.models.text_extra import TextExtraRows
 from zonos3.reference.accents import AccentState
@@ -64,6 +58,13 @@ from zonos3.reference.synth import (
     slerp,
     synthesize,
 )
+from zonos3.server.capabilities import (
+    CapabilityFacts,
+    capabilities_document,
+    condition_spec,
+    decoder_capability,
+    dual_codec_hop,
+)
 from zonos3.server.errors import call as edit_errors
 from zonos3.server.schemas import (
     EditAlignRequest,
@@ -73,6 +74,7 @@ from zonos3.server.schemas import (
     PhonemizeRequest,
     SpeakerCreateRequest,
 )
+from zonos3.server.speech import check_format, prefix_stream_supported, speech_headers
 from zonos3.server.studio import resolve_studio_file, studio_cache_control
 from zonos3.server.voices import (
     DefaultVoice,
@@ -96,8 +98,8 @@ from zonos3.tts import plan as P
 from zonos3.tts.audio import _decode_audio_bytes, _transcode_audio_bytes_to_wav, pcm16_wav_bytes
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, edit_capabilities
-from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
+from zonos3.tts.markup import trained_on_tags
 from zonos3.tts.phonemes import PhonemeLexicon
 from zonos3.tts.steering import (
     check_controls,
@@ -152,77 +154,40 @@ EDIT_MODEL = EditModel(
 
 
 def capabilities() -> dict:
-    """GET /v2/capabilities (the MLX server's document, for the reference and this Space's routes)."""
-    c, modes = CONFIG, list(CONTEXT.speaker_modes)
-    codec = matched_codec.entry(c.audio_codec)
-    hop = int(codec["hop"])
-    names = list(c.condition_names)
-    counts = dict(zip(names, (int(n) for n in c.condition_bucket_counts)))
-    silence = P.silence_prefill_default()
-    spec = CONTEXT.text_tokenizer_spec
-    phonemes = None if not spec else spec.get("phonemes")
-    return {
-        "text_tokenizer_spec": spec or None,
-        "text_normalization_enabled": True,
-        "text_norm_languages": list(languages.CODES),
-        "accents": CONTEXT.accent_names,
-        "speaker_enabled": True,
-        "speaker_conditioning_type": "raw_reference_prefix",
-        "speaker_embedding_dim": c.speaker_embedding_dim,
-        "speaker_embedding_codec": c.speaker_embedding_codec,
-        "n_codebooks": c.n_codebooks,
-        "codebook_sizes": list(c.codebook_sizes),
-        "audio_codec": c.audio_codec,
-        "max_tokens": CONTEXT.max_frames,
-        "stream_decode_modes": ["prefix", "whole"],
-        "stream_decode_default": "prefix",
-        "silence_prefill": {
-            "available": CONTEXT.silence_available, "default_frames": silence.frames, "default_on": silence.on,
-            "default_seconds": round(silence.frames * hop / SAMPLE_RATE, 3), "frame_seconds": hop / SAMPLE_RATE,
-            "codec": c.audio_codec,
-            "note": "codec-matched silence frames open the audio stream before the model starts (their audio is "
-                    "not emitted); a request without silence_prefill_frames gets the server default, "
-                    "silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length"},
-        "tag_cfg": {"available": True, "trained": trained_on_tags(resolve_dir_or_local(RELEASE_LM)),
-                    "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": TAG_CFG_MIN_SCALE,
-                    "max_scale": TAG_CFG_MAX_SCALE, "default_scale": 1.0},
-        "decode_context": {"available": True, "default_frames": DECODE_CONTEXT_FRAMES, "max_frames": 450,
-                           "note": "decode the generated frames behind the last decode_context_frames of the "
-                                   "raw-reference prompt (their audio dropped), so the first generated frame is not "
-                                   "the decoder's position 0; no-op without a reference prompt"},
-        "speaker_modes": modes,
-        "speaker_mode_default": modes[0],
-        "decoder": {"kind": "istft_mr", "label": f"Multi-resolution iSTFT head ({Path(codec['checkpoint']).name}); "
-                                                 "causal",
-                    "checkpoint": Path(codec["checkpoint"]).name, "expect_step": None,
-                    "headroom_db": float(matched_codec.decoder_headroom_db(c.audio_codec)), "causal": True,
-                    "codec": c.audio_codec},
-        "condition_tokens": None if c.condition_count == 0 else {
-            "enabled": True, "names": names, "flags": {}, "count": c.condition_count, "bucket_counts": counts,
-            "unknown_ids": dict(counts), "edges": {n: [float(v) for v in c.condition_edges.get(n, ())] for n in names},
-            "units": {n: c.condition_units[n] for n in names if n in c.condition_units},
-            "layout": "[reference prefix | speaker row]" + "".join(f"[{n}]" for n in names) + " BOS text EOS"},
-        "speaker_audio_upload": True,
-        "speaker_cfg_supported": True,
-        "speaker_cfg_modes": modes,
-        "speaker_cfg_unconditional": "remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_"
-                                     "generated_history",
-        "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
-        "laci_languages": sorted(CONTEXT.laci_languages),
-        "plugins": [],
-        "speaker_embedding_upload": True,
-        "speaker_embedding_cache": True,
-        "speaker_embedding_blend": True,
-        "default_voices_enabled": True,
-        "projects": {"enabled": False},
-        **edit_capabilities(EDIT_MODEL, True, True),
-        "phoneme_tokens": None if phonemes is None else {
-            "open_marker": phonemes["open_marker"], "close_marker": phonemes["close_marker"],
-            "symbols": list(phonemes["symbols"])},
-        "phonemize_enabled": True,
-        "phonemize_languages": LEXICON.server_languages,
-        "phonemize_guess_languages": LEXICON.guess_languages,
-    }
+    """GET /v2/capabilities (zonos3.server.capabilities) of this Space: the release LM with its speaker paths, the edit
+    LoRA and the gold lexicon; no plugins, no project store."""
+    c = CONFIG
+    modes = list(CONTEXT.speaker_modes)
+    return capabilities_document(CapabilityFacts(
+        text_tokenizer_spec=CONTEXT.text_tokenizer_spec or None,
+        text_normalization_enabled=ASSETS.normalizer() is not None,
+        accents=CONTEXT.accent_names,
+        speaker_modes=modes,
+        speaker_embedding_dim=c.speaker_embedding_dim,
+        speaker_embedding_codec=c.speaker_embedding_codec,
+        n_codebooks=c.n_codebooks,
+        codebook_sizes=list(c.codebook_sizes),
+        audio_codec=c.audio_codec,
+        max_tokens=CONTEXT.max_frames,
+        prefix_stream=prefix_stream_supported(c.audio_codec),
+        silence_hop=dual_codec_hop(c.audio_codec),
+        tag_cfg_available=True,
+        tag_cfg_trained=trained_on_tags(resolve_dir_or_local(RELEASE_LM)),
+        decoder=decoder_capability(c.audio_codec),
+        condition_tokens=None if c.condition_count == 0 else condition_spec(
+            names=c.condition_names, count=c.condition_count, bucket_counts=c.condition_bucket_counts,
+            edges=c.condition_edges, flags=getattr(c, "condition_flags", None), units=c.condition_units),
+        speaker_audio_upload=bool(modes),
+        speaker_cfg_available=bool(modes),
+        laci_languages=CONTEXT.laci_languages,
+        plugins=[],
+        default_voices_enabled=True,
+        edit_model=EDIT_MODEL,
+        edit_available=True,
+        edit_transcribe=True,
+        lexicon=LEXICON,
+        projects={"enabled": False},
+    ))
 
 
 CAPABILITIES = capabilities()
@@ -818,9 +783,8 @@ async def generate(req: GenerateRequest, request: Request,
                    x_tts_session_id: str | None = Header(default=None, alias="X-TTS-Session-ID")):
     """The take on the GPU session (GpuSessions): float32 PCM streamed as it is decoded, or buffered (stream=false, and
     16-bit WAV)."""
-    if req.stream and req.format == "wav":
-        raise HTTPException(status_code=400, detail="format=wav needs stream=false")
     try:
+        check_format(bool(req.stream), req.format)
         body = await prepare(req.model_dump(), normalize_session_id(x_tts_session_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -836,10 +800,8 @@ async def generate(req: GenerateRequest, request: Request,
     if kind != "start":
         raise HTTPException(status_code=400 if kind == "invalid" else 500, detail=payload)
     seed, reading = payload
-    headers = {"X-Audio-Sample-Rate": str(SAMPLE_RATE), "X-Audio-Channels": "1",
-               "X-Audio-Format": "pcm16" if req.format == "wav" else "float32", "X-Seed": str(seed)}
-    if req.control_spans:
-        headers["X-Control-Span-Follow"] = "reading" if reading else "rate"
+    headers = speech_headers(fmt=req.format, seed=seed, control_spans=bool(req.control_spans),
+                             follows_reading=bool(reading))
     if req.stream:  # a failure mid-take ends the stream: the status line is already sent
         return StreamingResponse((pcm.astype(np.float32).tobytes() async for pcm in audio_of(take)),
                                  media_type="audio/pcm", headers=headers)

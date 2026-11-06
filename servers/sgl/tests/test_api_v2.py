@@ -99,7 +99,7 @@ def client(frontend):
 def test_meta_routes(client, frontend):
     assert client.get("/v2/health").json() == {"status": "ok"}
     assert client.get("/v1/models").json() == {"object": "list", "data": [
-        {"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra", "root": frontend.config.model_path}]}
+        {"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra", "root": "lm"}]}
     exposed = client.get("/v2/health", headers={"Origin": "https://x.example"}).headers["access-control-expose-headers"]
     assert "X-Seed" in exposed
 
@@ -242,7 +242,7 @@ def test_speech_refusals(client, frontend, fields, status, detail):
 def test_capabilities_drop_the_legacy_keys(frontend, monkeypatch):
     import asyncio
 
-    monkeypatch.setattr(api_server, "_decoder_capability", lambda config: None)
+    monkeypatch.setattr(api_server, "decoder_capability", lambda codec: None)
     caps = asyncio.run(api_server.tts_capabilities())
     assert set(caps) == set(SPEC["components"]["schemas"]["Capabilities"]["required"])
     assert "prepend_silence" not in json.dumps(caps["silence_prefill"])

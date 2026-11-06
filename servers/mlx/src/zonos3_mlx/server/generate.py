@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 import numpy as np
 from fastapi import APIRouter, Header, HTTPException
@@ -18,6 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 from zonos3.generation import SAMPLE_RATE
 from zonos3.reference.synth import Sampling, fade_out
 from zonos3.server.schemas import SPEAKER_INPUT_FIELDS, GenerateRequest, SpeechRequest
+from zonos3.server.speech import check_format, resolve_stream_decode, speech_headers
 from zonos3.server.voices import normalize_session_id
 from zonos3.tts.audio import pcm16_wav_bytes
 from zonos3.tts.plan import parse_request, request_head
@@ -29,6 +29,8 @@ from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
 
 logger = logging.getLogger("zonos3_mlx.server")
+# Progressive (prefix re-decode) streaming: StreamDecoder re-decodes the growing prefix with every zac decoder.
+PREFIX_STREAM = True
 
 
 class JobRun:
@@ -125,14 +127,6 @@ def finish_pcm(audio: bytes, gain: float, fade_out_ms: float) -> np.ndarray:
     return fade_out(pcm.astype(np.float32), float(fade_out_ms))
 
 
-def stream_decode_mode(state: ServerState, req: GenerateRequest) -> str:
-    """GenerateRequest.stream_decode: the server default (prefix unless ZONOS3_STREAM_DECODE_DEFAULT=whole) for a
-    streaming response; non-streaming responses are always the whole decode."""
-    if not req.stream:
-        return "whole"
-    return req.stream_decode or state.options.stream_decode_default
-
-
 async def plan_generate(state: ServerState, req: GenerateRequest, session_id: str | None, **plan_kwargs) -> Plan:
     """The scheduler plan of a GenerateRequest (HTTP 400 for a refused request, 500 for an encoder failure). The
     request head (tag CFG, speaker mode, condition rows) is checked before the speaker inputs are resolved, in the sgl
@@ -156,14 +150,18 @@ async def run_plan(state: ServerState, plan: Plan, mode: str = "whole") -> JobRu
 
 async def generate_response(state: ServerState, req: GenerateRequest, session_id: str | None) -> Response:
     """Run a GenerateRequest: streamed or buffered float32 PCM, or a buffered 16-bit WAV."""
-    if req.stream and req.format == "wav":
-        raise HTTPException(status_code=400, detail="format=wav needs stream=false")
+    try:
+        check_format(bool(req.stream), req.format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     plan = await plan_generate(state, req, session_id)
-    run = await run_plan(state, plan, stream_decode_mode(state, req))
-    headers = {"X-Audio-Sample-Rate": str(SAMPLE_RATE), "X-Audio-Channels": "1",
-               "X-Audio-Format": "pcm16" if req.format == "wav" else "float32", "X-Seed": str(plan.seed)}
-    if req.control_spans:
-        headers["X-Control-Span-Follow"] = "reading" if plan.follow_tokens is not None else "rate"
+    try:
+        mode = resolve_stream_decode(req.stream_decode, streaming=bool(req.stream), prefix_supported=PREFIX_STREAM)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    run = await run_plan(state, plan, mode or "whole")
+    headers = speech_headers(fmt=req.format, seed=plan.seed, control_spans=bool(req.control_spans),
+                             follows_reading=plan.follow_tokens is not None)
     gain = state.engine.output_gain(req.headroom_db)
     if req.stream:
         return StreamingResponse(_stream(run, gain, float(req.fade_out_ms)), media_type="audio/pcm", headers=headers)
@@ -229,8 +227,3 @@ def router(state: ServerState) -> APIRouter:
         return await generate_response(state, request, session_id)
 
     return r
-
-
-def default_stream_decode() -> str:
-    wanted = os.environ.get("ZONOS3_STREAM_DECODE_DEFAULT", "prefix").strip().lower()
-    return "whole" if wanted == "whole" else "prefix"

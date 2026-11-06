@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import io
-import os
 import subprocess
 import time
 from contextlib import asynccontextmanager
@@ -29,8 +28,7 @@ from zonos3_sgl.message import (
     TTSSamplingParams,
     TTSTokenizeMsg,
 )
-from zonos3 import languages
-from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE
+from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING
 from zonos3.reference.synth import decode_base64_blob, load_embedding_vector, slerp
 from zonos3.tts import plan
 from zonos3.tts.audio import (
@@ -43,7 +41,7 @@ from zonos3.tts.audio import (
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, edit_capabilities
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
 from zonos3.tts.steering import (
     SteeringBundle,
     check_controls,
@@ -53,12 +51,22 @@ from zonos3.tts.steering import (
     no_steering_message,
     resolve_controls,
 )
-from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
+from zonos3.tts.markup import trained_on_tags
 from zonos3.server import plugins
+from zonos3.server.capabilities import (
+    CapabilityFacts,
+    capabilities_document,
+    condition_spec,
+    decoder_capability,
+    dual_codec_hop,
+    models_document,
+    phoneme_capabilities,
+)
 from zonos3.server.edit import make_router as _edit_router
 from zonos3.server.keepalive import KEEPALIVE_PATHS, KeepaliveMiddleware
 from zonos3.server.middleware import access_log_enabled, install_cors, install_private_access
 from zonos3.server.projects import ProjectStore, make_router as _projects_router
+from zonos3.server.speech import check_format, prefix_stream_supported, resolve_stream_decode, speech_headers
 from zonos3.server.studio import install_studio
 from zonos3.server.schemas import (
     SPEAKER_INPUT_FIELDS,
@@ -174,65 +182,21 @@ def _speaker_modes(config: ServerArgs) -> list[str]:
 
 
 # ----------------------------------------------------------------------------- condition rows (cond3 finetunes)
-_CONDITION_LAYOUT = "[reference prefix | speaker row][loudness][fmax][speaking_rate] BOS text EOS"
-
-
 def _condition_spec(config: ServerArgs) -> dict | None:
-    """The checkpoint's condition rows (loudness / fmax / speaking-rate buckets): names, per-name bucket counts (the
-    count is the unknown id), edges; None when the model has none."""
+    """The checkpoint's condition rows (zonos3.server.capabilities.condition_spec); None when the model has none."""
     model_config = config.model_config
     if not getattr(model_config, "condition_tokens_enabled", False):
         return None
     names = [str(item) for item in (getattr(model_config, "condition_names", None) or ("loudness", "fmax", "speaking_rate"))]
-    count = int(getattr(model_config, "condition_count", len(names)) or len(names))
-    counts = dict(zip(names[:count], (int(n) for n in model_config.condition_bucket_counts)))
-    edges = {
-        str(name): [float(x) for x in (values or ())]
-        for name, values in (getattr(model_config, "condition_edges", None) or {}).items()
-    }
-    # flag rows (the encode-start finetunes): ids restricted to the flag's values, no edges
-    flags = {str(name): dict(spec or {}) for name, spec in (getattr(model_config, "condition_flags", None) or {}).items()}
-    return dict(
-        enabled=True,
-        names=names[:count],
-        flags={name: flags[name] for name in names[:count] if name in flags},
-        count=count,
-        bucket_counts=counts,
-        unknown_ids=dict(counts),
-        edges=edges,
-        units=dict(getattr(model_config, "condition_units", None) or {}),
-        layout="[reference prefix | speaker row]" + "".join(f"[{name}]" for name in names[:count]) + " BOS text EOS",
+    return condition_spec(
+        names=names, count=int(getattr(model_config, "condition_count", len(names)) or len(names)),
+        bucket_counts=model_config.condition_bucket_counts, edges=getattr(model_config, "condition_edges", None),
+        flags=getattr(model_config, "condition_flags", None), units=getattr(model_config, "condition_units", None),
     )
 
 
-def _dual_codec(config: ServerArgs) -> dict | None:
-    """The codec registry entry of the checkpoint's codec when it is a matched dual codec (the codecs with
-    codec-matched silence frames), else None."""
-    from zonos3.tokenizer.matched_codec import codec_names, entry
-
-    codec = str(getattr(config.model_config, "audio_codec", "") or "")
-    return entry(codec) if codec in codec_names() and entry(codec).get("family") == "dual" else None
-
-
-def _silence_prefill_spec(config: ServerArgs) -> dict:
-    """Whether codec-matched silence frames can be prefilled into the audio stream (2026-10-17), and the server
-    default (zonos3.tts.plan.silence_prefill_default)."""
-    codec = str(getattr(config.model_config, "audio_codec", "") or "")
-    spec = _dual_codec(config)
-    if spec is None:
-        return dict(available=False, default_frames=None, codec=codec)
-    hop, default = int(spec["hop"]), plan.silence_prefill_default()
-    return dict(available=True, default_frames=default.frames, default_on=default.on,
-                default_seconds=round(default.frames * hop / SAMPLE_RATE, 3), frame_seconds=hop / SAMPLE_RATE, codec=codec,
-                note="codec-matched silence frames open the audio stream before the model starts (their audio is not emitted); "
-                     "a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 "
-                     "turns it off and silence_prefill_frames=N sets the length")
-
-
-def _model_supports_speaker(config: ServerArgs) -> bool:
-    return _model_supports_speaker_embedding(
-        config
-    ) or _model_uses_speaker_reference_prefix(config)
+def _audio_codec(config: ServerArgs) -> str:
+    return str(getattr(config.model_config, "audio_codec", "") or "")
 
 
 def _model_speaker_dim(config: ServerArgs) -> int:
@@ -242,37 +206,6 @@ def _model_speaker_dim(config: ServerArgs) -> int:
 def _model_speaker_codec(config: ServerArgs) -> str | None:
     codec = getattr(config.model_config, "speaker_embedding_codec", None)
     return str(codec) if codec else None
-
-
-_STREAM_DECODE_MODES = ("prefix", "whole")
-
-
-def _model_prefix_stream_supported(config: ServerArgs) -> bool:
-    """Progressive (prefix re-decode) streaming exists for the matched long-context codecs only."""
-    from zonos3.tokenizer.matched_codec import codec_names
-
-    return str(getattr(config.model_config, "audio_codec", "")) in codec_names()
-
-
-def _default_stream_decode(config: ServerArgs) -> str | None:
-    """The server default for a streaming response: progressive prefix re-decode whenever the codec supports it
-    (first audio after ~15 frames instead of at EOS). ZONOS3_STREAM_DECODE_DEFAULT=whole restores the one exact
-    decode at EOS for every request that does not ask for a mode."""
-    wanted = os.environ.get("ZONOS3_STREAM_DECODE_DEFAULT", "prefix").strip().lower()
-    return "prefix" if wanted == "prefix" and _model_prefix_stream_supported(config) else None
-
-
-def _resolve_stream_decode(config: ServerArgs, value: str | None, streaming: bool = True) -> str | None:
-    """GenerateRequest.stream_decode: None = the server default (prefix for streaming responses of the matched
-    codecs, whole decode otherwise), "prefix", or "whole" (one exact decode at EOS). Non-streaming responses are
-    always the whole decode."""
-    if value is None:
-        return _default_stream_decode(config) if streaming else None
-    if value == "whole" or not streaming:
-        return None
-    if not _model_prefix_stream_supported(config):
-        raise HTTPException(status_code=400, detail="stream_decode=prefix is only available for the matched long-context codecs")
-    return value
 
 
 def _adapter_accents(config: ServerArgs) -> list[str]:
@@ -389,7 +322,7 @@ class _RulesContext:
 
     @property
     def silence_available(self) -> bool:
-        return _dual_codec(self.config) is not None
+        return dual_codec_hop(_audio_codec(self.config)) is not None
 
 
 def _apply_gain_pcm(audio_bytes: bytes, gain: float) -> bytes:
@@ -446,12 +379,6 @@ def _text_tokenizer_spec(config: ServerArgs) -> dict | None:
 def _model_trained_on_tags(model_path: str) -> bool:
     """zonos3.tts.markup.trained_on_tags, memoized per checkpoint path."""
     return trained_on_tags(model_path)
-
-
-def _tag_cfg_capabilities(config: ServerArgs) -> dict:
-    return {"available": True, "trained": _model_trained_on_tags(str(config.model_path)),
-            "tags": list(NONVERBAL_MARKUP_TAGS), "min_scale": TAG_CFG_MIN_SCALE, "max_scale": TAG_CFG_MAX_SCALE,
-            "default_scale": 1.0}
 
 
 def _speaker_document(config: ServerArgs, entry: CachedSpeakerReference | DefaultVoice) -> dict:
@@ -1002,9 +929,7 @@ async def health():
 
 @app.get("/v1/models")
 async def available_models():
-    state = get_global_state()
-    return {"object": "list", "data": [{"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra",
-                                        "root": str(state.config.model_path)}]}
+    return models_document(get_global_state().config.model_path)
 
 
 # =============================================================================
@@ -1110,7 +1035,11 @@ async def _tts_generate_msg(
         rules = plan.request_rules(ctx, request, head, speaker, duration_target=laci_target_frames is not None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    stream_decode = _resolve_stream_decode(state.config, req.stream_decode, streaming=bool(req.stream))
+    try:
+        stream_decode = resolve_stream_decode(req.stream_decode, streaming=bool(req.stream),
+                                              prefix_supported=prefix_stream_supported(_audio_codec(state.config)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     # sgl's own LACI rule: a retake in another speaking-rate bucket changes the condition rows, which only the naive
     # cache never serves stale from a cached prompt prefix
     if laci_target_frames is not None and laci_adjust_rate and getattr(state.config, "cache_type", "naive") != "naive":
@@ -1157,8 +1086,10 @@ async def _tts_generate_msg(
 
 async def _generate_response(state: FrontendManager, req: GenerateRequest, session_id: str | None) -> Response:
     """Run a GenerateRequest: streamed or buffered float32 PCM, or a buffered 16-bit WAV."""
-    if req.stream and req.format == "wav":
-        raise HTTPException(status_code=400, detail="format=wav needs stream=false")
+    try:
+        check_format(bool(req.stream), req.format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     msg = await _tts_generate_msg(state, req, session_id)
     uid = msg.uid
     await state.send_one(msg)
@@ -1166,11 +1097,8 @@ async def _generate_response(state: FrontendManager, req: GenerateRequest, sessi
     async def _abort():
         await state.abort_user(uid)
 
-    headers = {"X-Audio-Sample-Rate": str(SAMPLE_RATE), "X-Audio-Channels": "1",
-               "X-Audio-Format": "pcm16" if req.format == "wav" else "float32",
-               "X-Seed": str(msg.sampling_params.seed)}
-    if req.control_spans:
-        headers["X-Control-Span-Follow"] = "reading" if msg.steer_follow_chars is not None else "rate"
+    headers = speech_headers(fmt=req.format, seed=msg.sampling_params.seed, control_spans=bool(req.control_spans),
+                             follows_reading=msg.steer_follow_chars is not None)
     gain = _output_gain(state.config, req.headroom_db)
     if req.stream:
         return StreamingResponse(
@@ -1383,86 +1311,46 @@ async def tts_controls():
     )
 
 
+def _capability_facts(config: ServerArgs) -> CapabilityFacts:
+    """This server's facts for GET /v2/capabilities (zonos3.server.capabilities)."""
+    from zonos3.tokenizer.textnorm import normalization_enabled
+
+    modes, codec = _speaker_modes(config), _audio_codec(config)
+    store = _project_store()
+    return CapabilityFacts(
+        text_tokenizer_spec=_text_tokenizer_spec(config),
+        text_normalization_enabled=normalization_enabled(),
+        accents=_adapter_accents(config),
+        speaker_modes=modes,
+        speaker_embedding_dim=_model_speaker_dim(config),
+        speaker_embedding_codec=_model_speaker_codec(config),
+        n_codebooks=int(getattr(config.model_config, "n_codebooks", 9)),
+        codebook_sizes=list(getattr(config.model_config, "codebook_sizes", ()) or ()),
+        audio_codec=codec,
+        max_tokens=int(config.max_seq_len),
+        prefix_stream=prefix_stream_supported(codec),
+        silence_hop=dual_codec_hop(codec),
+        tag_cfg_available=True,
+        tag_cfg_trained=_model_trained_on_tags(str(config.model_path)),
+        decoder=decoder_capability(codec),
+        condition_tokens=_condition_spec(config),
+        speaker_audio_upload=bool(modes),
+        speaker_cfg_available=bool(modes),
+        laci_languages=getattr(config, "laci_heads", None) or {},
+        plugins=[p.name for p in _PLUGINS],
+        default_voices_enabled=bool(_default_voice_root(config)),
+        edit_model=_EDIT_RUNTIME.model,
+        edit_available=fusealign_installed(),
+        edit_transcribe=_ASR.installed,
+        lexicon=_get_phoneme_lexicon(config),
+        projects=store.capabilities() if store is not None else {"enabled": False},
+    )
+
 
 @app.get("/v2/capabilities")
 async def tts_capabilities():
     """Return TTS feature flags for the currently loaded model."""
-    from zonos3.tokenizer.textnorm import normalization_enabled
-
-    state = get_global_state()
-    return {
-        "text_tokenizer_spec": _text_tokenizer_spec(state.config),
-        "text_normalization_enabled": normalization_enabled(),
-        "text_norm_languages": list(languages.CODES),
-        "accents": _adapter_accents(state.config),
-        "speaker_enabled": _model_supports_speaker(state.config),
-        "speaker_conditioning_type": (
-            "raw_reference_prefix"
-            if _model_uses_speaker_reference_prefix(state.config)
-            else "embedding"
-            if _model_supports_speaker_embedding(state.config)
-            else "none"
-        ),
-        "speaker_embedding_dim": _model_speaker_dim(state.config),
-        "speaker_embedding_codec": _model_speaker_codec(state.config),
-        "n_codebooks": int(getattr(state.config.model_config, "n_codebooks", 9)),
-        "codebook_sizes": list(
-            getattr(state.config.model_config, "codebook_sizes", ()) or ()
-        ),
-        "audio_codec": str(
-            getattr(state.config.model_config, "audio_codec", "")
-        ),
-        "max_tokens": int(state.config.max_seq_len),
-        "stream_decode_modes": list(_STREAM_DECODE_MODES) if _model_prefix_stream_supported(state.config) else ["whole"],
-        "stream_decode_default": _default_stream_decode(state.config),
-        "silence_prefill": _silence_prefill_spec(state.config),
-        "tag_cfg": _tag_cfg_capabilities(state.config),
-        "decode_context": {"available": True, "default_frames": DECODE_CONTEXT_FRAMES, "max_frames": 450,
-                           "note": "decode the generated frames behind the last decode_context_frames of the raw-reference prompt "
-                                   "(their audio dropped), so the first generated frame is not the decoder's position 0; "
-                                   "no-op without a reference prompt"},
-        "speaker_modes": _speaker_modes(state.config),
-        "speaker_mode_default": (_speaker_modes(state.config) or [None])[0],
-        "decoder": _decoder_capability(state.config),
-        "condition_tokens": _condition_spec(state.config),
-        "speaker_audio_upload": _model_supports_speaker(state.config),
-        "speaker_cfg_supported": bool(_speaker_modes(state.config)),
-        "speaker_cfg_modes": _speaker_modes(state.config),      # both paths: the twin drops the reference prefix or the speaker row
-        "speaker_cfg_unconditional": "remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_generated_history",
-        "speaker_cfg_formula": "uncond + scale * (cond - uncond)",
-        # LACI (laci=true): languages with alignment heads (--laci-heads); needs speaker / controls CFG 1
-        "laci_languages": sorted(getattr(state.config, "laci_heads", None) or {}),
-        # server plugins (--plugins): plugin N serves /v2/N/* and /N
-        "plugins": [p.name for p in _PLUGINS],
-        "speaker_embedding_upload": _model_supports_speaker_embedding(state.config),
-        "speaker_embedding_cache": _model_supports_speaker(state.config),   # cached clips for raw-reference models too
-        "speaker_embedding_blend": _model_supports_speaker_embedding(state.config),
-        "default_voices_enabled": bool(_default_voice_root(state.config)),
-        # editing needs the checkpoint's span-end/marker rows and FuseAlign (fusealign_hub); Qwen3-ASR (.venv-asr) is
-        # optional and enables transcription (edit_transcribe)
-        **edit_capabilities(_EDIT_RUNTIME.model, fusealign_installed(), _ASR.installed),
-        **_phoneme_capabilities(state.config),
-        # server-side studio projects (/v2/projects, /v2/media; --studio-projects-dir)
-        "projects": (store.capabilities() if (store := _project_store()) is not None else {"enabled": False}),
-    }
-
-
-def _phoneme_capabilities(config: ServerArgs) -> dict:
-    """Pronunciation input: the checkpoint's phoneme tokens (if any) and the configured lexicon."""
-    spec = _text_tokenizer_spec(config)
-    phonemes = None if spec is None else spec.get("phonemes")
-    lexicon = _get_phoneme_lexicon(config)
-    return {
-        # null: "(IPA)" in plain text (paren-trained checkpoints); else the U+E000 IPA U+E001 group syntax.
-        "phoneme_tokens": None if phonemes is None else {
-            "open_marker": phonemes["open_marker"],
-            "close_marker": phonemes["close_marker"],
-            "symbols": list(phonemes["symbols"]),
-        },
-        "phonemize_enabled": lexicon is not None,
-        "phonemize_languages": [] if lexicon is None else lexicon.server_languages,
-        "phonemize_guess_languages": [] if lexicon is None else lexicon.guess_languages,
-    }
+    return capabilities_document(_capability_facts(get_global_state().config))
 
 
 @app.post("/v2/phonemize")
@@ -1478,21 +1366,10 @@ async def tts_phonemize(request: PhonemizeRequest):
     if lexicon is None:
         raise HTTPException(status_code=404, detail="This server has no pronunciation lexicon.")
     try:
-        return lexicon.phonemize_for(request.text, request.language, _text_tokenizer_spec(config), guess=request.guess)
+        return await asyncio.to_thread(lexicon.phonemize_for, request.text, request.language,
+                                       _text_tokenizer_spec(config), guess=request.guess)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def _decoder_capability(config: ServerArgs) -> dict | None:
-    """The audio decoder behind the matched codec (the causal iSTFT head), with its default headroom."""
-    codec = str(getattr(config.model_config, "audio_codec", ""))
-    from zonos3.tokenizer.matched_codec import codec_names, decoder_info
-    if codec not in codec_names():
-        return None
-    try:
-        return dict(decoder_info(codec), codec=codec)
-    except Exception as exc:  # noqa: BLE001
-        return dict(codec=codec, error=str(exc))
 
 
 # =============================================================================
@@ -1706,7 +1583,7 @@ class _SglHost:
             raw_controls=frozenset(
                 did for did, d in (bundle.directions.items() if bundle is not None else ()) if d.space == RAW_SPACE
             ),
-            phoneme_tokens=_phoneme_capabilities(config)["phoneme_tokens"] is not None,
+            phoneme_tokens=phoneme_capabilities(_text_tokenizer_spec(config), None)["phoneme_tokens"] is not None,
             rate_extension=bundle.rate_extension if bundle is not None else None,
         )
 

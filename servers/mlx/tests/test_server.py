@@ -60,7 +60,7 @@ def make_client(files, batch: int) -> TestClient:
     engine = Engine.load(files / "m.gguf")
     scheduler = Scheduler(engine, batch=batch)
     scheduler.start(warmup=False)
-    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=batch, max_frames=60))
+    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=batch))
     if batch > 1:
         state.lexicon = PhonemeLexicon(str(files / "lexicon.lmdb"))
     return TestClient(create_app(state))
@@ -296,7 +296,7 @@ def test_plugin_host_shares_the_server_asr_and_fusealign_workers(files, monkeypa
     engine = Engine.load(files / "m.gguf")
     scheduler = Scheduler(engine, batch=1)
     scheduler.start(warmup=False)
-    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=1, max_frames=60,
+    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=1,
                                                          studio_dir=files, plugins=("fake",)),
                         asr=asr, aligner=aligner)
     state.plugins = plugins.load(state.options.plugins)
@@ -387,7 +387,7 @@ def steered(files, tmp_path_factory):
     engine = Engine.load(files / "m.gguf", steer=str(root / "steer.gguf"))
     scheduler = Scheduler(engine, batch=2)
     scheduler.start(warmup=False)
-    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=2, max_frames=60,
+    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=2,
                                                          default_voices_dir=root / "voices"))
     with TestClient(create_app(state)) as c:
         yield c, bundle

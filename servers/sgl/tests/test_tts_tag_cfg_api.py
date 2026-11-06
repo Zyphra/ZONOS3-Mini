@@ -7,8 +7,10 @@ import pytest
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 HTTPException = api_server.HTTPException
 from pydantic import ValidationError  # noqa: E402
+from zonos3.server.capabilities import tag_cfg_capabilities  # noqa: E402
 from zonos3.server.errors import call as edit_call  # noqa: E402
 from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest  # noqa: E402
+from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS  # noqa: E402
 
 
 class _Frontend:
@@ -137,8 +139,8 @@ def test_trained_flag_reads_the_nv_training_config(tmp_path):
 def test_capabilities_document(frontend, tmp_path):
     frontend.config.model_path = str(tmp_path)
     api_server._model_trained_on_tags.cache_clear()
-    caps = api_server._tag_cfg_capabilities(frontend.config)
-    assert caps == {"available": True, "trained": False, "tags": list(api_server.NONVERBAL_MARKUP_TAGS),
+    caps = tag_cfg_capabilities(True, api_server._model_trained_on_tags(str(frontend.config.model_path)))
+    assert caps == {"available": True, "trained": False, "tags": list(NONVERBAL_MARKUP_TAGS),
                     "min_scale": 1.0, "max_scale": 4.0, "default_scale": 1.0}
     api_server._model_trained_on_tags.cache_clear()
 

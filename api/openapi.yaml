@@ -603,7 +603,7 @@ components:
               object: {type: string, enum: [model]}
               created: {type: integer, enum: [0]}
               owned_by: {type: string, enum: [zyphra]}
-              root: {type: string, description: "The served checkpoint path or GGUF file name."}
+              root: {type: string, description: "The served checkpoint's base name (its directory or GGUF file name)."}
 
     # -------------------------------------------------------------------------------------------------- generation
     ControlSpan:
