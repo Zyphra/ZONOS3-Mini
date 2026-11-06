@@ -23,7 +23,8 @@ import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
 import { ApiError, bodyOf, createHttp, errorOf, MissingMedia, newSessionId, readError, readFloat32Stream, RevisionConflict } from './lib/http';
-import { encodeNpy, encodeWav, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
+import { wavBytes } from './lib/wav';
+import { encodeNpy, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
 import { onEncoderProgress, selectWebEngine, startWebEngine, transport, webEngineAvailable } from './lib/web-engine';
 import { bootProgress, encoderDownload } from './state/app';
 
@@ -395,7 +396,7 @@ export async function getPreview(speaker: Speaker): Promise<ArrayBuffer> {
     const text = offlinePreviewText(speaker);
     const { pcm, words } = synthesizeWords(current().spec, { text, embedding, seed: 7 });
     fixtureEdit.remember(pcm, SAMPLE_RATE, { text, words, embedding });
-    return encodeWav(pcm, SAMPLE_RATE);
+    return wavBytes(pcm, SAMPLE_RATE).buffer;
   }
   const res = await transport(`${server}/v2/speakers/${encodeURIComponent(speaker.id)}/preview`, { headers: headers() });
   if (!res.ok) throw await readError(res);

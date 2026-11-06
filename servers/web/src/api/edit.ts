@@ -21,7 +21,7 @@ import { NCB, type Prompt } from '../prompt';
 import { stripNonverbalMarkup } from '../request/markup';
 import { resolveControls, STEER_FRAMES_PER_CHAR, textChars } from '../request/steer';
 import { defaultSampling, type Sampling } from '../sampler';
-import { wavBytes } from '../wav';
+import { wavBytes } from '../../../../studio/src/lib/wav';
 import { editMaxSpans } from './capabilities';
 import type { EditModels, Engine } from './engine';
 import { as400, CONTEXT_CAPACITY, resolveConditionBuckets, resolveLanguage } from './generate';

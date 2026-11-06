@@ -1,4 +1,5 @@
 /** Speech editing: zonos_edit_speech (takes of a changed text), zonos_keep_edit (keep one as a new Edit version). */
+import { isWav } from '../../../src/lib/wav';
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -15,7 +16,7 @@ import { config } from '../config';
 import { resolveValues } from '../design';
 import { samplingOf, takeText, wavSeconds } from '../params';
 import type { GenerationParams, TakeInfo, WidgetPayload } from '../payload';
-import { b64, isRiff, openProject, projectLine, saveProject, type ProjectRef } from '../project';
+import { b64, openProject, projectLine, saveProject, type ProjectRef } from '../project';
 import { state, type EditDraft } from '../state';
 import * as zonos from '../zonos';
 import { editLanguage, guard, lineRef, PLAYER_URI, project, seed, text, values, warningsText, widget } from './common';
@@ -104,7 +105,7 @@ export function registerEditTools(server: McpServer) {
           source = { kind: 'take', label: `Line ${index + 1} · take ${list.indexOf(take) + 1}`, lineId: line.id, takeId: take.id };
         } else {
           const { bytes, name } = await readSource(src.file, src.url);
-          if (!isRiff(bytes)) throw new Error(WAV_ONLY);
+          if (!isWav(bytes)) throw new Error(WAV_ONLY);
           wav = bytes;
           knownText = a.transcript?.trim() || null;
           if (!knownText && !c.edit_transcribe) throw new Error('This server has no speech recognition, so it cannot transcribe the clip: pass transcript (exactly what the file/url says) to align it instead');

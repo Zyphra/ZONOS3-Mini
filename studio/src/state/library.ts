@@ -3,7 +3,7 @@ import { signal } from '@preact/signals';
 import * as api from '../api';
 import type { Speaker } from '../api';
 import * as player from '../audio/player';
-import { encodeWav } from '../lib/files';
+import { wavBytes } from '../lib/wav';
 import { notify } from './app';
 import type { Design } from './design';
 import { errorText } from '../audio/render';
@@ -100,7 +100,7 @@ export async function uploadClip(blob: Blob, label: string, fileName: string): P
   try {
     // Normalise whatever the browser recorded / the user dropped to a WAV the server surely reads.
     const { pcm, sr } = await player.decode(await blob.arrayBuffer());
-    const s = await saveClipVoice(label, encodeWav(pcm, sr), fileName.replace(/\.[^.]+$/, '') + '.wav');
+    const s = await saveClipVoice(label, wavBytes(pcm, sr).buffer, fileName.replace(/\.[^.]+$/, '') + '.wav');
     await refreshSpeakers();
     notify(`Added “${s.label}” to your voices`, 'ok');
     return s;

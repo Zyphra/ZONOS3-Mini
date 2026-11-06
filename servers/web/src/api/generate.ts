@@ -17,7 +17,8 @@ import { resolveControls, Steering, textChars, type ControlSpan } from '../reque
 import { defaultSampling, Sampler, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { newSlot, sampleFrame, type SlotState } from '../slot';
-import { applyFade, wavBytes } from '../wav';
+import { wavBytes } from '../../../../studio/src/lib/wav';
+import { applyFade } from '../wav';
 import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
 import type { Engine } from './engine';
 import {
@@ -652,7 +653,7 @@ async function generate(e: Engine, spk: Speakers, body: Body, req: EngineRequest
   for (const part of parts) { audio.set(part, o); o += part.length; }
   if (wav) {
     sink.start(200, { ...headers, 'content-type': 'audio/wav' });
-    sink.chunk(wavBytes(audio, SAMPLE_RATE, 'trunc'));
+    sink.chunk(wavBytes(audio, SAMPLE_RATE));
   } else {
     sink.start(200, { ...headers, 'content-type': 'audio/pcm' });
     sink.chunk(new Uint8Array(audio.buffer));

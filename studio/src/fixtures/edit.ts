@@ -9,7 +9,8 @@ import { ApiError } from '../lib/http';
 import { type Alignment, type ControlsSpec, type Dose, type EditCaps, type EditRequest, type EditResponse, type EditTake, type EditWord } from '../api';
 import { resample } from '../audio/mix';
 import { contextWindows, diffOpcodes, isTagToken, normalizeTokens, tokenOwners, wordDiff } from '../edit/regions';
-import { base64ToBytes, bytesToBase64, encodeWav, parseWav } from '../lib/files';
+import { base64ToBytes, bytesToBase64 } from '../lib/files';
+import { parseWav, wavBytes } from '../lib/wav';
 import { ipaGloss } from '../lib/pron';
 import { EDIT_LANGUAGES } from '../lib/languages';
 import { hash32, rng } from '../lib/math';
@@ -386,7 +387,7 @@ export async function edit(spec: ControlsSpec, caps: EditCaps, req: EditRequest,
     aligned.set(keyOf(out.length / SR), outWords);
     takes.push({
       seed,
-      audio_base64: bytesToBase64(encodeWav(out, SR)),
+      audio_base64: bytesToBase64(wavBytes(out, SR).buffer),
       duration: round3(out.length / SR),
       edited_regions: edited,
       fill_seconds: fillSeconds,

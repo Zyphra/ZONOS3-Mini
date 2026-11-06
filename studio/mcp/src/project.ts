@@ -19,7 +19,6 @@ export const RELOAD_HINT = 'If this project is open in Studio, choose Reload whe
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 export const b64 = (bytes: Uint8Array | ArrayBuffer) => Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString('base64');
-export const isRiff = (b: Uint8Array) => b.length >= 12 && Buffer.from(b.subarray(0, 4)).toString('latin1') === 'RIFF' && Buffer.from(b.subarray(8, 12)).toString('latin1') === 'WAVE';
 
 /** A new project as the studio's `emptyDoc` builds it, minus the demo script. */
 export function newProjectDoc(id: string, name: string, language: string): ProjectDoc {
