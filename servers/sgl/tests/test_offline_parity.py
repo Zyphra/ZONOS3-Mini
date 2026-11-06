@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 import torch
-from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
-from zonos3_sgl.tts.llm import PendingRequest, TTSLLM
 from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
+from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
+from zonos3_sgl.tts.llm import TTSLLM, PendingRequest
 
 
 class _StubNormalizer:

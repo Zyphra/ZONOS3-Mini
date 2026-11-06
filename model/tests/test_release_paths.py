@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from zonos3.utils import release
 
 

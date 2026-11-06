@@ -32,8 +32,8 @@ def tts(tmp_path_factory):
     from zonos3_sgl.tts.llm import TTSLLM
 
     heads = tmp_path_factory.mktemp("laci") / "heads.json"
-    heads.write_text(json.dumps(dict(frames_per_token=3.5, heads=[
-        dict(layer=layer, head=head, radius=3) for layer, head in HEADS])))
+    heads.write_text(json.dumps({"frames_per_token": 3.5, "heads": [
+        {"layer": layer, "head": head, "radius": 3} for layer, head in HEADS]}))
     # decode graphs on, carrying the probe readout and one masked-request slot; LACI for en_us
     return TTSLLM(
         MODEL, decode_audio=False, max_running_req=4, attention_backend="fa", cache_type="naive",
@@ -60,7 +60,7 @@ def replays(tts, monkeypatch):
 def _params(**kw):
     from zonos3_sgl.message.tts import TTSSamplingParams
 
-    return TTSSamplingParams(**{**dict(seed=7, max_tokens=60, ignore_eos=True), **kw})
+    return TTSSamplingParams(**{**{"seed": 7, "max_tokens": 60, "ignore_eos": True}, **kw})
 
 
 class Reduced:
@@ -122,7 +122,7 @@ def test_observer_stop_finishes_request_at_the_observed_step(tts):
 
 
 def test_masked_probe_runs_in_the_graphs_and_masks(tts, replays):
-    window = {h: (0, 3) for h in HEADS}
+    window = dict.fromkeys(HEADS, (0, 3))
     plain = tts.generate(TEXTS[:1], _params(max_tokens=30), decode_audio=False)[0]["audio_tokens"]
     rec = Reduced()
     before = replays[0]
@@ -136,7 +136,7 @@ def test_masked_probe_runs_in_the_graphs_and_masks(tts, replays):
 
 
 def test_masked_requests_beyond_the_graph_slots_run_eager(tts, replays):
-    window = {h: (0, 3) for h in HEADS}
+    window = dict.fromkeys(HEADS, (0, 3))
     recs = [Reduced(), Reduced()]
     before = replays[0]
     tts.generate(TEXTS, _params(max_tokens=30), decode_audio=False,

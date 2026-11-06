@@ -19,8 +19,8 @@ TEXT_VOCAB = 3 + 4
 
 
 def _phonemes(symbols="kæt"):
-    return dict(open_id=TEXT_VOCAB + 1, close_id=TEXT_VOCAB + 2, symbols=list(symbols),
-                open_marker=O, close_marker=C, inventory_sha256="0" * 64)
+    return {"open_id": TEXT_VOCAB + 1, "close_id": TEXT_VOCAB + 2, "symbols": list(symbols),
+                "open_marker": O, "close_marker": C, "inventory_sha256": "0" * 64}
 
 
 def test_groups_encode_as_open_phones_close(superbpe_spec):
@@ -129,8 +129,8 @@ def test_runtime_rows_follow_the_edit_vocabulary_and_leave_plain_text_alone(supe
                           text_tokenizer_spec=dict(superbpe_spec)).state_dict(),
                base / "model.pth")
     (base / "params.json").write_text(json.dumps({"model": params}))
-    phonemes = dict(open_id=text_vocab + 1, close_id=text_vocab + 2, symbols=list("kæt"), open_marker=O,
-                    close_marker=C, inventory_sha256="0" * 64)
+    phonemes = {"open_id": text_vocab + 1, "close_id": text_vocab + 2, "symbols": list("kæt"), "open_marker": O,
+                    "close_marker": C, "inventory_sha256": "0" * 64}
     rows = torch.randn(5, TINY["dim"], generator=torch.Generator().manual_seed(1))
     torch.save({"format": "zonos-text-extra/1", "text_vocab": text_vocab, "rows": rows, "phonemes": phonemes},
                tmp_path / "rows.pt")

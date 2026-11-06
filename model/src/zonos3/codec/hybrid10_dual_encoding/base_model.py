@@ -6,14 +6,16 @@ Boundary sinc conversion has finite FIR lookahead; waveform timestamps are
 delay-compensated offline. Patch/attention processing is causal in frame time.
 """
 import math
+
 import torch
+from dac.nn.layers import Snake1d
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 from torchaudio.transforms import Resample
-from zonos3.codec.s1dac.vendor.modded_dac import CausalWNConv1d, EncoderBlock, DecoderBlock
+
+from zonos3.codec.s1dac.vendor.modded_dac import CausalWNConv1d, DecoderBlock, EncoderBlock
 from zonos3.codec.s1dac.vendor.rvq import DownsampleResidualVectorQuantize
-from dac.nn.layers import Snake1d
 
 
 class StableSnake1d(Snake1d):
@@ -213,9 +215,9 @@ class MossCodec(nn.Module):
 
     def forward(self,audio,**kwargs):
         result=self.quantizer(self.encode_latent(audio))
-        return dict(audio=self.decode_latent(result.z,audio.shape[-1]),codes=result.codes,
-                    commitment=result.commitment_loss,codebook=result.codebook_loss,
-                    semantic_prediction=self.semantic_head(result.semantic_distill_z))
+        return {'audio': self.decode_latent(result.z,audio.shape[-1]),'codes': result.codes,
+                    'commitment': result.commitment_loss,'codebook': result.codebook_loss,
+                    'semantic_prediction': self.semantic_head(result.semantic_distill_z)}
 
     def decode_tokens(self,codes,length=None):
         count=1+self.cfg['residual_codebooks']

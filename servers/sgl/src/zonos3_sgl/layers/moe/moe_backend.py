@@ -1,5 +1,5 @@
-from zonos3_sgl.layers.moe.fused_moe.layer import FusedMoE
 from zonos3.models.config import ModelConfig
+from zonos3_sgl.layers.moe.fused_moe.layer import FusedMoE
 
 
 def get_moe_backend(moe_backend: str, config: ModelConfig, prefix: str = ""):

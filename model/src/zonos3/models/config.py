@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from zonos3.utils.moe_topk import normalize_special_topk_layers, resolve_layer_topk
 from zonos3.condition_buckets import bucket_counts
+from zonos3.utils.moe_topk import normalize_special_topk_layers, resolve_layer_topk
 
 
 @dataclass(frozen=True)

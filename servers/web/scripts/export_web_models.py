@@ -383,7 +383,7 @@ def export_edit(release, edit, adapter, out):
         qkvg = [f"blk.{L}.attn_{s}" for s in ("q", "k", "v", "gate")]
         if any(b in factors for b in qkvg):
             rows = [g.ne(b + ".weight")[1] for b in qkvg]
-            downs, ups, k0 = [], [], 0
+            downs, k0 = [], 0
             for b in qkvg:
                 if b in factors:
                     downs.append(factors[b][0])

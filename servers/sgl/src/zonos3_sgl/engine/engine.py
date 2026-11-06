@@ -7,6 +7,7 @@ from typing import Dict, Tuple
 
 import torch
 from zonos3.models.config import ModelConfig
+
 from zonos3_sgl.attention import create_attention_backend
 from zonos3_sgl.core import (
     Context,
@@ -19,8 +20,8 @@ from zonos3_sgl.distributed import destroy_distributed, enable_pynccl_distribute
 from zonos3_sgl.kvcache import create_kvcache
 from zonos3_sgl.layers import set_rope_device
 from zonos3_sgl.models import create_model, load_checkpoint_weight
-from zonos3_sgl.utils.misc import divide_even
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import divide_even
 from zonos3_sgl.utils.torch_utils import torch_dtype
 
 from .config import EngineConfig
@@ -529,7 +530,9 @@ class Engine:
             # (batch, seq, n_codebooks, vocab_size)
             use_graph = self.graph_runner.can_use_cuda_graph(batch)
             if batch.is_decode:
-                from zonos3_sgl.tts import align_probe  # lazy: zonos3_sgl.tts imports the scheduler, which imports this module
+                from zonos3_sgl.tts import (
+                    align_probe,  # lazy: zonos3_sgl.tts imports the scheduler, which imports this module
+                )
 
                 align_probe.prepare(
                     batch, self.graph_runner.probe_static if use_graph else None,

@@ -69,15 +69,15 @@ class MECTFbankSpeakerEmbedding(nn.Module):
         self.embedding_dim = int(entry.get("embed_dim", 192))
         fb = dict(entry.get("fbank") or {})
         self.waveform_scale = float(fb.pop("scale", 1 << 15))
-        self.fbank_kwargs = dict(
-            num_mel_bins=int(fb.get("num_mel_bins", 80)),
-            frame_length=float(fb.get("frame_length", 25.0)),
-            frame_shift=float(fb.get("frame_shift", 10.0)),
-            dither=float(fb.get("dither", 0.0)),
-            energy_floor=float(fb.get("energy_floor", 0.0)),
-            window_type=str(fb.get("window_type", "hamming")),
-            sample_frequency=float(self.sample_rate),
-        )
+        self.fbank_kwargs = {
+            "num_mel_bins": int(fb.get("num_mel_bins", 80)),
+            "frame_length": float(fb.get("frame_length", 25.0)),
+            "frame_shift": float(fb.get("frame_shift", 10.0)),
+            "dither": float(fb.get("dither", 0.0)),
+            "energy_floor": float(fb.get("energy_floor", 0.0)),
+            "window_type": str(fb.get("window_type", "hamming")),
+            "sample_frequency": float(self.sample_rate),
+        }
         # the vendored AntSpeaker registry: importing .models registers VPR, the MECT_* backbones and the poolings
         import zonos3.models.third_party.antspeaker.models  # noqa: F401
         from zonos3.models.third_party.antspeaker.utils.registry import create_model

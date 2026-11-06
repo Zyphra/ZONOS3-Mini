@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 
 import torch
+
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.utils.misc import divide_up
 
@@ -128,8 +129,9 @@ def load_checkpoint_weight(model_path: str, device: torch.device) -> Dict[str, t
 
     Accepts a local path or a Hugging Face repo id (e.g. ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo``).
     """
-    from zonos3_sgl.utils.logger import init_logger
     from zonos3.utils.hf import resolve_model_path
+
+    from zonos3_sgl.utils.logger import init_logger
 
     logger = init_logger(__name__)
     model_path = resolve_model_path(model_path)

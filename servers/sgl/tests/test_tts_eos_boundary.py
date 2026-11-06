@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+
 import pytest
 import torch
 from zonos3_sgl.core import TTSReq

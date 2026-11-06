@@ -9,11 +9,10 @@ import math
 import sys
 from pathlib import Path
 
+import fusealign_hub
 import numpy as np
 import pytest
 import soundfile as sf
-
-import fusealign_hub
 from zonos3.tts.align_text import align_tokens
 from zonos3.tts.edit_align import FuseAlignError, FuseAlignWorker, aligned_words
 from zonos3.workers import fusealign as worker

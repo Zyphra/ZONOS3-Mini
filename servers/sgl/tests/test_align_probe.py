@@ -28,7 +28,7 @@ def test_locate_text_span_skips_prefix_and_condition_rows():
     assert ids[start, N_CB] == 2 and ids[start + length - 1, N_CB] == 3
 
 
-@pytest.mark.parametrize("kwargs", [dict(bos=False), dict(eos=False)])
+@pytest.mark.parametrize("kwargs", [{"bos": False}, {"eos": False}])
 def test_locate_text_span_requires_bos_and_eos(kwargs):
     with pytest.raises(ValueError):
         locate_text_span(_prompt(2, 0, [10, 11, 12], **kwargs), N_CB)

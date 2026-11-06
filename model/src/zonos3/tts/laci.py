@@ -476,9 +476,9 @@ def _failure_record(f, retry_seed, ignored: bool, resume_row: int | None = None,
     """``rollback_row`` is where the regeneration resumed: the failure's own rollback row, or the first unsent row when
     that lies above it (``clamped``). ``retry_bucket``: the speaking-rate bucket the regeneration switched to."""
     rollback = f.rollback_row if resume_row is None else int(resume_row)
-    return dict(kind=f.kind, detect_row=f.detect_row, onset_row=f.onset_row, rollback_row=rollback,
-                clamped=rollback != f.rollback_row, bin=f.bin, frontier=f.frontier, retry_seed=retry_seed,
-                ignored=ignored, retry_bucket=retry_bucket)
+    return {"kind": f.kind, "detect_row": f.detect_row, "onset_row": f.onset_row, "rollback_row": rollback,
+                "clamped": rollback != f.rollback_row, "bin": f.bin, "frontier": f.frontier, "retry_seed": retry_seed,
+                "ignored": ignored, "retry_bucket": retry_bucket}
 
 
 @dataclass(eq=False)
@@ -529,7 +529,7 @@ class LaciSession:
     follower: object | None = None
 
     def __post_init__(self):
-        self.stream = [r for r in self.prefill_rows.to(torch.int32)]
+        self.stream = list(self.prefill_rows.to(torch.int32))
         self.attempt_start = self.n_prefill
         if self.duration is not None:
             self.pace = PaceMonitor(self.duration.frames, self.n_prefill, self.n_prefill, self.cfg)
@@ -732,11 +732,11 @@ class LaciSession:
         det = self.detector
         kind, eos = self.end
         final_rows = (len(self.stream) if eos is None else int(eos)) - self.n_prefill
-        return dict(attempts=self.attempts, capped=self.attempts >= self.cfg.max_retries, end=kind,
-                    text_len=self.text_len, n_bins=det.nb if det else 0, final_rows=final_rows,
-                    final_eos_row=None if eos is None else int(eos), generated_total=self.generated_total,
-                    pace_tok=det.pace_tok() if det else None, heads=[list(h) for h in self.heads.heads],
-                    failures=list(self.failures), pace_retries=self.pace_retries, rate_bucket=self.rate_bucket)
+        return {"attempts": self.attempts, "capped": self.attempts >= self.cfg.max_retries, "end": kind,
+                    "text_len": self.text_len, "n_bins": det.nb if det else 0, "final_rows": final_rows,
+                    "final_eos_row": None if eos is None else int(eos), "generated_total": self.generated_total,
+                    "pace_tok": det.pace_tok() if det else None, "heads": [list(h) for h in self.heads.heads],
+                    "failures": list(self.failures), "pace_retries": self.pace_retries, "rate_bucket": self.rate_bucket}
 
 
 # ----------------------------------------------------------------------------------------------------- head files

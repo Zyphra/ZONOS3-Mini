@@ -1,6 +1,6 @@
 """Reproduce the trainer's fused two-phase AttnRes execution."""
-import torch
 from . import training_attnres_kernels as ar
+
 
 def forward_layers(model,x):
  layers=model.layers.op_list

@@ -25,6 +25,8 @@ Vendored from the s1_s2_dac codec package of the release codec `opus_dual_3n_600
 - `data_processing/__init__.py` holds a docstring only (no `raw_audio_dataloader` import, no `__getattr__`).
 - `s1dac/losses.py` keeps only `SemanticTeacher` and `average_ssl_frames` (the training losses are not used at
   inference).
+- `s1dac/vendor/modded_dac.py` `DecoderBlock` no longer builds the transformer it never used (its `nn.Sequential`
+  always had it commented out).
 - `codec_adapter.py` (`MossAutoencoder`):
   - takes the generator checkpoint, SSL teacher dir, step, codebook sizes, codec name, checkpoint sha256 and device as
     keyword arguments (`tokenizer/dual_reference.py` fills them from the codec registry) instead of reading the

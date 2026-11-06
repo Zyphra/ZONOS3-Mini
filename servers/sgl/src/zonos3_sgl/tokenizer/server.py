@@ -1,13 +1,19 @@
 from __future__ import annotations
-import hashlib
-import collections
 
+import collections
+import hashlib
 import multiprocessing as mp
 import os
 from types import SimpleNamespace
 from typing import List, Sequence
 
 import torch
+from zonos3.condition_buckets import check_ids
+from zonos3.generation import SAMPLE_RATE
+from zonos3.tts import plan
+from zonos3.tts.markup import strip_nonverbal_markup
+from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
+
 from zonos3_sgl.message import (
     BaseBackendMsg,
     BaseFrontendMsg,
@@ -24,13 +30,8 @@ from zonos3_sgl.message import (
     TTSTokenizeMsg,
     TTSUserMsg,
 )
-from zonos3.generation import SAMPLE_RATE
-from zonos3.condition_buckets import check_ids
-from zonos3.tts import plan
-from zonos3.tts.markup import strip_nonverbal_markup
-from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
-from zonos3_sgl.utils.mp import ZmqPullQueue, ZmqPushQueue
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.mp import ZmqPullQueue, ZmqPushQueue
 
 
 def _unwrap_msg(
@@ -120,6 +121,7 @@ def tokenize_worker(
     logger = init_logger(__name__, f"tokenizer_{tokenizer_id}")
 
     from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
+
     from .vocoder import TTSVocoderManager
 
     if text_vocab is None:

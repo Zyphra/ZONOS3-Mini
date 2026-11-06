@@ -6,8 +6,8 @@ from typing import List
 import torch
 from zonos3_sgl.message import BatchTTSBackendMsg, TTSSamplingParams, TTSUserMsg
 from zonos3_sgl.message.utils import deserialize_type, serialize_type
-from zonos3_sgl.utils.misc import call_if_main
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import call_if_main
 
 logger = init_logger(__name__)
 

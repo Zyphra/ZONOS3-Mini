@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+from zonos3.tokenizer.matched_codec import codec_names, entry
 from zonos3_sgl.message import TTSDetokenizeMsg
 from zonos3_sgl.tokenizer import vocoder
-from zonos3.tokenizer.matched_codec import codec_names, entry
 
 CODEC = sorted(codec_names())[0]
 N_CB = int(entry(CODEC)["codebooks"])

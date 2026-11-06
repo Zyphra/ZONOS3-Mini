@@ -17,23 +17,23 @@ Whisper anchoring never runs. A transcript Qwen3-ASR makes of a recording over `
 Without speech recognition a long-form item goes to FuseAlign without utterances: FuseAlign routes it by its own VAD
 character map.
 """
-from dataclasses import dataclass
 import difflib
 import importlib.util
 import json
 import math
 import os
 import re
-from pathlib import Path
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
+from pathlib import Path
 
 from zonos3 import languages
 
+from . import textmatch
 from .align_text import align_tokens
 from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
-from . import textmatch
 
 MODEL_SRC = Path(__file__).resolve().parents[2]  # model/src: PYTHONPATH of both workers
 ASR_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'asr.py'

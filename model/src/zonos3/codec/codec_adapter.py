@@ -6,17 +6,21 @@ lossless and only aligns the two sample grids for the existing batch scheduler.
 The teacher sees 20-second lanes, including the same 10-second real left context
 as the acoustic encoder. It retains native bidirectional attention within a lane.
 """
-import json,time
+import json
+import time
 from types import SimpleNamespace
+
 import numpy as np
 import torch
 from torch.nn import functional as F
+
 from zonos3.codec.data_processing.independent_batcher import IndependentBatcher
 from zonos3.codec.data_processing.torch_utils import compile_fixed
-from zonos3.codec.resample_exact import resample_exact
-from zonos3.codec.hybrid10_dual_encoding.model import MossCodec
 from zonos3.codec.hybrid10_dual_encoding.inference import extract_ssl
+from zonos3.codec.hybrid10_dual_encoding.model import MossCodec
+from zonos3.codec.resample_exact import resample_exact
 from zonos3.codec.s1dac.losses import SemanticTeacher
+
 
 class MossAutoencoder:
     def __init__(self,args,*,generator_path:str,teacher_dir:str,step:int,codebook_sizes:list[int],name:str,checkpoint_sha256:str,device:str):
@@ -26,7 +30,7 @@ class MossAutoencoder:
         self.device=torch.device(device)
         if self.device.type!='cuda':raise RuntimeError('Production encoding requires an allocated GPU')
         torch.cuda.set_device(self.device)
-        self.receipt=dict(step=step,codebook_sizes=list(codebook_sizes),output_name=name,sha256=checkpoint_sha256,checkpoint=generator_path)
+        self.receipt={'step': step,'codebook_sizes': list(codebook_sizes),'output_name': name,'sha256': checkpoint_sha256,'checkpoint': generator_path}
         self.teacher_dir=teacher_dir
         state=torch.load(generator_path,map_location='cpu',weights_only=True,mmap=True)
         cfg=state['config']['model']; self.cfg=cfg
@@ -61,10 +65,10 @@ class MossAutoencoder:
             for scale in [.05,.1]:
                 packed=torch.randn((self.batch_size,2,self.packer.chunk_samples),generator=g,device=self.device)*scale
                 assert torch.equal(self._run(packed),self._codes(packed)),'Graph/native dual tokens disagree'
-        report=dict(event='inference_validation_passed',step=self.receipt['step'],codebooks=10,
-            codebook_sizes=self.codebook_sizes,graph_token_agreement=1.,
-            native_quantize_dual=True,teacher_layer=16,batch_size=self.batch_size,chunk_seconds=self.chunk_seconds,
-            peak_gib=torch.cuda.max_memory_allocated()/1024**3)
+        report={'event': 'inference_validation_passed','step': self.receipt['step'],'codebooks': 10,
+            'codebook_sizes': self.codebook_sizes,'graph_token_agreement': 1.,
+            'native_quantize_dual': True,'teacher_layer': 16,'batch_size': self.batch_size,'chunk_seconds': self.chunk_seconds,
+            'peak_gib': torch.cuda.max_memory_allocated()/1024**3}
         print(json.dumps(report),flush=True)
 
     def _external(self,packed):
@@ -101,23 +105,23 @@ class MossAutoencoder:
             return torch.cat([internal,external],dim=1)
 
     def metadata(self):
-        return dict(name=self.name,model='s1_s2_dac/hybrid_dual_encoding',checkpoint_step=self.receipt['step'],
-            checkpoint_sha256=self.receipt['sha256'],checkpoint=self.receipt['checkpoint'],
-            sample_rate=44100,internal_sample_rate=44160,hop_length=2940,frame_rate=15,
-            n_codebooks=10,codebook_sizes=self.codebook_sizes,semantic_codebook_index=0,
-            representation='discrete_codes',layout=['time','codebook'],output_dtype=np.dtype(np.int16).str,
-            batch_size=self.batch_size,chunk_seconds=self.chunk_seconds,continuation_context_seconds=self.context_seconds,
-            resample_policy='full_file_before_hop_aligned_chunking',long_file_policy='overlap_left_context_then_discard_context_tokens',
-            precision='fp32_weights_bf16_encoder_teacher_semantic_modules_fp32_rvq',execution=self.execution,
-            ssl_teacher_layer=16,ssl_teacher=self.teacher_dir,
-            ssl_preprocessing='native_training_44100_to_16000_fbank_stride2',
-            ssl_context_policy='native_bidirectional_teacher_on_independent_padded_lanes')
+        return {'name': self.name,'model': 's1_s2_dac/hybrid_dual_encoding','checkpoint_step': self.receipt['step'],
+            'checkpoint_sha256': self.receipt['sha256'],'checkpoint': self.receipt['checkpoint'],
+            'sample_rate': 44100,'internal_sample_rate': 44160,'hop_length': 2940,'frame_rate': 15,
+            'n_codebooks': 10,'codebook_sizes': self.codebook_sizes,'semantic_codebook_index': 0,
+            'representation': 'discrete_codes','layout': ['time','codebook'],'output_dtype': np.dtype(np.int16).str,
+            'batch_size': self.batch_size,'chunk_seconds': self.chunk_seconds,'continuation_context_seconds': self.context_seconds,
+            'resample_policy': 'full_file_before_hop_aligned_chunking','long_file_policy': 'overlap_left_context_then_discard_context_tokens',
+            'precision': 'fp32_weights_bf16_encoder_teacher_semantic_modules_fp32_rvq','execution': self.execution,
+            'ssl_teacher_layer': 16,'ssl_teacher': self.teacher_dir,
+            'ssl_preprocessing': 'native_training_44100_to_16000_fbank_stride2',
+            'ssl_context_policy': 'native_bidirectional_teacher_on_independent_padded_lanes'}
 
     def reference_metadata(self,audio,sample_rate,output):
         expected=(audio.shape[-1]+2939)//2940
         if output.shape!=(expected,10):raise ValueError(f'Incorrect token shape {output.shape}, expected {(expected,10)}')
         if output.min()<0 or np.any(output>=np.asarray(self.codebook_sizes)[None,:]):raise ValueError('Invalid codebook index')
-        return dict(audio_samples=int(audio.shape[-1]),audio_sample_rate=sample_rate,checkpoint_step=self.receipt['step'])
+        return {'audio_samples': int(audio.shape[-1]),'audio_sample_rate': sample_rate,'checkpoint_step': self.receipt['step']}
 
     def encode_stream(self,samples):
         count=0;seconds=0.;start=time.monotonic()
@@ -126,7 +130,7 @@ class MossAutoencoder:
                 self.reference_metadata(sample.audio,sample.sample_rate,codes)
                 seconds+=sample.audio.shape[-1]/sample.sample_rate
             count+=1
-            if count%100==0:print(json.dumps(dict(event='encoding_progress',files=count,audio_hours=seconds/3600,audio_seconds_per_wall_second=seconds/(time.monotonic()-start))),flush=True)
+            if count%100==0:print(json.dumps({'event': 'encoding_progress','files': count,'audio_hours': seconds/3600,'audio_seconds_per_wall_second': seconds/(time.monotonic()-start)}),flush=True)
             yield sample,codes
 
     def encode(self,audio,sample_rate):

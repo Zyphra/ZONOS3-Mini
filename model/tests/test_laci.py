@@ -12,7 +12,6 @@ import unittest
 from types import SimpleNamespace
 
 import torch
-
 from zonos3.tts.laci import (
     DURATION_MIN_STALL_FRAMES,
     PACE_MAX_RETRIES,

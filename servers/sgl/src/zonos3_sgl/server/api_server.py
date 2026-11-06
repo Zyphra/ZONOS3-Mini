@@ -3,55 +3,21 @@ from __future__ import annotations
 import asyncio
 import functools
 import io
-import subprocess
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Literal, Tuple
 
 import numpy as np
 import soundfile as sf
 import torch
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
-from zonos3_sgl.message import (
-    BaseFrontendMsg,
-    BaseTokenizerMsg,
-    BatchTTSFrontendMsg,
-    TTSAudioReply,
-    TTSCodesReply,
-    TTSDecodeCodesMsg,
-    TTSEncodeAudioMsg,
-    TTSSamplingParams,
-    TTSTokenizeMsg,
-)
 from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING
 from zonos3.reference.synth import decode_base64_blob, load_embedding_vector, slerp
-from zonos3.tts import plan
-from zonos3.tts.audio import (
-    _decode_audio_bytes,
-    _decode_wav_bytes,
-    _transcode_audio_bytes_to_wav,
-    pcm16_wav_bytes,
-    write_pcm16_wav,
-)
-from zonos3.tts.directions import RAW_SPACE
-from zonos3.tts.edit import edit_marker_rows
-from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
-from zonos3.tts.steering import (
-    SteeringBundle,
-    check_controls,
-    controls_document,
-    disabled_controls,
-    load_bundle,
-    no_steering_message,
-    resolve_controls,
-)
-from zonos3.tts.markup import trained_on_tags
 from zonos3.server import plugins
 from zonos3.server.capabilities import (
     CapabilityFacts,
@@ -65,9 +31,8 @@ from zonos3.server.edit import make_router as _edit_router
 from zonos3.server.host import host_facts, laci_slots, rate_scale
 from zonos3.server.keepalive import KEEPALIVE_PATHS, KeepaliveMiddleware
 from zonos3.server.middleware import access_log_enabled, install_cors, install_private_access
-from zonos3.server.projects import ProjectStore, make_router as _projects_router
-from zonos3.server.speech import check_format, prefix_stream_supported, resolve_stream_decode, speech_headers
-from zonos3.server.studio import install_studio
+from zonos3.server.projects import ProjectStore
+from zonos3.server.projects import make_router as _projects_router
 from zonos3.server.schemas import (
     SPEAKER_INPUT_FIELDS,
     GenerateRequest,
@@ -75,6 +40,8 @@ from zonos3.server.schemas import (
     SpeakerCreateRequest,
     SpeechRequest,
 )
+from zonos3.server.speech import check_format, prefix_stream_supported, resolve_stream_decode, speech_headers
+from zonos3.server.studio import install_studio
 from zonos3.server.voices import (
     DefaultVoice,
     new_speaker_id,
@@ -89,8 +56,42 @@ from zonos3.server.voices import (
     voice_speaker_modes,
     warm_voice_embeddings,
 )
-from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
+from zonos3.tts import plan
+from zonos3.tts.audio import (
+    _decode_audio_bytes,
+    _decode_wav_bytes,
+    _transcode_audio_bytes_to_wav,
+    pcm16_wav_bytes,
+    write_pcm16_wav,
+)
+from zonos3.tts.directions import RAW_SPACE
+from zonos3.tts.edit import edit_marker_rows
+from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
+from zonos3.tts.markup import trained_on_tags
+from zonos3.tts.steering import (
+    SteeringBundle,
+    check_controls,
+    controls_document,
+    disabled_controls,
+    load_bundle,
+    no_steering_message,
+    resolve_controls,
+)
+
+from zonos3_sgl.message import (
+    BaseFrontendMsg,
+    BaseTokenizerMsg,
+    BatchTTSFrontendMsg,
+    TTSAudioReply,
+    TTSCodesReply,
+    TTSDecodeCodesMsg,
+    TTSEncodeAudioMsg,
+    TTSSamplingParams,
+    TTSTokenizeMsg,
+)
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
 
 from .args import ServerArgs
 
@@ -255,7 +256,7 @@ class _RulesContext:
 
     @functools.cached_property
     def _conditions(self) -> dict:
-        return _condition_spec(self.config) or dict(names=[], bucket_counts={}, unknown_ids={}, edges={}, flags={})
+        return _condition_spec(self.config) or {"names": [], "bucket_counts": {}, "unknown_ids": {}, "edges": {}, "flags": {}}
 
     @property
     def n_codebooks(self) -> int:

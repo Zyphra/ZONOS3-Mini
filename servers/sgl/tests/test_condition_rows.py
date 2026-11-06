@@ -7,12 +7,12 @@ import pytest
 import torch
 
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
-from zonos3_sgl.core import TTSBatch, TTSReq  # noqa: E402
-from zonos3_sgl.message.tts import TTSSamplingParams  # noqa: E402
-from zonos3_sgl.scheduler.scheduler import TTSScheduler, _speaking_rate_buckets  # noqa: E402
 from zonos3.server.schemas import GenerateRequest, SpeechRequest  # noqa: E402
 from zonos3.tts import plan  # noqa: E402
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig  # noqa: E402
+from zonos3_sgl.core import TTSBatch, TTSReq  # noqa: E402
+from zonos3_sgl.message.tts import TTSSamplingParams  # noqa: E402
+from zonos3_sgl.scheduler.scheduler import TTSScheduler, _speaking_rate_buckets  # noqa: E402
 
 EDGES = {
     "loudness": [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],

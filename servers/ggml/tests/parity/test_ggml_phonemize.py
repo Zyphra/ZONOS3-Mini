@@ -13,7 +13,6 @@ import subprocess
 
 import lmdb
 import pytest
-
 from zonos3.tts.phonemes import PhonemeLexicon, normalize_headword
 
 ENTRIES = {

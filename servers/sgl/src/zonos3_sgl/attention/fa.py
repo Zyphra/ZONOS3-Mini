@@ -10,9 +10,10 @@ from .base import BaseAttnBackend, BaseAttnMetadata
 from .utils import BaseCaptureData, make_positions
 
 if TYPE_CHECKING:
+    from zonos3.models.config import ModelConfig
+
     from zonos3_sgl.core import TTSBatch
     from zonos3_sgl.kvcache import BaseKVCache
-    from zonos3.models.config import ModelConfig
 
 
 @dataclass

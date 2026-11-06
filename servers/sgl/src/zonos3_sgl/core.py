@@ -5,14 +5,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Literal
 
 import torch
-
 from zonos3.generation import SAMPLING
 
 if TYPE_CHECKING:
+    from zonos3.tts.span_follow import SpanFollower
+
     from zonos3_sgl.attention import BaseAttnBackend, BaseAttnMetadata
     from zonos3_sgl.kvcache import BaseCacheHandle
     from zonos3_sgl.tts.align_probe import AlignProbe, ProbeInputs
-    from zonos3.tts.span_follow import SpanFollower
 
 
 @dataclass

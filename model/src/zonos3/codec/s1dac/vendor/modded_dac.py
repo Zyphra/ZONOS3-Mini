@@ -5,7 +5,6 @@ from typing import List, Optional, Union
 
 import numpy as np
 import torch
-from audiotools import AudioSignal
 from audiotools.ml import BaseModel
 from dac.model.base import CodecMixin
 from dac.nn.layers import Snake1d, WNConv1d, WNConvTranspose1d
@@ -269,7 +268,7 @@ class Attention(nn.Module):
             q = apply_rotary_emb(q, freqs_cis)
             k = apply_rotary_emb(k, freqs_cis)
 
-        q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
+        q, k, v = (x.transpose(1, 2) for x in (q, k, v))
 
         if self.kv_cache is not None:
             k, v = self.kv_cache.update(input_pos, k, v)
@@ -734,25 +733,7 @@ class DecoderBlock(nn.Module):
     ):
         super().__init__()
         conv_trans_class = CausalWNConvTranspose1d if causal else WNConvTranspose1d
-        transformer_module = (
-            nn.Identity()
-            if n_t_layer == 0
-            else (
-                WindowLimitedTransformer(
-                    causal=causal,
-                    input_dim=input_dim,
-                    window_size=None,
-                    config=transformer_general_config(
-                        n_layer=n_t_layer,
-                        n_head=input_dim // 64,
-                        dim=input_dim,
-                        intermediate_size=input_dim * 3,
-                    ),
-                )
-            )
-        )
         self.block = nn.Sequential(
-            # transformer_module,
             Snake1d(input_dim),
             conv_trans_class(
                 input_dim,

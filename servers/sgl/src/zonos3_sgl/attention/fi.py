@@ -7,10 +7,11 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Dict, List, Literal
 
 import torch
+
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.env import ENV
-from zonos3_sgl.utils.misc import divide_even
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import divide_even
 
 from .base import BaseAttnBackend, BaseAttnMetadata
 from .utils import BaseCaptureData, make_positions
@@ -21,9 +22,10 @@ if TYPE_CHECKING:
         BatchPrefillWithPagedKVCacheWrapper,
         CUDAGraphBatchDecodeWithPagedKVCacheWrapper,
     )
+    from zonos3.models.config import ModelConfig
+
     from zonos3_sgl.core import TTSBatch
     from zonos3_sgl.kvcache import BaseKVCache
-    from zonos3.models.config import ModelConfig
 
 
 def _next_power_of_2(n: int) -> int:

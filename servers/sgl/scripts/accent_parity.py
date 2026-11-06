@@ -93,15 +93,15 @@ def _worker(spec_path: str) -> None:
     from zonos3_sgl.tts.llm import TTSLLM
 
     spec = json.loads(Path(spec_path).read_text())
-    kwargs = dict(
-        attention_backend="fa",
-        cache_type="naive",
-        max_running_req=16,
-        cuda_graph_max_bs=16,
-        max_extend_tokens=256,
-        memory_ratio=0.5,
-        decode_audio=False,
-    )
+    kwargs = {
+        "attention_backend": "fa",
+        "cache_type": "naive",
+        "max_running_req": 16,
+        "cuda_graph_max_bs": 16,
+        "max_extend_tokens": 256,
+        "memory_ratio": 0.5,
+        "decode_audio": False,
+    }
     if spec.get("accent_adapters"):
         kwargs["accent_adapters"] = spec["accent_adapters"]
     tts = TTSLLM(model_path=spec["model_path"], **kwargs)

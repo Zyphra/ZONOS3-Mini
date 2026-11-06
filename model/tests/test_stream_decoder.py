@@ -126,7 +126,7 @@ def test_prefill_rows_are_decoded_but_never_streamed(mode):
 
 
 def test_prefix_settings_validation(monkeypatch):
-    for bad in (dict(chunk=0), dict(first_chunk=0), dict(hold_back=-1), dict(chunk=20, context=10)):
+    for bad in ({"chunk": 0}, {"first_chunk": 0}, {"hold_back": -1}, {"chunk": 20, "context": 10}):
         with pytest.raises(ValueError):
             StreamSettings(**bad)
     for name in ("CHUNK", "FIRST_CHUNK", "HOLD_BACK", "CONTEXT"):

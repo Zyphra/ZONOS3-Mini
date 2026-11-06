@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, List
 
 import torch
+
 from zonos3_sgl.message import BaseBackendMsg, BaseTokenizerMsg, BatchTokenizerMsg
-from zonos3_sgl.utils.mp import ZmqPubQueue, ZmqPullQueue, ZmqPushQueue, ZmqSubQueue
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.mp import ZmqPubQueue, ZmqPullQueue, ZmqPushQueue, ZmqSubQueue
 
 if TYPE_CHECKING:
     from .config import SchedulerConfig

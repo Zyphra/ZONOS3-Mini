@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
 from zonos3.tts import span_follow as sf
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciHeads, LaciSession, RateBuckets
 

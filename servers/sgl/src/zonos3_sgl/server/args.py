@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
-from zonos3_sgl.distributed import DistributedInfo
-from zonos3_sgl.scheduler import SchedulerConfig
 from zonos3.generation import SAMPLE_RATE
 from zonos3.tts.laci import parse_laci_heads
 from zonos3.utils.hf import cached_load_checkpoint_config
+
+from zonos3_sgl.distributed import DistributedInfo
+from zonos3_sgl.scheduler import SchedulerConfig
 from zonos3_sgl.utils.logger import init_logger
 
 

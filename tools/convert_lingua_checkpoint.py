@@ -270,9 +270,9 @@ def build_params(training_config: dict[str, Any], dtype_name: str) -> dict[str, 
         )
     data_config = training_config.get("data", {})
     if data_config.get("text_tokenizer") == "superbpe":
-        spec = dict(kind="superbpe", path=data_config["text_tokenizer_path"],
-                    sha256=data_config["text_tokenizer_sha256"],
-                    vocab_size=data_config["text_tokenizer_vocab_size"], offset=4, bos=2, eos=3)
+        spec = {"kind": "superbpe", "path": data_config["text_tokenizer_path"],
+                    "sha256": data_config["text_tokenizer_sha256"],
+                    "vocab_size": data_config["text_tokenizer_vocab_size"], "offset": 4, "bos": 2, "eos": 3}
         from zonos3.tts.superbpe import validate_spec
         validate_spec(spec, int(params["text_vocab"]))
         params["text_tokenizer_spec"] = spec

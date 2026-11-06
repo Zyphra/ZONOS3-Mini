@@ -17,7 +17,7 @@ def spec(tmp_path):
     tokenizer, size = wordlevel_spec(["hello", "world", "[UNK]"], whitespace=True)
     path = tmp_path / "superbpe.json"
     path.write_text(tokenizer)
-    return dict(kind="superbpe", path=str(path), sha256=sha256_file(path), vocab_size=size, offset=4, bos=2, eos=3)
+    return {"kind": "superbpe", "path": str(path), "sha256": sha256_file(path), "vocab_size": size, "offset": 4, "bos": 2, "eos": 3}
 
 
 def test_text_ids_follow_the_training_convention(spec):

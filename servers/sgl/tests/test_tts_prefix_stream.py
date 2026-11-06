@@ -14,11 +14,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
-
-from zonos3_sgl.message import BaseTTSTokenizerMsg, TTSDetokenizeMsg, TTSSamplingParams, TTSTokenizeMsg
-from zonos3_sgl.tokenizer import vocoder
 from zonos3.tokenizer.matched_codec import codec_names, entry
 from zonos3.tts.stream import StreamSettings
+from zonos3_sgl.message import BaseTTSTokenizerMsg, TTSDetokenizeMsg, TTSSamplingParams, TTSTokenizeMsg
+from zonos3_sgl.tokenizer import vocoder
 
 CODEC = sorted(codec_names())[0]
 SPEC = entry(CODEC)

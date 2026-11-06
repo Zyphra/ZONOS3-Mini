@@ -12,7 +12,6 @@ import pytest
 from .support import TEXT, check, error, needs
 
 
-
 @pytest.fixture(scope="module")
 def editing(caps):
     needs(caps["speech_editing"], "the checkpoint or server cannot edit speech")

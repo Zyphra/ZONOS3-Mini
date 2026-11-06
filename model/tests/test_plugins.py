@@ -6,7 +6,6 @@ import types
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from zonos3.server import plugins
 from zonos3.server.keepalive import KeepaliveMiddleware
 from zonos3.server.plugins import HOST_API, HostFacts, LaciTakeRequest

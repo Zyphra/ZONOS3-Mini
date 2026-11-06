@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
 from zonos3.speaker_cfg import SpeakerCfgTwin, is_reserved_speaker_slot, speaker_cfg_twin, unconditional_prompt
 
 C, PAD, TEXT_VOCAB = 10, 4097, 8196

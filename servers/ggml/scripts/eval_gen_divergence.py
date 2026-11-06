@@ -6,7 +6,13 @@ cannot see — the metric that mattered for the q2 audio-quality regression.
 
 Usage: eval_gen_divergence.py <ref.gguf> <test.gguf> [--max N] [--gpu G]
 """
-import argparse, subprocess, sys, tempfile, os, glob
+import argparse
+import glob
+import os
+import subprocess
+import sys
+import tempfile
+
 import numpy as np
 
 CLI = os.environ.get("ZONOS3_CLI", "./build-cuda/zonos3-cli")

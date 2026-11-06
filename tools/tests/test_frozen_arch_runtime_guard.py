@@ -2,26 +2,25 @@
 from __future__ import annotations
 
 import pytest
-
 from convert_lingua_checkpoint import RUNTIME_ASSUMED_MODEL_FIELDS, check_runtime_assumptions
 
-FROZEN_FAMILY = dict(
-    dim=1024,
-    n_layers=11,
-    attention_pattern="gdn3_global1",
-    residual_type="full_attnres",
-    qwen_gating_style="headwise",
-    embedding_norm=True,
-    attn_out_norm=False,
-    ffn_out_norm=False,
-    sliding_window=-1,
-    flash_msa_every_n_layers=0,
-    noise_codebook_size=None,
-    moe_qb_ema=0.0,
-    n_codebooks=10,
-    codebook_size=4096,
-    codebook_sizes=[4096] * 10,
-)
+FROZEN_FAMILY = {
+    "dim": 1024,
+    "n_layers": 11,
+    "attention_pattern": "gdn3_global1",
+    "residual_type": "full_attnres",
+    "qwen_gating_style": "headwise",
+    "embedding_norm": True,
+    "attn_out_norm": False,
+    "ffn_out_norm": False,
+    "sliding_window": -1,
+    "flash_msa_every_n_layers": 0,
+    "noise_codebook_size": None,
+    "moe_qb_ema": 0.0,
+    "n_codebooks": 10,
+    "codebook_size": 4096,
+    "codebook_sizes": [4096] * 10,
+}
 
 
 def test_frozen_family_config_passes_the_guard():

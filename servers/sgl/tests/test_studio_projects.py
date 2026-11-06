@@ -7,7 +7,6 @@ import time
 
 import pytest
 from fastapi import FastAPI
-
 from zonos3.server import projects as P
 from zonos3.server.projects import ProjectStore, make_router
 

@@ -38,7 +38,6 @@ from zonos3.tts.span_follow import FollowConfig, SpanFollower
 from zonos3.tts.steering import SteeringBundle, load_bundle, schedule_delta
 from zonos3.tts.stream import StreamDecoder, StreamSettings
 
-
 # ----------------------------------------------------------------------------------------------------- assets
 
 _UNLOADED = object()

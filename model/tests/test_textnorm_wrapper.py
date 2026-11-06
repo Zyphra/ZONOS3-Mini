@@ -1,9 +1,6 @@
 """Wrapper-level text normalization: line breaks, per-language pre-passes, sentence-level fallback (2026-10-19)."""
-import os
 
 import pytest
-
-from zonos3.tokenizer import textnorm
 from zonos3.tokenizer.textnorm import TTSTextNormalizer, collapse_line_breaks, post_normalize, pre_normalize
 
 

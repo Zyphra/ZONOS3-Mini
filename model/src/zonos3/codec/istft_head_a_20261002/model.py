@@ -6,11 +6,13 @@ replaced by a small causal ConvNeXt stack, a LayerNorm, a Linear to n_fft+2 chan
 hop 184 = 44160/240 and n_fft 736 = 4*hop (periodic Hann, centered frames). Everything except `head.*` is frozen.
 """
 import math
+
 import torch
 from torch import nn
-from zonos3.codec.hybrid10_dual_encoding.model import MossCodec, SemanticConvNeXt
 from torch.utils.checkpoint import checkpoint
-from zonos3.codec.hybrid10_dual_encoding.base_model import MossStage, MossLayer, Patch
+
+from zonos3.codec.hybrid10_dual_encoding.base_model import MossLayer, MossStage, Patch
+from zonos3.codec.hybrid10_dual_encoding.model import MossCodec, SemanticConvNeXt
 
 KEPT_STAGES = 9          # decoder.0 .. decoder.8
 HEAD_FRAME_RATE = 240
@@ -199,7 +201,7 @@ class ISTFTCodec(nn.Module):
             self.head = ISTFTHead(dim=stages[KEPT_STAGES - 1]['d_model'], depth=head_cfg['depth'],
                                   hidden=head_cfg['hidden'], n_fft=head_cfg['n_fft'], hop=hop)
         # Optionally unfreeze a suffix of the kept transformer stages (e.g. [8] = the 240 Hz stage) with the head.
-        self.trainable_stages = sorted(set(int(i) for i in head_cfg.get('trainable_stages', [])))
+        self.trainable_stages = sorted({int(i) for i in head_cfg.get('trainable_stages', [])})
         assert self.trainable_stages == list(range(KEPT_STAGES - len(self.trainable_stages), KEPT_STAGES)), \
             'trainable_stages must be a contiguous suffix of decoder.0..8'
         self.trainable_prefixes = ('head.',) + tuple(f'stages.{i}.' for i in self.trainable_stages)
@@ -288,9 +290,9 @@ class ISTFTCodec(nn.Module):
             raise RuntimeError(f'pretrained mapping mismatch: missing {missing[:5]} unexpected {unexpected[:5]}')
         result = self.load_state_dict(loaded, strict=False)
         assert not result.unexpected_keys and all(k.startswith('head.') for k in result.missing_keys)
-        out = dict(loaded_tensors=len(loaded),
-                   frozen_parameters=sum(p.numel() for _, p in self.frozen_parameters()),
-                   head_parameters=sum(p.numel() for p in self.head.parameters()))
+        out = {'loaded_tensors': len(loaded),
+                   'frozen_parameters': sum(p.numel() for _, p in self.frozen_parameters()),
+                   'head_parameters': sum(p.numel() for p in self.head.parameters())}
         if self.stage_layers:
             out.update(pruned_tensors=pruned, stage_layers={str(k): v for k, v in self.stage_layers.items()})
         return out

@@ -64,19 +64,19 @@ GDN375K_LORA_MODULES = {
 }
 
 # checkpoints/gdn375k/params.json (convert_lingua_checkpoint of the 375k run).
-GDN375K_PARAMS = dict(
-    n_layers=11, dim=1024, head_dim=32, n_heads=16, n_kv_heads=4, ffn_dim_multiplier=2.0,
-    multiple_of=64, moe_ffn_dim_multiplier=1.5, moe_multiple_of=64, norm_eps=1e-05,
-    rope_theta=10000.0, max_seqlen=32768, n_codebooks=10, codebook_size=4096,
-    codebook_sizes=[4096] * 10, eoa_id=4096, audio_pad_id=4097, text_vocab=8196,
-    speaker_enabled=False, speaker_embedding_dim=256, attention_pattern="gdn3_global1",
-    use_xsa=False, residual_type="full_attnres", block_attnres_block_size=4,
-    block_attnres_backend="auto", moe_router_topk=2, moe_n_experts=64, moe_alpha=0.25,
-    moe_router_dim=128, moe_router_type="linear", moe_router_use_eda=False,
-    moe_balancing_strategy="quantile", moe_start_from_layer=1, moe_end_from_layer=0,
-    loss_softcap=15.0, model_type="zonos2", dtype="bfloat16", norm_topk_prob=True,
-    moe_impl="sonic",
-)
+GDN375K_PARAMS = {
+    "n_layers": 11, "dim": 1024, "head_dim": 32, "n_heads": 16, "n_kv_heads": 4, "ffn_dim_multiplier": 2.0,
+    "multiple_of": 64, "moe_ffn_dim_multiplier": 1.5, "moe_multiple_of": 64, "norm_eps": 1e-05,
+    "rope_theta": 10000.0, "max_seqlen": 32768, "n_codebooks": 10, "codebook_size": 4096,
+    "codebook_sizes": [4096] * 10, "eoa_id": 4096, "audio_pad_id": 4097, "text_vocab": 8196,
+    "speaker_enabled": False, "speaker_embedding_dim": 256, "attention_pattern": "gdn3_global1",
+    "use_xsa": False, "residual_type": "full_attnres", "block_attnres_block_size": 4,
+    "block_attnres_backend": "auto", "moe_router_topk": 2, "moe_n_experts": 64, "moe_alpha": 0.25,
+    "moe_router_dim": 128, "moe_router_type": "linear", "moe_router_use_eda": False,
+    "moe_balancing_strategy": "quantile", "moe_start_from_layer": 1, "moe_end_from_layer": 0,
+    "loss_softcap": 15.0, "model_type": "zonos2", "dtype": "bfloat16", "norm_topk_prob": True,
+    "moe_impl": "sonic",
+}
 
 
 @pytest.fixture(autouse=True)

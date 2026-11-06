@@ -1,19 +1,21 @@
 """TTS vocoder manager: undelays the LM's codebook rows and decodes them with the registry's matched codec."""
 
 from __future__ import annotations
-from zonos3.tokenizer.matched_codec import codec_names as matched_codec_names, entry as matched_codec_entry, decode as decode_matched
 
 import dataclasses
 from typing import Dict, List
 
 import numpy as np
 import torch
-from zonos3_sgl.message import TTSDetokenizeMsg
-
 from zonos3.generation import SAMPLE_RATE
+from zonos3.tokenizer.matched_codec import codec_names as matched_codec_names
+from zonos3.tokenizer.matched_codec import decode as decode_matched
+from zonos3.tokenizer.matched_codec import entry as matched_codec_entry
 from zonos3.tts import plan
 from zonos3.tts.delay import shear_up, undelay_window
 from zonos3.tts.stream import StreamSettings, prefix_window
+
+from zonos3_sgl.message import TTSDetokenizeMsg
 
 
 def decode_audio_codes(codes: torch.Tensor, audio_codec: str) -> torch.Tensor:
@@ -68,8 +70,8 @@ class TTSVocoderManager:
         # causal decoder re-decodes the growing prefix holding back the last frames, and the exact whole decode at EOS
         # supplies the tail. Explicit settings win over ZONOS3_PREFIX_STREAM_* (zonos3.tts.stream.StreamSettings).
         self.prefix_stream_supported = True
-        explicit = dict(chunk=prefix_chunk_frames, first_chunk=prefix_first_chunk_frames,
-                        hold_back=prefix_hold_back_frames, context=prefix_context_frames)
+        explicit = {"chunk": prefix_chunk_frames, "first_chunk": prefix_first_chunk_frames,
+                        "hold_back": prefix_hold_back_frames, "context": prefix_context_frames}
         self.prefix = dataclasses.replace(StreamSettings.from_env(),
                                           **{k: int(v) for k, v in explicit.items() if v is not None})
         self._prefix_mode: Dict[int, bool] = {}
@@ -112,6 +114,7 @@ class TTSVocoderManager:
                 print(f"[vocoder] codec-matched silence frame {self._silence_frame.tolist()} from the codec registry", flush=True)
                 return self._silence_frame
             import io
+
             import soundfile as sf
             buf = io.BytesIO()
             sf.write(buf, np.zeros(2 * 44100, dtype=np.float32), 44100, format="WAV", subtype="FLOAT")
@@ -134,7 +137,7 @@ class TTSVocoderManager:
             arr = context_codes.detach().cpu().numpy() if hasattr(context_codes, "detach") else np.asarray(context_codes)
             ctx = np.asarray(arr, dtype=np.int64).reshape(-1, self.n_codebooks)
         if rows or ctx is not None:
-            self._pending_context[uid] = dict(rows=rows, context=ctx)
+            self._pending_context[uid] = {"rows": rows, "context": ctx}
         else:
             self._pending_context.pop(uid, None)
 
@@ -326,9 +329,9 @@ class TTSVocoderManager:
         live_chunks = self._prefix_live.get(uid) or []
         emitted = min(self._prefix_emitted[uid], max(target_frames, 0))
         context = self._context_codes.get(uid)
-        receipt = dict(uid=uid, frames=max(int(target_frames), 0), emitted_frames=int(emitted), chunks=len(live_chunks),
-                       live_vs_whole_max_abs=0.0, live_vs_whole_rms_db=None,
-                       prefill_frames=int(self._prefill_len.get(uid, 0)), context_frames=int(len(context)) if context is not None else 0)
+        receipt = {"uid": uid, "frames": max(int(target_frames), 0), "emitted_frames": int(emitted), "chunks": len(live_chunks),
+                       "live_vs_whole_max_abs": 0.0, "live_vs_whole_rms_db": None,
+                       "prefill_frames": int(self._prefill_len.get(uid, 0)), "context_frames": int(len(context)) if context is not None else 0}
         if target_frames <= 0:
             self.last_prefix_receipt = receipt
             self._prefix_receipts.append(receipt)

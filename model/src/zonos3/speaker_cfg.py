@@ -2,6 +2,7 @@
 row. The unconditional twin is the same prompt with that conditioning removed (and, on condition-row models, all-unknown
 condition rows): the training-side evaluation generator's twin. guided = uncond + scale * (cond - uncond)."""
 from __future__ import annotations
+
 import math
 from dataclasses import dataclass
 from typing import Sequence

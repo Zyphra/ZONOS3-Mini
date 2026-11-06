@@ -27,11 +27,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import gguf.quants as gquants
 import numpy as np
 import torch
 import yaml
 from gguf import GGMLQuantizationType, GGUFWriter
-import gguf.quants as gquants
 from zonos3.utils.hashing import sha256_bytes
 
 
@@ -85,7 +85,7 @@ QAT_TARGETS = {
 }
 CODEC = "opus_dual_3n_600k_sched600k_r4096_step600000"
 CONDITION_NAMES = ["loudness", "fmax", "speaking_rate"]
-TOKENIZER_SPEC = dict(kind="superbpe", offset=4, bos=2, eos=3)
+TOKENIZER_SPEC = {"kind": "superbpe", "offset": 4, "bos": 2, "eos": 3}
 SPEAKER_REFERENCE_MAX_SECONDS = 60.0
 
 
@@ -318,7 +318,7 @@ def qat_targets(bake, sd):
 def mix_targets(sd):
     """{GGUF tensor name: "q4_0"|"q8_0"} of a plain directory under --outtype q4_0-exp-q8_0-mix: the tensors the QAT
     forward quantizes (QAT_TARGETS), rounded to nearest from the checkpoint's weights (post-training quantization)."""
-    sources = {src: names for src, names in QAT_TARGETS.values()}
+    sources = dict(QAT_TARGETS.values())
     targets = {}
     for key in sd:
         layer, _, rest = key.removeprefix("layers.").partition(".")
@@ -785,7 +785,7 @@ def cmd_codec_encoder(args, parser):
     patches = [s["patch_size"] for s in specs[3::2]]
     if patches != [23, 2, 2, 2, 2] or any(s["direction"] != "down" for s in specs[3::2]):
         raise SystemExit("unsupported encoder patching")
-    if [s["stride"] for s in specs[1:3]] != [2, 4] or cfg["dual_encoding"] != dict(width=768, hidden=2048, depth=4, causal=True, window_ratio=2.0, strategy="frozen_ssl_to_q1_decoded_semantic_residual", normalization="unchanged_baseline"):
+    if [s["stride"] for s in specs[1:3]] != [2, 4] or cfg["dual_encoding"] != {"width": 768, "hidden": 2048, "depth": 4, "causal": True, "window_ratio": 2.0, "strategy": "frozen_ssl_to_q1_decoded_semantic_residual", "normalization": "unchanged_baseline"}:
         raise SystemExit("unsupported S1/semantic encoder configuration")
     moss = specs[4::2]
     model = MossCodec(cfg)
@@ -802,12 +802,12 @@ def cmd_codec_encoder(args, parser):
 
     w = GGUFWriter(args.out, ENC_ARCH)
     w.add_string("general.name", "fixed600k frozen dual Opus reference encoder")
-    for key, value in dict(sample_rate=44100, internal_sample_rate=44160, frame_rate=15, hop=2940, internal_hop=2944, n_codebooks=10, codebook_size=4096, latent_dim=1024, semantic_dim=768, semantic_depth=4, lane_frames=300, context_frames=150).items():
+    for key, value in {"sample_rate": 44100, "internal_sample_rate": 44160, "frame_rate": 15, "hop": 2940, "internal_hop": 2944, "n_codebooks": 10, "codebook_size": 4096, "latent_dim": 1024, "semantic_dim": 768, "semantic_depth": 4, "lane_frames": 300, "context_frames": 150}.items():
         w.add_uint32(f"{ENC_ARCH}.{key}", value)
     w.add_float32(f"{ENC_ARCH}.window_ratio", cfg["dual_encoding"]["window_ratio"])
     w.add_float32(f"{ENC_ARCH}.ln_eps", 1e-5)
     w.add_float32(f"{ENC_ARCH}.convnext_eps", 1e-6)
-    for key, field in dict(in_dim="input_dimension", out_dim="output_dimension", d_model="d_model", n_head="num_heads", n_layer="num_layers", n_ff="dim_feedforward", context="context_frames").items():
+    for key, field in {"in_dim": "input_dimension", "out_dim": "output_dimension", "d_model": "d_model", "n_head": "num_heads", "n_layer": "num_layers", "n_ff": "dim_feedforward", "context": "context_frames"}.items():
         w.add_array(f"{ENC_ARCH}.stage.{key}", [int(s[field]) for s in moss])
     w.add_array(f"{ENC_ARCH}.stage.patch", patches)
     count = 0
@@ -846,7 +846,7 @@ def cmd_codec_encoder(args, parser):
         width = (kl - orig) // 2
         if new != 736 or kl != 2 * width + orig:
             raise SystemExit("unsupported encoder resampling kernel")
-        for key, value in dict(orig=orig, new=new, width=width).items():
+        for key, value in {"orig": orig, "new": new, "width": width}.items():
             w.add_uint32(f"{ENC_ARCH}.resample.{key}", value)
         put("resample.kernel", kernel)
         conv("enc.in", "encoder.0")
@@ -981,12 +981,12 @@ def cmd_ssl_teacher(args, parser):
     args.out.parent.mkdir(parents=True, exist_ok=True)
     w = GGUFWriter(str(args.out), SSL_ARCH)
     w.add_string("general.name", "Matched Wav2Vec2-BERT semantic teacher layer 16")
-    meta = dict(sample_rate=16000, max_seconds=60, n_layer=16, n_embd=1024,
-                n_head=16, n_ff=4096, rel_left=64, rel_right=8, conv_kernel=31,
-                n_mels=80, frame_length=400, hop_length=160, fft_length=512, stride=2)
+    meta = {"sample_rate": 16000, "max_seconds": 60, "n_layer": 16, "n_embd": 1024,
+                "n_head": 16, "n_ff": 4096, "rel_left": 64, "rel_right": 8, "conv_kernel": 31,
+                "n_mels": 80, "frame_length": 400, "hop_length": 160, "fft_length": 512, "stride": 2}
     for key, value in meta.items():
         w.add_uint32(f"{SSL_ARCH}.{key}", value)
-    for key, value in dict(eps=1e-5, preemphasis=0.97, mel_floor=1.192092955078125e-07).items():
+    for key, value in {"eps": 1e-5, "preemphasis": 0.97, "mel_floor": 1.192092955078125e-07}.items():
         w.add_float32(f"{SSL_ARCH}.{key}", value)
     w.add_float32(f"{SSL_ARCH}.padding_value", 1.0)
     fe = SeamlessM4TFeatureExtractor(feature_size=80, sampling_rate=16000, num_mel_bins=80, padding_value=1, stride=2)
@@ -1307,11 +1307,11 @@ def cmd_speaker_encoder(args, parser):
     args.out.parent.mkdir(parents=True, exist_ok=True)
     w = GGUFWriter(str(args.out), SPK_ARCH)
     w.add_string("general.name", f"ZONOS3 Mini speaker encoder {ENCODER} (MECT-B2 + ASTP, 192-d)")
-    for key, value in dict(sample_rate=16000, max_seconds=60, embedding_length=192, n_mels=80, frame_length=400,
-                           frame_shift=160, n_fft=512, n_heads=4, n_experts=N_EXPERTS, pos_kernel=POS_K).items():
+    for key, value in {"sample_rate": 16000, "max_seconds": 60, "embedding_length": 192, "n_mels": 80, "frame_length": 400,
+                           "frame_shift": 160, "n_fft": 512, "n_heads": 4, "n_experts": N_EXPERTS, "pos_kernel": POS_K}.items():
         w.add_uint32(f"{SPK_ARCH}.{key}", value)
-    for key, value in dict(preemphasis=0.97, waveform_scale=32768.0, log_floor=1.1920928955078125e-07,
-                           ln_eps=1e-6, pool_var_floor=1e-7).items():
+    for key, value in {"preemphasis": 0.97, "waveform_scale": 32768.0, "log_floor": 1.1920928955078125e-07,
+                           "ln_eps": 1e-6, "pool_var_floor": 1e-7}.items():
         w.add_float32(f"{SPK_ARCH}.{key}", value)
     w.add_string(f"{SPK_ARCH}.backbone", "MECT_B2")
 

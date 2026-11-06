@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from zonos3.tts.sampler import sample_tts
 from zonos3_sgl.engine.sample import TTSSampler
 from zonos3_sgl.message.tts import TTSSamplingParams
-from zonos3.tts.sampler import sample_tts
 
 # Edit-checkpoint layout: codes 0..3, EOA 4, pad 5, span-end 6 (V = codebook_size + 3).
 CODEBOOK_SIZE, EOA, PAD, SPAN_END = 4, 4, 5, 6

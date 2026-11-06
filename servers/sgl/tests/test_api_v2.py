@@ -44,16 +44,16 @@ def test_request_models_transcribe_the_spec(name, model):
 
 
 def _config(tmp_path, **extra):
-    fields = dict(
-        model_path=str(tmp_path / "lm"),
-        model_config=SimpleNamespace(audio_codec=CODEC, speaker_enabled=True, speaker_embedding_dim=3,
+    fields = {
+        "model_path": str(tmp_path / "lm"),
+        "model_config": SimpleNamespace(audio_codec=CODEC, speaker_enabled=True, speaker_embedding_dim=3,
                                      speaker_reference_prefix_enabled=False, condition_tokens_enabled=False,
                                      span_end_id=None, text_extra_tokens=0, hidden_size=4, n_codebooks=10,
                                      audio_pad_id=4097, codebook_sizes=(4096,) * 10),
-        max_seq_len=4096, tts_n_codebooks=10, tts_audio_pad_id=4097, tts_audio_codec=CODEC,
-        tts_default_voices_dir=None, studio_projects_dir=None, studio_dir=str(tmp_path / "studio"),
-        accent_adapters=None, steer_bundle=None, laci_heads={},
-    )
+        "max_seq_len": 4096, "tts_n_codebooks": 10, "tts_audio_pad_id": 4097, "tts_audio_codec": CODEC,
+        "tts_default_voices_dir": None, "studio_projects_dir": None, "studio_dir": str(tmp_path / "studio"),
+        "accent_adapters": None, "steer_bundle": None, "laci_heads": {},
+    }
     return SimpleNamespace(**{**fields, **extra})
 
 

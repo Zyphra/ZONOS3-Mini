@@ -8,23 +8,22 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
+from zonos3.tokenizer import textnorm
+from zonos3.tokenizer.textnorm import TTSTextNormalizer
+from zonos3.tts import plan
+from zonos3.tts.markup import (
+    _NONVERBAL_MARKUP,
+    NONVERBAL_MARKUP_TAGS,
+    has_nonverbal_markup,
+    split_nonverbal_markup,
+    strip_nonverbal_markup,
+)
+from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
 from zonos3_sgl.distributed.info import DistributedInfo
 from zonos3_sgl.message import TTSUserMsg
 from zonos3_sgl.message.tts import TTSSamplingParams, TTSTokenizeMsg
 from zonos3_sgl.scheduler.scheduler import TTSScheduler
 from zonos3_sgl.tokenizer import server as tokenizer_server
-from zonos3.tokenizer import textnorm
-from zonos3.tokenizer.textnorm import TTSTextNormalizer
-from zonos3.tts.markup import (
-    NONVERBAL_MARKUP_TAGS,
-    _NONVERBAL_MARKUP,
-    has_nonverbal_markup,
-    split_nonverbal_markup,
-    strip_nonverbal_markup,
-)
-from zonos3.tts import plan
-from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
 
 C = 2                                   # codebooks
 PAD = 1025
@@ -83,10 +82,10 @@ class _UpperNormalizer:
 
 
 def _message(scale=2.0, **kwargs):
-    fields = dict(
-        uid=7, text=TAGGED, language="en_us", sampling_params=TTSSamplingParams(tag_cfg_scale=scale, max_tokens=20),
-        speaker_embedding=torch.tensor([1.0, 2.0]), condition_buckets=[3, UNKNOWN, 5],
-    )
+    fields = {
+        "uid": 7, "text": TAGGED, "language": "en_us", "sampling_params": TTSSamplingParams(tag_cfg_scale=scale, max_tokens=20),
+        "speaker_embedding": torch.tensor([1.0, 2.0]), "condition_buckets": [3, UNKNOWN, 5],
+    }
     fields.update(kwargs)
     return TTSTokenizeMsg(**fields)
 
@@ -442,7 +441,6 @@ def test_controls_cfg_twin_drops_the_steering_only(monkeypatch, tmp_path):
 
 def test_rate_schedule_gives_markers_no_time(tmp_path):
     import numpy as np
-
     from zonos3.tts.steering import load_bundle, resolve_controls
 
     d = tmp_path / "style"

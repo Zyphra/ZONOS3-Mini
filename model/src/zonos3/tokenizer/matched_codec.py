@@ -4,11 +4,17 @@ Decoding goes through the causal multi-resolution iSTFT head declared by the reg
 KEEP-2 pruned head (``codec_registry_keep2_plain.json``, istft_head_a_20261002 full-unfreezeall-mr-drop30-4x10).
 The 600k conv-tail decoder is never used. The 600k generator.pt only supplies the frozen encoder/quantizer and the
 initial decoder stages that the head checkpoint then overrides."""
-import functools,json,os,time
+import functools
+import json
+import os
+import time
 from pathlib import Path
+
 import torch
+
 from zonos3.utils.hashing import sha256_file
-from zonos3.utils.release import hf_join,resolve_file
+from zonos3.utils.release import hf_join, resolve_file
+
 REGISTRY=Path(__file__).resolve().parents[1]/'registries'/'codec_registry_keep2_plain.json'
 _CACHE={}
 _INFO={}
@@ -30,8 +36,8 @@ def decoder_headroom_db(codec):
     return float(decoder_spec(codec).get('headroom_db',0.0))
 def decoder_info(codec):
     spec=decoder_spec(codec)
-    info=dict(kind=spec['kind'],label=spec.get('label'),checkpoint=hf_join(spec['campaign'],spec['checkpoint']),
-              expect_step=spec.get('expect_step'),headroom_db=float(spec.get('headroom_db',0.0)),causal=True)
+    info={'kind': spec['kind'],'label': spec.get('label'),'checkpoint': hf_join(spec['campaign'],spec['checkpoint']),
+              'expect_step': spec.get('expect_step'),'headroom_db': float(spec.get('headroom_db',0.0)),'causal': True}
     info.update(_INFO.get(codec,{}))
     return info
 def load_model(codec,device,prune=True):
@@ -58,9 +64,9 @@ def load_model(codec,device,prune=True):
         model.head.load_state_dict(state['head'],strict=True)
     model.eval().requires_grad_(False)
     if prune:prune_model(model,e)
-    _INFO[codec]=dict(step=int(state['step']),checkpoint_bytes=checkpoint.stat().st_size,
-                      checkpoint_mtime=time.strftime('%Y-%m-%dT%H:%M:%S',time.localtime(checkpoint.stat().st_mtime)),
-                      model=type(model).__name__,init=init if isinstance(init,dict) else None)
+    _INFO[codec]={'step': int(state['step']),'checkpoint_bytes': checkpoint.stat().st_size,
+                      'checkpoint_mtime': time.strftime('%Y-%m-%dT%H:%M:%S',time.localtime(checkpoint.stat().st_mtime)),
+                      'model': type(model).__name__,'init': init if isinstance(init,dict) else None}
     del state,generator_state
     return model.to(device)
 def prune_model(model,e):

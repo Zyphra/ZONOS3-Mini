@@ -10,11 +10,24 @@ import argparse
 import json
 import math
 from pathlib import Path
+
 import soundfile as sf
-from zonos3.tts import textmatch
-from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, diff_spans, edit_aligned_words, edit_language, expected_fill_seconds, new_word_confidence, plan_edit_windows, seconds_to_spans, target_tokens, transcribe_audio
-from zonos3_sgl.tts.llm import TTSLLM, TTSSamplingParams
 from zonos3.tokenizer.dual_reference import encode_dual_reference_file
+from zonos3.tts import textmatch
+from zonos3.tts.edit_align import (
+    AsrWorker,
+    FuseAlignWorker,
+    diff_spans,
+    edit_aligned_words,
+    edit_language,
+    expected_fill_seconds,
+    new_word_confidence,
+    plan_edit_windows,
+    seconds_to_spans,
+    target_tokens,
+    transcribe_audio,
+)
+from zonos3_sgl.tts.llm import TTSLLM, TTSSamplingParams
 
 
 def main():
@@ -68,7 +81,7 @@ def main():
     result = llm.edit(codes, a.target_text, spans, TTSSamplingParams(seed=a.seed, max_tokens=int(a.max_span_seconds * 15) + llm.n_codebooks + 1), language=a.language, text_normalization=not a.no_text_normalization, windows=windows, min_frames=min_frames)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     sf.write(a.out, result['audio'], 44100, subtype='FLOAT')
-    report = dict(original_text=original, spans_seconds=[[start / 15, (start + length) / 15] for start, length in spans], fill_seconds=[len(fill) / 15 for fill in result['fills']], stopped=result['stopped'], expected_seconds=expected)
+    report = {'original_text': original, 'spans_seconds': [[start / 15, (start + length) / 15] for start, length in spans], 'fill_seconds': [len(fill) / 15 for fill in result['fills']], 'stopped': result['stopped'], 'expected_seconds': expected}
     if windows is not None:
         report['contexts'] = [[w.start / 15, w.end / 15] for w in windows]
     if a.verify:

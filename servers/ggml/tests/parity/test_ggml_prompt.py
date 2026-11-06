@@ -57,7 +57,6 @@ def reference(request, tmp_path_factory):
     if not model.startswith("hf://") and not (Path(model) / "params.json").is_file():
         pytest.skip(f"{request.param}: no reference checkpoint at {model}")
     import torch
-
     from zonos3.reference.lm import Zonos3LM
     from zonos3.reference.synth import ReferenceAssets
 

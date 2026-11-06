@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import os
-
 import json
 import logging
-from pathlib import Path
+import os
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
 import torch.nn.functional as F
-from zonos3_sgl.core import TTSBatch, TTSReq
 from zonos3.speaker_cfg import guided_logits, speaker_cfg_twin
 from zonos3.tts.delay import apply_cold_start_delay
+
+from zonos3_sgl.core import TTSBatch, TTSReq
 from zonos3_sgl.env import ENV
 from zonos3_sgl.message import (
     BaseTTSBackendMsg,
@@ -34,8 +34,9 @@ from .io import SchedulerIOMixin
 from .table import TTSTableManager
 
 if TYPE_CHECKING:
-    from zonos3_sgl.engine.sample import TTSBatchSamplingArgs
     from zonos3.tts.laci import LaciSession
+
+    from zonos3_sgl.engine.sample import TTSBatchSamplingArgs
 
 logger = init_logger(__name__)
 
@@ -419,9 +420,9 @@ class TTSScheduler(SchedulerIOMixin):
                     Path(dump_dir).mkdir(parents=True, exist_ok=True)
                     rows = self.token_pool[req.table_idx, : req.device_len].cpu().numpy()
                     np.save(Path(dump_dir) / f"uid{req.uid}.npy", rows)
-                    (Path(dump_dir) / f"uid{req.uid}.json").write_text(json.dumps(dict(
-                        uid=req.uid, prompt_rows=int(len(req.input_ids)), device_len=int(req.device_len),
-                        generated=int(generated), eos_frame=req.eos_frame, is_cfg_uncond=bool(req.is_cfg_uncond))))
+                    (Path(dump_dir) / f"uid{req.uid}.json").write_text(json.dumps({
+                        "uid": req.uid, "prompt_rows": int(len(req.input_ids)), "device_len": int(req.device_len),
+                        "generated": int(generated), "eos_frame": req.eos_frame, "is_cfg_uncond": bool(req.is_cfg_uncond)}))
 
         # Free resources for finished but not ongoing reqs
         ongoing_reqs = ongoing_data[0].batch.reqs if ongoing_data else []

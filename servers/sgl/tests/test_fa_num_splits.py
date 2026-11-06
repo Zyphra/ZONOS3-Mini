@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 import torch.nn.functional as F
-
 from zonos3_sgl.attention.fa import fa_num_splits
 
 

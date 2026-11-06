@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Tuple, overload
 from openai import AsyncOpenAI as OpenAI
 from pydantic import BaseModel
 from tqdm.asyncio import tqdm
-from zonos3_sgl.utils.misc import UNSET, Unset
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import UNSET, Unset
 
 logger = init_logger(__name__)
 

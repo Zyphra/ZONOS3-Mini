@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from zonos3.tts import textmatch
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "textmatch_zsa.json").read_text(encoding="utf-8"))

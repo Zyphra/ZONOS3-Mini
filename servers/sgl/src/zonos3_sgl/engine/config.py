@@ -5,8 +5,9 @@ from functools import cached_property
 from typing import TYPE_CHECKING, List
 
 import torch
-from zonos3_sgl.distributed import DistributedInfo
 from zonos3.utils.hf import cached_load_checkpoint_config
+
+from zonos3_sgl.distributed import DistributedInfo
 
 if TYPE_CHECKING:
     from zonos3.models.config import ModelConfig

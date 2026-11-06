@@ -193,15 +193,15 @@ def test_raw_reference_checkpoints_resolve_voice_ids_to_reference_audio(tmp_path
     config = _DefaultVoiceConfig(tmp_path)
 
     def resolve(**overrides):
-        request = dict(
-            config=config,
-            session_id="session",
-            speaker_audio_base64=None,
-            speaker_embedding_base64=None,
-            speaker_embedding_id=None,
-            speaker_blend_embedding_id_a=None,
-            speaker_blend_embedding_id_b=None,
-        )
+        request = {
+            "config": config,
+            "session_id": "session",
+            "speaker_audio_base64": None,
+            "speaker_embedding_base64": None,
+            "speaker_embedding_id": None,
+            "speaker_blend_embedding_id_a": None,
+            "speaker_blend_embedding_id_b": None,
+        }
         request.update(overrides)
         return asyncio.run(api_server._resolve_speaker_reference_audio(**request))
 

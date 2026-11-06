@@ -162,12 +162,12 @@ class PhonemeLexicon:
         segments, pos = [], 0
         for a, b, ipa, status in spans:
             if a > pos:
-                segments.append(dict(text=text[pos:a], ipa=None, status=None))
-            segments.append(dict(text=text[a:b], ipa=ipa, status=status))
+                segments.append({"text": text[pos:a], "ipa": None, "status": None})
+            segments.append({"text": text[a:b], "ipa": ipa, "status": status})
             pos = b
         if pos < len(text):
-            segments.append(dict(text=text[pos:], ipa=None, status=None))
-        return dict(language=code, segments=segments)
+            segments.append({"text": text[pos:], "ipa": None, "status": None})
+        return {"language": code, "segments": segments}
 
     @staticmethod
     def _word_spans(text: str) -> list[tuple[int, int]]:

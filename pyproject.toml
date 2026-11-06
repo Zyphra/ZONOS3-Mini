@@ -19,9 +19,6 @@ fusealign-hub = { path = "third_party/fusealign-multilingual", editable = true }
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
-    "black>=22.0",
-    "flake8>=4.0",
-    "mypy>=0.950",
     "pre-commit>=3.0.0",
     "ruff>=0.11.0",
     "matplotlib>=3.10.5",
@@ -51,67 +48,20 @@ markers = [
     "gpu: test loads model weights and requires a GPU (set ZONOS3_TEST_MODEL to run)",
 ]
 
-[tool.black]
-line-length = 100
-target-version = ['py310']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
 [tool.ruff]
-target-version = "py310"
-line-length = 100
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+    "model/src/zonos3/vendor",
+    "model/src/zonos3/models/third_party",
+    "third_party",
+    "servers/ggml/ggml",
+    "servers/ggml/vendor",
+    ".avsync",
+]
 lint.select = [
     "W",  # pycodestyle warnings
     "F",  # pyflakes
     "I",  # isort
     "C4", # flake8-comprehensions
 ]
-lint.ignore = [
-    "E501",  # line too long, handled by black
-    "B008",  # do not perform function calls in argument defaults
-    "C901",  # too complex
-]
-exclude = [
-    ".git",
-    ".venv",
-    "build",
-    "dist",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-
-[[tool.mypy.overrides]]
-module = [
-    "torch.*",
-    "transformers.*",
-    "datasets.*",
-]
-ignore_missing_imports = true

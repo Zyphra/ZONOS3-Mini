@@ -59,18 +59,18 @@ def condition_spec(*, names: Sequence[str], count: int, bucket_counts: Sequence[
     names = [str(name) for name in names][:count]
     counts = dict(zip(names, (int(n) for n in bucket_counts)))
     flag_specs = {str(name): dict(spec or {}) for name, spec in (flags or {}).items()}
-    return dict(
-        enabled=True,
-        names=names,
+    return {
+        "enabled": True,
+        "names": names,
         # flag rows (the encode-start finetunes): ids restricted to the flag's values, no edges
-        flags={name: flag_specs[name] for name in names if name in flag_specs},
-        count=count,
-        bucket_counts=counts,
-        unknown_ids=dict(counts),
-        edges={str(name): [float(x) for x in (values or ())] for name, values in (edges or {}).items()},
-        units=dict(units or {}),
-        layout="[reference prefix | speaker row]" + "".join(f"[{name}]" for name in names) + " BOS text EOS",
-    )
+        "flags": {name: flag_specs[name] for name in names if name in flag_specs},
+        "count": count,
+        "bucket_counts": counts,
+        "unknown_ids": dict(counts),
+        "edges": {str(name): [float(x) for x in (values or ())] for name, values in (edges or {}).items()},
+        "units": dict(units or {}),
+        "layout": "[reference prefix | speaker row]" + "".join(f"[{name}]" for name in names) + " BOS text EOS",
+    }
 
 
 def dual_codec_hop(audio_codec: str) -> int | None:
@@ -88,14 +88,14 @@ def silence_prefill_spec(audio_codec: str, hop: int | None) -> dict:
     default (zonos3.tts.plan.silence_prefill_default)."""
     codec = str(audio_codec or "")
     if hop is None:
-        return dict(available=False, default_frames=None, codec=codec)
+        return {"available": False, "default_frames": None, "codec": codec}
     default = silence_prefill_default()
-    return dict(available=True, default_frames=default.frames, default_on=default.on,
-                default_seconds=round(default.frames * hop / SAMPLE_RATE, 3), frame_seconds=hop / SAMPLE_RATE,
-                codec=codec,
-                note="codec-matched silence frames open the audio stream before the model starts (their audio is not "
+    return {"available": True, "default_frames": default.frames, "default_on": default.on,
+                "default_seconds": round(default.frames * hop / SAMPLE_RATE, 3), "frame_seconds": hop / SAMPLE_RATE,
+                "codec": codec,
+                "note": "codec-matched silence frames open the audio stream before the model starts (their audio is not "
                      "emitted); a request without silence_prefill_frames gets the server default, "
-                     "silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length")
+                     "silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length"}
 
 
 def tag_cfg_capabilities(available: bool, trained: bool) -> dict:
@@ -113,7 +113,7 @@ def decoder_capability(audio_codec: str) -> dict | None:
     try:
         return dict(decoder_info(codec), codec=codec)
     except Exception as exc:  # noqa: BLE001
-        return dict(codec=codec, error=str(exc))
+        return {"codec": codec, "error": str(exc)}
 
 
 def phoneme_capabilities(text_tokenizer_spec: dict | None, lexicon) -> dict:

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
 from zonos3_sgl.models.zonos3 import MultiOutputHead, head_min_rows
 
 

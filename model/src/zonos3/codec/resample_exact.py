@@ -1,6 +1,6 @@
 """Torchaudio sinc kernels with integer-exact output length for long files."""
-import torch
 from torch.nn import functional as F
+
 
 def output_length(samples,source_rate,target_rate):
     return (int(samples)*int(target_rate)+int(source_rate)-1)//int(source_rate)

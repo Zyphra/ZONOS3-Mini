@@ -12,6 +12,7 @@ text_normalization flag.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -19,7 +20,6 @@ from typing import Dict, Optional
 
 from zonos3 import languages
 from zonos3.tts.markup import has_nonverbal_markup, split_nonverbal_markup
-import logging
 
 logger = logging.getLogger(__name__)
 

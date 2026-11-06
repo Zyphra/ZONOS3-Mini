@@ -5,11 +5,13 @@ Baseline cosine supervision, feature pooling and codebook settings are retained.
 SSL features are required at encoding time; token decoding is self-contained.
 """
 import torch
-from torch import nn
-from torch.nn import functional as F
 from dac.nn.layers import WNConv1d
 from dac.nn.quantize import ResidualVectorQuantize
+from torch import nn
+from torch.nn import functional as F
+
 from zonos3.codec.s1dac.losses import average_ssl_frames
+
 from .base_model import MossCodec as BaseCodec
 
 
@@ -59,10 +61,10 @@ class MossCodec(BaseCodec):
             residual = acoustic.float() - semantic.float()
             qr, cr, _, commitmentr, codebookr = self.quantizer.quantizer(residual, n_quantizers=n_quantizers)
             z = semantic.float() + qr
-        return dict(z=z, codes=torch.cat([c1, cr], dim=1),
-                    semantic_prediction=semantic,
-                    commitment=commitment1 + commitmentr,
-                    codebook=codebook1 + codebookr)
+        return {'z': z, 'codes': torch.cat([c1, cr], dim=1),
+                    'semantic_prediction': semantic,
+                    'commitment': commitment1 + commitmentr,
+                    'codebook': codebook1 + codebookr}
 
     def forward(self, audio, ssl_features=None, **kwargs):
         if ssl_features is None:

@@ -8,6 +8,12 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
+from zonos3.models.config import (
+    get_routed_moe_dim,
+    normalize_moe_balancing_strategy,
+    normalize_moe_router_type,
+)
+
 from zonos3_sgl.core import get_global_ctx
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.layers import (
@@ -28,15 +34,10 @@ from zonos3_sgl.layers.accent import (
 )
 from zonos3_sgl.layers.linear import LinearReplicated
 from zonos3_sgl.layers.moe.fused_moe.layer import FusedMoE
-from zonos3_sgl.utils.misc import divide_even
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import divide_even
 from zonos3_sgl.utils.torch_utils import nvtx_annotate
 
-from zonos3.models.config import (
-    get_routed_moe_dim,
-    normalize_moe_balancing_strategy,
-    normalize_moe_router_type,
-)
 from .speaker_lda import SpeakerLDAProjection
 
 _model_debug_counter = 0

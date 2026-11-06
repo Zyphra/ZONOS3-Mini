@@ -4,7 +4,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
-
 from zonos3.tts.prompt import TTSPromptConfig, speaker_reference_prefix_tokens
 
 

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import torch
-
 from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING
 
 from .utils import deserialize_type, serialize_type

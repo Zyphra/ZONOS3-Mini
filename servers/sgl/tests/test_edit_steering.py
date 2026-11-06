@@ -106,11 +106,11 @@ def test_region_doses_add_to_the_shared_controls_per_id(serve, bundle):
 
 
 @pytest.mark.parametrize("fields, message", [
-    (dict(region_controls=[{"style.whisper": 1}]), "needs explicit spans"),
-    (dict(spans=SPANS, region_controls=[None, {"style.whisper": 1}]), "2 entries for 3 spans"),
-    (dict(spans=SPANS, region_controls=[None, None, {"style.shout": 1}]), "Unknown control"),
-    (dict(controls={"who.gender": 1}, speaker_embedding=False), "need the speaker row"),
-    (dict(spans=SPANS, region_controls=[None, None, {"style.whisper": float("inf")}]), "finite"),
+    ({"region_controls": [{"style.whisper": 1}]}, "needs explicit spans"),
+    ({"spans": SPANS, "region_controls": [None, {"style.whisper": 1}]}, "2 entries for 3 spans"),
+    ({"spans": SPANS, "region_controls": [None, None, {"style.shout": 1}]}, "Unknown control"),
+    ({"controls": {"who.gender": 1}, "speaker_embedding": False}, "need the speaker row"),
+    ({"spans": SPANS, "region_controls": [None, None, {"style.whisper": float("inf")}]}, "finite"),
 ])
 def test_bad_region_controls_are_refused(serve, bundle, fields, message):
     assert message in _edit(serve(bundle), **fields)

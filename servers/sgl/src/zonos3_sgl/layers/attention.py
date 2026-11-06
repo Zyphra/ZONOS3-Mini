@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
+
 from zonos3_sgl.core import get_global_ctx
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.utils.misc import divide_even
@@ -11,8 +12,9 @@ from .base import StateLessOP
 from .rotary import get_rope
 
 if TYPE_CHECKING:
-    from zonos3_sgl.layers import RMSNorm
     from zonos3.models.config import RotaryConfig
+
+    from zonos3_sgl.layers import RMSNorm
 
 
 class AttentionLayer(StateLessOP):

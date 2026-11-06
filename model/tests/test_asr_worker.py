@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import soundfile as sf
-
 from zonos3.tts.edit_align import AsrError, AsrWorker
 from zonos3.workers import asr as worker
 

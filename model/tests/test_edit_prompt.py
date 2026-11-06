@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import torch
 from zonos3.tts.edit import edit_prompt_tokens, extract_fill, splice_edit
-from zonos3.tts.prompt import TTSPromptConfig, shear
 from zonos3.tts.edit_align import AlignedWord, diff_spans, new_word_confidence, seconds_to_spans
+from zonos3.tts.prompt import TTSPromptConfig, shear
 
 
 @pytest.mark.parametrize('spans', [((0, 10),), ((50, 10),), ((5, 10), (25, 8), (50, 10)), ((5, 10), (20, 8))])

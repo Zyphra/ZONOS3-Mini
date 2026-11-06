@@ -31,14 +31,14 @@ def spec(tmp_path):
                                      whitespace=True)
     path = tmp_path / "superbpe.json"
     path.write_text(tokenizer)
-    return dict(kind="superbpe", path=str(path), sha256=sha256_file(path),
-                vocab_size=size, offset=4, bos=2, eos=3)
+    return {"kind": "superbpe", "path": str(path), "sha256": sha256_file(path),
+                "vocab_size": size, "offset": 4, "bos": 2, "eos": 3}
 
 
 def phoneme_spec(spec):
     text_vocab = spec["vocab_size"] + 4
-    return {**spec, "phonemes": dict(open_id=text_vocab + 1, close_id=text_vocab + 2, symbols=list("stɛlə"),
-                                     open_marker=O, close_marker=C, inventory_sha256="0" * 64)}
+    return {**spec, "phonemes": {"open_id": text_vocab + 1, "close_id": text_vocab + 2, "symbols": list("stɛlə"),
+                                     "open_marker": O, "close_marker": C, "inventory_sha256": "0" * 64}}
 
 
 # ------------------------------------------------------------------------------------------------- token mapping

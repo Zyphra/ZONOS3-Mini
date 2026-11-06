@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     import torch
+
     from zonos3_sgl.core import TTSBatch
 
 

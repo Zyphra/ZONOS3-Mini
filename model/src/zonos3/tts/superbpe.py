@@ -11,7 +11,9 @@ after the speech-edit marker rows of an edit checkpoint (open_id = text_vocab + 
 import json
 from functools import lru_cache
 from pathlib import Path
+
 from zonos3.utils.hashing import sha256_bytes
+
 PHONEME_OPEN,PHONEME_CLOSE="\ue000","\ue001"  # lingua apps.zonos.phonemes markers (the spec carries its own)
 @lru_cache(maxsize=8)
 def tokenizer(path,sha,size):
@@ -65,7 +67,7 @@ def payload_ids(text,spec):
 def text_ids(text,spec):
     return [2]+payload_ids(text,spec)+[3]
 def load_spec(model_path):
-    from zonos3.utils.release import resolve_dir_or_local,resolve_tokenizer_path
+    from zonos3.utils.release import resolve_dir_or_local, resolve_tokenizer_path
     model_dir=resolve_dir_or_local(str(model_path))
     model=json.loads((Path(model_dir)/'params.json').read_text())['model']
     spec=model.get('text_tokenizer_spec')

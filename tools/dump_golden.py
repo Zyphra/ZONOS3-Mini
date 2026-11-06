@@ -580,7 +580,7 @@ def run_codec_encoder(args, parser):
         def teacher_norm_hook(mod, inp, output):
             save(p() + '.ssl.feature_input', inp[0], False, expected=False)
             save(p() + '.ssl.feature_norm', output, False, expected=False)
-            teacher_precision[p()] = dict(feature_input=str(inp[0].dtype), feature_norm=str(output.dtype))
+            teacher_precision[p()] = {"feature_input": str(inp[0].dtype), "feature_norm": str(output.dtype)}
         def teacher_projection_hook(mod, inp, output):
             save(p() + '.ssl.feature_projection', output, False, expected=False)
             teacher_precision[p()]['feature_projection'] = str(output.dtype)
@@ -643,9 +643,9 @@ def run_codec_encoder(args, parser):
                     backend = torch.ops.aten._fused_sdp_choice.default(
                         q, k, v, bias, kwargs.get('dropout_p', 0.), kwargs.get('is_causal', False),
                         scale=kwargs.get('scale'), enable_gqa=kwargs.get('enable_gqa', False))
-                first_attention_backends.setdefault(p() + '.stage.0.l0', []).append(dict(
-                    backend=int(backend), query_shape=list(q.shape), key_shape=list(k.shape),
-                    query_dtype=str(q.dtype), mask_dtype=str(bias.dtype) if bias is not None else None))
+                first_attention_backends.setdefault(p() + '.stage.0.l0', []).append({
+                    "backend": int(backend), "query_shape": list(q.shape), "key_shape": list(k.shape),
+                    "query_dtype": str(q.dtype), "mask_dtype": str(bias.dtype) if bias is not None else None})
             return original_sdpa(query, key, value, *inputs, **kwargs)
         def sem_hook(mod, inp, output):
             save(p() + '.pooled', inp[0])
@@ -683,7 +683,7 @@ def run_codec_encoder(args, parser):
                 start = piece.output_start_frame
                 chunk = codes[0, start:start+piece.output_frames].cpu().numpy().astype(np.int32)
                 chunks.append(chunk)
-                pieces.append(dict(lane=i, context_frames=piece.context_frames, output_start_frame=start, output_frames=piece.output_frames))
+                pieces.append({"lane": i, "context_frames": piece.context_frames, "output_start_frame": start, "output_frames": piece.output_frames})
         finally:
             torch.nn.functional.scaled_dot_product_attention = original_sdpa
             for handle in handles:
@@ -694,19 +694,19 @@ def run_codec_encoder(args, parser):
         raise RuntimeError(f'actual frozen reference produced invalid shape/codes: {codes.shape}, expected {expected}')
     np.save(out / 'codes.npy', np.ascontiguousarray(codes), allow_pickle=False)
     expected_tensors.append('codes')
-    (out / 'manifest.json').write_text(json.dumps(dict(generator=str(generator), step=600000,
-        teacher=str(teacher_path), teacher_layer=16, precision='fp32_weights_bf16_encoder_teacher_semantic_modules_fp32_rvq',
-        recipe='zonos3.codec.codec_adapter.MossAutoencoder._prepare/_dual;IndependentBatcher._record/_prepare_batch',
-        audio_samples=int(audio.size), audio_sha256=hashlib.sha256(audio.tobytes()).hexdigest(),
-        expected_tensors=expected_tensors,
-        teacher_capture_tensors=teacher_capture_tensors, teacher_precision=teacher_precision,
-        first_attention_backends=first_attention_backends,
-        runtime=dict(python=sys.executable, torch=torch.__version__, torch_file=torch.__file__,
-                     transformers=transformers.__version__, transformers_file=transformers.__file__,
-                     teacher_implementation=sys.modules[Wav2Vec2BertModel.__module__].__file__,
-                     torchaudio=torchaudio.__version__, torchaudio_file=torchaudio.__file__,
-                     quantizer_implementation=sys.modules[type(quantizers[0]).__module__].__file__),
-        sample_rate=44100, batch_size=args.batch_size, codes_shape=list(codes.shape), pieces=pieces), indent=2) + '\n')
+    (out / 'manifest.json').write_text(json.dumps({"generator": str(generator), "step": 600000,
+        "teacher": str(teacher_path), "teacher_layer": 16, "precision": 'fp32_weights_bf16_encoder_teacher_semantic_modules_fp32_rvq',
+        "recipe": 'zonos3.codec.codec_adapter.MossAutoencoder._prepare/_dual;IndependentBatcher._record/_prepare_batch',
+        "audio_samples": int(audio.size), "audio_sha256": hashlib.sha256(audio.tobytes()).hexdigest(),
+        "expected_tensors": expected_tensors,
+        "teacher_capture_tensors": teacher_capture_tensors, "teacher_precision": teacher_precision,
+        "first_attention_backends": first_attention_backends,
+        "runtime": {"python": sys.executable, "torch": torch.__version__, "torch_file": torch.__file__,
+                     "transformers": transformers.__version__, "transformers_file": transformers.__file__,
+                     "teacher_implementation": sys.modules[Wav2Vec2BertModel.__module__].__file__,
+                     "torchaudio": torchaudio.__version__, "torchaudio_file": torchaudio.__file__,
+                     "quantizer_implementation": sys.modules[type(quantizers[0]).__module__].__file__},
+        "sample_rate": 44100, "batch_size": args.batch_size, "codes_shape": list(codes.shape), "pieces": pieces}, indent=2) + '\n')
     print(f'wrote frozen dual encoder goldens: {codes.shape[0]} frames, {len(pieces)} padded lanes to {out}')
     if args.compare:
         native = np.load(args.compare, allow_pickle=False)
@@ -848,10 +848,10 @@ def run_ssl_teacher(args, parser):
             save("diagnostic_projection_premature_rounding", prebiased)
             for name, values in (("f32_gemm", f32_gemm), ("premature_rounding", prebiased)):
                 difference = values.float() - output.float()
-                projection_diagnostics[name] = dict(
-                    mismatched=int(torch.count_nonzero(difference)),
-                    maxabs=float(difference.abs().max()),
-                    rmse=float(difference.square().mean().sqrt()))
+                projection_diagnostics[name] = {
+                    "mismatched": int(torch.count_nonzero(difference)),
+                    "maxabs": float(difference.abs().max()),
+                    "rmse": float(difference.square().mean().sqrt())}
     handles = [
         model.feature_projection.layer_norm.register_forward_hook(norm_hook),
         model.feature_projection.projection.register_forward_hook(projection_hook),
@@ -871,15 +871,15 @@ def run_ssl_teacher(args, parser):
                 f32_mm = torch.mm(flat.float(), weight.T.float()).to(module.weight.dtype)
             reference = output.transpose(1, 2)
             save(f"diagnostic_{name}.input", operands)
-            stats = dict(input_dtype=str(inputs[0].dtype), operand_dtype=str(operands.dtype),
-                         weight_dtype=str(weight.dtype), output_dtype=str(output.dtype))
+            stats = {"input_dtype": str(inputs[0].dtype), "operand_dtype": str(operands.dtype),
+                         "weight_dtype": str(weight.dtype), "output_dtype": str(output.dtype)}
             for label, values in (("bf16_linear", bf16_linear), ("bf16_mm_f32_output", bf16_mm_f32), ("f32_mm", f32_mm)):
                 values = values.reshape(reference.shape)
                 save(f"diagnostic_{name}.{label}", values)
                 difference = values.float() - reference.float()
-                stats[label] = dict(mismatched=int(torch.count_nonzero(difference)),
-                                    maxabs=float(difference.abs().max()),
-                                    rmse=float(difference.square().mean().sqrt()))
+                stats[label] = {"mismatched": int(torch.count_nonzero(difference)),
+                                    "maxabs": float(difference.abs().max()),
+                                    "rmse": float(difference.square().mean().sqrt())}
             convolution_diagnostics[name] = stats
         conv = model.encoder.layers[0].conv_module
         for name, module in (("enc.0.conv.pw1", conv.pointwise_conv1), ("enc.0.conv.pw2", conv.pointwise_conv2)):
@@ -973,25 +973,25 @@ def run_ssl_teacher(args, parser):
         expected_tensors.append(f"hidden_{layer}")
     np.save(args.out / "output.npy", result.last_hidden_state[0].float().cpu().numpy())
     expected_tensors.append("output")
-    (args.out / "manifest.json").write_text(json.dumps(dict(
-        teacher=str(args.teacher.resolve()), precision=args.dtype, device=args.device,
-        recipe="zonos3.codec.codec_adapter.MossAutoencoder._dual CUDA autocast BF16" if args.dtype == "bf16" else "F32 diagnostic without autocast",
-        expected_tensors=expected_tensors, projection_diagnostics=projection_diagnostics,
-        operation_dtypes=operation_dtypes,
-        convolution_diagnostics=convolution_diagnostics,
-        hidden_dtypes=[str(state.dtype) for state in result.hidden_states],
-        runtime=dict(python=sys.executable, torch=torch.__version__, torch_file=torch.__file__,
-                     transformers=transformers.__version__, transformers_file=transformers.__file__,
-                     teacher_implementation=sys.modules[Wav2Vec2BertModel.__module__].__file__,
-                     torchaudio=torchaudio.__version__, torchaudio_file=torchaudio.__file__,
-                     allow_tf32=torch.backends.cuda.matmul.allow_tf32,
-                     allow_bf16_reduced_precision_reduction=torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction),
-        convolution_runtime=dict(cudnn_version=torch.backends.cudnn.version(),
-                                 cudnn_enabled=torch.backends.cudnn.enabled,
-                                 cudnn_allow_tf32=torch.backends.cudnn.allow_tf32,
-                                 cudnn_benchmark=torch.backends.cudnn.benchmark,
-                                 cudnn_deterministic=torch.backends.cudnn.deterministic),
-    ), indent=2) + "\n")
+    (args.out / "manifest.json").write_text(json.dumps({
+        "teacher": str(args.teacher.resolve()), "precision": args.dtype, "device": args.device,
+        "recipe": "zonos3.codec.codec_adapter.MossAutoencoder._dual CUDA autocast BF16" if args.dtype == "bf16" else "F32 diagnostic without autocast",
+        "expected_tensors": expected_tensors, "projection_diagnostics": projection_diagnostics,
+        "operation_dtypes": operation_dtypes,
+        "convolution_diagnostics": convolution_diagnostics,
+        "hidden_dtypes": [str(state.dtype) for state in result.hidden_states],
+        "runtime": {"python": sys.executable, "torch": torch.__version__, "torch_file": torch.__file__,
+                     "transformers": transformers.__version__, "transformers_file": transformers.__file__,
+                     "teacher_implementation": sys.modules[Wav2Vec2BertModel.__module__].__file__,
+                     "torchaudio": torchaudio.__version__, "torchaudio_file": torchaudio.__file__,
+                     "allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+                     "allow_bf16_reduced_precision_reduction": torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction},
+        "convolution_runtime": {"cudnn_version": torch.backends.cudnn.version(),
+                                 "cudnn_enabled": torch.backends.cudnn.enabled,
+                                 "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+                                 "cudnn_benchmark": torch.backends.cudnn.benchmark,
+                                 "cudnn_deterministic": torch.backends.cudnn.deterministic},
+    }, indent=2) + "\n")
     print(f"features: {features.shape}, valid={mask.sum()}/{len(mask)}, dtype={args.dtype}", flush=True)
 
 
