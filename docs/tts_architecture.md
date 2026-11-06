@@ -178,8 +178,8 @@ checkpoint's `audio_codec`). Only matched codecs of the codec registry are accep
 
 ### Codec registry
 
-`zonos3/registries/codec_registry_keep2_plain.json` (the default: the pruned `keep2_plain` decoder head; override:
-`ZONOS3_CODEC_REGISTRY`, e.g. `zonos3/registries/codec_registry.json` for the full-size `full_mr` head) holds one entry
+`zonos3/registries/codec_registry_keep2_plain.json` (the pruned `keep2_plain` decoder head of the Python servers; the
+full-size `full_mr` head is a GGUF option of the ggml and MLX servers, `zac.gguf`) holds one entry
 per codec. The ZONOS3 Mini entry
 (`opus_dual_3n_600k_sched600k_r4096_step600000`, family `dual`) declares:
 
@@ -267,7 +267,7 @@ other linears, the FLA chunk kernel, SonicMoE, the training RMSNorm and AttnRes 
 
 Text uses the SuperBPE convention in `zonos3/tts/superbpe.py` (`[2] + (ids + 4) + [3]`, artifact pinned by SHA-256 through
 `params.json`). Audio uses 10 codebooks of 4096 (`eoa_id` 4096, `audio_pad_id` 4097) from the dual codec; the matched
-codec registry (`zonos3/tokenizer/matched_codec.py`, `ZONOS3_CODEC_REGISTRY`) provides both the encoder for reference audio
+codec registry (`zonos3/tokenizer/matched_codec.py`) provides both the encoder for reference audio
 (`zonos3/tokenizer/dual_reference.py`) and the vocoder. The raw-audio reference prefix (`speaker_reference_prefix_tokens` in
 `zonos3/tts/prompt.py`, or caller-supplied `speaker_reference_codes`) precedes the text rows; speaker CFG removes it for the
 unconditional twin. Speech-editing checkpoints add a span-end row per codebook (`span_end_id` 4098) and

@@ -1,18 +1,18 @@
 """Decode the frozen codec used to tokenize each matched LM's training data.
 
-Decoding goes through the causal multi-resolution iSTFT head declared by the registry entry's ``decoder`` block: by
-default the KEEP-2 pruned head (``codec_registry_keep2_plain.json``, istft_head_a_20261002 full-unfreezeall-mr-drop30-4x10;
-KEEP2_DEFAULT_20261103); ``ZONOS3_CODEC_REGISTRY=<registries>/codec_registry.json`` selects the full-decoder MR head.
+Decoding goes through the causal multi-resolution iSTFT head declared by the registry entry's ``decoder`` block: the
+KEEP-2 pruned head (``codec_registry_keep2_plain.json``, istft_head_a_20261002 full-unfreezeall-mr-drop30-4x10).
 The 600k conv-tail decoder is never used. The 600k generator.pt only supplies the frozen encoder/quantizer and the
 initial decoder stages that the head checkpoint then overrides."""
-import hashlib,json,os,time
+import functools,hashlib,json,os,time
 from pathlib import Path
 import torch
 from zonos3.utils.release import hf_join,resolve_file  # RELEASE_HF_20261021
-REGISTRY=os.environ.get('ZONOS3_CODEC_REGISTRY') or str(Path(__file__).resolve().parents[1]/'registries'/'codec_registry_keep2_plain.json')  # may be hf://
+REGISTRY=Path(__file__).resolve().parents[1]/'registries'/'codec_registry_keep2_plain.json'
 _CACHE={}
 _INFO={}
-def registry():return json.loads(Path(resolve_file(REGISTRY)).read_text())
+@functools.cache
+def registry():return json.loads(REGISTRY.read_text())
 def codec_names():return {v['codec'] for v in registry().values()}
 def entry(codec):
     values=[v for v in registry().values() if v['codec']==codec]
@@ -23,7 +23,7 @@ def decoder_spec(codec):
     e=entry(codec)
     spec=e.get('decoder')
     if not spec or spec.get('kind')!='istft_mr':
-        raise RuntimeError(f'matched codec {codec!r} declares no iSTFT decoder in {REGISTRY}; the conv-tail decoder is disabled')
+        raise RuntimeError(f'matched codec {codec!r} declares no iSTFT decoder; the conv-tail decoder is disabled')
     return spec
 def decoder_headroom_db(codec):
     return float(decoder_spec(codec).get('headroom_db',0.0))

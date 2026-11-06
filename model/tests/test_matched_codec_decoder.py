@@ -1,4 +1,5 @@
 """The matched codec decodes only through the causal iSTFT head declared in the registry (no conv-tail fallback)."""
+import copy
 import json
 from pathlib import Path
 
@@ -23,7 +24,7 @@ def test_registry_declares_the_istft_decoder():
 
 
 def test_a_codec_without_the_decoder_block_is_refused(monkeypatch):
-    reg = matched_codec.registry()
+    reg = copy.deepcopy(matched_codec.registry())  # the module's registry is parsed once and shared
     for value in reg.values():
         value.pop("decoder", None)
     monkeypatch.setattr(matched_codec, "registry", lambda: reg)

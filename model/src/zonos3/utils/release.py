@@ -17,7 +17,6 @@ from pathlib import Path
 PREFIX = "hf://"
 RELEASE_REPO = os.environ.get("ZONOS3_RELEASE_REPO", "Zyphra/ZONOS3_Mini_release_ckpts")
 RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/rate30_20k_r2grpo")
-RELEASE_CODEC_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/codec_registry_keep2_plain.json"   # KEEP2_DEFAULT_20261103
 RELEASE_SPEAKER_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/speaker_encoder_registry.json"
 
 

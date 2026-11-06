@@ -286,7 +286,7 @@ def build_params(training_config: dict[str, Any], dtype_name: str) -> dict[str, 
             if audio_codec not in codec_names():
                 raise ValueError(
                     f"Unsupported data.codec={audio_codec!r}: ZONOS3 converts checkpoints of the codecs in "
-                    f"registries/codec_registry.json {sorted(codec_names())}"
+                    f"registries/codec_registry_keep2_plain.json {sorted(codec_names())}"
                 )
         speaker_codec = data_config.get("speaker_embedding_codec")
         if speaker_codec and params.get("speaker_enabled"):
