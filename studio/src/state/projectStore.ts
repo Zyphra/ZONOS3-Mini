@@ -4,7 +4,8 @@
  * stale copy (another tab, another browser) is refused with RevisionConflict instead of overwriting.
  */
 import * as api from '../api';
-import { MissingMedia, RevisionConflict, type Revision, type ServerProjectEntry } from '../api';
+import { MissingMedia, RevisionConflict } from '../lib/http';
+import { type Revision, type ServerProjectEntry } from '../api';
 import { hash128, isSha256, sha256Async } from '../lib/hash';
 import { committed, openDb, request } from '../lib/idb';
 import { stored } from './media';

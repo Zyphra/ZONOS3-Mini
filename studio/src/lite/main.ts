@@ -11,8 +11,8 @@ import { bytesToBase64, download, encodeNpy, encodeWav, slug } from '../lib/file
 import { langLabel } from '../lib/languages';
 import { drawWave } from '../lib/wave';
 import { onEncoderProgress, usingWebEngine, type Download } from '../lib/web-engine';
+import { ApiError } from '../lib/http';
 import {
-  ApiError,
   connect,
   createSpeaker,
   generateStream,

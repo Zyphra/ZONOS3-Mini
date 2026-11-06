@@ -8,9 +8,8 @@
  * no ZONOS server answers and this browser and site can run it. Every request carries `X-TTS-Session-ID`, random
  * per tab and kept in sessionStorage, so the voices this tab caches stay its own.
  */
-import createClient from 'openapi-fetch';
-import type { Readable } from 'openapi-typescript-helpers';
 import type { components, paths } from '../api/schema';
+import { ApiError, createHttp, newSessionId, readError, readFloat32Stream } from '../lib/http';
 import { selectWebEngine, startWebEngine, transport, webEngineAvailable, type Download } from '../lib/web-engine';
 
 type Schemas = components['schemas'];
@@ -28,13 +27,6 @@ if (mode === 'web') selectWebEngine();
 
 const SESSION_KEY = 'zonos3.lite.session';
 
-function newSessionId(): string {
-  // crypto.randomUUID exists only in secure contexts; a plain-http cluster host has none.
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 const sessionId: string = (() => {
   try {
     const saved = sessionStorage.getItem(SESSION_KEY);
@@ -47,54 +39,7 @@ const sessionId: string = (() => {
   }
 })();
 
-export class ApiError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-  }
-}
-
-/** The server's `detail`: a string (400/404/500) or the 422 list of `{loc, msg}`. */
-function detailText(status: number, body: unknown): string {
-  const detail = (body as { detail?: unknown } | null)?.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((d: { loc?: unknown; msg?: unknown }) => {
-        const loc = Array.isArray(d?.loc) ? d.loc.filter((p) => p !== 'body').join('.') : '';
-        const msg = typeof d?.msg === 'string' ? d.msg : JSON.stringify(d);
-        return loc ? `${loc}: ${msg}` : msg;
-      })
-      .join('; ');
-  }
-  if (typeof body === 'string' && body.trim() && !/^\s*</.test(body)) return body.slice(0, 300);
-  return `The server answered ${status}`;
-}
-
-async function responseError(res: Response): Promise<ApiError> {
-  const text = await res.text().catch(() => '');
-  let body: unknown = text;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    /* not JSON: the text itself */
-  }
-  return new ApiError(res.status, detailText(res.status, body));
-}
-
-const client = createClient<paths>({ baseUrl: server, fetch: transport });
-client.use({
-  onRequest({ request }) {
-    request.headers.set('X-TTS-Session-ID', sessionId);
-    return request;
-  },
-});
-
-/** A client call's data typed as the spec schema `T`; an HTTP error becomes an ApiError with its `detail`. */
-async function ok<T>(call: Promise<{ data?: Readable<T>; error?: unknown; response: Response }>): Promise<T> {
-  const { data, error, response } = await call;
-  if (!response.ok) throw new ApiError(response.status, detailText(response.status, error));
-  return data as T;
-}
+const { client, headers, ok } = createHttp<paths>({ baseUrl: server, session: () => sessionId, fetch: transport });
 
 const capabilities = () => ok<Capabilities>(client.GET('/v2/capabilities'));
 
@@ -139,9 +84,9 @@ export async function speakerEmbedding(id: string): Promise<Float32Array> {
 
 export async function speakerPreview(id: string): Promise<Blob> {
   const res = await transport(`${server}/v2/speakers/${encodeURIComponent(id)}/preview`, {
-    headers: { 'X-TTS-Session-ID': sessionId },
+    headers: headers(),
   });
-  if (!res.ok) throw await responseError(res);
+  if (!res.ok) throw await readError(res);
   return res.blob();
 }
 
@@ -156,28 +101,13 @@ export async function generateStream(
 ): Promise<{ seed: string | null }> {
   const res = await transport(`${server}/v2/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-TTS-Session-ID': sessionId },
+    headers: headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok) throw await responseError(res);
+  if (!res.ok) throw await readError(res);
   if (!res.body) throw new ApiError(res.status, 'The response has no body');
   const seed = res.headers.get('X-Seed');
-  const reader = res.body.getReader();
-  let carry = new Uint8Array(0);
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    let bytes = value;
-    if (carry.length) {
-      bytes = new Uint8Array(carry.length + value.length);
-      bytes.set(carry);
-      bytes.set(value, carry.length);
-    }
-    const whole = bytes.length - (bytes.length % 4);
-    carry = bytes.slice(whole);
-    // slice: an own, 4-byte aligned buffer for the Float32Array view (float32 little-endian on the wire).
-    if (whole) onPcm(new Float32Array(bytes.slice(0, whole).buffer));
-  }
+  await readFloat32Stream(res.body, onPcm);
   return { seed };
 }

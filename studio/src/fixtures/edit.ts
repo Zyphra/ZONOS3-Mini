@@ -5,7 +5,8 @@
  * from its energy envelope. Fills are synthesized with the clip's voice when it is known, spliced in with short
  * crossfades, verified with a simulated ASR that sometimes mishears a word.
  */
-import { ApiError, type Alignment, type ControlsSpec, type Dose, type EditCaps, type EditRequest, type EditResponse, type EditTake, type EditWord } from '../api';
+import { ApiError } from '../lib/http';
+import { type Alignment, type ControlsSpec, type Dose, type EditCaps, type EditRequest, type EditResponse, type EditTake, type EditWord } from '../api';
 import { resample } from '../audio/mix';
 import { contextWindows, diffOpcodes, isTagToken, normalizeTokens, tokenOwners, wordDiff } from '../edit/regions';
 import { base64ToBytes, bytesToBase64, encodeWav, parseWav } from '../lib/files';

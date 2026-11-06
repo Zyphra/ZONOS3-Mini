@@ -3,7 +3,8 @@
  * lexicon (US English), a few ambiguous / unsupported entries, and a letter-to-sound "guess" for the rest in the
  * guess languages, so every status the studio shows can be exercised offline.
  */
-import { ApiError, type PhonemeStatus, type PhonemizeResponse, type PronCaps } from '../api';
+import { ApiError } from '../lib/http';
+import { type PhonemeStatus, type PhonemizeResponse, type PronCaps } from '../api';
 import type { PronTokens } from '../lib/pron';
 
 const LEXICON: Record<string, string> = {
