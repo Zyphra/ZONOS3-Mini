@@ -78,7 +78,7 @@ voice-cloning page at `/lite` (pick, upload, record or load a voice embedding, t
 | `PHONEME_LEXICON` | Gold pronunciation lexicon directory (`--tts-phoneme-lexicon`) for `POST /v2/phonemize` |
 | `ZONOS3_STUDIO_PROJECTS` | Shared studio project store (`--studio-projects-dir`); empty (default) keeps projects in the browser |
 | `LACI_HEADS` | `"lang=path ..."` LACI alignment heads (`--laci-heads`) |
-| `LACI_ALL` | `1` passes LACI heads for every language that has them, from `LACI_HEADS_DIR` (default `laci_heads/`) |
+| `LACI_ALL` | `1` passes LACI heads for every server language, from `LACI_HEADS_DIR` (default `laci_heads/`): the directory's `*_heads.json` for every language, overridden by a `*_heads_<speech code>.json` (`*_heads_zh.json` for Chinese); `en_gb` included |
 | `PLUGINS` | `"name ..."` server plugins (`--plugins`), e.g. `dub` from [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) |
 
 ## Generate
