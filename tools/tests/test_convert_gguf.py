@@ -4,12 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import convert_gguf
 import numpy as np
 import pytest
 import torch
 from gguf import GGUFReader
-
-import convert_gguf
+from tiny_lm import write_lm_dir
 from zonos3.reference.lm import Zonos3LM, Zonos3LMConfig
 
 CODEC = "tiny_codec"
@@ -42,7 +42,6 @@ def tiny_params(span_end: bool = False, **overrides) -> dict:
 
 def make_tiny_lm_dir(path: Path, span_end: bool = False, seed: int = 0, **overrides) -> tuple[Path, Path]:
     """A random tiny LM checkpoint directory and its silence-frame JSON."""
-    path.mkdir(parents=True, exist_ok=True)
     params = tiny_params(span_end, **overrides)
     model = Zonos3LM(Zonos3LMConfig.from_params(params))
     generator = torch.Generator().manual_seed(seed)
@@ -50,12 +49,8 @@ def make_tiny_lm_dir(path: Path, span_end: bool = False, seed: int = 0, **overri
     for name, tensor in model.state_dict().items():
         value = torch.randn(tensor.shape, generator=generator) * 0.05
         state[name] = value if name.endswith("balancing_biases") else value.to(torch.bfloat16)
-    torch.save(state, path / "model.pth")
-    (path / "params.json").write_text(json.dumps({"model": params}))
-    (path / "tokenizer.json").write_text('{"model": {"type": "BPE"}}')
-    silence = path / "silence.json"
-    silence.write_text(json.dumps({"codec": CODEC, "frame": list(range(10))}))
-    return path, silence
+    write_lm_dir(path, params, state, silence=list(range(10)))
+    return path, path / "silence.json"
 
 
 @pytest.mark.parametrize("span_end", [False, True])

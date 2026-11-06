@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import soundfile as sf
+from _audio import write_wav
 
 MODEL_SRC = Path(__file__).resolve().parents[1] / "src"
 WORKER = MODEL_SRC / "zonos3" / "workers" / "pyhost.py"
@@ -188,14 +188,10 @@ class Ggml:
         return code
 
 
-def wav(path: str, frames: int, sample_rate: int) -> None:
-    sf.write(path, np.zeros(frames, dtype=np.float32), sample_rate, subtype="FLOAT")
-
-
 def engine(**override) -> dict:
     def decode_audio(call):
         assert Path(call["audio"]).read_bytes() == UPLOAD
-        wav(call["out"], 3 * 16000, 16000)
+        write_wav(call["out"], np.zeros(3 * 16000, np.float32), 16000, "FLOAT")
         return {"sample_rate": 16000}
 
     def fill(call):
@@ -203,7 +199,7 @@ def engine(**override) -> dict:
         return {"rows": [[900] * K] * (n + K - 1), "eos_frame": n}
 
     def decode(call):
-        wav(call["out"], len(call["codes"]) * 4410, 44100)
+        write_wav(call["out"], np.zeros(len(call["codes"]) * 4410, np.float32), 44100, "FLOAT")
         return {}
 
     return {"decode_audio": decode_audio, "embed": lambda call: {"embedding": [0.25] * 8},
@@ -345,7 +341,7 @@ def test_plugin_laci_takes(make_ggml, tmp_path):
     def laci_takes(call):
         for k, take in enumerate(call["takes"]):
             if k == 0:
-                wav(take["out"], 4410, 44100)
+                write_wav(take["out"], np.zeros(4410, np.float32), 44100, "FLOAT")
         return {"takes": [{"audio": k == 0, "record": {"k": k}} for k in range(len(call["takes"]))]}
 
     ggml = make_ggml(laci_takes=laci_takes)

@@ -11,6 +11,7 @@ import torch
 pytest.importorskip("tokenizers")
 
 from test_laci import TEXT_LEN, run_attempt, session  # noqa: E402
+from tiny_lm import wordlevel_spec  # noqa: E402
 from zonos3.tts.span_follow import (  # noqa: E402
     FollowConfig,
     SpanFollower,
@@ -26,15 +27,12 @@ O, C = "\ue000", "\ue001"
 
 @pytest.fixture
 def spec(tmp_path):
-    from tokenizers import Tokenizer, models, pre_tokenizers
-
-    vocab = {w: i for i, w in enumerate(["please", "call", "stella", "tomorrow", "morning", ".", "[UNK]"])}
-    tokenizer = Tokenizer(models.WordLevel(vocab, unk_token="[UNK]"))
-    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer, size = wordlevel_spec(["please", "call", "stella", "tomorrow", "morning", ".", "[UNK]"],
+                                     whitespace=True)
     path = tmp_path / "superbpe.json"
-    tokenizer.save(str(path))
+    path.write_text(tokenizer)
     return dict(kind="superbpe", path=str(path), sha256=sha256_file(path),
-                vocab_size=len(vocab), offset=4, bos=2, eos=3)
+                vocab_size=size, offset=4, bos=2, eos=3)
 
 
 def phoneme_spec(spec):

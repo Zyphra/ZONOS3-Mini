@@ -4,10 +4,11 @@ without utterances (FuseAlign's VAD map) when the server has no speech recogniti
 
 import numpy as np
 import pytest
-import soundfile as sf
-
+from _audio import write_wav
 from zonos3.tts import edit_align as E
 from zonos3.workers import fusealign
+
+SR = 16000
 
 
 class StubAsr:
@@ -38,11 +39,6 @@ class StubAligner:
                 for it in items]
 
 
-def wav(path, seconds, sr=16000):
-    sf.write(path, np.zeros(int(seconds * sr), dtype=np.float32), sr)
-    return str(path)
-
-
 def test_constants_match_fusealign_hub():
     from fusealign_hub.aligner import MAX_SECONDS
     from fusealign_hub.longform import MAX_TEXT_BYTES
@@ -52,7 +48,7 @@ def test_constants_match_fusealign_hub():
 
 
 def test_short_audio_is_one_recognition_without_utterances(tmp_path):
-    short = wav(tmp_path / "s.wav", 30.0)  # exactly 30 s is short
+    short = write_wav(tmp_path / "s.wav", np.zeros(30 * SR, np.float32), SR)  # exactly 30 s is short
     asr, aligner = StubAsr({None: "hello world"}), StubAligner({})
     t = E.transcribe_audio(asr, aligner, short, "English")
     assert (t.text, t.language, t.utterances) == ("hello world", "English", None)
@@ -60,7 +56,7 @@ def test_short_audio_is_one_recognition_without_utterances(tmp_path):
 
 
 def test_long_audio_is_transcribed_chunk_by_chunk(tmp_path):
-    long = wav(tmp_path / "l.wav", 45.0)
+    long = write_wav(tmp_path / "l.wav", np.zeros(45 * SR, np.float32), SR)
     chunks = {long: [[0.5, 20.0], [21.0, 30.0], [31.0, 44.0]]}
     asr, aligner = StubAsr({0.5: "first part", 21.0: "", 31.0: "last part"}), StubAligner(chunks)
     t = E.transcribe_audio(asr, aligner, long, None)
@@ -76,21 +72,23 @@ def test_long_audio_is_transcribed_chunk_by_chunk(tmp_path):
     (None, "English", "今日は いい天気"),
 ])
 def test_unspaced_languages_join_chunks_without_spaces(tmp_path, forced, detected, joined):
-    long = wav(tmp_path / "l.wav", 40.0)
+    long = write_wav(tmp_path / "l.wav", np.zeros(40 * SR, np.float32), SR)
     asr = StubAsr({0.0: "今日は", 20.0: "いい天気"}, language=detected)
     t = E.transcribe_audio(asr, StubAligner({long: [[0.0, 19.0], [20.0, 39.0]]}), long, forced)
     assert t.text == joined and t.language == (forced or detected)
 
 
 def test_long_audio_without_speech_has_an_empty_transcript(tmp_path):
-    long = wav(tmp_path / "l.wav", 40.0)
+    long = write_wav(tmp_path / "l.wav", np.zeros(40 * SR, np.float32), SR)
     asr = StubAsr()
     t = E.transcribe_audio(asr, StubAligner({long: []}), long, None)
     assert (t.text, t.language, t.utterances) == ("", "", []) and asr.calls == []
 
 
 def test_align_words_anchors_only_long_form_items_in_one_batch(tmp_path):
-    short, long_a, long_b = wav(tmp_path / "s.wav", 5.0), wav(tmp_path / "a.wav", 40.0), wav(tmp_path / "b.wav", 35.0)
+    short = write_wav(tmp_path / "s.wav", np.zeros(5 * SR, np.float32), SR)
+    long_a = write_wav(tmp_path / "a.wav", np.zeros(40 * SR, np.float32), SR)
+    long_b = write_wav(tmp_path / "b.wav", np.zeros(35 * SR, np.float32), SR)
     chunks = {long_a: [[0.0, 20.0], [21.0, 39.0]], long_b: [[1.0, 30.0]], short: [[0.0, 5.0]]}
     asr, aligner = StubAsr(), StubAligner(chunks)
     given = [{"text": "given", "start": 0.0, "end": 40.0, "language": "French"}]
@@ -119,7 +117,8 @@ def test_align_words_anchors_only_long_form_items_in_one_batch(tmp_path):
 
 @pytest.mark.parametrize("asr", [None, E.AsrWorker(python="/nonexistent/.venv-asr/bin/python")])
 def test_align_words_without_asr_sends_long_form_items_without_utterances(tmp_path, asr):
-    short, long = wav(tmp_path / "s.wav", 5.0), wav(tmp_path / "l.wav", 40.0)
+    short = write_wav(tmp_path / "s.wav", np.zeros(5 * SR, np.float32), SR)
+    long = write_wav(tmp_path / "l.wav", np.zeros(40 * SR, np.float32), SR)
     aligner = StubAligner({})  # a segments call would raise KeyError
     given = [{"text": "given", "start": 0.0, "end": 40.0, "language": "English"}]
     wide = [f"token{k}" for k in range(200)]
@@ -138,7 +137,7 @@ def test_align_words_without_asr_sends_long_form_items_without_utterances(tmp_pa
 
 
 def test_edit_aligned_words_carry_edit_tokens(tmp_path):
-    short = wav(tmp_path / "s.wav", 3.0)
+    short = write_wav(tmp_path / "s.wav", np.zeros(3 * SR, np.float32), SR)
     aligner = StubAligner({})
     words = E.edit_aligned_words(StubAsr(), aligner, short, "Don’t — stop!", ("en", "English"))
     assert [(w.word, w.tokens) for w in words] == [("Don’t", ["DON'T"]), ("stop!", ["STOP"])]

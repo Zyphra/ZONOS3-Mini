@@ -4,14 +4,12 @@ accent adapter (the tiny model of servers/ggml/tests/parity/test_ggml_graph.py).
 
 from __future__ import annotations
 
-import json
-
 import convert_gguf
 import numpy as np
 import pytest
 import torch
 from conftest import FIXTURES
-from gguf import GGUFReader
+from tiny_lm import fixture_tokenizer, write_lm_dir
 from zonos3.models.accent_format import FORMAT_EXPERTS, grow_adapter, load_adapter
 from zonos3.reference.accents import AccentState as RefAccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig
@@ -46,16 +44,10 @@ def tiny_params() -> dict:
     }
 
 
-def fixture_tokenizer() -> str:
-    field = GGUFReader(FIXTURES / "dummy-zonos3.gguf").fields["zonos3.tokenizer.json"]
-    return bytes(field.parts[field.data[0]]).decode()
-
-
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory):
     root = tmp_path_factory.mktemp("lm")
     lm_dir = root / "lm"
-    lm_dir.mkdir()
     params = tiny_params()
     model = Zonos3LM(Zonos3LMConfig.from_params(params))
     generator = torch.Generator().manual_seed(0)
@@ -65,13 +57,11 @@ def tiny(tmp_path_factory):
         if name.endswith("attention.temp"):
             value = 3.0 + value
         state[name] = value if name.endswith("balancing_biases") else value.to(torch.bfloat16)
-    torch.save(state, lm_dir / "model.pth")
-    (lm_dir / "params.json").write_text(json.dumps({"model": params}))
-    (lm_dir / "tokenizer.json").write_text(fixture_tokenizer())
-    silence = root / "silence.json"
-    silence.write_text(json.dumps({"codec": CODEC, "frame": [11 * i for i in range(10)]}))
+    write_lm_dir(lm_dir, params, state, tokenizer=fixture_tokenizer(FIXTURES / "dummy-zonos3.gguf"),
+                 silence=[11 * i for i in range(10)])
     gguf = root / "tiny.gguf"
-    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(silence), "-o", str(gguf)])
+    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(lm_dir / "silence.json"),
+                       "-o", str(gguf)])
     return root, Zonos3LM.load(lm_dir), Zonos3MLX.load(gguf)
 
 
@@ -226,7 +216,8 @@ def test_edit_adapter_backbone_keeps_plain_logits_and_fits_old_head_factors(tiny
     accents = root / "edit-accents.gguf"
     convert_gguf.main(["accents", str(adapters), "-o", str(accents)])
     grown_gguf = root / "grown.gguf"
-    convert_gguf.main(["lm", str(root / "lm"), "--outtype", "f32", "--silence-frame", str(root / "silence.json"),
+    lm_dir = root / "lm"
+    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(lm_dir / "silence.json"),
                        "--edit-adapter", str(adapters / "edit.pt"), "-o", str(grown_gguf)])
     grown = Zonos3MLX.load(grown_gguf)
     assert grown.config.span_end_id == 4098 and grown.config.text_extra_tokens == 3
@@ -239,7 +230,7 @@ def test_edit_adapter_backbone_keeps_plain_logits_and_fits_old_head_factors(tiny
     for (_, want), (_, got) in zip(plain, on_grown):
         np.testing.assert_array_equal(got[..., :4098], want)
 
-    ref_grown = Zonos3LM.load(root / "lm").grow(load_adapter(adapters / "edit.pt").grown)
+    ref_grown = Zonos3LM.load(lm_dir).grow(load_adapter(adapters / "edit.pt").grown)
     ref_state = RefAccentState.for_model(ref_grown, load_adapter(adapters / "plain.pt"), 0.8)
     pairs, _ = run_both(ref_grown, grown, ref_accents=ref_state, mlx_accents=bank.state("plain", 0.8))
     for i, (want, got) in enumerate(pairs):

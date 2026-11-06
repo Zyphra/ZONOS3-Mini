@@ -17,22 +17,20 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
+import convert_gguf
 import numpy as np
 import pytest
 import torch
+from gguf import GGUFReader
+from tiny_lm import fixture_tokenizer, write_lm_dir
+from zonos3.models.accent_format import FORMAT_EXPERTS, grow_adapter, load_adapter
+from zonos3.reference.accents import AccentState
+from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig
 
 REPO = Path(__file__).resolve().parents[4]
 GGML = REPO / "servers" / "ggml"
-sys.path.insert(0, str(REPO / "tools"))
-
-import convert_gguf  # noqa: E402
-from gguf import GGUFReader  # noqa: E402
-from zonos3.models.accent_format import FORMAT_EXPERTS, grow_adapter, load_adapter  # noqa: E402
-from zonos3.reference.accents import AccentState  # noqa: E402
-from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig  # noqa: E402
 
 CODEC = "tiny_codec"
 TEXT_LEN = 14  # BOS + 12 tokens + EOS
@@ -62,18 +60,11 @@ def tiny_params() -> dict:
     }
 
 
-def fixture_tokenizer() -> str:
-    """The pinned SuperBPE tokenizer embedded in tests/fixtures/dummy-zonos3.gguf."""
-    field = GGUFReader(GGML / "tests" / "fixtures" / "dummy-zonos3.gguf").fields["zonos3.tokenizer.json"]
-    return bytes(field.parts[field.data[0]]).decode()
-
-
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory, ggml_build):
     """(checkpoint dir, f32 GGUF, fp32 reference) of a random tiny backbone."""
     root = tmp_path_factory.mktemp("graph")
     lm_dir = root / "lm"
-    lm_dir.mkdir()
     params = tiny_params()
     model = Zonos3LM(Zonos3LMConfig.from_params(params))
     generator = torch.Generator().manual_seed(0)
@@ -83,13 +74,11 @@ def tiny(tmp_path_factory, ggml_build):
         if name.endswith("attention.temp"):
             value = 3.0 + value  # peaked attention: the readout's argmax is far from a tie
         state[name] = value if name.endswith("balancing_biases") else value.to(torch.bfloat16)
-    torch.save(state, lm_dir / "model.pth")
-    (lm_dir / "params.json").write_text(json.dumps({"model": params}))
-    (lm_dir / "tokenizer.json").write_text(fixture_tokenizer())
-    silence = root / "silence.json"
-    silence.write_text(json.dumps({"codec": CODEC, "frame": [11 * i for i in range(10)]}))
+    write_lm_dir(lm_dir, params, state, tokenizer=fixture_tokenizer(GGML / "tests" / "fixtures" / "dummy-zonos3.gguf"),
+                 silence=[11 * i for i in range(10)])
     gguf = root / "tiny.gguf"
-    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(silence), "-o", str(gguf)])
+    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(lm_dir / "silence.json"),
+                       "-o", str(gguf)])
     return lm_dir, gguf, Zonos3LM.load(lm_dir)
 
 
@@ -228,10 +217,8 @@ def test_edit_adapter_grows_the_backbone_and_is_no_accent(tiny, ggml_build, tmp_
     torch.save(edit, adapters / "edit.pt")
     accents = tmp_path / "accents.gguf"
     convert_gguf.main(["accents", str(adapters), "-o", str(accents)])
-    silence = tmp_path / "silence.json"
-    silence.write_text(json.dumps({"codec": CODEC, "frame": [11 * i for i in range(10)]}))
     grown = tmp_path / "grown.gguf"
-    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(silence),
+    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(lm_dir / "silence.json"),
                        "--edit-adapter", str(adapters / "edit.pt"), "-o", str(grown)])
     assert GGUFReader(grown).fields["zonos3.span_end_id"].parts[-1][0] == 4098
 

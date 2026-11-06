@@ -7,20 +7,17 @@ import pytest
 
 tokenizers = pytest.importorskip("tokenizers")
 
+from tiny_lm import wordlevel_spec  # noqa: E402
 from zonos3.tts.superbpe import load_spec, text_ids, validate_spec  # noqa: E402
 from zonos3.utils.hashing import sha256_file  # noqa: E402
 
 
 @pytest.fixture
 def spec(tmp_path):
-    from tokenizers import Tokenizer, models, pre_tokenizers
-
-    tokenizer = Tokenizer(models.WordLevel({"hello": 0, "world": 1, "[UNK]": 2}, unk_token="[UNK]"))
-    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer, size = wordlevel_spec(["hello", "world", "[UNK]"], whitespace=True)
     path = tmp_path / "superbpe.json"
-    tokenizer.save(str(path))
-    sha = sha256_file(path)
-    return dict(kind="superbpe", path=str(path), sha256=sha, vocab_size=3, offset=4, bos=2, eos=3)
+    path.write_text(tokenizer)
+    return dict(kind="superbpe", path=str(path), sha256=sha256_file(path), vocab_size=size, offset=4, bos=2, eos=3)
 
 
 def test_text_ids_follow_the_training_convention(spec):
