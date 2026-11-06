@@ -11,7 +11,6 @@ import argparse
 import os
 import sys
 
-
 import numpy as np
 from gguf import GGUFWriter
 
@@ -31,6 +30,9 @@ def main():
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--codes-out", help="also write deterministic delayed codes [40,10] and PATH.eos.npy = [31, 0]")
     args = ap.parse_args()
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools"))
+    import convert_gguf
+
     rng = np.random.default_rng(0)
     w = GGUFWriter(args.out, ARCH)
     w.add_string("general.name", "mossdual_istft dummy")
@@ -119,10 +121,7 @@ def main():
     for i, n in enumerate(N_FFT):   # torch.hann_window(n, periodic=True)
         put(f"head.window.{i}", (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(n) / n)).astype(np.float32))
     put("resample.kernel", rnd(RS_NEW, 2 * RS_WIDTH + RS_ORIG))
-    w.write_header_to_file()
-    w.write_kv_data_to_file()
-    w.write_tensors_to_file(progress=False)
-    w.close()
+    convert_gguf.write_gguf(w, progress=False)
     print(f"wrote {count} mossdual_istft dummy tensors to {args.out}")
     if args.codes_out:
         codes = np.random.default_rng(0).integers(0, 4096, size=(40, 10)).astype(np.float32)

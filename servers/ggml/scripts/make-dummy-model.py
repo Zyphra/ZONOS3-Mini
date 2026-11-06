@@ -63,7 +63,6 @@ TEXT_VOCAB  = 8196
 # counts and speaking-rate edges of zonos3-rate30-20k-r2grpo) ---
 SPEAKER_DIM = 192
 COND_BUCKET_COUNTS = [10, 10, 30]
-COND_NAMES = ["loudness", "fmax", "speaking_rate"]
 COND_UNITS = ["LUFS", "Hz", "utf-8 bytes per second"]
 COND_EDGES = {
     "loudness": [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
@@ -83,8 +82,13 @@ def main():
     ap.add_argument("--span-end", action="store_true", help="write zonos3.span_end_id (edit checkpoints)")
     ap.add_argument("--phonemes", help="phone inventory: each code point of this string is one phoneme token")
     args = ap.parse_args()
-    spec = {"kind": "superbpe", "path": "tokenizer/superbpe8192.json", "sha256": TOKENIZER_SHA256,
-            "vocab_size": TEXT_VOCAB - 4, "offset": 4, "bos": 2, "eos": 3}
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools"))
+    import convert_gguf
+
+    cond_names = convert_gguf.CONDITION_NAMES
+    tspec = convert_gguf.TOKENIZER_SPEC
+    spec = {"kind": tspec["kind"], "path": "tokenizer/superbpe8192.json", "sha256": TOKENIZER_SHA256,
+            "vocab_size": TEXT_VOCAB - 4, "offset": tspec["offset"], "bos": tspec["bos"], "eos": tspec["eos"]}
     extra = max(0, args.edit_markers)
     if args.phonemes:
         symbols = list(dict.fromkeys(args.phonemes))
@@ -147,15 +151,15 @@ def main():
     w.add_uint32(f"{ARCH}.gdn.head_dim", GDN_HEAD_DIM)
     w.add_uint32(f"{ARCH}.gdn.conv_kernel", GDN_KERNEL)
     w.add_string(f"{ARCH}.tokenizer.json", tok_json)
-    w.add_uint32(f"{ARCH}.tokenizer.offset", 4)
-    w.add_uint32(f"{ARCH}.tokenizer.bos", 2)
-    w.add_uint32(f"{ARCH}.tokenizer.eos", 3)
+    w.add_uint32(f"{ARCH}.tokenizer.offset", tspec["offset"])
+    w.add_uint32(f"{ARCH}.tokenizer.bos", tspec["bos"])
+    w.add_uint32(f"{ARCH}.tokenizer.eos", tspec["eos"])
     w.add_uint32(f"{ARCH}.speaker.embedding_length", SPEAKER_DIM)
-    w.add_uint32(f"{ARCH}.condition.count", len(COND_NAMES))
+    w.add_uint32(f"{ARCH}.condition.count", len(cond_names))
     w.add_array(f"{ARCH}.condition.bucket_counts", COND_BUCKET_COUNTS)
-    w.add_array(f"{ARCH}.condition.names", COND_NAMES)
+    w.add_array(f"{ARCH}.condition.names", cond_names)
     w.add_array(f"{ARCH}.condition.units", COND_UNITS)
-    for name in COND_NAMES:
+    for name in cond_names:
         w.add_array(f"{ARCH}.condition.edges.{name}", [float(v) for v in COND_EDGES[name]])
     w.add_array(f"{ARCH}.silence_frame", list(SILENCE_FRAME))
     w.add_file_type(1)  # f16 matrices, f32 1-D tensors
@@ -213,10 +217,7 @@ def main():
             w.add_tensor(b + "router_norm.weight",     rnd(DIM))
             w.add_tensor(b + "router_bias",            rnd(N_EXPERT))
 
-    w.write_header_to_file()
-    w.write_kv_data_to_file()
-    w.write_tensors_to_file()
-    w.close()
+    convert_gguf.write_gguf(w)
     print(f"wrote {args.out}")
 
 

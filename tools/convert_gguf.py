@@ -35,7 +35,7 @@ import gguf.quants as gquants
 from zonos3.utils.hashing import sha256_bytes
 
 
-def _finish(writer: GGUFWriter, progress: bool = False) -> None:
+def write_gguf(writer: GGUFWriter, progress: bool = False) -> None:
     writer.write_header_to_file()
     writer.write_kv_data_to_file()
     writer.write_tensors_to_file(progress=progress)
@@ -503,7 +503,7 @@ def cmd_lm(args, parser):
             raise ValueError("baked weights do not lie on the Q4_0/Q8_0 grid; refusing to export")
     print(f"Exported {len(src.model.state_dict())} model tensors as {len(seen)} GGUF tensors; storage={counts}",
           flush=True)
-    _finish(writer, progress=True)
+    write_gguf(writer, progress=True)
     print(f"Wrote {args.out}", flush=True)
 
 
@@ -759,7 +759,7 @@ def cmd_codec_decoder(args, parser):
     leftover = sorted(k for k in sd if k not in consumed)
     if leftover:
         raise SystemExit(f"{len(leftover)} ISTFTCodec tensors not mapped, e.g.: {leftover[:8]}")
-    _finish(w)
+    write_gguf(w)
     print(f"wrote {count} {DEC_ARCH} tensors to {args.out}")
 
 
@@ -885,7 +885,7 @@ def cmd_codec_encoder(args, parser):
     leftover = sorted(k for k in sd if k.startswith(required) and k not in consumed)
     if leftover:
         raise SystemExit(f"unmapped encoder tensors: {leftover}")
-    _finish(w)
+    write_gguf(w)
     print(f"wrote {count} encoder tensors to {args.out}")
 
 
@@ -1013,7 +1013,7 @@ def cmd_ssl_teacher(args, parser):
         consumed.add(src)
     if consumed != keys:
         raise ValueError(f"unconsumed teacher tensors: {sorted(keys - consumed)}")
-    _finish(w, progress=True)
+    write_gguf(w, progress=True)
     print(f"consumed {len(consumed)} checkpoint tensors; exported {len(mapping)} inference tensors and 3 frontend tables -> {args.out}", flush=True)
 
 
@@ -1348,7 +1348,7 @@ def cmd_speaker_encoder(args, parser):
         put(dst + ".shift", shift.float().numpy())
 
     w.add_uint32(f"{SPK_ARCH}.source_tensor_count", len(keys))
-    _finish(w, progress=True)
+    write_gguf(w, progress=True)
     print(f"Accounted for {len(keys)} checkpoint tensors; wrote {n_out} GGUF tensors -> {args.out}", flush=True)
 
 
@@ -1435,7 +1435,7 @@ def cmd_steer(args, parser):
     w.add_string(f"{STEER_ARCH}.rate_extension", json.dumps(spec["rate_extension"]) if spec.get("rate_extension") else "")
     for i, vec in enumerate(vectors):
         w.add_tensor(f"steer.dir.{i}", vec)
-    _finish(w)
+    write_gguf(w)
     for set_name, space, source, n in summary:
         print(f"{set_name} {space} {source} {n}")
     n_raw = sum(n for _, sp, _, n in summary if sp == RAW_SPACE)
@@ -1521,7 +1521,7 @@ def cmd_accents(args, parser):
                 raise SystemExit(f"error: {name} has non-finite values")
             w.add_tensor(name, value)
             count += 1
-    _finish(w)
+    write_gguf(w)
     print(f"wrote {args.out}: {len(adapters)} adapters, {count} tensors")
 
 

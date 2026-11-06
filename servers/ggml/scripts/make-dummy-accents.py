@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import numpy as np
 from gguf import GGUFReader, GGUFWriter
@@ -31,6 +32,8 @@ def main():
     ap.add_argument("--model", default=os.path.join(here, "..", "tests", "fixtures", "dummy-zonos3.gguf"))
     ap.add_argument("-o", "--out", required=True)
     args = ap.parse_args()
+    sys.path.insert(0, os.path.join(here, "..", "..", "..", "tools"))
+    import convert_gguf
 
     reader = GGUFReader(args.model)
     shapes = {t.name: tuple(int(v) for v in reversed(t.shape.tolist())) for t in reader.tensors}  # numpy order
@@ -65,10 +68,7 @@ def main():
         for layer in router_layers:
             (experts,) = shapes[f"blk.{layer}.router_bias"]
             w.add_tensor(f"acc.{slot}.blk.{layer}.router_bias", rnd(experts, scale=0.5))
-    w.write_header_to_file()
-    w.write_kv_data_to_file()
-    w.write_tensors_to_file()
-    w.close()
+    convert_gguf.write_gguf(w)
     print(f"wrote {args.out}")
 
 
