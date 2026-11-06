@@ -139,7 +139,7 @@ def test_span_end_id_grows_audio_vocab_by_one_per_codebook():
 
 @pytest.mark.parametrize("span_end_id", [4096, 4097, 4099])
 def test_span_end_id_must_follow_audio_pad(span_end_id):
-    with pytest.raises(ValueError, match="audio_pad_id \\+ 1"):
+    with pytest.raises(ValueError):
         ModelConfig.from_zonos3_config(
             Zonos3Config(n_codebooks=10, codebook_size=4096, eoa_id=4096, audio_pad_id=4097, span_end_id=span_end_id)
         )

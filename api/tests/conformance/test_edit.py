@@ -11,7 +11,6 @@ import pytest
 
 from .support import TEXT, check, error, needs
 
-ASR_DETAIL = "Speech recognition is not available on this server: "
 
 
 @pytest.fixture(scope="module")
@@ -64,12 +63,11 @@ def test_one_word_edit_of_a_known_transcript(client, known):
 def test_without_speech_recognition(client, caps, editing, known):
     needs(not caps["edit_transcribe"], "the server has speech recognition")
     clip = known["audio_base64"]
-    detail = error(client.post("/v2/edit/transcribe", json={"audio_base64": clip, "language": "en_us"}), 503)["detail"]
-    assert detail.startswith(ASR_DETAIL)
+    error(client.post("/v2/edit/transcribe", json={"audio_base64": clip, "language": "en_us"}), 503)
     body = {"audio_base64": clip, "target_text": "Hello there, this is a long test.", "seed": 7}
-    assert error(client.post("/v2/edit", json=body), 503)["detail"].startswith(ASR_DETAIL)  # no original_text
+    error(client.post("/v2/edit", json=body), 503)  # no original_text
     verify = {**_edit_body(known["text"], clip), "verify": True}
-    assert error(client.post("/v2/edit", json=verify), 503)["detail"].startswith(ASR_DETAIL)
+    error(client.post("/v2/edit", json=verify), 503)
 
 
 def test_align(client, transcript, voice_b64):

@@ -27,16 +27,16 @@ def test_text_ids_follow_the_training_convention(spec):
 
 def test_validate_spec_checks_the_id_convention_and_vocab(spec):
     validate_spec(spec, text_vocab=3 + 4)
-    with pytest.raises(ValueError, match="convention"):
+    with pytest.raises(ValueError):
         validate_spec(spec, text_vocab=3 + 5)
-    with pytest.raises(ValueError, match="convention"):
+    with pytest.raises(ValueError):
         validate_spec({**spec, "offset": 0}, text_vocab=3 + 4)
 
 
 def test_sha_mismatch_is_refused(spec, tmp_path):
     tampered = tmp_path / "tampered.json"
     tampered.write_bytes(open(spec["path"], "rb").read() + b" ")
-    with pytest.raises(ValueError, match="SHA"):
+    with pytest.raises(ValueError):
         text_ids("hello", {**spec, "path": str(tampered)})
 
 

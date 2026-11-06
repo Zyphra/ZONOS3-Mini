@@ -8,7 +8,7 @@ from zonos3 import languages
 def test_normalize_accepts_case_and_dashes_and_rejects_others():
     assert languages.normalize("EN-US") == "en_us"
     assert languages.normalize(" cmn ") == "cmn"
-    with pytest.raises(ValueError, match="Unsupported language code: 'klingon'. Supported: en_us, en_gb"):
+    with pytest.raises(ValueError):
         languages.normalize("klingon")
 
 

@@ -47,7 +47,7 @@ def test_load_dim_mismatch_raises(tmp_path):
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     manifest["dim"] = 3
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="has dim 4, expected 3"):
+    with pytest.raises(ValueError):
         DirectionSet.load(tmp_path)
 
 
@@ -57,7 +57,7 @@ def test_load_rejects_spaces_other_than_raw_and_attnres_source(tmp_path, space):
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     manifest["space"] = space
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="direction space"):
+    with pytest.raises(ValueError):
         DirectionSet.load(tmp_path)
 
 

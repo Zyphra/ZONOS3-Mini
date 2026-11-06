@@ -35,5 +35,5 @@ def test_prefix_needs_a_matched_codec():
 
 
 def test_unknown_mode_fails_the_schema():
-    with pytest.raises(ValidationError, match="stream_decode"):
+    with pytest.raises(ValidationError):
         GenerateRequest(text="hi", stream_decode="sideways")

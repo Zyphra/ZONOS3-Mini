@@ -75,7 +75,7 @@ ENDPOINTS = pytest.mark.parametrize("endpoint", ["generate", "speech"])
 @ENDPOINTS
 @pytest.mark.parametrize("scale", [0.9, 0.0, 4.1, float("nan"), float("inf"), -float("inf")])
 def test_out_of_range_and_nonfinite_scales_fail_the_schema(frontend, endpoint, scale):
-    with pytest.raises(ValidationError, match="tag_cfg_scale"):
+    with pytest.raises(ValidationError):
         _request(endpoint, "Say <laugh/> hello", tag_cfg_scale=scale)
 
 

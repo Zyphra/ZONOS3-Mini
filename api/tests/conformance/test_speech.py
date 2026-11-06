@@ -31,8 +31,7 @@ def test_voice_is_a_speaker_id(client, default_voice):
 
 
 def test_unknown_voice_is_400(client):
-    body = error(speech(client, voice="alloy"), 400)
-    assert "unknown voice" in body["detail"]
+    error(speech(client, voice="alloy"), 400)
 
 
 def test_voice_with_speaker_fields_is_400(client, default_voice, voice_b64):

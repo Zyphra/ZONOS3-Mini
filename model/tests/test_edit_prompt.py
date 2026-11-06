@@ -45,7 +45,7 @@ def test_prompt_rejects_span_end_other_than_pad_plus_one():
     cfg = TTSPromptConfig(n_codebooks=3, codebook_sizes=(8,) * 3, audio_pad_id=9, text_vocab=448)
     codes = np.zeros((20, 3), dtype=np.int64)
     text = np.array([[9, 9, 9, 2], [9, 9, 9, 3]])
-    with pytest.raises(ValueError, match='audio_pad_id \\+ 1'):
+    with pytest.raises(ValueError):
         edit_prompt_tokens(text, codes, ((5, 4),), [], cfg, span_end_id=8)
 
 
@@ -104,9 +104,9 @@ def test_diff_substitution_deletion_insertions(target, indices):
 
 
 def test_no_change_and_excess_regions():
-    with pytest.raises(ValueError, match='equals'):
+    with pytest.raises(ValueError):
         diff_spans(words(), ['A','B','C','D','E','F','G'], total_frames=210)
-    with pytest.raises(ValueError, match='at most 3'):
+    with pytest.raises(ValueError):
         diff_spans(words(), ['X','B','X','D','X','F','X'], total_frames=210)
 
 

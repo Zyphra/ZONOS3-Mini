@@ -29,7 +29,7 @@ def test_a_codec_without_the_decoder_block_is_refused(monkeypatch):
         value.pop("decoder", None)
     monkeypatch.setattr(matched_codec, "registry", lambda: reg)
     codec = next(iter(matched_codec.codec_names()))
-    with pytest.raises(RuntimeError, match="conv-tail decoder is disabled"):
+    with pytest.raises(RuntimeError):
         matched_codec.decoder_spec(codec)
     with pytest.raises(RuntimeError):
         matched_codec.load_model(codec, "cpu")

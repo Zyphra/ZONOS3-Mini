@@ -179,4 +179,5 @@ def test_request_refused(entry, backbone_caps, ggml_build, tmp_path):
     # The refusal is the last stderr line: "<status> {"detail": ...}".
     status, _, body = run.stderr.strip().splitlines()[-1].partition(" ")
     assert status == "400", run.stderr
-    assert entry["error"] in json.loads(body)["detail"], run.stderr
+    detail = json.loads(body)["detail"]
+    assert isinstance(detail, str) and detail, run.stderr

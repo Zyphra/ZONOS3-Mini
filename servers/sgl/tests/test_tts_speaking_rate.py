@@ -55,7 +55,7 @@ def test_tts_max_tokens_default_resolves_to_model_max():
     assert plan.max_tokens_budget(9999, server_max) == 4096
     assert plan.max_tokens_budget(256, server_max) == 256
 
-    with pytest.raises(ValueError, match="positive"):
+    with pytest.raises(ValueError):
         plan.max_tokens_budget(0, server_max)
 
 

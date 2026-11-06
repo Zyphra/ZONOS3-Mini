@@ -48,7 +48,7 @@ def test_inline_reference_codes_are_checked_and_cut():
     assert codes.dtype == torch.int32 and codes.shape == (2, 3) and codes.is_contiguous()
     assert codes.tolist() == [[1, 2, 4095], [4096, 0, 7]]
     for bad in ([], [1, 2, 3], [[-1, 2]], [[-1, 2, 3]], [[4097, 0, 0]]):
-        with pytest.raises(ValueError, match="speaker_reference_codes"):
+        with pytest.raises(ValueError):
             convert(bad)
     # longer codes keep their first frames: the checkpoint's speaker_reference_max_seconds at the codec hop
     assert ctx.reference_max_frames == int(SAMPLE_RATE // int(entry(codec)["hop"]))

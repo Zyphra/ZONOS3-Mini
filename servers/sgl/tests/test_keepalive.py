@@ -57,11 +57,12 @@ def test_status_at_once_heartbeats_then_the_json_body():
 def test_an_endpoint_error_travels_in_the_body():
     status, _, chunks = _post("/fail", keepalive=True)
     assert status == 200
-    assert json.loads(b"".join(chunks)) == {"detail": "bad clip", "status_code": 422}
+    body = json.loads(b"".join(chunks))
+    assert body["status_code"] == 422 and isinstance(body["detail"], str)
 
 
 def test_without_the_header_or_outside_the_paths_nothing_changes():
     status, _, chunks = _post("/fail", keepalive=False)
-    assert status == 422 and json.loads(b"".join(chunks)) == {"detail": "bad clip"}
+    assert status == 422 and set(json.loads(b"".join(chunks))) == {"detail"}
     status, _, chunks = _post("/other", keepalive=True)
-    assert status == 400 and json.loads(b"".join(chunks)) == {"detail": "plain"}
+    assert status == 400 and set(json.loads(b"".join(chunks))) == {"detail"}

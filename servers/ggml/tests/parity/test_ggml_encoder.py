@@ -61,19 +61,17 @@ def _clip(seconds: float) -> np.ndarray:
 
 
 def test_cli_limit(ggml_build, tmp_path):
-    """Up to MAX_SECONDS reaches the models (missing GGUF paths fail at load); one sample more is rejected first."""
+    """Up to MAX_SECONDS reaches the models (the --dump audio is written; missing GGUF paths fail at load); one sample
+    more is rejected before the dump."""
     exe = _cli(ggml_build)
-    for samples, message in [(MAX_SECONDS * SR + 1, f"reference must contain 1..{MAX_SECONDS * SR} mono samples"),
-                             (MAX_SECONDS * SR, None)]:
+    for samples, accepted in [(MAX_SECONDS * SR + 1, False), (MAX_SECONDS * SR, True)]:
         np.save(tmp_path / "a.npy", np.zeros(samples, np.float32))
+        dump = tmp_path / f"dump{samples}"
         run = subprocess.run([str(exe), str(tmp_path / "missing.gguf"), str(tmp_path / "missing.gguf"),
-                              "--audio", str(tmp_path / "a.npy"), str(tmp_path / "codes.npy"), "--cpu"],
-                             capture_output=True, text=True)
+                              "--audio", str(tmp_path / "a.npy"), str(tmp_path / "codes.npy"), "--cpu",
+                              "--dump", str(dump)], capture_output=True, text=True)
         assert run.returncode != 0
-        if message:
-            assert message in run.stderr, run.stderr
-        else:
-            assert "reference must contain" not in run.stderr, run.stderr
+        assert (dump / "audio.npy").is_file() == accepted, run.stderr
 
 
 def test_encode_past_60_seconds(ggml_build, tmp_path):

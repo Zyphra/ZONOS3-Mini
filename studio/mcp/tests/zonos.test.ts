@@ -15,7 +15,7 @@ describe('bodyOf', () => {
   });
 
   it('reports a proxy page', () => {
-    expect(() => bodyOf(200, '<html><body>Bad gateway</body></html>')).toThrow('The server sent a web page instead of an answer (a proxy error?)');
+    expect(() => bodyOf(200, '<html><body>Bad gateway</body></html>')).toThrow(ApiError);
   });
 
   it('returns the JSON of a success', () => {

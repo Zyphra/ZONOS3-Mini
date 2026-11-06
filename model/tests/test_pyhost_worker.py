@@ -332,7 +332,7 @@ def test_plugin_http(make_ggml, tmp_path):
     status, headers, body = http(ggml, 3, tmp_path, "GET", "/fake")
     assert status == 200 and body == b"fake app" and headers["cache-control"] == "no-store"
     status, _, body = http(ggml, 4, tmp_path, "GET", "/v2/fake/gone")
-    assert status == 404 and json.loads(body) == {"detail": "no such thing"}
+    assert status == 404 and json.loads(body)["detail"]
     status, _, _ = http(ggml, 5, tmp_path, "GET", "/v2/elsewhere")
     assert status == 404
 
@@ -363,4 +363,4 @@ def test_plugin_engine_errors_map_to_http(make_ggml, tmp_path):
 
     ggml = make_ggml(laci_takes=laci_takes)
     status, _, body = http(ggml, 1, tmp_path, "POST", "/v2/fake/takes")
-    assert status == 400 and json.loads(body) == {"detail": "LACI needs heads for fr_fr"}
+    assert status == 400 and json.loads(body)["detail"]

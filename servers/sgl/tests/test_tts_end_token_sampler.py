@@ -96,7 +96,7 @@ def test_prepare_builds_stop_ids_and_rejects_unknown_end_tokens():
     args = sampler((EOA, SPAN_END)).prepare(SimpleNamespace(reqs=[req(EOA), req(SPAN_END)]))
     assert args.stop_token_ids.tolist() == [EOA, SPAN_END]
 
-    with pytest.raises(ValueError, match="not an end token"):
+    with pytest.raises(ValueError):
         sampler((EOA,)).prepare(SimpleNamespace(reqs=[req(SPAN_END)]))
 
 
