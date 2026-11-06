@@ -15,6 +15,9 @@ import json
 from typing import Sequence
 
 KEEPALIVE_HEADER = b"x-keepalive"
+# The servers' own keepalive paths: the /v2/edit prefix covers /v2/edit/transcribe and /v2/edit/align (each server
+# copies them into the list plugins.mount extends with the plugins' paths).
+KEEPALIVE_PATHS: tuple[str, ...] = ("/v2/edit",)
 
 
 class KeepaliveMiddleware:

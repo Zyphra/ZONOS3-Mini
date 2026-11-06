@@ -14,9 +14,10 @@ info:
       `{"detail": "The studio is not built (pnpm --dir studio build)."}`.
     - `GET|HEAD /<path>` returns the file `<studio dir>/<path>` when it resolves inside the studio dir and is a
       file; else the page `<studio dir>/<path>.html` when that is a file (`/studio` is `studio.html`, the Voice
-      Studio; `/lite` is `lite.html`); otherwise a 404 `{"detail": "Not Found"}`. A file whose name ends in `.html`
-      (a studio page) carries `Cache-Control: no-store, max-age=0`, every other file
-      `Cache-Control: public, max-age=31536000, immutable`.
+      Studio; `/lite` is `lite.html`); otherwise a 404 `{"detail": "Not Found"}`. The file's path inside the studio dir
+      picks its cache header: under `assets/` (content-hashed) `Cache-Control: public, max-age=31536000, immutable`;
+      a page (`*.html`), `sw.js` or `manifest.webmanifest` `Cache-Control: no-store, max-age=0`; any other file
+      (icons, the in-browser engine, `theme-boot.js`) `Cache-Control: no-cache`.
     - Paths under `/v1/` and `/v2/` are never served from the studio dir. There is no SPA fallback (the studio routes
       with the URL hash). Any other method on such a path is a 404 `{"detail": "Not Found"}`.
 

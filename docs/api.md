@@ -29,7 +29,9 @@ Voice Studio.
 | `GET\|HEAD\|PUT /v2/media/{sha256}` | Content-addressed studio media |
 
 **Studio.** `GET /` returns the studio's `index.html` (`Cache-Control: no-store`); `GET /<path>` returns a file of the
-studio build (`studio/dist`, `--studio-dir`) with an immutable cache header, else 404 `{"detail": "Not Found"}`.
+studio build (`studio/dist`, `--studio-dir`), else 404 `{"detail": "Not Found"}`. Hashed `assets/` are immutable;
+pages, `sw.js` and `manifest.webmanifest` are `no-store`; every other file (icons, `web-engine/`, `theme-boot.js`) is
+`no-cache` (revalidated).
 There is no SPA fallback (the studio routes with the URL hash), and `/v1/…`, `/v2/…` are never served from the studio
 dir. Without a build, `GET /` is a 404 that names `pnpm --dir studio build`.
 

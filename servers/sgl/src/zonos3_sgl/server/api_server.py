@@ -6,7 +6,6 @@ import functools
 import hashlib
 import io
 import os
-import secrets
 import subprocess
 import time
 import uuid
@@ -20,8 +19,7 @@ import soundfile as sf
 import torch
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 from zonos3_sgl.message import (
     BaseFrontendMsg,
@@ -60,8 +58,10 @@ from zonos3.tts.steering import (
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
 from zonos3.server import plugins
 from zonos3.server.edit import make_router as _edit_router
-from zonos3.server.keepalive import KeepaliveMiddleware
+from zonos3.server.keepalive import KEEPALIVE_PATHS, KeepaliveMiddleware
+from zonos3.server.middleware import access_log_enabled, install_cors, install_private_access
 from zonos3.server.projects import ProjectStore, make_router as _projects_router
+from zonos3.server.studio import install_studio
 from zonos3.server.schemas import (
     GenerateRequest,
     PhonemizeRequest,
@@ -1248,55 +1248,12 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Zonos3 API Server", version="2.0.0", lifespan=lifespan,
               openapi_url=None, docs_url=None, redoc_url=None)
 
-# Innermost, so CORS and the access check wrap its early status line (zonos3.server.keepalive). The /v2/edit
-# prefix covers /v2/edit/transcribe and /v2/edit/align; plugins.mount adds each plugin's paths before serving.
-_KEEPALIVE_PATHS = ["/v2/edit"]
-app.add_middleware(KeepaliveMiddleware, paths=_KEEPALIVE_PATHS)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Studio clients on another origin (?server=) read these response headers.
-    expose_headers=["X-Audio-Sample-Rate", "X-Audio-Channels", "X-Audio-Format", "X-Control-Span-Follow", "X-Seed"],
-)
-
-
-@app.middleware("http")
-async def optional_private_access(request: Request, call_next):
-    """Keep the inference UI and API private when ZONOS3_ACCESS_TOKEN is set.
-
-    Clients send ``Authorization: Bearer <token>``; a browser opens
-    ``/?access_token=<token>`` once and then carries an HttpOnly cookie.
-    """
-    token = os.environ.get("ZONOS3_ACCESS_TOKEN")
-    if not token:
-        return await call_next(request)
-    candidate = request.headers.get("authorization", "").removeprefix("Bearer ")
-    if not candidate:
-        candidate = request.cookies.get("zonos3_access", "")
-    if candidate and secrets.compare_digest(candidate, token):
-        response = await call_next(request)
-    elif request.method == "GET" and request.url.path == "/" and (
-        candidate := request.query_params.get("access_token", "")
-    ) and secrets.compare_digest(candidate, token):
-        response = RedirectResponse("/", status_code=303)
-        response.set_cookie(
-            "zonos3_access", token, httponly=True,
-            secure=request.headers.get("x-forwarded-proto") == "https",
-            samesite="strict",
-        )
-    else:
-        response = Response("Access denied", status_code=403, media_type="text/plain")
-    response.headers["Referrer-Policy"] = "no-referrer"
-    if request.url.path.startswith("/v2/media/") and response.status_code in (200, 206, 304):
-        # content-addressed and immutable: the browser may keep it (private: never a shared cache)
-        response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
-    else:
-        response.headers["Cache-Control"] = "no-store"
-    return response
-
+# Innermost, so CORS and the access check wrap its early status line (zonos3.server.keepalive); plugins.mount adds
+# each plugin's paths before serving.
+_KEEPALIVE = list(KEEPALIVE_PATHS)
+app.add_middleware(KeepaliveMiddleware, paths=_KEEPALIVE)
+install_cors(app)
+install_private_access(app)
 
 # Studio projects on the server (shared by every studio browser, kept across restarts): /v2/projects, /v2/media.
 app.include_router(_projects_router(_project_store), prefix="/v2")
@@ -2087,26 +2044,8 @@ def _studio_dir() -> Path:
     return Path(state.config.studio_dir if state is not None else ServerArgs.studio_dir).resolve()
 
 
-# Registered last, so every API route matches first: the studio serving rule. GET|HEAD / is the studio's
-# index.html (the chooser); GET|HEAD /<path> a file inside the studio dir, else the page <path>.html (/studio, /lite;
-# never under /v1/ or /v2/); anything else is a 404. Pages (*.html) are no-store, so a rebuild's new hashed assets
-# are picked up at once; every other file is immutable.
-# No SPA fallback: the studio routes with the URL hash.
-@app.api_route("/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
-async def serve_studio(request: Request, path: str = ""):
-    if request.method not in ("GET", "HEAD") or path.split("/", 1)[0] in ("v1", "v2"):
-        raise HTTPException(status_code=404, detail="Not Found")
-    root = _studio_dir()
-    if not path:
-        index = root / "index.html"
-        if not index.is_file():
-            raise HTTPException(status_code=404, detail="The studio is not built (pnpm --dir studio build).")
-        return FileResponse(index, media_type="text/html", headers={"Cache-Control": "no-store, max-age=0"})
-    for target in ((root / path).resolve(), (root / f"{path}.html").resolve()):
-        if target.is_relative_to(root) and target.is_file():
-            cache = "no-store, max-age=0" if target.name.endswith(".html") else "public, max-age=31536000, immutable"
-            return FileResponse(target, headers={"Cache-Control": cache})
-    raise HTTPException(status_code=404, detail="Not Found")
+# Registered last, so every API route matches first (zonos3.server.studio).
+install_studio(app, lambda: _studio_dir())
 
 
 async def tts_shell():
@@ -2320,17 +2259,17 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
         ),
     )
 
-    # Plugin routes go ahead of the studio catch-all; their keepalive paths join _KEEPALIVE_PATHS before serving.
+    # Plugin routes go ahead of the studio catch-all; their keepalive paths join _KEEPALIVE before serving.
     _PLUGINS[:] = plugins.load(config.plugins)
-    plugins.mount(app, _PLUGINS, _SglHost(), _KEEPALIVE_PATHS)
+    plugins.mount(app, _PLUGINS, _SglHost(), _KEEPALIVE)
 
     # start the backend here
     start_backend()
 
     logger.info(f"API server is ready to serve on {host}:{port}")
     if not run_shell:
-        # Request logs would record the access_token query of a private server.
-        uvicorn.run(app, host=host, port=port, access_log=not os.environ.get("ZONOS3_ACCESS_TOKEN"))
+        # Request logs would record the access_token query of a private server (access_log_enabled).
+        uvicorn.run(app, host=host, port=port, access_log=access_log_enabled())
     else:
         asyncio.run(tts_shell())
 

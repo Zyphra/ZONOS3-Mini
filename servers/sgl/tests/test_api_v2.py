@@ -114,7 +114,7 @@ def test_removed_paths_are_404(client, method, path):
     assert r.status_code == 404 and isinstance(r.json()["detail"], str)
 
 
-def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path):
+def test_studio_cache_rule(client, tmp_path):
     studio = tmp_path / "studio"
     (studio / "assets").mkdir(parents=True)
     for page in ("index", "studio", "lite"):
@@ -128,6 +128,13 @@ def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path):
         assert f'id="{page}"' in r.text, path
     r = client.get("/assets/index-abc.js")
     assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=31536000, immutable"
+    # unhashed files: the service worker and the manifest are never stored, the rest is revalidated
+    (studio / "icons").mkdir()
+    for name in ("sw.js", "manifest.webmanifest", "icons/icon.svg", "theme-boot.js"):
+        (studio / name).write_text("x")
+    for path, cache in (("/sw.js", "no-store, max-age=0"), ("/manifest.webmanifest", "no-store, max-age=0"),
+                        ("/icons/icon.svg", "no-cache"), ("/theme-boot.js", "no-cache")):
+        assert client.get(path).headers["cache-control"] == cache, path
     for path in ("/nope.html", "/nope", "/assets/index-abc"):
         assert client.get(path).status_code == 404, path
 

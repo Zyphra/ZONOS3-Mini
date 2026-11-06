@@ -88,8 +88,8 @@ class _FakePlugin:
 def test_plugin_routes_are_reached_before_the_studio_catch_all(monkeypatch, tmp_path):
     app = api_server.app
     monkeypatch.setattr(app.router, "routes", list(app.router.routes))
-    keepalive = list(api_server._KEEPALIVE_PATHS)
-    monkeypatch.setattr(api_server, "_KEEPALIVE_PATHS", keepalive)
+    keepalive = list(api_server._KEEPALIVE)
+    monkeypatch.setattr(api_server, "_KEEPALIVE", keepalive)
     monkeypatch.setattr(api_server, "_studio_dir", lambda: tmp_path)
     monkeypatch.delenv("ZONOS3_ACCESS_TOKEN", raising=False)
     plugin = _FakePlugin()

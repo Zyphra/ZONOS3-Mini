@@ -75,6 +75,7 @@ from zonos3.server.schemas import (
     PhonemizeRequest,
     SpeakerCreateRequest,
 )
+from zonos3.server.studio import resolve_studio_file, studio_cache_control
 from zonos3.tokenizer import matched_codec
 from zonos3.tokenizer.dual_reference import encode_dual_reference
 from zonos3.tokenizer.matched_codec import decode_model
@@ -916,33 +917,39 @@ async def lite(request: Request):
     return page("lite.html", request)
 
 
-def studio_file(folder: str, path: str, cache: str) -> FileResponse:
-    root = (STUDIO / folder).resolve()
-    target = (root / path).resolve()
-    if not target.is_relative_to(root) or not target.is_file():
+def studio_file(path: str) -> FileResponse:
+    """A file of the studio build with the servers' cache rule (zonos3.server.studio)."""
+    root = STUDIO.resolve()
+    target = resolve_studio_file(root, path)
+    if target is None:
         raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(target, headers={"Cache-Control": cache})
+    return FileResponse(target, headers={"Cache-Control": studio_cache_control(target.relative_to(root).as_posix())})
 
 
 @app.api_route("/assets/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def asset(path: str):
-    return studio_file("assets", path, "public, max-age=31536000, immutable")
+    return studio_file(f"assets/{path}")
 
 
-# The studio is an installable PWA: its manifest, icons and service worker sit at the root. Unhashed, so revalidated.
+# The studio is an installable PWA: its manifest, icons, service worker and theme script sit at the root.
 @app.api_route("/icons/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def icon(path: str):
-    return studio_file("icons", path, "no-cache")
+    return studio_file(f"icons/{path}")
 
 
 @app.api_route("/manifest.webmanifest", methods=["GET", "HEAD"], include_in_schema=False)
 async def manifest():
-    return studio_file(".", "manifest.webmanifest", "no-cache")
+    return studio_file("manifest.webmanifest")
 
 
 @app.api_route("/sw.js", methods=["GET", "HEAD"], include_in_schema=False)
 async def service_worker():
-    return studio_file(".", "sw.js", "no-store, max-age=0")
+    return studio_file("sw.js")
+
+
+@app.api_route("/theme-boot.js", methods=["GET", "HEAD"], include_in_schema=False)
+async def theme_boot():
+    return studio_file("theme-boot.js")
 
 
 app.launch(ssr_mode=False)

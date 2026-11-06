@@ -93,6 +93,7 @@ def main(argv=None) -> int:
 
     import uvicorn
     from zonos3.server import plugins
+    from zonos3.server.middleware import access_log_enabled
     from zonos3.tts.edit_align import FuseAlignWorker
     from zonos3.tts.laci import parse_laci_heads
     from zonos3.tts.stream import StreamSettings
@@ -142,9 +143,7 @@ def main(argv=None) -> int:
         parser.error(str(exc))
     scheduler.start()
     app = create_app(state)
-    # Request logs would record the access_token query of a private server.
-    uvicorn.run(app, host=args.host, port=args.port, access_log=not os.environ.get("ZONOS3_ACCESS_TOKEN"),
-                log_level=args.log_level)
+    uvicorn.run(app, host=args.host, port=args.port, access_log=access_log_enabled(), log_level=args.log_level)
     return 0
 
 
