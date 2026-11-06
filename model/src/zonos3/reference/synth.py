@@ -289,6 +289,39 @@ def plan_prompt(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=
     return P.plan_prompt(ctx, request, lambda req, mode: _resolve_speaker(lm, ctx, req, mode))
 
 
+@dataclass
+class EditLayout:
+    """A speech-edit region's prompt inputs (``zonos3.tts.plan.text_rows``): the window's codes, its spans and the fills
+    generated so far."""
+
+    codes: torch.Tensor
+    spans: list
+    fills: list
+
+
+@torch.inference_mode()
+def edit_region(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, layout: EditLayout, min_frames: int,
+                speaker_embedding: torch.Tensor | None = None, hidden_delta=None, accents: AccentState | None = None,
+                device=None) -> tuple[list[torch.Tensor], int | None]:
+    """One speech-edit region (``zonos3.tts.edit_runtime.FillJob``): ``request`` (text, language, normalization,
+    sampling, seed, max_tokens, condition buckets) planned over the edit layout behind the speaker row
+    (``speaker_embedding``, already steered) and generated until the span-end token, masked for ``min_frames`` rows;
+    ``hidden_delta``: the region's steering delta on its generated frames. Returns the generated rows and the aligned
+    span-end frame (None: the budget ran out)."""
+    c = lm.config
+    if c.span_end_id is None:
+        raise ValueError("Speech editing needs a checkpoint with a span-end audio token (span_end_id)")
+    device = torch.device(device if device is not None else lm.device)
+    ctx = ReferenceContext(lm, assets, device)
+    plan = P.plan_prompt(ctx, request, lambda req, mode: P.Speaker(mode, speaker_embedding, None),
+                         hidden_delta=hidden_delta, edit=layout)
+    sampling = replace(Sampling.from_request(plan.request), min_frames=int(min_frames))
+    attempt = generate_rows(lm, plan.cond, sampling=sampling, seed=plan.seed, max_tokens=plan.max_tokens,
+                            stop_id=c.span_end_id, twin=plan.twin, cfg_scale=plan.cfg_scale, accents=accents,
+                            steer=steer_fn(plan, None))
+    return attempt.rows, attempt.eos_frame
+
+
 # ----------------------------------------------------------------------------------------------------- generation
 
 

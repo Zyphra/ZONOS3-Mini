@@ -130,7 +130,7 @@ def test_client_defaults_to_the_repo_venv_and_the_device_env(monkeypatch):
     monkeypatch.delenv("ZONOS3_ASR_PYTHON", raising=False)
     monkeypatch.setenv("ZONOS3_ASR_DEVICE", "cuda:3")
     client = AsrWorker()
-    assert client.python == str(edit_align.REPO_ROOT / ".venv-asr" / "bin" / "python")
+    assert client.python == str(edit_align.MODEL_SRC.parents[1] / ".venv-asr" / "bin" / "python")
     assert client._command == [client.python, str(edit_align.ASR_WORKER), "--device", "cuda:3"]
     assert edit_align.ASR_WORKER == edit_align.MODEL_SRC / "zonos3" / "workers" / "asr.py"
     assert edit_align.ASR_WORKER.is_file()

@@ -32,7 +32,6 @@ from .align_text import align_tokens
 from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
 from . import textmatch
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 MODEL_SRC = Path(__file__).resolve().parents[2]  # model/src: PYTHONPATH of both workers
 ASR_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'asr.py'
 FUSEALIGN_WORKER = MODEL_SRC / 'zonos3' / 'workers' / 'fusealign.py'
@@ -76,8 +75,9 @@ def fusealign_installed() -> bool:
 
 
 def asr_python() -> str:
-    """The interpreter of the ASR worker and of the dubbing worker: ``ZONOS3_ASR_PYTHON``, else the repo's .venv-asr."""
-    return os.environ.get('ZONOS3_ASR_PYTHON') or str(REPO_ROOT / '.venv-asr' / 'bin' / 'python')
+    """The interpreter of the ASR worker and of the dubbing worker: ``ZONOS3_ASR_PYTHON``, else the repo's .venv-asr
+    (the checkout's root, three levels above model/src; a package installed elsewhere has none)."""
+    return os.environ.get('ZONOS3_ASR_PYTHON') or str(MODEL_SRC.parents[1] / '.venv-asr' / 'bin' / 'python')
 
 
 class _JsonLinesWorker:

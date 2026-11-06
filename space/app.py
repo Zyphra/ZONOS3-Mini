@@ -13,6 +13,13 @@ huggingface.co (studio/src/lib/zerogpu.ts).
 
 import spaces  # noqa: I001  (ZeroGPU: must be imported before torch)
 
+import subprocess
+import sys
+
+# qwen-asr pins transformers==4.57.6, which the Space's pins (4.57.3, ZONOS3's lock) exclude; it runs on 4.57.3, so it
+# is installed without its dependencies (its runtime ones are in requirements.txt) before anything imports it.
+subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "--quiet", "qwen-asr==0.0.6"], check=True)
+
 import asyncio
 import base64
 import contextvars
@@ -32,34 +39,58 @@ import soundfile as sf
 import torch
 from fastapi import Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from fusealign_hub.aligner import CHECKPOINT_FILE as FUSEALIGN_CHECKPOINT
+from fusealign_hub.aligner import HF_REPO as FUSEALIGN_REPO
 from gradio.context import LocalContext
-
+from qwen_asr.inference.utils import SUPPORTED_LANGUAGES
 from zonos3 import languages
 from zonos3.generation import (
     DECODE_CONTEXT_FRAMES,
-    EDIT_MAX_SECONDS,
     SAMPLE_RATE,
     TAG_CFG_MAX_SCALE,
     TAG_CFG_MIN_SCALE,
 )
+from zonos3.models.accent_format import load_adapter
+from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import Zonos3LM
 from zonos3.reference.synth import (
+    EditLayout,
     ReferenceAssets,
     ReferenceContext,
     StreamSettings,
     _speaker_embedding,
     decode_base64_blob,
+    edit_region,
     load_embedding_vector,
+    output_gain,
     synthesize,
 )
-from zonos3.server.schemas import GenerateRequest, SpeakerCreateRequest
+from zonos3.server.edit import call as edit_errors
+from zonos3.server.schemas import (
+    EditAlignRequest,
+    EditRequest,
+    EditTranscribeRequest,
+    GenerateRequest,
+    SpeakerCreateRequest,
+)
 from zonos3.tokenizer import matched_codec
+from zonos3.tokenizer.dual_reference import encode_dual_reference
+from zonos3.tokenizer.matched_codec import decode_model
 from zonos3.tts import plan as P
-from zonos3.tts.audio import _transcode_audio_bytes_to_wav
+from zonos3.tts.audio import _decode_audio_bytes, _transcode_audio_bytes_to_wav
+from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, edit_capabilities
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
-from zonos3.tts.steering import controls_document, disabled_controls
-from zonos3.utils.release import RELEASE_LM, resolve_dir_or_local
+from zonos3.tts.steering import (
+    check_controls,
+    controls_document,
+    disabled_controls,
+    resolve_controls,
+)
+from zonos3.utils.release import RELEASE_LM, resolve_dir_or_local, resolve_file
+from zonos3.workers import asr as asr_worker
+from zonos3.workers import fusealign as fusealign_worker
 
 ROOT = Path(__file__).resolve().parent
 STUDIO = ROOT / "studio"
@@ -68,10 +99,18 @@ STUDIO = ROOT / "studio"
 DEVICE = torch.device("cuda:0")
 CPU = torch.device("cpu")
 
-LM = Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32).to(DEVICE)
+# The edit checkpoint's vocabulary: its span-end audio row and edit-marker text rows, which plain takes never read or
+# sample (so they run exactly as on the release LM). Edit regions add the edit LoRA per request (EDIT_LORA). Grown on
+# the CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with CPU ones in this process.
+_EDIT = f"{RELEASE_LM}/edit_lora"
+_GROWN = torch.load(resolve_file(f"{_EDIT}/grown_rows.pt"), map_location="cpu", weights_only=True)
+LM = Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32)
+LM.grow(_GROWN["rows"], span_end_id=_GROWN["span_end_id"], text_extra_tokens=_GROWN["text_extra_tokens"])
+LM = LM.to(DEVICE)
 CONFIG = LM.config
 ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k.json"))
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
+EDIT_LORA = AccentState.for_model(LM, load_adapter(resolve_file(f"{_EDIT}/z3m_omni3b_edit_lora.pt"), tables=True), 1.0)
 ASSETS.decoder(CONFIG.audio_codec, DEVICE)
 ASSETS.speaker_encoder(CONFIG.speaker_embedding_codec, CONFIG.speaker_embedding_dim, CPU)
 # A clip in reference mode is encoded by the dual codec inside the GPU call; fetch its teacher folder now.
@@ -84,6 +123,12 @@ ASSETS.normalizer().warmup()
 # --------------------------------------------------------------------------------------------- capabilities
 
 
+EDIT_MODEL = EditModel(
+    frame_rate=SAMPLE_RATE / int(matched_codec.entry(CONFIG.audio_codec)["hop"]), n_codebooks=CONFIG.n_codebooks,
+    audio_pad_id=CONFIG.audio_pad_id, codebook_sizes=CONFIG.codebook_sizes,
+    max_spans=edit_marker_rows(CONFIG.text_extra_tokens, CONTEXT.text_tokenizer_spec), speaker_row=True)
+
+
 def capabilities() -> dict:
     """GET /v2/capabilities (the MLX server's document, for the reference and this Space's routes)."""
     c, modes = CONFIG, list(CONTEXT.speaker_modes)
@@ -94,9 +139,6 @@ def capabilities() -> dict:
     silence = P.silence_prefill_default()
     spec = CONTEXT.text_tokenizer_spec
     phonemes = None if not spec else spec.get("phonemes")
-    # zonos3.tts.edit_runtime.edit_capabilities(model, available=False): that module locates the ASR / FuseAlign
-    # workers in the repo checkout at import and cannot load from the Space's flat layout.
-    max_spans = edit_marker_rows(c.text_extra_tokens, spec or None) if c.span_end_id is not None else 0
     return {
         "text_tokenizer_spec": spec or None,
         "text_normalization_enabled": True,
@@ -151,11 +193,7 @@ def capabilities() -> dict:
         "speaker_embedding_blend": True,
         "default_voices_enabled": True,
         "projects": {"enabled": False},
-        "speech_editing": False,
-        "edit_max_spans": max_spans,
-        "edit_frame_rate": SAMPLE_RATE / hop if max_spans else None,
-        "edit_max_seconds": EDIT_MAX_SECONDS,
-        "edit_align_max_seconds": EDIT_MAX_SECONDS,
+        **edit_capabilities(EDIT_MODEL, True),
         "phoneme_tokens": None if phonemes is None else {
             "open_marker": phonemes["open_marker"], "close_marker": phonemes["close_marker"],
             "symbols": list(phonemes["symbols"])},
@@ -324,12 +362,85 @@ async def prepare(body: dict, session_id: str | None) -> dict:
 # ------------------------------------------------------------------------------------------------------ GPU
 
 
-def gpu_seconds(body: dict) -> int:
-    """A take's worst-case GPU time: 10 s, +60 s for encoding an uploaded clip in reference mode (a fresh GPU worker
-    loads the dual codec first), and 0.15 s per character (twice that with a guidance twin)."""
+def gpu_seconds(body) -> int:
+    """A job's worst-case GPU time. A take: 10 s, +60 s for encoding an uploaded clip in reference mode (a fresh GPU
+    worker loads the dual codec first), and 0.15 s per character (twice that with a guidance twin). An edit call: 90 s
+    (a fresh worker loads Qwen3-ASR or FuseAlign or the dual codec on its first one)."""
+    if isinstance(body, tuple):
+        return 90
     clip = 60 if body["speaker_mode"] == "reference" and body["speaker_audio_base64"] else 0
     guided = any(float(body[k]) != 1.0 for k in ("speaker_cfg_scale", "tag_cfg_scale", "controls_cfg_scale"))
     return min(240, int(10 + clip + 0.15 * len(body["text"]) * (2 if guided else 1)))
+
+
+# ------------------------------------------------------------------------------------------------- speech editing
+
+# Speech editing (/v2/edit/transcribe, /v2/edit/align, /v2/edit): zonos3.tts.edit_runtime.EditRuntime in this process,
+# its EditEngine (SpaceEditEngine) and its ASR / aligner calls (InProcessAsr, InProcessAligner) sent to the GPU session
+# as edit jobs. The LM is the release LM grown to the edit checkpoint's vocabulary (its span-end and marker rows; plain
+# takes never read or sample them, so they are unchanged), and every edit region runs with the edit LoRA applied per
+# request (zonos3.reference.accents, strength 1): release + LoRA, as trained. Qwen3-ASR and FuseAlign load in the GPU
+# worker on first use, beside the LM.
+# Fetched now (no GPU time on downloads); loaded by a GPU worker's first edit job.
+resolve_dir_or_local("hf://Qwen/Qwen3-ASR-1.7B")
+resolve_file(f"hf://{FUSEALIGN_REPO}/{FUSEALIGN_CHECKPOINT}")
+_WORKERS: dict = {}  # the GPU worker's Qwen3-ASR model and FuseAlign aligner (each GPU worker loads its own)
+
+
+def _asr():
+    if "asr" not in _WORKERS:
+        from qwen_asr import Qwen3ASRModel
+
+        _WORKERS["asr"] = Qwen3ASRModel.from_pretrained(resolve_dir_or_local("hf://Qwen/Qwen3-ASR-1.7B"),
+                                                        dtype=torch.bfloat16, device_map="cuda:0",
+                                                        max_inference_batch_size=32, max_new_tokens=1024)
+    return _WORKERS["asr"]
+
+
+def _aligner():
+    if "aligner" not in _WORKERS:
+        from fusealign_hub import load_aligner
+
+        aligner = load_aligner(resolve_file(f"hf://{FUSEALIGN_REPO}/{FUSEALIGN_CHECKPOINT}"), device="cuda:0")
+        aligner.whisper_words = fusealign_worker.no_whisper  # anchors always come from Qwen3-ASR
+        _WORKERS["aligner"] = aligner
+    return _WORKERS["aligner"]
+
+
+def edit_job(op: str, args: dict):
+    """One edit call in the GPU worker: the ops of zonos3/workers/asr.py and fusealign.py, run in-process, and the
+    EditEngine's GPU work (encode, fill, decode)."""
+    from fusealign_hub.longform import guide_words
+    from fusealign_hub.vad import speech_regions
+
+    if op == "transcribe":
+        return asr_worker.transcribe(_asr(), SUPPORTED_LANGUAGES, args["items"])
+    if op == "segments":
+        return fusealign_worker.segments(args["items"], speech_regions)
+    if op == "speech":
+        return fusealign_worker.speech(args["items"], speech_regions)
+    if op == "align":
+        return fusealign_worker.align(_aligner(), args["items"], guide_words)
+    if op == "encode":
+        wav, sample_rate = _decode_audio_bytes(args["audio"])
+        return encode_dual_reference(wav, sample_rate, max_seconds=args["max_seconds"], device="cuda:0").numpy()
+    if op == "decode":
+        codes = torch.as_tensor(args["codes"], dtype=torch.int64)
+        model = ASSETS.decoder(CONFIG.audio_codec, DEVICE)
+        audio = decode_model(model, codes.unsqueeze(0), matched_codec.entry(CONFIG.audio_codec))[0].numpy()
+        return (audio * np.float32(output_gain(CONFIG.audio_codec, None))).astype(np.float32)
+    if op == "fill":
+        layout = EditLayout(torch.as_tensor(args["codes"], dtype=torch.int64), args["spans"],
+                            [torch.as_tensor(f, dtype=torch.int32) for f in args["fills"]])
+        embedding = args["embedding"]
+        rows, eos_frame = edit_region(LM, args["body"], assets=ASSETS, layout=layout, min_frames=args["min_frames"],
+                                      speaker_embedding=None if embedding is None else embedding.to(DEVICE),
+                                      hidden_delta=args["hidden_delta"], accents=EDIT_LORA, device=DEVICE)
+        n_cb = CONFIG.n_codebooks
+        # the finishing row is not part of the generated span (it only completes the delayed codebooks' flush)
+        out = (torch.stack(rows[:-1])[:, :n_cb].numpy() if len(rows) > 1 else np.zeros((0, n_cb), dtype=np.int32))
+        return out, -1 if eos_frame is None else int(eos_frame)
+    raise ValueError(f"unknown edit job {op!r}")
 
 
 # Takes run in a GPU session: one ZeroGPU call that holds its GPU and serves takes over a pipe until HOLD_SECONDS pass
@@ -352,29 +463,33 @@ STREAM = StreamSettings(first_chunk=4)
 
 @spaces.GPU(duration=lambda seconds: seconds)
 def gpu_session(seconds: int) -> int:
-    """Serve takes until none comes for HOLD_SECONDS, None arrives or ``seconds`` (less the margin) are up; returns the
-    number served. A take's messages: "start" (seed, whether painted spans follow the reading) once planned, "audio"
-    (a float32 PCM chunk) as it is decoded, then "end", or "invalid" (a request the reference refused) or "error" (the
-    session then ends: the next take gets a fresh worker)."""
+    """Serve jobs until none comes for HOLD_SECONDS, None arrives or ``seconds`` (less the margin) are up; returns the
+    number served. A job is a take (a GenerateRequest body) or an edit call (``("edit", op, args)``: ``edit_job``). A
+    take's messages: "start" (seed, whether painted spans follow the reading) once planned, "audio" (a float32 PCM chunk)
+    as it is decoded, then "end"; an edit call's: "result" (its value). Either may end "invalid" (a request the
+    reference refused) or "error" (the session then ends: the next job gets a fresh worker)."""
     deadline, served = time.monotonic() + seconds - MARGIN_SECONDS, 0
     while (left := deadline - time.monotonic()) > 0 and TAKE_RX.poll(min(HOLD_SECONDS, left)):
         message = TAKE_RX.recv()
         if message is None:
             break
-        take_id, body = message
+        job_id, body = message
         served += 1
         try:
+            if isinstance(body, tuple):
+                RESULT_TX.send((job_id, "result", edit_job(*body[1:])))
+                continue
             synthesize(LM, body, assets=ASSETS, device=DEVICE, stream=STREAM,
-                       on_plan=lambda plan: RESULT_TX.send((take_id, "start",
+                       on_plan=lambda plan: RESULT_TX.send((job_id, "start",
                                                             (plan.seed, plan.follow_tokens is not None))),
-                       on_audio=lambda pcm: RESULT_TX.send((take_id, "audio", pcm)))
+                       on_audio=lambda pcm: RESULT_TX.send((job_id, "audio", pcm)))
         except ValueError as exc:
-            RESULT_TX.send((take_id, "invalid", str(exc)))
+            RESULT_TX.send((job_id, "invalid", str(exc)))
         except Exception as exc:
-            RESULT_TX.send((take_id, "error", f"{type(exc).__name__}: {exc}"))
+            RESULT_TX.send((job_id, "error", f"{type(exc).__name__}: {exc}"))
             break
         else:
-            RESULT_TX.send((take_id, "end", None))
+            RESULT_TX.send((job_id, "end", None))
     return served
 
 
@@ -479,7 +594,7 @@ class GpuSessions:
                     continue
                 began = True
                 out.put_nowait((kind, payload))
-                if kind in ("end", "invalid", "error"):
+                if kind in ("end", "result", "invalid", "error"):
                     return True
             elif self.session.done() and not RESULT_RX.poll(0):
                 return began or None
@@ -493,6 +608,110 @@ class GpuSessions:
 
 
 GPU = GpuSessions()
+
+
+async def edit_call(request: Request, op: str, **args):
+    """One edit job on the GPU session (``edit_job``), on behalf of ``request``'s visitor: its value, ValueError for
+    a request the reference refused, RuntimeError for a failed job."""
+    job = GPU.submit(("edit", op, args), request)
+    kind, payload = await job.out.get()
+    if kind == "result":
+        return payload
+    if kind == "skipped":
+        raise RuntimeError("the client left before the edit ran")
+    if kind == "failed":
+        raise payload
+    raise (ValueError if kind == "invalid" else RuntimeError)(payload)
+
+
+# The HTTP request and the event loop of the edit route being served (set by the edit_request_context middleware):
+# the runtime's ASR / aligner calls run in worker threads (asyncio.to_thread copies this context into them).
+EDIT_REQUEST: contextvars.ContextVar[tuple[Request, asyncio.AbstractEventLoop]] = contextvars.ContextVar("edit_request")
+
+
+def edit_call_sync(op: str, **args):
+    """``edit_call`` from a worker thread of the edit runtime."""
+    request, loop = EDIT_REQUEST.get()
+    return asyncio.run_coroutine_threadsafe(edit_call(request, op, **args), loop).result()
+
+
+class InProcessAsr:
+    """``zonos3.tts.edit_align.AsrWorker`` on the GPU session (Qwen3-ASR loaded in the GPU worker). Audio items are the
+    runtime's temp WAV paths: the forked GPU worker shares this file system."""
+
+    def languages(self) -> list[str]:
+        return list(SUPPORTED_LANGUAGES)
+
+    def transcribe(self, items: list[dict]) -> list[dict]:
+        return edit_call_sync("transcribe", items=items)
+
+
+class InProcessAligner:
+    """``zonos3.tts.edit_align.FuseAlignWorker`` on the GPU session (FuseAlign loaded in the GPU worker)."""
+
+    def segments(self, audios: list[str]) -> list[list[list[float]]]:
+        return [r["chunks"] for r in edit_call_sync("segments", items=[{"audio": a} for a in audios])]
+
+    def speech(self, audios: list[str]) -> list[list[list[float]]]:
+        return [r["regions"] for r in edit_call_sync("speech", items=[{"audio": a} for a in audios])]
+
+    def align(self, items: list[dict]) -> list[list[dict]]:
+        return [r["words"] for r in edit_call_sync("align", items=items)]
+
+
+class SpaceEditEngine:
+    """``zonos3.tts.edit_runtime.EditEngine`` of the Space: uploads decode and the speaker row embeds on this process's
+    CPU; encoding the clip, each region's fill (the edit LoRA on) and the decode run on the GPU session."""
+
+    model = EDIT_MODEL
+
+    async def decode_audio(self, audio: bytes) -> tuple[np.ndarray, int]:
+        wav, sample_rate = await asyncio.to_thread(_decode_audio_bytes, audio)
+        return wav[0].numpy(), int(sample_rate)
+
+    async def embed(self, audio: bytes) -> torch.Tensor:
+        return await asyncio.to_thread(embed_audio, audio)
+
+    async def encode(self, audio: bytes, max_seconds: float) -> np.ndarray:
+        codes = await edit_call(EDIT_REQUEST.get()[0], "encode", audio=audio, max_seconds=float(max_seconds))
+        return np.asarray(codes, dtype=np.int64)
+
+    async def check(self, target_text: str, doses, condition_buckets, condition_values) -> set[str]:
+        P.validate_phoneme_groups(CONTEXT.text_tokenizer_spec, target_text)
+        raw = set()
+        if doses is not None:
+            for region in doses:
+                check_controls(ASSETS.steer_bundle, region)
+            raw = {did for region in doses for did in region if ASSETS.steer_bundle.directions[did].space == RAW_SPACE}
+        P.resolve_condition_buckets(CONTEXT, condition_buckets, condition_values)
+        return raw
+
+    async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
+        embedding, delta = job.speaker_embedding, None
+        if job.controls:
+            resolved = resolve_controls(ASSETS.steer_bundle, job.controls, None, text=job.controls_text,
+                                        speaker_embedding=embedding, sources=CONTEXT.steering_sources,
+                                        hidden_size=CONTEXT.hidden_size)
+            embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
+        request = {"text": job.text, "language": job.language, "text_normalization": job.text_normalization,
+                   **job.sampling, "seed": job.seed, "max_tokens": job.max_tokens, "speaker_mode": "embedding",
+                   "condition_buckets": job.condition_buckets, "condition_values": job.condition_values,
+                   "stream": False}
+        return await edit_call(EDIT_REQUEST.get()[0], "fill", body=request, codes=np.asarray(job.window_codes),
+                               spans=job.spans, fills=[np.asarray(f) for f in job.fills], min_frames=int(job.min_frames),
+                               embedding=embedding, hidden_delta=delta)
+
+    async def decode(self, codes: np.ndarray) -> np.ndarray:
+        return await edit_call(EDIT_REQUEST.get()[0], "decode", codes=np.asarray(codes))
+
+
+EDIT_RUNTIME = EditRuntime(SpaceEditEngine(), InProcessAsr(), InProcessAligner())
+
+
+async def edit_route(request: Request, run):
+    """An edit route (zonos3.server.edit): its GPU jobs run on behalf of its visitor (their X-IP-Token)."""
+    EDIT_REQUEST.set((request, asyncio.get_running_loop()))
+    return await edit_errors(run(EDIT_RUNTIME))
 
 
 async def audio_of(take: Take):
@@ -513,6 +732,24 @@ def pcm16_wav(pcm: np.ndarray) -> bytes:
 # ----------------------------------------------------------------------------------------------------- app
 
 app = gr.Server(title="ZONOS3 Mini", openapi_url=None, docs_url=None, redoc_url=None)
+
+
+@app.post("/v2/edit/transcribe")
+async def edit_transcribe(req: EditTranscribeRequest, request: Request):
+    """Qwen3-ASR transcript of the audio to edit (chunk-wise past 30 s) and its words' FuseAlign timings."""
+    return await edit_route(request, lambda rt: rt.transcribe(req))
+
+
+@app.post("/v2/edit/align")
+async def edit_align(req: EditAlignRequest, request: Request):
+    """FuseAlign forced alignment of the audio to ``text``: word timings, presences and edit tokens."""
+    return await edit_route(request, lambda rt: rt.align(req))
+
+
+@app.post("/v2/edit")
+async def edit(req: EditRequest, request: Request):
+    """Regenerate the edited regions of recorded speech (the edit LoRA on); unedited codec frames are kept exactly."""
+    return await edit_route(request, lambda rt: rt.edit(req))
 
 
 @app.get("/v2/capabilities")

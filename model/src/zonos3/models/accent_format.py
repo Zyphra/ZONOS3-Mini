@@ -89,7 +89,9 @@ class AccentAdapter:
     ``(x @ down.T) @ up`` on the flat ``[out, in]`` product; ``shapes``: the weight shape each linear shift was trained
     on. ``experts``: experts module (``layers.N.feed_forward.experts``) -> weight (``w13`` / ``w2``) -> (up [E, out, r],
     down [E, r, in]) float32 in the SonicExperts layout. ``router_bias``: router module (``layers.N.feed_forward.router``)
-    -> float32 [experts] added to its balancing biases."""
+    -> float32 [experts] added to its balancing biases. ``tables``: embedding / output-head weight
+    (``multi_embedder.embedders.<i>.weight``, ``multi_output.weight``) -> float32 shift of its rows, only in adapters
+    loaded with ``tables=True`` (an adapter trained with the vocabulary grown, e.g. a speech-edit LoRA)."""
 
     name: str
     format: str
@@ -97,6 +99,7 @@ class AccentAdapter:
     shapes: dict[str, tuple[int, ...]] = field(default_factory=dict)
     experts: dict[str, dict[str, tuple[torch.Tensor, torch.Tensor]]] = field(default_factory=dict)
     router_bias: dict[str, torch.Tensor] = field(default_factory=dict)
+    tables: dict[str, torch.Tensor] = field(default_factory=dict)
 
     @property
     def rank(self) -> int:
@@ -104,17 +107,26 @@ class AccentAdapter:
         return max((down.shape[0] for down, _ in self.linear.values()), default=0)
 
 
-def load_adapter(path: str | Path) -> AccentAdapter:
-    """Parse ``<accent>.pt``; raises ValueError for a file no server can apply."""
+TABLES = ("multi_embedder.embedders.", "multi_output.weight")
+
+
+def load_adapter(path: str | Path, *, tables: bool = False) -> AccentAdapter:
+    """Parse ``<accent>.pt``; raises ValueError for a file no server can apply. ``tables``: also take the adapter's
+    shifts of the embedding tables and the output head (a reference-only path: the sgl, ggml and MLX servers refuse
+    them)."""
     path = Path(path)
     adapter = torch.load(path, map_location="cpu", weights_only=True)
     fmt = adapter.get("format")
     if fmt not in FORMATS:
         raise ValueError(f"{path}: not a {' / '.join(FORMATS)} adapter")
     router_bias: dict[str, torch.Tensor] = {}
+    table_shifts: dict[str, torch.Tensor] = {}
     for target, shift in adapter["exact"].items():
         served, zero_mean = served_exact_name(target)
         if served is None:
+            continue
+        if tables and served.startswith(TABLES) and served.endswith(".weight"):
+            table_shifts[served] = shift.float()
             continue
         if not served.endswith(".router" + BALANCING_BIASES):
             raise ValueError(
@@ -161,4 +173,4 @@ def load_adapter(path: str | Path) -> AccentAdapter:
             )
         linear[module] = (pair["down"].float(), pair["up"].float().T)
         shapes[module] = tuple(pair["shape"])
-    return AccentAdapter(path.stem, fmt, linear, shapes, experts, router_bias)
+    return AccentAdapter(path.stem, fmt, linear, shapes, experts, router_bias, table_shifts)
