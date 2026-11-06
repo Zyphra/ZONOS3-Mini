@@ -70,7 +70,7 @@ def exported_factors(ex, g):
             k = down.shape[0] // len(QKVG)
             r0 = 0
             for i, s in enumerate(QKVG):
-                rows = g.tensors[f"blk.{L}.attn_{s}.weight"].ne[1]
+                rows = g.ne(f"blk.{L}.attn_{s}.weight")[1]
                 block = up[r0:r0 + rows]
                 if np.any(np.delete(block, np.s_[i * k:(i + 1) * k], axis=1)):
                     raise SystemExit(f"{base}: the stacked up factor is not block-diagonal")
@@ -93,13 +93,13 @@ def exports(g, ge, ex, factors, shifts):
     ncb = g.kv["zonos3.n_codebooks"]
     worst = 0.0
     for k in range(ncb):
-        old = g.tensors[f"audio_embd.{k}.weight"].ne[1]
+        old = g.ne(f"audio_embd.{k}.weight")[1]
         worst = max(worst, float(np.abs(ex["embd_extra"][k] - ge.arr(f"audio_embd.{k}.weight")[old].astype(np.float32)).max()))
-    told = g.tensors["text_embd.weight"].ne[1]
+    told = g.ne("text_embd.weight")[1]
     worst = max(worst, float(np.abs(ex["embd_extra"][ncb:] - ge.arr("text_embd.weight")[told:].astype(np.float32)).max()))
     print(f"embd_extra vs the grown rows: max|err| {worst:.3g}")
     v = g.kv["zonos3.audio_vocab"]
-    head = ge.arr("output.weight").astype(np.float32).reshape(ncb, -1, g.tensors["output.weight"].ne[0])[:, v:]
+    head = ge.arr("output.weight").astype(np.float32).reshape(ncb, -1, g.ne("output.weight")[0])[:, v:]
     err = ex["output_extra"] - head.reshape(-1, head.shape[-1])
     print(f"output_extra (q8) vs the grown head rows: rms err {float(np.sqrt((err ** 2).mean())):.3g}, "
           f"rms rows {float(np.sqrt((head ** 2).mean())):.3g}")
@@ -142,7 +142,7 @@ def main():
     gguf, acc = os.path.join(MODELS, "zonos3-ptq-edit.gguf"), os.path.join(MODELS, "edit/accents.gguf")
     g, ge, ex = Gguf(os.path.join(MODELS, "zonos3-ptq.gguf")), Gguf(gguf), Export(a.export)
     ncb = g.kv["zonos3.n_codebooks"]
-    _, _, factors, shifts = edit_adapter(acc, ncb, ge.tensors["output.weight"].ne[1])
+    _, _, factors, shifts = edit_adapter(acc, ncb, ge.ne("output.weight")[1])
     linear, experts = exports(g, ge, ex, factors, shifts)
 
     print("\n(b) logits: MLX runtime adapter (accents.gguf) vs MLX runtime adapter (exported factors)")

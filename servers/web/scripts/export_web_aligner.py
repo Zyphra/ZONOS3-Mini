@@ -19,36 +19,34 @@ import argparse
 import os
 
 import numpy as np
-
-from export_web_models import Gguf, Writer, GGUF_F32, GGUF_Q8_0, GGUF_TYPE_NAMES
+from export_web_models import Gguf, Writer
+from gguf import GGMLQuantizationType
 
 HF_REPO = "Zyphra/fusealign"
 GGUF_FILE = "fusealign-multilingual-cjkft-step2500-q8_0.gguf"
-GGUF_BF16 = 30
 UP_KERNEL, SMOOTH_KERNEL = 4, 5
 
 
 def bf16_f32(g, name):
     """A BF16 tensor as float32, C order shape reversed(ne)."""
-    t = g.tensors[name]
-    if t.type != GGUF_BF16:
-        raise SystemExit(f"{name}: expected BF16, got {GGUF_TYPE_NAMES.get(t.type, t.type)}")
-    o = g.data_off + t.offset
-    bits = np.asarray(g.mm[o:o + t.n * 2]).view(np.uint16).astype(np.uint32) << 16
-    return bits.view(np.float32).reshape(list(reversed(t.ne)))
+    qtype = g.tensors[name].tensor_type
+    if qtype != GGMLQuantizationType.BF16:
+        raise SystemExit(f"{name}: expected BF16, got {qtype.name}")
+    bits = np.asarray(g.raw(name)).view(np.uint16).astype(np.uint32) << 16
+    return bits.view(np.float32).reshape(list(reversed(g.ne(name))))
 
 
 def f32(g, name, ne):
-    t = g.tensors[name]
-    if t.type != GGUF_F32 or list(t.ne) != list(ne):
-        raise SystemExit(f"{name}: expected F32 {ne}, got {GGUF_TYPE_NAMES.get(t.type, t.type)} {t.ne}")
+    qtype = g.tensors[name].tensor_type
+    if qtype != GGMLQuantizationType.F32 or g.ne(name) != list(ne):
+        raise SystemExit(f"{name}: expected F32 {ne}, got {qtype.name} {g.ne(name)}")
     return np.asarray(g.arr(name), dtype=np.float32)
 
 
 def q8(g, name, ne):
-    t = g.tensors[name]
-    if t.type != GGUF_Q8_0 or list(t.ne) != list(ne):
-        raise SystemExit(f"{name}: expected Q8_0 {ne}, got {GGUF_TYPE_NAMES.get(t.type, t.type)} {t.ne}")
+    qtype = g.tensors[name].tensor_type
+    if qtype != GGMLQuantizationType.Q8_0 or g.ne(name) != list(ne):
+        raise SystemExit(f"{name}: expected Q8_0 {ne}, got {qtype.name} {g.ne(name)}")
     return np.asarray(g.raw(name))
 
 

@@ -17,123 +17,54 @@ import hashlib
 import json
 import os
 import shutil
-import struct
 
 import numpy as np
+from gguf import GGMLQuantizationType, GGUFReader
+from gguf.quants import quantize
 from zonos3.languages import CODES
 from zonos3.utils.hashing import sha256_bytes, sha256_file
 
 SHARD_CAP = 64 << 20
 ALIGN = 256
 
-GGUF_F32, GGUF_F16, GGUF_Q4_0, GGUF_Q8_0, GGUF_F64 = 0, 1, 2, 8, 28
-GGUF_TYPE_NAMES = {0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1", 8: "Q8_0",
-                   9: "Q8_1", 10: "Q2_K", 11: "Q3_K", 12: "Q4_K", 13: "Q5_K", 14: "Q6_K",
-                   15: "Q8_K", 20: "IQ4_NL", 24: "I8", 25: "I16", 26: "I32", 27: "I64",
-                   28: "F64", 30: "BF16"}
-
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# --------------------------------------------------------------------------- GGUF v3 reader
+# --------------------------------------------------------------------------- GGUF reader
 
-_SCALAR = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
-           10: "<Q", 11: "<q", 12: "<d"}
-
-
-class Tensor:
-    def __init__(self, name, ne, typ, offset):
-        self.name, self.ne, self.type, self.offset = name, ne, typ, offset
-
-    @property
-    def n(self):
-        n = 1
-        for d in self.ne:
-            n *= d
-        return n
-
-    @property
-    def nbytes(self):
-        if self.type == GGUF_F32:
-            return self.n * 4
-        if self.type == GGUF_F16:
-            return self.n * 2
-        if self.type == GGUF_Q8_0:
-            return self.n // 32 * 34
-        if self.type == GGUF_Q4_0:
-            return self.n // 32 * 18
-        if self.type == GGUF_F64:
-            return self.n * 8
-        raise ValueError(self.type)
+FLOAT_DTYPES = {GGMLQuantizationType.F32: np.float32, GGMLQuantizationType.F16: np.float16,
+                GGMLQuantizationType.F64: np.float64}
+EXPORT_TYPES = (*FLOAT_DTYPES, GGMLQuantizationType.Q4_0, GGMLQuantizationType.Q8_0)
 
 
 class Gguf:
+    """A GGUF file (gguf.GGUFReader): ``kv`` the metadata as Python values, ``tensors`` name -> ReaderTensor in file
+    order."""
+
     def __init__(self, path):
         self.path = path
-        with open(path, "rb") as f:
-            head = f.read(64 << 20)
-        self._d, self._o = head, 0
-        if self._rd("<4s") != b"GGUF":
-            raise SystemExit(f"{path}: not a GGUF file")
-        ver = self._rd("<I")
-        if ver != 3:
-            raise SystemExit(f"{path}: unsupported GGUF version {ver}")
-        nt, nkv = self._rd("<Q"), self._rd("<Q")
-        self.kv = {}
-        for _ in range(nkv):
-            k = self._rs()
-            self.kv[k] = self._rv(self._rd("<I"))
-        self.tensors = {}
-        self.order = []
-        for _ in range(nt):
-            name = self._rs()
-            nd = self._rd("<I")
-            ne = [self._rd("<Q") for _ in range(nd)]
-            typ = self._rd("<I")
-            off = self._rd("<Q")
-            self.tensors[name] = Tensor(name, ne, typ, off)
-            self.order.append(name)
-        al = self.kv.get("general.alignment", 32)
-        self.data_off = (self._o + al - 1) // al * al
-        self.mm = np.memmap(path, dtype=np.uint8, mode="r")
-        del self._d
+        self.reader = GGUFReader(path)
+        self.kv = {k: f.contents() for k, f in self.reader.fields.items() if not k.startswith("GGUF.")}
+        self.tensors = {t.name: t for t in self.reader.tensors}
 
-    def _rd(self, fmt):
-        v = struct.unpack_from(fmt, self._d, self._o)
-        self._o += struct.calcsize(fmt)
-        return v[0]
-
-    def _rs(self):
-        n = self._rd("<Q")
-        s = self._d[self._o:self._o + n].decode("utf-8", "replace")
-        self._o += n
-        return s
-
-    def _rv(self, t):
-        if t == 8:
-            return self._rs()
-        if t == 9:
-            et, n = self._rd("<I"), self._rd("<Q")
-            return [self._rv(et) for _ in range(n)]
-        return self._rd(_SCALAR[t])
+    def ne(self, name):
+        """The tensor's ggml shape (ne0 first)."""
+        return self.tensors[name].shape.tolist()
 
     def raw(self, name):
         t = self.tensors[name]
-        o = self.data_off + t.offset
-        return self.mm[o:o + t.nbytes]
+        return self.reader.data[t.data_offset:t.data_offset + t.n_bytes]
 
     def arr(self, name):
         """Tensor as numpy array in C order shape = reversed(ne) (f32/f16/f64 only)."""
-        t = self.tensors[name]
-        dt = {GGUF_F32: np.float32, GGUF_F16: np.float16, GGUF_F64: np.float64}.get(t.type)
+        dt = FLOAT_DTYPES.get(self.tensors[name].tensor_type)
         if dt is None:
-            raise SystemExit(f"unsupported tensor type {GGUF_TYPE_NAMES.get(t.type, t.type)} for {name}")
-        return self.raw(name).view(dt).reshape(list(reversed(t.ne)))
+            raise SystemExit(f"unsupported tensor type {self.tensors[name].tensor_type.name} for {name}")
+        return self.raw(name).view(dt).reshape(list(reversed(self.ne(name))))
 
     def check_types(self):
-        for name in self.order:
-            t = self.tensors[name].type
-            if t not in (GGUF_F32, GGUF_F16, GGUF_Q4_0, GGUF_Q8_0, GGUF_F64):
-                raise SystemExit(f"unsupported tensor type {GGUF_TYPE_NAMES.get(t, t)} for {name}")
+        for name, t in self.tensors.items():
+            if t.tensor_type not in EXPORT_TYPES:
+                raise SystemExit(f"unsupported tensor type {t.tensor_type.name} for {name}")
 
     def meta(self):
         arch = self.kv.get("general.architecture", "")
@@ -146,7 +77,7 @@ class Gguf:
         return out
 
 
-# --------------------------------------------------------------------------- bf16 / q8_0 conversion
+# --------------------------------------------------------------------------- bf16 conversion
 
 def bf16_bits(a):
     """ggml_fp32_to_bf16 (round to nearest, ties to even) of finite float32 values, as uint16 bits."""
@@ -157,51 +88,6 @@ def bf16_bits(a):
 def bf16_round(a):
     """float32 values rounded to the nearest bf16 (what a BF16 cast followed by an F32 cast returns)."""
     return (bf16_bits(a).astype(np.uint32) << 16).view(np.float32)
-
-
-def quantize_q8_0(a):
-    """ggml quantize_row_q8_0_ref over a float array (ne0 % 32 == 0): 34-byte blocks (f16 d, 32 int8)."""
-    x = np.ascontiguousarray(a, dtype=np.float32).reshape(-1, 32)
-    amax = np.max(np.abs(x), axis=1)
-    d = (amax / np.float32(127)).astype(np.float32)
-    inv = np.zeros_like(d)
-    np.divide(np.float32(1), d, out=inv, where=d != 0)
-    v = (x * inv[:, None]).astype(np.float64)  # float32 product as ggml; |v| + 0.5 is exact in f64
-    q = (np.sign(v) * np.floor(np.abs(v) + 0.5)).astype(np.int8)  # roundf: half away from zero
-    blocks = np.empty((x.shape[0], 34), np.uint8)
-    blocks[:, :2] = d.astype(np.float16).view(np.uint8).reshape(-1, 2)
-    blocks[:, 2:] = q.view(np.uint8)
-    return blocks.reshape(-1)
-
-
-def quantize_q4_0(a):
-    """ggml quantize_row_q4_0_ref over a float array (ne0 % 32 == 0): 18-byte blocks (f16 d, 16 bytes; byte j =
-    element j (low nibble) | element j + 16 (high)). d = (the first largest-magnitude value) / -8."""
-    x = np.ascontiguousarray(a, dtype=np.float32).reshape(-1, 32)
-    mx = x[np.arange(len(x)), np.argmax(np.abs(x), axis=1)]
-    d = (mx / np.float32(-8)).astype(np.float32)
-    inv = np.zeros_like(d)
-    np.divide(np.float32(1), d, out=inv, where=d != 0)
-    u = np.minimum(np.float32(15), np.floor(x * inv[:, None] + np.float32(8.5))).astype(np.uint8)  # (int8_t) truncation
-    blocks = np.empty((x.shape[0], 18), np.uint8)
-    blocks[:, :2] = d.astype(np.float16).view(np.uint8).reshape(-1, 2)
-    blocks[:, 2:] = u[:, :16] | (u[:, 16:] << 4)
-    return blocks.reshape(-1)
-
-
-def dequantize(g, name):
-    """A GGUF tensor as float32 in C order shape = reversed(ne) (F32/F16/F64, Q8_0 q * d, Q4_0 (u - 8) * d)."""
-    t = g.tensors[name]
-    if t.type not in (GGUF_Q8_0, GGUF_Q4_0):
-        return g.arr(name).astype(np.float32)
-    blocks = np.asarray(g.raw(name)).reshape(-1, 34 if t.type == GGUF_Q8_0 else 18)
-    d = blocks[:, :2].copy().view(np.float16).astype(np.float32)
-    if t.type == GGUF_Q8_0:
-        q = blocks[:, 2:].view(np.int8).astype(np.float32)
-    else:
-        qs = blocks[:, 2:]
-        q = np.concatenate([qs & 15, qs >> 4], axis=1).astype(np.float32) - np.float32(8)
-    return (q * d).reshape(list(reversed(t.ne)))
 
 
 # --------------------------------------------------------------------------- shard writer
@@ -286,7 +172,7 @@ class Writer:
 
     def add_q8_from(self, name, arr, shape):
         """Quantize a float tensor (ggml order, ne0 % 32 == 0) to q8_0 as ggml quantize-cli does."""
-        self.add_q8(name, quantize_q8_0(arr), shape)
+        self.add_q8(name, quantize(np.asarray(arr, dtype=np.float32), GGMLQuantizationType.Q8_0), shape)
 
     def add_bf16(self, name, arr, shape):
         """A float tensor (final memory order) rounded to bf16 as ggml_fp32_to_bf16_row does."""
@@ -308,15 +194,15 @@ class Writer:
 
 
 def copy_plain(w, g, name):
-    t = g.tensors[name]
-    if t.type == GGUF_Q8_0:
-        w.add_q8(name, g.raw(name), t.ne)
-    elif t.type == GGUF_Q4_0:
-        w.add_q4(name, g.raw(name), t.ne)
-    elif t.type == GGUF_F16:
-        w.add(name, g.arr(name), "f16", t.ne)
+    qtype, ne = g.tensors[name].tensor_type, g.ne(name)
+    if qtype == GGMLQuantizationType.Q8_0:
+        w.add_q8(name, g.raw(name), ne)
+    elif qtype == GGMLQuantizationType.Q4_0:
+        w.add_q4(name, g.raw(name), ne)
+    elif qtype == GGMLQuantizationType.F16:
+        w.add(name, g.arr(name), "f16", ne)
     else:
-        w.add(name, g.arr(name).astype(np.float32), "f32", t.ne)
+        w.add(name, g.arr(name).astype(np.float32), "f32", ne)
 
 
 # --------------------------------------------------------------------------- backbone
@@ -358,25 +244,24 @@ def export_backbone(path, out):
         if f"blk.{L}.attn_q.weight" not in g.tensors:
             continue
         names = [f"blk.{L}.attn_{s}.weight" for s in ("q", "k", "v", "gate")]
-        types = {g.tensors[n].type for n in names}
-        if types == {GGUF_Q8_0}:
+        types = {g.tensors[n].tensor_type for n in names}
+        if types == {GGMLQuantizationType.Q8_0}:
             # each output row is 1024/32 contiguous blocks: row concat is a byte concat (q|k|v|gate)
             raw = np.concatenate([np.asarray(g.raw(n)) for n in names])
-            rows = sum(g.tensors[n].ne[1] for n in names)
-            w.add_q8(f"blk.{L}.attn_qkvg.weight", raw, [g.tensors[names[0]].ne[0], rows])
-        elif types == {GGUF_F16}:
+            rows = sum(g.ne(n)[1] for n in names)
+            w.add_q8(f"blk.{L}.attn_qkvg.weight", raw, [g.ne(names[0])[0], rows])
+        elif types == {GGMLQuantizationType.F16}:
             cat = np.concatenate([g.arr(n).astype(np.float16) for n in names], axis=0)
             w.add(f"blk.{L}.attn_qkvg.weight", cat, "f16", [cat.shape[1], cat.shape[0]])
         else:
             raise SystemExit(f"blk.{L}: mixed attention projection types")
         skip.update(names)
-    for name in g.order:
+    for name in g.tensors:
         if name in skip:
             continue
-        t = g.tensors[name]
         if name == "output.weight":
             # web only: the 84 MB F16 logits head as q8_0 (half the bytes of every decode step)
-            w.add_q8_from(name, g.arr(name), t.ne)
+            w.add_q8_from(name, g.arr(name), g.ne(name))
         else:
             copy_plain(w, g, name)
     w.finish()
@@ -413,7 +298,7 @@ def edit_adapter(path, ncb, head_rows):
         raise SystemExit(f"{path}: expected one zonos-accent-lora/3 (speech-edit) adapter, found {len(edits)}")
     prefix = f"acc.{edits[0]}."
     parts, shifts = {}, {}
-    for name in a.order:
+    for name in a.tensors:
         if not name.startswith(prefix):
             continue
         rest = name[len(prefix):]
@@ -452,21 +337,21 @@ def export_edit(release, edit, adapter, out):
         raise SystemExit(f"{edit}: the speech-edit adapter needs the edit vocabulary (zonos3-ptq-edit.gguf)")
     ncb = g.kv["zonos3.n_codebooks"]
     grown = {f"audio_embd.{k}.weight" for k in range(ncb)} | {"text_embd.weight", "output.weight"}
-    if g.order != ge.order:
+    if list(g.tensors) != list(ge.tensors):
         raise SystemExit(f"{edit}: tensor list differs from {release}")
-    for name in g.order:
+    for name in g.tensors:
         if name in grown:
-            if g.tensors[name].type != GGUF_F16 or ge.tensors[name].type != GGUF_F16:
+            if {g.tensors[name].tensor_type, ge.tensors[name].tensor_type} != {GGMLQuantizationType.F16}:
                 raise SystemExit(f"{name}: expected F16")
-        elif g.tensors[name].ne != ge.tensors[name].ne or not np.array_equal(g.raw(name), ge.raw(name)):
+        elif g.ne(name) != ge.ne(name) or not np.array_equal(g.raw(name), ge.raw(name)):
             raise SystemExit(f"{name}: differs between {release} and {edit}")
     audio = [grown_rows(g, ge, f"audio_embd.{k}.weight", 1)[0] for k in range(ncb)]
     text = grown_rows(g, ge, "text_embd.weight", 1)[0]
-    head = grown_rows(g, ge, "output.weight", ncb).reshape(-1, g.tensors["output.weight"].ne[0])
+    head = grown_rows(g, ge, "output.weight", ncb).reshape(-1, g.ne("output.weight")[0])
     ax = audio[0].shape[0]
     if meta["audio_vocab"] != g.kv["zonos3.audio_vocab"] + ax or head.shape[0] != ncb * ax:
         raise SystemExit(f"{edit}: grown audio rows do not match audio_vocab")
-    name, rank, factors, shifts = edit_adapter(adapter, ncb, ge.tensors["output.weight"].ne[1])
+    name, rank, factors, shifts = edit_adapter(adapter, ncb, ge.ne("output.weight")[1])
     for base in factors:
         if base + ".weight" not in g.tensors:
             raise SystemExit(f"{adapter}: adapter module {base} is not a tensor of {release}")
@@ -497,7 +382,7 @@ def export_edit(release, edit, adapter, out):
         # q | k | v | gate as one rank-4K linear over the fused projection
         qkvg = [f"blk.{L}.attn_{s}" for s in ("q", "k", "v", "gate")]
         if any(b in factors for b in qkvg):
-            rows = [g.tensors[b + ".weight"].ne[1] for b in qkvg]
+            rows = [g.ne(b + ".weight")[1] for b in qkvg]
             downs, ups, k0 = [], [], 0
             for b in qkvg:
                 if b in factors:
@@ -529,10 +414,8 @@ def export_edit(release, edit, adapter, out):
         add(base + ".lora_up", up)
     for layer, shift in sorted(shifts.items()):
         bias = f"blk.{layer}.router_bias"
-        w.add(bias, g.arr(bias).astype(np.float32) + shift, "f32", g.tensors[bias].ne)
+        w.add(bias, g.arr(bias).astype(np.float32) + shift, "f32", g.ne(bias))
     w.finish()
-
-
 
 
 # --------------------------------------------------------------------------- codec decoder (mossdual_istft)
@@ -558,27 +441,27 @@ def export_zac(path, out):
     res = np.concatenate([g.arr(f"res.{c}.table") for c in range(9)], axis=0).astype(np.float16)
     w.add("res.tables", res, "f16", [res.shape[1], res.shape[0]])
     del res
-    for name in g.order:
+    for name, t in g.tensors.items():
         if name == "sem.table" or (name.startswith("res.") and name.endswith(".table")):
             continue
-        t = g.tensors[name]
-        if t.type == GGUF_Q8_0:
-            if not is_zac_mat(name) or len(t.ne) != 2:
+        ne = g.ne(name)
+        if t.tensor_type == GGMLQuantizationType.Q8_0:
+            if not is_zac_mat(name) or len(ne) != 2:
                 raise SystemExit(f"{name}: q8_0 is only supported for codec linear matrices")
-            w.add_q8(name, g.raw(name), t.ne)
+            w.add_q8(name, g.raw(name), ne)
             continue
         a = g.arr(name)  # C-order shape reversed(ne)
         if name in ZAC_HOST:
-            w.add(name, a.astype(np.float32), "f32", t.ne, host=True)
+            w.add(name, a.astype(np.float32), "f32", ne, host=True)
         elif name.endswith(".dw.weight"):
-            K, C = t.ne  # a: (C, K) -> [K][C]
+            K, C = ne  # a: (C, K) -> [K][C]
             w.add(name, np.ascontiguousarray(a.T).astype(np.float32), "f32", [C, K])
-        elif len(t.ne) == 2 and is_zac_mat(name) and t.ne[0] % 32 == 0:
-            w.add_q8_from(name, a, t.ne)
-        elif len(t.ne) >= 2 and t.ne[0] != 1:
-            w.add(name, a.astype(np.float16), "f16", t.ne)
+        elif len(ne) == 2 and is_zac_mat(name) and ne[0] % 32 == 0:
+            w.add_q8_from(name, a, ne)
+        elif len(ne) >= 2 and ne[0] != 1:
+            w.add(name, a.astype(np.float16), "f16", ne)
         else:
-            w.add(name, a.astype(np.float32), "f32", t.ne)
+            w.add(name, a.astype(np.float32), "f32", ne)
     w.finish()
 
 
@@ -612,14 +495,14 @@ def export_encoder(path, out):
     if g.kv.get("general.architecture") != "mossdual_encoder":
         raise SystemExit(f"{path}: not a mossdual_encoder GGUF")
     w = Writer(os.path.join(out, "encoder"), "encoder", g.meta())
-    for name in g.order:
-        t = g.tensors[name]
-        if t.type != GGUF_F32:
+    for name, t in g.tensors.items():
+        ne = g.ne(name)
+        if t.tensor_type != GGMLQuantizationType.F32:
             raise SystemExit(f"{name}: the reference encoder export needs the F32 zac-encoder.gguf")
         if name == "resample.kernel" or name.startswith("rvq."):
-            w.add(name, g.arr(name).astype(np.float32), "f32", t.ne, host=True)
-        elif is_encoder_linear(name, t.ne):
-            w.add_bf16(name, g.arr(name), t.ne)
+            w.add(name, g.arr(name).astype(np.float32), "f32", ne, host=True)
+        elif is_encoder_linear(name, ne):
+            w.add_bf16(name, g.arr(name), ne)
         elif name == "enc.in.weight":
             # K=7 causal conv on 1 channel as a 2-tap gemm over 16-sample rows:
             # y[16t+r][c] = sum_k W[k][c] x[16t+r+k-6]; tap 0 reads row t-1, tap 1 row t.
@@ -643,13 +526,13 @@ def export_encoder(path, out):
             tap1 = np.transpose(a[s:], (1, 0, 2)).reshape(OC, s * C)
             w.add_bf16(name, np.stack([tap0, tap1]), [s * C, OC, 2])
         elif name.endswith(".dw.weight"):  # already [K][C]
-            w.add(name, bf16_round(g.arr(name)), "f32", t.ne)
-        elif len(t.ne) >= 2 and t.ne[0] != 1:  # [K][OC][IC] residual-unit convs
-            w.add_bf16(name, g.arr(name), t.ne)
+            w.add(name, bf16_round(g.arr(name)), "f32", ne)
+        elif len(ne) >= 2 and ne[0] != 1:  # [K][OC][IC] residual-unit convs
+            w.add_bf16(name, g.arr(name), ne)
         elif is_encoder_autocast(name):
-            w.add(name, bf16_round(g.arr(name)), "f32", t.ne)
+            w.add(name, bf16_round(g.arr(name)), "f32", ne)
         else:
-            w.add(name, g.arr(name).astype(np.float32), "f32", t.ne)
+            w.add(name, g.arr(name).astype(np.float32), "f32", ne)
     w.finish()
 
 
@@ -662,22 +545,22 @@ def export_teacher(path, out):
     if g.kv.get("general.architecture") != "w2vbert_ssl":
         raise SystemExit(f"{path}: not a w2vbert_ssl teacher GGUF")
     w = Writer(os.path.join(out, "teacher"), "teacher", g.meta())
-    for name in g.order:
-        t = g.tensors[name]
+    for name, t in g.tensors.items():
+        ne = g.ne(name)
         if name.startswith("frontend."):
-            w.add(name, g.arr(name).astype(np.float32), "f32", t.ne, host=True)
+            w.add(name, g.arr(name).astype(np.float32), "f32", ne, host=True)
             continue
-        if t.type != GGUF_F32:
+        if t.tensor_type != GGMLQuantizationType.F32:
             raise SystemExit(f"{name}: the teacher export needs the F32 ssl-teacher.gguf")
         if name.endswith(".conv.dw.weight"):
-            K, C = t.ne  # a: (C, K) -> [K][C]
+            K, C = ne  # a: (C, K) -> [K][C]
             w.add(name, np.ascontiguousarray(g.arr(name).T).astype(np.float32), "f32", [C, K])
         elif name.endswith(".attn.dist"):
-            w.add(name, bf16_round(g.arr(name)), "f32", t.ne)
-        elif name.endswith(".weight") and len(t.ne) == 2 and t.ne[0] != 1:
-            w.add_bf16(name, g.arr(name), t.ne)
+            w.add(name, bf16_round(g.arr(name)), "f32", ne)
+        elif name.endswith(".weight") and len(ne) == 2 and ne[0] != 1:
+            w.add_bf16(name, g.arr(name), ne)
         else:
-            w.add(name, g.arr(name).astype(np.float32), "f32", t.ne)
+            w.add(name, g.arr(name).astype(np.float32), "f32", ne)
     w.finish()
 
 
@@ -696,10 +579,10 @@ def export_spk(path, out):
         raise SystemExit(f"{path}: not a mect_spk speaker encoder GGUF")
     w = Writer(os.path.join(out, "spk"), "spk", g.meta())
     done = set()
-    for name in g.order:
+    for name in g.tensors:
         if name in done:
             continue
-        t = g.tensors[name]
+        ne = g.ne(name)
         stem, _, last = name.rpartition(".")
         if stem.endswith((".conv1", ".conv2")) and last.startswith("w") and last[1:].isdigit():
             a = 0
@@ -708,16 +591,16 @@ def export_spk(path, out):
             slots = []
             for j in range(a):
                 sj = f"{stem}.w{j}"
-                if g.tensors[sj].ne[:3] != [3, 3, 1]:
+                if g.ne(sj)[:3] != [3, 3, 1]:
                     raise SystemExit(f"{sj}: expected a [3,3,1,OC] grouped-conv slot")
                 slots.append(g.arr(sj).astype(np.float32))  # (OC, 1, 3, 3)
                 done.add(sj)
             cat = np.concatenate(slots, axis=1)            # (OC, a, 3, 3)
-            w.add(stem + ".weight", cat, "f32", [3, 3, a, t.ne[3]])
+            w.add(stem + ".weight", cat, "f32", [3, 3, a, ne[3]])
             continue
         if name.endswith(".pos.dw.weight"):
             p = name[:-len("dw.weight")]
-            K, C = t.ne                                     # a: (C, K)
+            K, C = ne                                       # a: (C, K)
             scale = g.arr(p + "bn.scale").astype(np.float32)
             wt = (g.arr(name).astype(np.float32) * scale[:, None]).T  # (K, C)
             w.add(name, np.ascontiguousarray(wt), "f32", [C, K])
@@ -726,11 +609,11 @@ def export_spk(path, out):
             p = name[:-len("dw.bias")]
             b = g.arr(name).astype(np.float32) * g.arr(p + "bn.scale").astype(np.float32) + \
                 g.arr(p + "bn.shift").astype(np.float32)
-            w.add(name, b.astype(np.float32), "f32", t.ne)
+            w.add(name, b.astype(np.float32), "f32", ne)
             continue
         if ".pos.bn." in name:  # folded into pos.dw
             continue
-        w.add(name, g.arr(name).astype(np.float32), "f32", t.ne, host=name in SPK_HOST)
+        w.add(name, g.arr(name).astype(np.float32), "f32", ne, host=name in SPK_HOST)
     w.finish()
 
 
