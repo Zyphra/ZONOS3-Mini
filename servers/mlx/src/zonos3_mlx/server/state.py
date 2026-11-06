@@ -12,6 +12,7 @@ from pathlib import Path
 
 from zonos3.generation import MAX_FRAMES
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
+from zonos3.tts.stream import StreamSettings
 
 from zonos3_mlx.engine import Engine
 from zonos3_mlx.scheduler import Scheduler
@@ -33,7 +34,7 @@ class ServerOptions:
     studio_dir: Path | None = None
     phoneme_lexicon: str | None = None
     text_normalization: bool = False
-    prefix: tuple[int, int, int, int] = (15, 4, 3, 450)  # chunk, first-chunk, hold-back, context frames
+    prefix: StreamSettings = field(default_factory=StreamSettings)  # ZONOS3_PREFIX_STREAM_*
     # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and plugins need it)
     fusealign: bool = field(default_factory=fusealign_installed)
     plugins: tuple[str, ...] = ()  # --plugins: zonos3_<name> packages to mount

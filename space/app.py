@@ -59,7 +59,6 @@ from zonos3.reference.synth import (
     EditLayout,
     ReferenceAssets,
     ReferenceContext,
-    StreamSettings,
     _speaker_embedding,
     decode_base64_blob,
     edit_region,
@@ -465,9 +464,6 @@ MARGIN_SECONDS = 5  # a session stops taking work this long before its ZeroGPU d
 _FORK = multiprocessing.get_context("fork")  # spaces forks its GPU workers, which inherit both pipes
 TAKE_RX, TAKE_TX = _FORK.Pipe(duplex=False)  # (take id, request body) or None (close), main process -> session
 RESULT_RX, RESULT_TX = _FORK.Pipe(duplex=False)  # (take id, kind, payload), session -> main process
-# Prefix streaming as the servers do it (15-frame chunks behind a 3-frame hold-back), but the first chunk once 4 frames
-# are decodable: first audio 16 rows into the take instead of 27.
-STREAM = StreamSettings(first_chunk=4)
 
 
 @spaces.GPU(duration=lambda seconds: seconds)
@@ -488,7 +484,7 @@ def gpu_session(seconds: int) -> int:
             if isinstance(body, tuple):
                 RESULT_TX.send((job_id, "result", edit_job(*body[1:])))
                 continue
-            synthesize(LM, body, assets=ASSETS, device=DEVICE, stream=STREAM,
+            synthesize(LM, body, assets=ASSETS, device=DEVICE,
                        on_plan=lambda plan: RESULT_TX.send((job_id, "start",
                                                             (plan.seed, plan.follow_tokens is not None))),
                        on_audio=lambda pcm: RESULT_TX.send((job_id, "audio", pcm)))

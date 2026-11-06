@@ -107,15 +107,15 @@ def main(argv=None) -> int:
     import uvicorn
     from zonos3.server import plugins
     from zonos3.tts.edit_align import FuseAlignWorker
+    from zonos3.tts.stream import StreamSettings
 
     from zonos3_mlx.engine import Engine, TextNormalizer
     from zonos3_mlx.scheduler import Scheduler
     from zonos3_mlx.server.app import create_app
     from zonos3_mlx.server.state import ServerOptions, ServerState
-    from zonos3_mlx.vocoder import prefix_settings
 
     try:
-        prefix = prefix_settings()
+        prefix = StreamSettings.from_env()
     except ValueError as exc:
         parser.error(str(exc))
     laci = parse_laci_heads(parser, args.laci_heads)

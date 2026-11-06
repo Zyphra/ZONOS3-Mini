@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 from zonos3_sgl.core import TTSBatch, TTSReq
 from zonos3.speaker_cfg import guided_logits, speaker_cfg_twin
+from zonos3.tts.delay import apply_cold_start_delay
 from zonos3_sgl.env import ENV
 from zonos3_sgl.message import (
     BaseTTSBackendMsg,
@@ -185,19 +186,10 @@ def _apply_cold_start_delay_mask(
     n_codebooks: int,
     audio_pad_id: int,
 ) -> None:
-    """Force the unsupervised initial delay triangle to audio padding.
-
-    In training, codebook ``c`` is shifted by ``c`` frames and targets in the
-    leading triangle are ignored. Sampling those logits can create an immediate
-    EOA or arbitrary residual codes. This matches native Lingua inference by
-    padding codebooks whose delayed stream has not started, while preserving
-    ordinary continuation for prompts that already contain an audio prefix.
-    """
+    """zonos3.tts.delay.apply_cold_start_delay on every row of the batch."""
     for row, req in enumerate(batch.reqs):
-        step = int(req.total_generated)
-        if req.has_audio_prefix or step >= n_codebooks - 1:
-            continue
-        next_tokens[row, step + 1 : n_codebooks] = int(audio_pad_id)
+        apply_cold_start_delay(next_tokens[row], int(req.total_generated), n_codebooks=n_codebooks,
+                               pad_id=int(audio_pad_id), has_audio_prefix=req.has_audio_prefix)
 
 
 def _speaking_rate_buckets(model_config, condition_unknowns: Tuple[int, ...]):

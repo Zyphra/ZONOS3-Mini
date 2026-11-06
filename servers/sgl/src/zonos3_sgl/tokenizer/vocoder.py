@@ -3,7 +3,7 @@
 from __future__ import annotations
 from zonos3.tokenizer.matched_codec import codec_names as matched_codec_names, entry as matched_codec_entry, decode as decode_matched
 
-import os
+import dataclasses
 from typing import Dict, List
 
 import numpy as np
@@ -12,7 +12,8 @@ from zonos3_sgl.message import TTSDetokenizeMsg
 
 from zonos3.generation import SAMPLE_RATE
 from zonos3.tts import plan
-from zonos3.tts.delay import shear_up
+from zonos3.tts.delay import shear_up, undelay_window
+from zonos3.tts.stream import StreamSettings, prefix_window
 
 
 def decode_audio_codes(codes: torch.Tensor, audio_codec: str) -> torch.Tensor:
@@ -63,23 +64,14 @@ class TTSVocoderManager:
         self.sample_rate = sample_rate
         self.overlap_frames = overlap_frames
         self.hop_length = int(specification['hop'])
-        # Opt-in progressive decode for the matched long-context codecs (request
-        # field stream_decode="prefix"): the causal decoder re-decodes the growing
-        # prefix holding back the last frames, and the exact whole decode at EOS
-        # supplies the tail. Off unless a request asks for it: the default output
-        # is unchanged. Defaults = the arena's measured settings (1 s chunks, 3
-        # frames held back, 450 frames = 30 s of left context, -48 dB vs whole); the
-        # first chunk of a request is shorter (4 frames) for an earlier first audio.
+        # Opt-in progressive decode for the matched long-context codecs (request field stream_decode="prefix"): the
+        # causal decoder re-decodes the growing prefix holding back the last frames, and the exact whole decode at EOS
+        # supplies the tail. Explicit settings win over ZONOS3_PREFIX_STREAM_* (zonos3.tts.stream.StreamSettings).
         self.prefix_stream_supported = True
-        env = os.environ.get
-        self.prefix_chunk_frames = int(prefix_chunk_frames if prefix_chunk_frames is not None else env("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", 15))
-        self.prefix_hold_back_frames = int(prefix_hold_back_frames if prefix_hold_back_frames is not None else env("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", 3))
-        self.prefix_context_frames = int(prefix_context_frames if prefix_context_frames is not None else env("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", 450))
-        self.prefix_first_chunk_frames = int(prefix_first_chunk_frames if prefix_first_chunk_frames is not None else env("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", 4))
-        if (self.prefix_chunk_frames < 1 or self.prefix_first_chunk_frames < 1 or self.prefix_hold_back_frames < 0
-                or self.prefix_context_frames < self.prefix_chunk_frames):
-            raise ValueError("prefix stream settings: chunk_frames >= 1, first_chunk_frames >= 1, hold_back_frames >= 0, "
-                             "context_frames >= chunk_frames")
+        explicit = dict(chunk=prefix_chunk_frames, first_chunk=prefix_first_chunk_frames,
+                        hold_back=prefix_hold_back_frames, context=prefix_context_frames)
+        self.prefix = dataclasses.replace(StreamSettings.from_env(),
+                                          **{k: int(v) for k, v in explicit.items() if v is not None})
         self._prefix_mode: Dict[int, bool] = {}
         self._prefix_emitted: Dict[int, int] = {}
         self._prefix_live: Dict[int, List[np.ndarray]] = {}
@@ -287,11 +279,9 @@ class TTSVocoderManager:
         if target_frames <= decoded:
             return b""
         decode_start = decoded - min(self.overlap_frames, decoded)
-        raw_end = min(target_frames + self.n_codebooks - 1, total)
-        codes = shear_up(
-            torch.tensor(buffer[decode_start:raw_end], dtype=torch.int64, device="cuda" if torch.cuda.is_available() else "cpu"),
-            self.audio_pad_id,
-        )[: target_frames - decode_start].unsqueeze(0)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        codes = undelay_window(buffer, decode_start, target_frames, self.n_codebooks, self.audio_pad_id,
+                               device=device).unsqueeze(0)
         audio = self._decode_with_context(uid, codes, decode_start == 0)
         self._decoded_counts[uid] = target_frames
         return audio.tobytes()
@@ -305,31 +295,21 @@ class TTSVocoderManager:
     def _decode_prefix_rows(self, buffer: List[List[int]], start: int, frames_end: int, uid: int | None = None) -> np.ndarray:
         """Decode output frames [start, frames_end) from the delayed rows; the rows after
         frames_end (up to n_codebooks - 1 of them) complete the shear of the last frames."""
-        raw_end = min(frames_end + self.n_codebooks - 1, len(buffer))
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        codes = torch.tensor(buffer[start:raw_end], dtype=torch.int64, device=device)
-        codes = shear_up(codes, self.audio_pad_id)[: frames_end - start].unsqueeze(0)
+        codes = undelay_window(buffer, start, frames_end, self.n_codebooks, self.audio_pad_id, device=device).unsqueeze(0)
         if uid is None:
             audio = decode_audio_codes(codes, self.audio_codec)
             return audio[0].numpy().astype(np.float32)
         return self._decode_with_context(uid, codes, start == 0)
 
     def _decode_prefix_chunk(self, uid: int, complete_frames: int) -> bytes:
-        """Emit the samples of the next chunk of frames from a prefix re-decode (causal decoder).
-
-        decodable = complete frames minus the held-back tail: the held-back frames are decoded as right context
-        but not emitted (the last decoded frame of the iSTFT head sits ~-22 dB from the whole decode; one frame of
-        right context already reaches the bf16 floor near -48 dB). The first chunk of a request (nothing past the
-        silence prefill emitted yet) waits for first_chunk_frames, every later one for chunk_frames. Once the
-        history is longer than the context window only the last context_frames of left context are re-decoded, so
-        the cost per chunk stays bounded."""
-        decodable = complete_frames - self.prefix_hold_back_frames
+        """Emit the samples of the next chunk of frames from a prefix re-decode (causal decoder): the window of
+        zonos3.tts.stream.prefix_window."""
         emitted = self._prefix_emitted[uid]
-        first = emitted == self._prefill_len.get(uid, 0)
-        if decodable - emitted < (self.prefix_first_chunk_frames if first else self.prefix_chunk_frames):
+        window = prefix_window(complete_frames, emitted, self._prefill_len.get(uid, 0), self.prefix)
+        if window is None:
             return b""
-        windowed = decodable > self.prefix_context_frames + self.prefix_chunk_frames
-        start = max(0, emitted - self.prefix_context_frames) if windowed else 0
+        start, decodable = window
         audio = self._decode_prefix_rows(self._frame_buffers[uid], start, complete_frames, uid)
         chunk = audio[(emitted - start) * self.hop_length : (decodable - start) * self.hop_length].copy()
         self._prefix_emitted[uid] = decodable

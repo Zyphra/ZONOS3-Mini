@@ -18,6 +18,7 @@ import torch
 from zonos3_sgl.message import BaseTTSTokenizerMsg, TTSDetokenizeMsg, TTSSamplingParams, TTSTokenizeMsg
 from zonos3_sgl.tokenizer import vocoder
 from zonos3.tokenizer.matched_codec import codec_names, entry
+from zonos3.tts.stream import StreamSettings
 
 CODEC = sorted(codec_names())[0]
 SPEC = entry(CODEC)
@@ -172,4 +173,4 @@ def test_prefix_settings_validation():
     with pytest.raises(ValueError):
         vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_chunk_frames=20, prefix_context_frames=10)
     m = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
-    assert (m.prefix_first_chunk_frames, m.prefix_chunk_frames, m.prefix_hold_back_frames, m.prefix_context_frames) == (4, 15, 3, 450)
+    assert m.prefix == StreamSettings(chunk=15, first_chunk=4, hold_back=3, context=450)

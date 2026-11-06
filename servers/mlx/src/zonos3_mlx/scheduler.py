@@ -28,6 +28,7 @@ import numpy as np
 import torch
 from zonos3.reference.synth import ProbeState, Sampling, fade_out, sample_row, steer_fn
 from zonos3.speaker_cfg import guided_logits
+from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciSession, RateBuckets
 from zonos3.tts.plan import Branch
 from zonos3.tts.probe import locate_text_span
@@ -276,8 +277,7 @@ class Scheduler:
         total_generated = len(a.rows)
         token = sample_row(c, logits, job.sampling, a.history, total_generated, a.history_rows, job.stop_id,
                            a.generator)
-        if not a.has_audio_prefix and total_generated < n_cb - 1:  # cold-start delay triangle -> padding
-            token[total_generated + 1 : n_cb] = pad
+        apply_cold_start_delay(token, total_generated, n_codebooks=n_cb, pad_id=pad, has_audio_prefix=a.has_audio_prefix)
         if a.step > 0 and a.probe is not None and a.observer is not None:
             a.probe.steps += 1
             if not a.probe.stop:

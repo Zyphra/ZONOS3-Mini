@@ -28,15 +28,14 @@ from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM
 from zonos3.speaker_cfg import guided_logits
 from zonos3.tts import plan as P
-from zonos3.tts.delay import shear_up
+from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import LaciConfig, LaciHeads, LaciSession, RateBuckets
 from zonos3.tts.probe import locate_text_span
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 from zonos3.tts.sampler import sample_tts
 from zonos3.tts.span_follow import FollowConfig, SpanFollower
 from zonos3.tts.steering import SteeringBundle, load_bundle, schedule_delta
-
-_DECODE_OVERLAP_FRAMES = 4  # TTSVocoderManager overlap_frames: already-counted rows re-decoded at EOS
+from zonos3.tts.stream import StreamDecoder, StreamSettings
 
 
 # ----------------------------------------------------------------------------------------------------- assets
@@ -457,8 +456,7 @@ def generate_rows(
             logits = guided_logits(logits, outs[1].logits[-1].float(), cfg_scale)
         total_generated = len(rows)
         token = sample_row(lm.config, logits, sampling, history, total_generated, history_rows, stop_id, generator)
-        if not has_audio_prefix and total_generated < n_cb - 1:  # cold-start delay triangle -> padding
-            token[total_generated + 1 : n_cb] = pad
+        apply_cold_start_delay(token, total_generated, n_codebooks=n_cb, pad_id=pad, has_audio_prefix=has_audio_prefix)
         if step > 0 and probe is not None and observer is not None:
             probe.steps += 1
             if not probe.stop:
@@ -493,121 +491,42 @@ def generate_rows(
 # ----------------------------------------------------------------------------------------------------- decoding
 
 
-def decode_rows(lm: Zonos3LM, assets: ReferenceAssets, rows: list, *, prefill_rows: torch.Tensor | None,
-                eos_frame: int | None, context_codes: torch.Tensor | None, device) -> np.ndarray:
-    """End-of-stream decode of TTSVocoderManager.decode_frames / _decode_final: the prefill rows open the stream, the
-    EOS boundary is the earliest of the aligned EOS frame and every row's EOA column, the last overlap rows of the
-    prefill are re-decoded with the rest, and the reference tail is decoded as left context at the stream start."""
+def _codec_decode(lm: Zonos3LM, assets: ReferenceAssets, device):
+    """The checkpoint's matched codec on undelayed codes [frames, n_codebooks] -> float32 PCM (ValueError for codes
+    outside the codebook)."""
     from zonos3.tokenizer.matched_codec import decode_model, entry
 
     c = lm.config
-    n_cb = c.n_codebooks
-    eoa = c.audio_pad_id - 1
-    buffer = [] if prefill_rows is None else [[int(v) for v in r[:n_cb]] for r in prefill_rows.tolist()]
-    prefill = len(buffer)
-    candidates = [] if eos_frame is None else [max(0, int(eos_frame)) + prefill]
-    for row in rows:
-        codes = [int(v) for v in row[:n_cb].tolist()]
-        buffer.append(codes)
-        cols = [i for i, tok in enumerate(codes) if tok == eoa]
-        if cols:
-            candidates.append(max(0, len(buffer) - 1 - max(cols)))
-    total = len(buffer)
-    target = total - (n_cb - 1)
-    if candidates:
-        target = min(target, min(candidates))
-    if target <= prefill:
-        return np.zeros(0, dtype=np.float32)
-    start = prefill - min(_DECODE_OVERLAP_FRAMES, prefill)
-    raw_end = min(target + n_cb - 1, total)
-    codes = shear_up(torch.tensor(buffer[start:raw_end], dtype=torch.int64), c.audio_pad_id)[: target - start]
-    hop = int(entry(c.audio_codec)["hop"])
-    context = 0
-    if start == 0 and context_codes is not None and len(context_codes):
-        context = len(context_codes)
-        codes = torch.cat((torch.as_tensor(context_codes, dtype=torch.int64).reshape(-1, n_cb), codes), dim=0)
-    if bool(((codes < 0) | (codes >= c.codebook_size)).any()):
-        raise ValueError("decode rows hold non-codec tokens")
+    codec = entry(c.audio_codec)
     model = assets.decoder(c.audio_codec, torch.device(device))
-    audio = decode_model(model, codes.unsqueeze(0), entry(c.audio_codec))[0].numpy().astype(np.float32)
-    return audio[context * hop:]
 
-
-@dataclass(frozen=True)
-class StreamSettings:
-    """Prefix streaming (TTSVocoderManager, ZONOS3_PREFIX_STREAM_*): a chunk once ``chunk`` new frames are decodable
-    behind ``hold_back`` frames (``first_chunk`` for the stream's first), each decoding the prefix with at most
-    ``context`` frames of left context."""
-
-    chunk: int = 15
-    hold_back: int = 3
-    context: int = 450
-    first_chunk: int = 15
-
-
-class PrefixStream:
-    """One take's rows as they come -> float32 PCM chunks (TTSVocoderManager._decode_prefix_chunk / _decode_final in
-    prefix mode): the buffer opens with the silence-prefill rows (decoded, never emitted), the reference tail is left
-    context at the stream start, the causal decoder re-decodes the growing prefix for each chunk, and at EOS the exact
-    whole decode supplies the tail."""
-
-    def __init__(self, lm: Zonos3LM, assets: ReferenceAssets, device, *, prefill_rows: torch.Tensor | None,
-                 context_codes: torch.Tensor | None, settings: StreamSettings):
-        from zonos3.tokenizer.matched_codec import decode_model, entry
-
-        c = lm.config
-        codec = entry(c.audio_codec)
-        model = assets.decoder(c.audio_codec, torch.device(device))
-        self.decode = lambda codes: decode_model(model, codes.unsqueeze(0), codec)[0].numpy().astype(np.float32)
-        self.n_cb, self.pad, self.codebook_size, self.hop = c.n_codebooks, c.audio_pad_id, c.codebook_size, int(codec["hop"])
-        self.settings = settings
-        self.buffer = [] if prefill_rows is None else [[int(v) for v in r[: self.n_cb]] for r in prefill_rows.tolist()]
-        self.prefill = self.emitted = len(self.buffer)
-        self.context = None
-        if context_codes is not None and len(context_codes):
-            self.context = torch.as_tensor(context_codes, dtype=torch.int64).reshape(-1, self.n_cb)
-        self.eos: int | None = None
-
-    def _decode(self, start: int, end: int) -> np.ndarray:
-        """Output frames [start, end) from the delayed rows (the reference tail as left context at the stream start)."""
-        raw_end = min(end + self.n_cb - 1, len(self.buffer))
-        codes = shear_up(torch.tensor(self.buffer[start:raw_end], dtype=torch.int64), self.pad)[: end - start]
-        context = 0
-        if start == 0 and self.context is not None:
-            context = len(self.context)
-            codes = torch.cat((self.context, codes), dim=0)
-        if bool(((codes < 0) | (codes >= self.codebook_size)).any()):
+    def decode(codes: np.ndarray) -> np.ndarray:
+        codes = torch.as_tensor(codes, dtype=torch.int64)
+        if bool(((codes < 0) | (codes >= c.codebook_size)).any()):
             raise ValueError("decode rows hold non-codec tokens")
-        return self.decode(codes)[context * self.hop:]
+        return decode_model(model, codes.unsqueeze(0), codec)[0].numpy().astype(np.float32)
 
-    def _target(self) -> int:
-        target = len(self.buffer) - (self.n_cb - 1)
-        return target if self.eos is None else min(target, self.eos)
+    return decode
 
-    def push(self, row: torch.Tensor, eos_frame: int | None, finished: bool) -> np.ndarray:
-        """One generated row (``eos_frame``: the aligned EOS frame in generated rows): the PCM it completes (maybe none);
-        ``finished``: the take's last row, after which the rest is returned."""
-        codes = [int(v) for v in row[: self.n_cb].tolist()]
-        self.buffer.append(codes)
-        candidates = [] if eos_frame is None else [max(0, int(eos_frame)) + self.prefill]
-        cols = [i for i, tok in enumerate(codes) if tok == self.pad - 1]  # EOA
-        if cols:
-            candidates.append(max(0, len(self.buffer) - 1 - max(cols)))
-        if candidates:
-            self.eos = min(candidates) if self.eos is None else min(self.eos, *candidates)
-        complete = self._target()
-        if finished:
-            if complete <= self.emitted:
-                return np.zeros(0, dtype=np.float32)
-            return self._decode(0, complete)[self.emitted * self.hop:]
-        s = self.settings
-        decodable = complete - s.hold_back
-        if decodable - self.emitted < (s.first_chunk if self.emitted == self.prefill else s.chunk):
-            return np.zeros(0, dtype=np.float32)
-        start = max(0, self.emitted - s.context) if decodable > s.context + s.chunk else 0
-        chunk = self._decode(start, complete)[(self.emitted - start) * self.hop:(decodable - start) * self.hop]
-        self.emitted = decodable
-        return chunk
+
+def _codec_hop(lm: Zonos3LM) -> int:
+    from zonos3.tokenizer.matched_codec import entry
+
+    return int(entry(lm.config.audio_codec)["hop"])
+
+
+def decode_rows(lm: Zonos3LM, assets: ReferenceAssets, rows: list, *, prefill_rows: torch.Tensor | None,
+                eos_frame: int | None, context_codes: torch.Tensor | None, device) -> np.ndarray:
+    """End-of-stream decode of TTSVocoderManager.decode_frames / _decode_final (a whole-mode StreamDecoder): the
+    prefill rows open the stream, the EOS boundary is the earliest of the aligned EOS frame and every row's EOA column,
+    the last overlap rows of the prefill are re-decoded with the rest, and the reference tail is decoded as left
+    context at the stream start."""
+    c = lm.config
+    decoder = StreamDecoder(_codec_decode(lm, assets, device), n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id,
+                            hop=_codec_hop(lm), prefill_rows=prefill_rows, context_codes=context_codes, mode="whole")
+    for row in rows:
+        decoder.push(row, eos_frame)
+    return decoder.finish()
 
 
 class _Emit:
@@ -719,8 +638,9 @@ def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=N
     gain = output_gain(c.audio_codec, req.headroom_db)
     prefix = emit = on_row = None
     if on_audio is not None and plan.laci is None and req.stream_decode != "whole":
-        prefix = PrefixStream(lm, assets, device, prefill_rows=plan.prefill_rows, context_codes=plan.context_codes,
-                              settings=stream)
+        prefix = StreamDecoder(_codec_decode(lm, assets, device), n_codebooks=c.n_codebooks,
+                               audio_pad_id=c.audio_pad_id, hop=_codec_hop(lm), prefill_rows=plan.prefill_rows,
+                               context_codes=plan.context_codes, mode="prefix", settings=stream)
         emit = _Emit(on_audio, gain, float(req.fade_out_ms))
 
         def on_row(row, eos_frame, finished):

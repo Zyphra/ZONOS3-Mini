@@ -20,12 +20,12 @@ from zonos3.reference.synth import Sampling, fade_out
 from zonos3.server.schemas import GenerateRequest, SpeechRequest
 from zonos3.tts.audio import pcm16_wav_bytes
 from zonos3.tts.plan import parse_request, request_head
+from zonos3.tts.stream import StreamDecoder
 
 from zonos3_mlx.engine import Plan, plan_request
 from zonos3_mlx.scheduler import Job
 from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
-from zonos3_mlx.vocoder import StreamDecoder
 
 logger = logging.getLogger("zonos3_mlx.server")
 
@@ -49,12 +49,10 @@ class JobRun:
         c, dec = state.config, state.engine.decoder
         self.decoder = None
         if mode is not None:
-            chunk, first, hold, context = state.options.prefix
             self.decoder = StreamDecoder(
                 dec.decode, n_codebooks=c.n_codebooks, audio_pad_id=c.audio_pad_id, hop=dec.hop,
-                prefill_rows=None if plan.prefill_rows is None else plan.prefill_rows.numpy(),
-                context_codes=None if plan.context_codes is None else plan.context_codes.numpy(), mode=mode,
-                chunk_frames=chunk, first_chunk_frames=first, hold_back_frames=hold, context_frames=context)
+                prefill_rows=plan.prefill_rows, context_codes=plan.context_codes, mode=mode,
+                settings=state.options.prefix)
         self.rows: list = []
         self.eos_frame: int | None = None
         self.record: dict | None = None
@@ -101,7 +99,7 @@ class JobRun:
         if self.failed or self.job.aborted:
             return
         try:
-            self._post(("audio", fn(*args)))
+            self._post(("audio", fn(*args).tobytes()))
         except Exception as exc:  # noqa: BLE001 - delivered to the request
             logger.exception("decode failed")
             self.failed = True
