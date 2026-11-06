@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import functools
 import hashlib
 import io
 import os
 import secrets
 import subprocess
+import threading
 import time
 import uuid
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,6 +81,10 @@ _GLOBAL_STATE = None
 _SPEAKER_EMBEDDERS = {}
 _SPEAKER_EMBEDDER_LOCK = asyncio.Lock()
 _SPEAKER_EMBEDDER_DEVICE = os.getenv("ZONOS3_SPEAKER_EMBEDDER_DEVICE", "cpu")
+# Reference clips are decoded and embedded on this many worker threads (each with its own CUDA stream).
+_SPEAKER_EMBEDDER_THREADS = max(1, int(os.getenv("ZONOS3_SPEAKER_EMBEDDER_THREADS", "8")))
+_SPEAKER_EMBEDDER_POOL: ThreadPoolExecutor | None = None
+_SPEAKER_EMBEDDER_STREAMS = threading.local()
 _SESSION_SPEAKER_CACHE: Dict[str, Dict[str, "CachedSpeakerReference"]] = {}
 _SESSION_SPEAKER_CACHE_LOCK = asyncio.Lock()
 _DEFAULT_SPEAKER_CACHE: Dict[Tuple[str, int], Dict[str, "DefaultSpeakerReference"]] = {}
@@ -858,13 +865,40 @@ async def _get_speaker_embedder(expected_dim: int, speaker_codec: str | None = N
     return _SPEAKER_EMBEDDERS[backend_key]
 
 
+def _speaker_embedder_pool() -> ThreadPoolExecutor:
+    """Worker threads for reference-clip decoding and speaker embedding, so concurrent uploads run in parallel instead
+    of one after another on the event loop (ffmpeg transcode, resample, fbank and encoder forward per clip)."""
+    global _SPEAKER_EMBEDDER_POOL
+    if _SPEAKER_EMBEDDER_POOL is None:
+        _SPEAKER_EMBEDDER_POOL = ThreadPoolExecutor(
+            max_workers=_SPEAKER_EMBEDDER_THREADS, thread_name_prefix="speaker-embedder"
+        )
+    return _SPEAKER_EMBEDDER_POOL
+
+
+def _embed_waveform_sync(embedder, wav: torch.Tensor, sample_rate: int) -> list[torch.Tensor]:
+    """One encoder forward on the calling worker thread's own CUDA stream; returns the CPU candidates."""
+    device = getattr(embedder, "device", None)
+    stream = None
+    if isinstance(device, torch.device) and device.type == "cuda":
+        stream = getattr(_SPEAKER_EMBEDDER_STREAMS, "stream", None)
+        if stream is None:
+            stream = _SPEAKER_EMBEDDER_STREAMS.stream = torch.cuda.Stream(device=device)
+    with torch.inference_mode(), (torch.cuda.stream(stream) if stream is not None else contextlib.nullcontext()):
+        output = embedder(wav, sample_rate)
+        outputs = output if isinstance(output, tuple) else (output,)
+        return [tensor.squeeze(0).to(dtype=torch.float32, device="cpu") for tensor in outputs]
+
+
 async def _compute_speaker_embedding_from_audio(
     speaker_audio_base64: str,
     expected_dim: int,
     speaker_codec: str | None = None,
 ) -> torch.Tensor:
     audio_bytes = _decode_base64_blob(speaker_audio_base64, "speaker_audio_base64")
-    wav, sample_rate = _decode_audio_bytes(audio_bytes)
+    wav, sample_rate = await asyncio.get_running_loop().run_in_executor(
+        _speaker_embedder_pool(), _decode_audio_bytes, audio_bytes
+    )
     return await _compute_speaker_embedding_from_waveform(
         wav,
         sample_rate,
@@ -881,16 +915,9 @@ async def _compute_speaker_embedding_from_waveform(
     speaker_codec: str | None = None,
 ) -> torch.Tensor:
     embedder = await _get_speaker_embedder(expected_dim, speaker_codec)
-    with torch.inference_mode():
-        output = embedder(wav, sample_rate)
-
-    if isinstance(output, tuple):
-        candidates = [
-            tensor.squeeze(0).to(dtype=torch.float32, device="cpu")
-            for tensor in output
-        ]
-    else:
-        candidates = [output.squeeze(0).to(dtype=torch.float32, device="cpu")]
+    candidates = await asyncio.get_running_loop().run_in_executor(
+        _speaker_embedder_pool(), _embed_waveform_sync, embedder, wav, sample_rate
+    )
 
     for candidate in candidates:
         if candidate.numel() == expected_dim:
