@@ -98,7 +98,8 @@ export class SpeakerEncoder {
     return new SpeakerEncoder(gpu, w, { bnScale, bnShift, linear });
   }
 
-  /** 192-d speaker embedding (not normalized) of mono 44.1 kHz audio; at most maxSeconds are used. */
+  /** 192-d speaker embedding (not normalized) of mono 44.1 kHz audio; at most maxSeconds are used, so a longer clip (a
+   *  speech-edit source of up to EDIT_MAX_SECONDS) embeds its first maxSeconds. */
   async embed(pcm44k: Float32Array): Promise<Float32Array> {
     const { fbank, T } = this.features(pcm44k);
     const { embedding } = await this.run(fbank, T);
@@ -108,8 +109,10 @@ export class SpeakerEncoder {
 
   /** Kaldi fbank [T][80] (log mel, before CMN) of the first maxSeconds of 44.1 kHz audio resampled to 16 kHz. */
   features(pcm44k: Float32Array): { fbank: Float32Array; T: number } {
+    // Only the first maxSeconds are read: the resampler sees them plus one second of lookahead (far more than its
+    // filter's), so the 16 kHz samples kept are the ones of the whole clip.
     const rs = new Resampler(this.resampleKernel, 441, 160, 17);
-    const a = rs.push(pcm44k), z = rs.flush();
+    const a = rs.push(pcm44k.subarray(0, (this.maxSeconds + 1) * 44100)), z = rs.flush();
     const n = Math.min(a.length + z.length, MAX_SAMPLES_16K, this.maxSeconds * 16000);
     if (n < FRAME_LEN) throw new Error('spk: audio shorter than 25 ms');
     const wav = new Float32Array(n);

@@ -49,8 +49,30 @@ describe('sampler stop id and min frames', () => {
   it('masks special ids other than the stop id', () => {
     const lg = Float32Array.from([0, 1, 0, 0, 0, 0, 9, 9]);
     const s = new Sampler(cfg({ greedy: true }), 1, V);
-    expect(s.sample(lg, 0)).toBe(1); // default stop id 4096 is outside this vocab: 6 masked
-    s.stopId = 6;
+    expect([s.eoaId, s.padId, s.spanEndId, s.stopId]).toEqual([6, 7, -1, 6]);
+    expect(s.sample(lg, 0)).toBe(6); // EOA is the stop id; the pad (7) is masked
+    s.stopId = 4096;                 // a stop id outside this vocab: EOA masked too
+    expect(s.sample(lg, 0)).toBe(1);
+  });
+});
+
+describe('sampler span-end vocabulary', () => {
+  // 9 ids: codes 0..5, EOA 6, pad 7, span-end 8
+  const lg = Float32Array.from([0, 1, 0, 0, 0, 0, 9, 9, 8]);
+
+  it('lays out EOA, pad and span-end; plain stop on EOA masks span-end', () => {
+    const s = new Sampler(cfg({ greedy: true }), 1, 9, { spanEnd: true });
+    expect([s.eoaId, s.padId, s.spanEndId, s.stopId]).toEqual([6, 7, 8, 6]);
+    expect(s.sample(Float32Array.from([0, 1, 0, 0, 0, 0, 0, 9, 8]), 0)).toBe(1);
     expect(s.sample(lg, 0)).toBe(6);
+  });
+
+  it('spanEndStop stops on span-end, masks EOA and waits for minFrames', () => {
+    const s = new Sampler(cfg({ greedy: true }), 1, 9, { spanEndStop: true });
+    expect([s.eoaId, s.padId, s.spanEndId, s.stopId]).toEqual([6, 7, 8, 8]);
+    s.minFrames = 1;
+    expect(s.sample(lg, 0)).toBe(1);
+    s.accept([1]);
+    expect(s.sample(lg, 0)).toBe(8);
   });
 });

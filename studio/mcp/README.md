@@ -48,7 +48,7 @@ says so. Without a steering bundle (`/v2/controls` 404) only plain voices work: 
 | `zonos_project` | | `list`, `open` (by id or name: personas, lines, takes, Edit clip), `create` |
 | `zonos_design_voice` | ✓ | Create / refine a persona by name (base voice, mode, preset, values, accents); renders a preview |
 | `zonos_speak` | ✓ | A new Direct line or more takes of one (`line`); `delivery` for the whole line, `spans` for words |
-| `zonos_edit_speech` | ✓ | Change the words of a Direct take, a WAV file / URL or the current Edit clip; returns takes |
+| `zonos_edit_speech` | ✓ | Change the words of a Direct take, a WAV file / URL or the current Edit clip; returns takes. A file / URL without `transcript` is transcribed; a server without speech recognition (`edit_transcribe: false`) requires `transcript` and returns unchecked takes |
 | `zonos_keep_edit` | | Keep an edit take as the next Edit version; `send_back` replaces the Direct take |
 | `zonos_clone_voice` | | Register a voice from an audio file / URL; adds a persona |
 | `zonos_save_voice` | | Bake a persona's design into a new embedding voice |

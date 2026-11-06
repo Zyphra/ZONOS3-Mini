@@ -205,7 +205,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings */
+        /**
+         * Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings
+         * @description Needs speech recognition (capabilities `edit_transcribe`). Without it the server answers 503 with the detail
+         *     "Speech recognition is not available on this server: send the transcript to /v2/edit/align instead".
+         */
         post: operations["editTranscribe"];
         delete?: never;
         options?: never;
@@ -243,7 +247,10 @@ export interface paths {
          * Edit recorded speech so it says target_text
          * @description Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between
          *     `original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one
-         *     span-end-terminated generation; unedited codec frames are kept exactly.
+         *     span-end-terminated generation; unedited codec frames are kept exactly. A server without speech recognition
+         *     (capabilities `edit_transcribe` false) needs `original_text` whenever the clip's words are read (no `spans`, or a
+         *     clip longer than `max_context_seconds`) and refuses `verify`: 503 "Speech recognition is not available on this
+         *     server: ..." (the detail names the fix), before any generation.
          */
         post: operations["edit"];
         delete?: never;
@@ -1038,11 +1045,14 @@ export interface components {
             speaker_embedding_cache: boolean;
             speaker_embedding_blend: boolean;
             default_voices_enabled: boolean;
-            /** @description The checkpoint edits speech (span-end and marker rows) and the server has Qwen3-ASR (.venv-asr) and FuseAlign. */
+            /** @description The checkpoint edits speech (span-end and marker rows) and the server has FuseAlign and the reference encoder: /v2/edit/align and /v2/edit with the clip's transcript. Speech recognition is not required (edit_transcribe). */
             speech_editing: boolean;
+            /** @description The server also has speech recognition (Qwen3-ASR): /v2/edit/transcribe, /v2/edit without original_text and verify. Always false when speech_editing is false; without it those answer 503. */
+            edit_transcribe: boolean;
             edit_max_spans: number;
             edit_frame_rate: number | null;
             edit_max_seconds: number;
+            /** @description The longest clip /v2/edit/align and the alignment inside /v2/edit accept (seconds). */
             edit_align_max_seconds: number;
             phoneme_tokens: components["schemas"]["PhonemeTokens"];
             phonemize_enabled: boolean;
@@ -1164,7 +1174,10 @@ export interface components {
         EditRequest: {
             audio_base64: string;
             target_text: string;
-            /** @default null */
+            /**
+             * @description The clip's transcript. Omitted, it is recognized with Qwen3-ASR when the clip's words are needed; a server without speech recognition (edit_transcribe false) then answers 503.
+             * @default null
+             */
             original_text?: string | null;
             /**
              * @description Checked word timings of original_text, used instead of the server's alignment.
@@ -1229,7 +1242,10 @@ export interface components {
             context_seconds?: number;
             /** @default 0.7 */
             min_fill_ratio?: number;
-            /** @default false */
+            /**
+             * @description Transcribe each take with Qwen3-ASR and report WER/CER against target_text and the take's words. Needs edit_transcribe (else 503).
+             * @default false
+             */
             verify?: boolean;
             /**
              * @description Tag CFG is not offered for edits; only 1.0 is accepted.
@@ -1401,7 +1417,11 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description A helper worker (Qwen3-ASR, FuseAlign, a plugin's worker, the ggml server's Python host) is unavailable. */
+        /**
+         * @description A helper worker (Qwen3-ASR, FuseAlign, a plugin's worker, the ggml server's Python host) is unavailable, or the
+         *     request needs speech recognition on a server without it (detail "Speech recognition is not available on this
+         *     server: " followed by the fix, e.g. "send the clip's transcript as original_text").
+         */
         Unavailable: {
             headers: {
                 [name: string]: unknown;

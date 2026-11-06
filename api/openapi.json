@@ -330,6 +330,7 @@
       "post": {
         "operationId": "editTranscribe",
         "summary": "Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings",
+        "description": "Needs speech recognition (capabilities `edit_transcribe`). Without it the server answers 503 with the detail\n\"Speech recognition is not available on this server: send the transcript to /v2/edit/align instead\".\n",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -414,7 +415,7 @@
       "post": {
         "operationId": "edit",
         "summary": "Edit recorded speech so it says target_text",
-        "description": "Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\n`original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\nspan-end-terminated generation; unedited codec frames are kept exactly.\n",
+        "description": "Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\n`original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\nspan-end-terminated generation; unedited codec frames are kept exactly. A server without speech recognition\n(capabilities `edit_transcribe` false) needs `original_text` whenever the clip's words are read (no `spans`, or a\nclip longer than `max_context_seconds`) and refuses `verify`: 503 \"Speech recognition is not available on this\nserver: ...\" (the detail names the fix), before any generation.\n",
         "parameters": [
           {
             "$ref": "#/components/parameters/Keepalive"
@@ -915,7 +916,7 @@
         }
       },
       "Unavailable": {
-        "description": "A helper worker (Qwen3-ASR, FuseAlign, a plugin's worker, the ggml server's Python host) is unavailable.",
+        "description": "A helper worker (Qwen3-ASR, FuseAlign, a plugin's worker, the ggml server's Python host) is unavailable, or the\nrequest needs speech recognition on a server without it (detail \"Speech recognition is not available on this\nserver: \" followed by the fix, e.g. \"send the clip's transcript as original_text\").\n",
         "content": {
           "application/json": {
             "schema": {
@@ -2601,6 +2602,7 @@
           "speaker_embedding_blend",
           "default_voices_enabled",
           "speech_editing",
+          "edit_transcribe",
           "edit_max_spans",
           "edit_frame_rate",
           "edit_max_seconds",
@@ -2774,7 +2776,11 @@
           },
           "speech_editing": {
             "type": "boolean",
-            "description": "The checkpoint edits speech (span-end and marker rows) and the server has Qwen3-ASR (.venv-asr) and FuseAlign."
+            "description": "The checkpoint edits speech (span-end and marker rows) and the server has FuseAlign and the reference encoder: /v2/edit/align and /v2/edit with the clip's transcript. Speech recognition is not required (edit_transcribe)."
+          },
+          "edit_transcribe": {
+            "type": "boolean",
+            "description": "The server also has speech recognition (Qwen3-ASR): /v2/edit/transcribe, /v2/edit without original_text and verify. Always false when speech_editing is false; without it those answer 503."
           },
           "edit_max_spans": {
             "type": "integer"
@@ -2789,7 +2795,8 @@
             "type": "number"
           },
           "edit_align_max_seconds": {
-            "type": "number"
+            "type": "number",
+            "description": "The longest clip /v2/edit/align and the alignment inside /v2/edit accept (seconds)."
           },
           "phoneme_tokens": {
             "$ref": "#/components/schemas/PhonemeTokens"
@@ -3176,6 +3183,7 @@
             "type": "string"
           },
           "original_text": {
+            "description": "The clip's transcript. Omitted, it is recognized with Qwen3-ASR when the clip's words are needed; a server without speech recognition (edit_transcribe false) then answers 503.",
             "type": [
               "string",
               "null"
@@ -3332,6 +3340,7 @@
             "default": 0.7
           },
           "verify": {
+            "description": "Transcribe each take with Qwen3-ASR and report WER/CER against target_text and the take's words. Needs edit_transcribe (else 503).",
             "type": "boolean",
             "default": false
           },

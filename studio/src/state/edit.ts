@@ -38,6 +38,7 @@ export interface Version {
   b64: string;
   /** Duration the server measured (what word timings and spans refer to). */
   duration: number;
+  /** Empty: none yet (a server without speech recognition waits for it to be typed, then aligns it). */
   transcript: string;
   /** Word timings in use: the alignment, possibly corrected by hand. */
   words: Word[];
@@ -52,7 +53,7 @@ export interface Version {
 export interface Doc {
   name: string;
   source: Source;
-  /** The clip's language (server code): every speech-recognition and alignment call (transcription, alignment, verify) uses it. */
+  /** The clip's language (server code): every alignment (and, with speech recognition, transcription and verify) uses it. */
   language: string;
   versions: Version[];
   current: number;
@@ -142,6 +143,8 @@ persist('edit.context', contextSeconds);
 
 export const caps = computed(() => backend.value!.edit);
 export const canEdit = computed(() => !!backend.value?.edit.speech_editing);
+/** The server can transcribe (and verify takes); without, a clip's transcript is typed in and aligned. */
+export const canTranscribe = computed(() => !!backend.value?.edit.edit_transcribe);
 /** Longest clip an edit takes: edits are planned (and long clips windowed) over an alignment, so both limits bound it. */
 export const maxSeconds = computed(() => Math.min(caps.value.edit_max_seconds, caps.value.edit_align_max_seconds));
 export const fps = computed(() => caps.value.edit_frame_rate || 15);
@@ -164,6 +167,9 @@ export const displayed = computed(() => {
 /** The target text takes pronunciation groups: an edit checkpoint with phoneme tokens. */
 export const pronEdit = computed(() => canEdit.value && !!pronTokens.value);
 
+/** The current version has no transcript yet (no speech recognition): the user types what it says, then aligns. */
+export const needsTranscript = computed(() => !!version.value && !version.value.transcript);
+
 /** What the server would refuse in the target's pronunciation groups (never for the transcript being fixed). */
 export const pronError = computed(() => (pronEdit.value && !fixMode.value ? pronProblem(text.value, pronTokens.value) : null));
 
@@ -185,15 +191,26 @@ export async function wavOf(pcm: Float32Array, sr: number): Promise<string> {
 export const clipLanguages = signal<Record<string, string>>({});
 const clipKey = (s: Source, seconds: number) => `${s.kind}:${s.label}:${seconds.toFixed(2)}`;
 
-/** Whether a speech-editing call answered this session: the server's first one loads its speech recognition. */
+/** Whether speech recognition answered this session: the server's first transcription (or take check) loads it. */
 let asrWarmed = false;
-/** A busy label that says the server may be loading its speech recognition (about half a minute) rather than hanging. */
-export const asrLabel = (label: string) => (asrWarmed ? label : `${label} (the server's first use loads speech recognition: about half a minute)`);
+/** A busy label for a call that runs speech recognition: the first one loads it (about half a minute) rather than hanging. */
+export const asrLabel = (label: string) => (asrWarmed || !canTranscribe.value ? label : `${label} (the server's first use loads speech recognition: about half a minute)`);
 
-/** Open a clip; `language` (server code) defaults to the one last used for this clip, else the project's language. */
+/** A starting point for typing a transcript the server cannot recognize: a known text with its groups spelled out. */
+export const suggestedTranscript = signal('');
+
+/**
+ * Open a clip; `language` (server code) defaults to the one last used for this clip, else the project's language.
+ * Known text is aligned; otherwise the clip is transcribed, or, on a server without speech recognition, opened
+ * without a transcript for the user to type (then aligned by saveFix).
+ */
 export async function openClip(source: Source, pcm: Float32Array, sr: number, knownText?: string | null, language?: string): Promise<boolean> {
-  // A pronunciation group is not a word the aligner can read: such clips are transcribed instead.
-  if (knownText && parsePron(knownText, null).groups.length) knownText = null;
+  // A pronunciation group is not a word the aligner can read: such clips are transcribed (or typed) instead.
+  const grouped = !!knownText && parsePron(knownText, null).groups.length > 0;
+  suggestedTranscript.value = grouped ? spokenText(knownText!) : '';
+  if (grouped) knownText = null;
+  const known = knownText?.trim() ?? '';
+  const transcribe = !known && canTranscribe.value;
   const max = maxSeconds.value;
   const dur = pcm.length / sr;
   if (dur > max) {
@@ -208,14 +225,14 @@ export async function openClip(source: Source, pcm: Float32Array, sr: number, kn
   const had = doc.value && doc.value.versions.length > 1;
   const p = projectSettings.value.language;
   const lang = language ?? clipLanguages.value[clipKey(source, dur)] ?? (EDIT_LANGUAGES.includes(p) ? p : 'en_us');
-  busy.value = { label: asrLabel(knownText ? 'Aligning the transcript…' : 'Transcribing…'), started: performance.now() };
+  busy.value = { label: known ? 'Aligning the transcript…' : transcribe ? asrLabel('Transcribing…') : 'Opening…', started: performance.now() };
   genError.value = null;
   act.value = 'edit';
   try {
     const b64 = await wavOf(pcm, sr);
-    const a = knownText?.trim() ? await api.align(b64, knownText.trim(), lang) : await api.transcribe(b64, lang);
-    asrWarmed = true;
-    const v: Version = { id: uid(), label: 'Original', pcm, sr, b64, duration: a.duration || dur, transcript: a.text, words: a.words, alignedWords: a.words, automatic: !knownText?.trim() };
+    const a = known ? await api.align(b64, known, lang) : transcribe ? await api.transcribe(b64, lang) : { text: '', duration: dur, words: [] };
+    if (transcribe) asrWarmed = true;
+    const v: Version = { id: uid(), label: 'Original', pcm, sr, b64, duration: a.duration || dur, transcript: a.text, words: a.words, alignedWords: a.words, automatic: transcribe };
     player.stop();
     docs.reset({ name: source.label, source, language: lang, versions: [v], current: 0 });
     clipLanguages.value = { ...clipLanguages.value, [clipKey(source, dur)]: lang };
@@ -240,7 +257,8 @@ effect(() => {
     selectedWord.value = null;
     gen.value = null;
     ab.value = 'version';
-    fixMode.value = false;
+    // A version without a transcript opens on typing it.
+    fixMode.value = !!v && !v.transcript;
     cursor.value = 0;
     touched = false;
     regions.value = [];
@@ -614,7 +632,8 @@ export function requestFor(v: Version, target: string, list: { start: number; en
     spans: list.map((r) => [onFrame(r.start, 1), onFrame(r.end, -1)]),
     margin_seconds: margin.value,
     num_takes: takeCount.value,
-    verify: true,
+    // The take check runs speech recognition: a server without it refuses `verify`.
+    verify: canTranscribe.value,
     seed: seedPin.value,
     language: doc.value?.language ?? 'en_us',
   };
@@ -639,6 +658,7 @@ export async function generate() {
   player.stop();
   try {
     const res = await api.edit(req, ctrl.signal);
+    if (req.verify) asrWarmed = true;
     const contexts = res.contexts ?? [];
     const ts = res.takes.map((t, i) => {
       const take = takeOf(t, `Take ${i + 1}`);
@@ -679,6 +699,7 @@ export function cancel() {
 /** Another project's clip (or none): aborts what runs; the draft starts clean on its current version. */
 export function loadDoc(next: Doc | null) {
   cancel();
+  suggestedTranscript.value = '';
   docs.reset(next);
 }
 
@@ -697,6 +718,7 @@ export async function retryRegion(k: number) {
   player.stop();
   try {
     const res = await api.edit(req, ctrl.signal);
+    if (req.verify) asrWarmed = true;
     const fresh = res.takes.map((raw, i) => {
       const nt = takeOf(raw, `${t.label} · region ${k + 1} retry ${i + 1}`);
       // Back to the full set of regions: k is the new fill, later regions shift by its change in length.
@@ -827,27 +849,35 @@ export function jumpTo(index: number) {
 // ── Fixing the transcript ─────────────────────────────────────────────────────────────────────────
 
 export function setFix(on: boolean) {
-  if (busy.value) return;
+  if (busy.value || (!on && needsTranscript.value)) return;
   fixMode.value = on;
   if (!on) text.value = version.value?.transcript ?? '';
 }
 
 /**
  * The clip's language: its words came from the previous language's model, so a transcribed version is transcribed
- * again and a known text aligned again (undoable). An unsupported language keeps the old one (the server's 400).
+ * again (when the server can) and a known text aligned again (undoable). A version without a transcript only
+ * changes language. An unsupported language keeps the old one (the server's 400).
  */
 export async function setLanguage(language: string) {
   const d = doc.value;
   const v = version.value;
   if (!d || !v || busy.value || language === d.language) return;
-  busy.value = { label: asrLabel(v.automatic ? 'Transcribing…' : 'Aligning the transcript…'), started: performance.now() };
+  const key = clipKey(d.source, d.versions[0].pcm.length / d.versions[0].sr);
+  if (!v.transcript) {
+    docs.apply({ ...d, language });
+    clipLanguages.value = { ...clipLanguages.value, [key]: language };
+    return;
+  }
+  const retranscribe = v.automatic && canTranscribe.value;
+  busy.value = { label: retranscribe ? asrLabel('Transcribing…') : 'Aligning the transcript…', started: performance.now() };
   try {
-    const a = v.automatic ? await api.transcribe(v.b64, language) : await api.align(v.b64, v.transcript, language);
-    asrWarmed = true;
+    const a = retranscribe ? await api.transcribe(v.b64, language) : await api.align(v.b64, v.transcript, language);
+    if (retranscribe) asrWarmed = true;
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words };
     docs.apply({ ...d, language, versions: d.versions.map((x, i) => (i === d.current ? nv : x)) });
-    clipLanguages.value = { ...clipLanguages.value, [clipKey(d.source, d.versions[0].pcm.length / d.versions[0].sr)]: language };
-    notify(`${v.automatic ? 'Transcribed' : 'Aligned'} in ${langLabel(language)}`, 'ok');
+    clipLanguages.value = { ...clipLanguages.value, [key]: language };
+    notify(`${retranscribe ? 'Transcribed' : 'Aligned'} in ${langLabel(language)}`, 'ok');
   } catch (e) {
     notify(`Couldn’t switch to ${langLabel(language)}: ${errorText(e)}`, 'error');
   } finally {
@@ -855,19 +885,20 @@ export async function setLanguage(language: string) {
   }
 }
 
-/** Re-align the corrected transcript: replaces the current version's words (undoable). */
+/** Align the corrected (or first typed) transcript: replaces the current version's words (undoable). */
 export async function saveFix(corrected: string) {
   const d = doc.value;
   const v = version.value;
   if (!d || !v || !corrected.trim()) return;
-  busy.value = { label: asrLabel('Re-aligning…'), started: performance.now() };
+  const first = !v.transcript;
+  busy.value = { label: first ? 'Aligning the transcript…' : 'Re-aligning…', started: performance.now() };
   try {
     const a = await api.align(v.b64, corrected.trim(), d.language);
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words, automatic: false };
     docs.apply({ ...d, versions: d.versions.map((x, i) => (i === d.current ? nv : x)) });
-    notify('Transcript corrected and re-aligned', 'ok');
+    notify(first ? 'Transcript aligned: edit the words to change the speech' : 'Transcript corrected and re-aligned', 'ok');
   } catch (e) {
-    notify(`Couldn’t re-align: ${errorText(e)}`, 'error');
+    notify(`Couldn’t ${first ? 'align' : 're-align'}: ${errorText(e)}`, 'error');
   } finally {
     busy.value = null;
   }

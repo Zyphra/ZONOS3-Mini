@@ -61,7 +61,7 @@ export function registerEditTools(server: McpServer) {
           current: z.boolean().optional().describe('The project’s current Edit clip version'),
         }),
         target_text: z.string().min(1).describe('The full new text of the clip'),
-        transcript: z.string().optional().describe('What the file/url says (else it is transcribed)'),
+        transcript: z.string().optional().describe('What the file/url says (else it is transcribed; required when the server cannot transcribe: zonos_status)'),
         delivery: values.optional().describe('Delivery controls for the regenerated words'),
         takes: z.number().int().min(1).max(4).optional().describe('Takes to generate (default 2)'),
         seed,
@@ -89,6 +89,7 @@ export function registerEditTools(server: McpServer) {
       let ref: ProjectRef | null = null;
       if (src.current) {
         version = currentVersion(doc);
+        if (!version.transcript) throw new Error('The current Edit clip has no transcript yet: type it in the Studio (Edit screen), or pass the WAV as source.file with transcript');
         wav = await zonos.getMedia(version.media);
         source = doc.edit.doc!.source;
       } else {
@@ -106,6 +107,7 @@ export function registerEditTools(server: McpServer) {
           if (!isRiff(bytes)) throw new Error(WAV_ONLY);
           wav = bytes;
           knownText = a.transcript?.trim() || null;
+          if (!knownText && !c.edit_transcribe) throw new Error('This server has no speech recognition, so it cannot transcribe the clip: pass transcript (exactly what the file/url says) to align it instead');
           source = { kind: 'upload', label: name.replace(/\.[^.]+$/, '') };
         }
         const dur = wavSeconds(wav);
@@ -131,7 +133,8 @@ export function registerEditTools(server: McpServer) {
         target_text: a.target_text,
         margin_seconds: 0.08,
         num_takes: a.takes ?? 2,
-        verify: true,
+        // The take check runs speech recognition: a server without it refuses `verify`.
+        verify: c.edit_transcribe,
         seed: a.seed ?? null,
         language: lang,
       };

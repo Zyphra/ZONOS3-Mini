@@ -1,10 +1,13 @@
 // Deterministic stub engines for the API tests: the real tokenizer and prompt layout with the backbone, codec and
 // encoders replaced by stand-ins (EOA after a few frames, a sine per decoded frame). stubApi adds the exported models'
-// hyper-parameters, steering bundle and LACI heads (public/models); bareApi needs no exported models.
+// hyper-parameters, steering bundle and LACI heads (public/models) and, with the exported speech-edit backbone and
+// aligner, a stub speech-edit backbone (span-end after a few frames) and a stub aligner (words spread evenly over the
+// clip); bareApi needs no exported models.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ProbeInput } from '../../src/backbone';
-import type { Engine } from '../../src/api/engine';
+import type { AlignedWord } from '../../src/aligner/host';
+import type { EditModels, Engine } from '../../src/api/engine';
 import { Api } from '../../src/api/router';
 import type { EngineRequest, Sink } from '../../src/api/http';
 import { parseGguf } from '../../src/gguf';
@@ -17,31 +20,39 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const models = root + 'public/models/';
 export const haveModels = (() => { try { readFileSync(models + 'backbone/manifest.json'); return true; } catch { return false; } })();
 
-const VOCAB = 4098, NCB = 10, HOP = 2940, EOA = 4096;
+export const haveEditModels = haveModels &&
+  (() => { try { readFileSync(models + 'edit/manifest.json'); readFileSync(models + 'aligner/manifest.json'); return true; } catch { return false; } })();
+
+const NCB = 10, HOP = 2940, EOA = 4096, SPAN_END = 4098;
 
 function file(path: string): ArrayBuffer {
   const b = readFileSync(path);
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 }
 
-/** Logits that emit codes 7 for `frames` steps, then EOA on every codebook. */
+/** Logits that emit code 7 for `frames` steps, then the stop (EOA, or span-end on the speech-edit vocabulary) on every
+ *  codebook; code 7 stays the runner-up so a masked stop keeps the stream deterministic. */
 class StubBackbone {
   steerSources: number[];
   private steps: [number, number] = [0, 0];
   steered: (Float32Array | null)[] = [];
   twinSteered: (Float32Array | null)[] = [];
   probes: (ProbeInput | null)[] = [];
-  prefills: { slot: 0 | 1; rows: number; cond: Conditioning }[] = [];
-  constructor(sources: number[], private frames = 14) { this.steerSources = sources; }
+  prefills: { slot: 0 | 1; rows: number; cond: Conditioning; ids: Int32Array }[] = [];
+  constructor(sources: number[], private frames = 14, private vocab = 4098) { this.steerSources = sources; }
   private logits(slot: 0 | 1): Float32Array {
-    const l = new Float32Array(VOCAB * NCB).fill(-10);
-    const eoa = this.steps[slot] >= this.frames;
-    for (let cb = 0; cb < NCB; cb++) l[cb * VOCAB + (eoa ? EOA : 7)] = 10;
+    const V = this.vocab;
+    const l = new Float32Array(V * NCB).fill(-10);
+    const stop = this.steps[slot] >= this.frames;
+    for (let cb = 0; cb < NCB; cb++) {
+      l[cb * V + 7] = 5;
+      if (stop) l[cb * V + (V === 4099 ? SPAN_END : EOA)] = 10;
+    }
     return l;
   }
   async prefill(slot: 0 | 1, ids: Int32Array, cond: Conditioning) {
     this.steps[slot] = 0;
-    this.prefills.push({ slot, rows: ids.length / 11, cond });
+    this.prefills.push({ slot, rows: ids.length / 11, cond, ids: ids.slice() });
     return { logits: this.logits(slot) };
   }
   private probeOut(probe: ProbeInput | null) {
@@ -64,7 +75,8 @@ class StubBackbone {
 
 class StubCodec {
   readonly gain = Math.fround(10 ** (-3 / 20));
-  private frames = 0;
+  /** Frames decoded since the last reset. */
+  frames = 0;
   reset() { this.frames = 0; }
   async chunk(_idx: Int32Array, _p0: number, n: number) {
     this.frames += n;
@@ -73,9 +85,30 @@ class StubCodec {
   async flush() { return new Float32Array(0); }
 }
 
-export interface StubSet { api: Api; engine: Engine; backbone: StubBackbone }
+/** FuseAlign stand-in: every token gets an equal share of the clip, presence 0.9. */
+class StubAligner {
+  calls: { seconds: number; tokens: string[] }[] = [];
+  async align(pcm16k: Float32Array, tokens: string[]): Promise<AlignedWord[]> {
+    const seconds = pcm16k.length / 16000;
+    this.calls.push({ seconds, tokens });
+    const w = seconds / Math.max(1, tokens.length);
+    return tokens.map((word, k) => ({ word, start: k * w, end: (k + 1) * w, presence: 0.9, placed: true }));
+  }
+}
 
-export function stubApi(opts: { frames?: number } = {}): StubSet {
+export interface EditStubs { backbone: StubBackbone; aligner: StubAligner; models: EditModels }
+
+export interface StubSet { api: Api; engine: Engine; backbone: StubBackbone; codec: StubCodec; edit: EditStubs | null }
+
+/** The stub speech-edit models over the exported `edit` backbone's hyper-parameters. */
+function editStubs(sources: number[], frames: number): EditStubs {
+  const hp = modelHp(JSON.parse(readFileSync(models + 'edit/manifest.json', 'utf8')).meta);
+  const backbone = new StubBackbone(sources, frames, hp.audioVocab);
+  const aligner = new StubAligner();
+  return { backbone, aligner, models: { hp, backbone: async () => backbone, align: (pcm, tokens) => aligner.align(pcm, tokens) } };
+}
+
+export function stubApi(opts: { frames?: number; editFrames?: number } = {}): StubSet {
   const man = JSON.parse(readFileSync(models + 'backbone/manifest.json', 'utf8'));
   const hp = modelHp(man.meta);
   const g = (name: string) => parseGguf(file(models + 'companions/' + name));
@@ -85,8 +118,10 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
   for (const [lang, f] of Object.entries(index)) laci.set(lang, LaciHeads.parse(readFileSync(models + 'laci/' + f, 'utf8'), f));
   const voices = JSON.parse(readFileSync(models + 'voices/voices.json', 'utf8')) as { id: string; label: string; file: string }[];
   const backbone = new StubBackbone(steer.sources, opts.frames);
+  const codec = new StubCodec();
+  const edit = haveEditModels ? editStubs(steer.sources, opts.editFrames ?? 6) : null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
     steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
     voices: voices.map(v => ({
       ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5),
@@ -95,14 +130,16 @@ export function stubApi(opts: { frames?: number } = {}): StubSet {
     headroomDb: 3,
     async embedSpeaker(pcm) { return new Float32Array(hp.speakerDim).fill(pcm[0] ?? 0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
+    edit: edit?.models ?? null,
   };
-  return { api: new Api(engine, 1000), engine, backbone };
+  return { api: new Api(engine, 1000), engine, backbone, codec, edit };
 }
 
 /** Release-like checkpoint hyper-parameters (ZONOS3 Mini, zonos3-rate30-20k-r2grpo): condition rows of 10, 10 and 30
  *  buckets, the speaker row, no phoneme tokens. */
 const RELEASE_HP: ModelHp = {
-  nCodebooks: NCB, audioPad: 4097, textVocab: 8196, nCond: 3, condBucketCounts: [10, 10, 30],
+  nCodebooks: NCB, audioPad: 4097, textVocab: 8196, audioVocab: 4098, spanEndId: null, textExtraTokens: 0, nCond: 3,
+  condBucketCounts: [10, 10, 30],
   condNames: ['loudness', 'fmax', 'speaking_rate'],
   condEdges: [
     [-29.002, -26.861, -25.366, -23.607, -21.916, -20.505, -19.38, -18.151, -16.297],
@@ -117,34 +154,36 @@ const RELEASE_HP: ModelHp = {
   nEmbd: 1024, nLayer: 11,
 };
 
-/** A stub engine without exported models: RELEASE_HP, no steering bundle, no LACI heads, no accent adapters, one
- *  default voice. */
+/** A stub engine without exported models: RELEASE_HP, no steering bundle, no LACI heads, no accent adapters, no
+ *  speech editing, one default voice. */
 export function bareApi(): StubSet {
   const hp = RELEASE_HP;
   const backbone = new StubBackbone([]);
+  const codec = new StubCodec();
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: new StubCodec(), tokenizer: createTokenizer(),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),
     voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5), embedding: null }],
     headroomDb: 3,
     async embedSpeaker() { return new Float32Array(hp.speakerDim).fill(0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
+    edit: null,
   };
-  return { api: new Api(engine, 1000), engine, backbone };
+  return { api: new Api(engine, 1000), engine, backbone, codec, edit: null };
 }
 
 /** A response; `json<T>()` parses the body as the caller's expected shape (tests then assert on it). */
 export interface Reply { status: number; headers: Record<string, string>; body: Uint8Array; json<T = Record<string, unknown>>(): T }
 
 export async function call(api: Api, method: string, path: string, body?: unknown,
-                           headers: Record<string, string> = {}, pcm?: Float32Array): Promise<Reply> {
+                           headers: Record<string, string> = {}, pcm?: Float32Array, pcmSeconds?: number): Promise<Reply> {
   let status = 0, hdrs: Record<string, string> = {};
   const parts: Uint8Array[] = [];
   const sink: Sink = { start(s, h) { status = s; hdrs = h; }, chunk(d) { parts.push(d.slice()); }, end() {} };
   const req: EngineRequest = {
     method, path, headers,
     body: body === undefined ? null : new TextEncoder().encode(typeof body === 'string' ? body : JSON.stringify(body)).buffer,
-    pcm,
+    pcm, pcmSeconds,
   };
   await api.handle(req, sink);
   const n = parts.reduce((a, b) => a + b.length, 0);

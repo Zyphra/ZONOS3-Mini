@@ -1,6 +1,8 @@
 // GET /v2/capabilities of the in-browser server (servers/ggml/src/server/capabilities.cpp, edit.cpp edit_capabilities,
-// phonemize.cpp phoneme_capabilities) with this server's feature set: no text normalization, speech editing,
-// phonemizer, server projects or plugins.
+// phonemize.cpp phoneme_capabilities) with this server's feature set: no text normalization, speech recognition,
+// phonemizer, server projects or plugins; speech editing with the clip's transcript when the export has the speech-edit
+// backbone and FuseAlign.
+import { ALIGN_MAX_SECONDS } from '../aligner/host';
 import languages from '../../../../model/src/zonos3/registries/languages.json';
 import {
   DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES, TAG_CFG_MAX_SCALE,
@@ -33,8 +35,15 @@ export function laciLanguages(e: Engine): string[] {
   return [...e.laci.keys()].sort();
 }
 
-/** Accent adapters a request can pick with `accent` (`accents.gguf`): the web export ships none. */
+/** Accent adapters a request can pick with `accent` (`accents.gguf`): the web export ships none (the speech-edit
+ *  adapter is merged into the `edit` backbone). */
 export const ACCENT_ADAPTERS: string[] = [];
+
+/** Edit regions per request: the speech-edit backbone's marker rows (zonos3.tts.edit edit_marker_rows; this export's
+ *  tokenizer has no phoneme block, so every extra text row is a marker). */
+export function editMaxSpans(e: Engine): number {
+  return e.edit ? e.edit.hp.textExtraTokens : 0;
+}
 
 function conditionTokens(e: Engine): unknown {
   const hp = e.hp;
@@ -110,11 +119,12 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     speaker_embedding_blend: embedding,
     default_voices_enabled: true,
     projects: { enabled: false },
-    speech_editing: false,
-    edit_max_spans: 0,
-    edit_frame_rate: null,
+    speech_editing: e.edit !== null && editMaxSpans(e) > 0,
+    edit_transcribe: false,
+    edit_max_spans: editMaxSpans(e),
+    edit_frame_rate: e.edit ? SAMPLE_RATE / HOP : null,
     edit_max_seconds: EDIT_MAX_SECONDS,
-    edit_align_max_seconds: EDIT_MAX_SECONDS,
+    edit_align_max_seconds: ALIGN_MAX_SECONDS,
     phoneme_tokens: null,
     phonemize_enabled: false,
     phonemize_languages: [],

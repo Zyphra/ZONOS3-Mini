@@ -1,15 +1,16 @@
 // Engine worker: owns the WebGPU device and the models, serves the v2 API (src/api/router.ts) one request at a time.
 // The codec's host half (iSTFT, mixer, resampler) runs in the codec worker behind `codecPort`.
 /// <reference lib="webworker" />
-import type { Engine, DefaultVoice } from './api/engine';
+import type { Engine, DefaultVoice, EditModels } from './api/engine';
 import { loadEmbeddingVector } from './api/speakers';
 import { Api } from './api/router';
-import { Backbone } from './backbone';
+import { Aligner } from './aligner';
+import { Backbone, loadBackbone } from './backbone';
 import { BLOCK_FRAMES, ZacStream } from './zac';
 import { RefEncoder } from './encoder';
 import { parseGguf } from './gguf';
 import { Gpu, initGpu } from './gpu/device';
-import { batchProgress, fetchJson, loadModel, type LoadProgress } from './gpu/weights';
+import { batchProgress, fetchJson, loadModel, type LoadProgress, type Manifest } from './gpu/weights';
 import { loadReferenceCodes } from './npy';
 import { buildPrompt, modelHp, NCB, W, type ModelHp } from './prompt';
 import { LaciHeads } from './request/laci';
@@ -22,7 +23,10 @@ declare const self: DedicatedWorkerGlobalScope;
 
 export type InMsg =
   | { type: 'init'; base: string; cache: boolean; voicesPcm: Record<string, Float32Array>; codecPort: MessagePort }
-  | { type: 'req'; id: number; method: string; path: string; headers: Record<string, string>; body: ArrayBuffer | null; pcm?: Float32Array }
+  | {
+    type: 'req'; id: number; method: string; path: string; headers: Record<string, string>; body: ArrayBuffer | null;
+    pcm?: Float32Array; pcmSeconds?: number;
+  }
   | { type: 'abort'; id: number };
 
 export type OutMsg =
@@ -63,6 +67,40 @@ async function loadLaci(base: string): Promise<Map<string, LaciHeads>> {
   return out;
 }
 
+/** A model directory's manifest meta, or null when the export has no such model (404). */
+async function manifestMeta(base: string, name: string): Promise<Record<string, unknown> | null> {
+  const r = await fetch(new URL(name + '/manifest.json', base).href);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`failed to fetch ${name}/manifest.json: ${r.status}`);
+  const man: Manifest = await r.json();
+  return man.meta;
+}
+
+/** Speech editing when the export has the speech-edit backbone (`edit`) and FuseAlign (`aligner`): each loads on the
+ *  first request that needs it (its download reported like the encoders'). */
+async function editModels(gpu: Gpu, base: string, cache: boolean, steerSources: number[],
+                          progress: (p: LoadProgress) => void): Promise<EditModels | null> {
+  const [editMeta, alignerMeta] = await Promise.all([manifestMeta(base, 'edit'), manifestMeta(base, 'aligner')]);
+  if (!editMeta || !alignerMeta) return null;
+  const hp = modelHp(editMeta);
+  if (hp.spanEndId === null || hp.textExtraTokens < 1) return null;
+  let bb: Promise<Backbone> | null = null;
+  let aligner: Promise<Aligner> | null = null;
+  return {
+    hp,
+    backbone() {
+      return bb ??= batchProgress(base, ['edit'], progress)
+        .then(p => loadBackbone(gpu, base, 'edit', { steerSources, onProgress: p, cache }))
+        .catch((e: unknown) => { bb = null; throw e; });
+    },
+    async align(pcm16k, tokens) {
+      const a = await (aligner ??= batchProgress(base, ['aligner'], progress).then(p => Aligner.load(gpu, base, p, cache))
+        .catch((e: unknown) => { aligner = null; throw e; }));
+      return a.align(pcm16k, tokens);
+    },
+  };
+}
+
 async function init(base: string, cache: boolean, voicesPcm: Record<string, Float32Array>, codecPort: MessagePort): Promise<void> {
   const device = await initGpu(message => post({ type: 'fatal', message }));
   const gpu = new Gpu(device);
@@ -95,10 +133,12 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
     ? loadSteer(parseGguf(steerBuf), { nEmbd: hp.nEmbd, nLayer: hp.nLayer, speakerDim: hp.speakerDim }) : null;
   const laci = await loadLaci(base);
 
-  const backbone = new Backbone(gpu, bbw, steer ? steer.sources : []);
+  const steerSources = steer ? steer.sources : [];
+  const backbone = new Backbone(gpu, bbw, steerSources);
   const zac = await ZacStream.create(gpu, zacw, p => new RemoteSpecSink(codecPort, p));
   const tokenizer = createTokenizer();
   await warmup(backbone, zac, hp);
+  const edit = await editModels(gpu, base, cache, steerSources, progress);
 
   let spk: Promise<SpeakerEncoder> | null = null;
   let ref: Promise<RefEncoder> | null = null;
@@ -114,6 +154,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
       const enc = await (ref ??= batchProgress(base, ['encoder', 'teacher'], progress).then(p => RefEncoder.load(gpu, base, p, cache)).catch((e: unknown) => { ref = null; throw e; }));
       return enc.encode(pcm);
     },
+    edit,
   };
   api = new Api(engine);
 }
@@ -151,7 +192,8 @@ async function serve(m: Extract<InMsg, { type: 'req' }>): Promise<void> {
       sink.end();
       return;
     }
-    await api.handle({ method: m.method, path: m.path, headers: m.headers, body: m.body, pcm: m.pcm }, sink, () => aborted.has(id));
+    await api.handle({ method: m.method, path: m.path, headers: m.headers, body: m.body, pcm: m.pcm, pcmSeconds: m.pcmSeconds },
+      sink, () => aborted.has(id));
   } finally {
     aborted.delete(id);
   }

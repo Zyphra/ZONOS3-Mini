@@ -11,6 +11,9 @@ export const CODEBOOK_SIZE = 4096;
 
 export interface ModelHp {
   nCodebooks: number; audioPad: number; textVocab: number; nCond: number;
+  audioVocab: number;           // audio ids per codebook: 4098 (codes, EOA, pad), 4099 with span-end (edit vocabulary)
+  spanEndId: number | null;     // span-end audio id after the pad (edit vocabulary), null without
+  textExtraTokens: number;      // text rows after the text pad (edit infill markers at textVocab + 1 + j)
   condBucketCounts: number[];   // per condition row: ids 0..n-1, n = unknown
   condNames: string[]; condEdges: number[][]; silenceFrame: number[]; speakerDim: number; contextLength: number;
   condUnits: string[];          // condition.units (capabilities)
@@ -45,14 +48,28 @@ export function conditionBucketCounts(meta: Record<string, unknown>): number[] {
   return new Array<number>(num(meta, 'condition.count')).fill(num(meta, 'condition.bucket_count'));
 }
 
+/** The model's hyperparameters from its manifest meta. The vocabulary: audio ids 0..codebook-1 are codes, then EOA,
+ *  the audio pad and (edit vocabulary, span_end_id = pad + 1) span-end; text_extra_tokens is absent from the release
+ *  backbone/ manifest (0 extra rows). */
 export function modelHp(meta: Record<string, unknown>): ModelHp {
   const names = meta['condition.names'];
   if (!Array.isArray(names) || names.some(x => typeof x !== 'string')) throw new Error('backbone: missing meta condition.names');
   const condNames = names.map(String);
+  const audioPad = num(meta, 'audio_pad_id');
+  const audioVocab = num(meta, 'audio_vocab');
+  const spanEndId = meta.span_end_id === undefined ? null : num(meta, 'span_end_id');
+  const textExtraTokens = meta.text_extra_tokens === undefined ? 0 : num(meta, 'text_extra_tokens');
+  if (audioVocab !== audioPad + (spanEndId === null ? 1 : 2) || (spanEndId !== null && spanEndId !== audioPad + 1) ||
+      !Number.isInteger(textExtraTokens) || textExtraTokens < 0)
+    throw new Error(`backbone: unsupported vocabulary (audio_vocab ${audioVocab}, audio_pad_id ${audioPad}, ` +
+      `span_end_id ${spanEndId}, text_extra_tokens ${textExtraTokens})`);
   return {
     nCodebooks: num(meta, 'n_codebooks'),
-    audioPad: num(meta, 'audio_pad_id'),
+    audioPad,
     textVocab: num(meta, 'text_vocab'),
+    audioVocab,
+    spanEndId,
+    textExtraTokens,
     nCond: num(meta, 'condition.count'),
     condBucketCounts: conditionBucketCounts(meta),
     condNames,

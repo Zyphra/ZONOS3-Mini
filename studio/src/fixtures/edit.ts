@@ -121,17 +121,25 @@ const STOCK =
 
 const MISHEAR: Record<string, string> = { a: 'the', the: 'a', to: 'too', for: 'four', I: 'eye', when: 'then', how: 'now', read: 'red', line: 'lime', short: 'sort', sound: 'found' };
 
-/** The server's language check (zonos3.tts.edit_align.edit_language); its speech recognition loads on first use. */
-let loaded = false;
-async function asr(language: string, signal?: AbortSignal) {
+const languageOk = (language: string) => {
   if (!EDIT_LANGUAGES.includes(language)) throw new ApiError(400, `Speech editing does not serve language '${language}' (supported: ${EDIT_LANGUAGES.join(', ')}).`);
+};
+
+/** A server without speech recognition (`edit_transcribe: false`) refuses what needs it, before any work. */
+const noAsr = (fix: string) => new ApiError(503, `Speech recognition is not available on this server: ${fix}`);
+
+/** The server's speech recognition (transcription, verify): it loads on first use. Alignment never needs it. */
+let loaded = false;
+async function asr(signal?: AbortSignal) {
   if (loaded) return;
   await wait(2500, signal);
   loaded = true;
 }
 
-export async function transcribe(b64: string, language = 'en_us'): Promise<Alignment> {
-  await asr(language);
+export async function transcribe(caps: EditCaps, b64: string, language = 'en_us'): Promise<Alignment> {
+  if (!caps.edit_transcribe) throw noAsr('send the transcript to /v2/edit/align instead');
+  languageOk(language);
+  await asr();
   const { pcm, sr, duration } = decode(b64);
   if (duration > 150) throw new ApiError(400, `Alignment supports clips up to 150 s (this one is ${duration.toFixed(1)} s).`);
   await wait(500 + duration * 40);
@@ -158,7 +166,7 @@ export async function transcribe(b64: string, language = 'en_us'): Promise<Align
 }
 
 export async function align(b64: string, text: string, language = 'en_us'): Promise<Alignment> {
-  await asr(language);
+  languageOk(language);
   const { pcm, sr, duration } = decode(b64);
   if (duration > 150) throw new ApiError(400, `Alignment supports clips up to 150 s (this one is ${duration.toFixed(1)} s).`);
   if (!normalizeTokens(text).length) throw new ApiError(400, 'text has no words to align.');
@@ -261,7 +269,9 @@ function groupsHeard(target: string, heard: { ipa: string; heard: string | null 
 }
 
 export async function edit(spec: ControlsSpec, caps: EditCaps, req: EditRequest, signal?: AbortSignal): Promise<EditResponse> {
-  await asr(req.language ?? 'en_us', signal);
+  if (req.verify && !caps.edit_transcribe) throw noAsr('set verify to false');
+  languageOk(req.language ?? 'en_us');
+  if (req.verify) await asr(signal);
   const src = decode(req.audio_base64);
   validate(spec, caps, req, src.duration);
   const fps = caps.edit_frame_rate;

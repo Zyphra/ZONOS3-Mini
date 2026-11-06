@@ -99,8 +99,9 @@ visitor's ZeroGPU headers to `/v2/generate` (`src/lib/zerogpu.ts`: the `supports
 (`../servers/web/dist`, `pnpm --dir ../servers/web build`) at `/web-engine` and its models
 (`../servers/web/public/models`, `pnpm --dir ../servers/web export`) at `/models`; `pnpm build:web` (after `build`)
 copies the engine into `dist/web-engine/` for a deployment (`pnpm build` empties `dist/` except `web-engine/`).
-Speech editing follows `/v2/capabilities.speech_editing` on a live server and runs on the client-side fixture
-offline; `?edit=fixture` forces the fixture, `?edit=0` a checkpoint that cannot edit.
+Speech editing follows `/v2/capabilities.speech_editing` (and `edit_transcribe`: the server has speech recognition)
+on a live server and runs on the client-side fixture offline; `?edit=fixture` forces the fixture, `?edit=0` a
+checkpoint that cannot edit, `?edit_transcribe=0` a server without speech recognition (works with the fixture too).
 
 ## Lite UI
 
@@ -264,7 +265,8 @@ sent with U+E000 IPA U+E001, `original_text` / `original_words` stay plain. The 
 a wildcard word, and each take lists what was recognized at it (`verify.groups`: “(S@vO:n) heard as ‘shivon’”).
 Keeping such a take writes the groups as heard into the new version's transcript (re-aligned); sending it back to
 Direct keeps the groups in the line. The original transcript (Fix the transcript) is always plain, and a
-take whose text has groups is opened by transcription. Without phoneme tokens the target text is plain. Offline, `src/fixtures/phonemes.json` (the real 136-symbol inventory)
+take whose text has groups is opened by transcription (without speech recognition: typed, starting from the text
+with each group spelled as a guess). Without phoneme tokens the target text is plain. Offline, `src/fixtures/phonemes.json` (the real 136-symbol inventory)
 and `src/fixtures/phonemize.ts` stand in; `?phon=fixture` forces them, `?phon=0` a checkpoint without tokens. Offline
 mode is the edit + phoneme checkpoint (the fixture edit engine sends `verify.groups`); `?edit=fixture&phon=fixture`
 forces the same against a live server.
@@ -272,18 +274,20 @@ forces the same against a live server.
 ## Edit screen
 
 Every edit call sends the clip's `language` (server code: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko); it picks
-the speech-recognition (Qwen3-ASR) language and the alignment tokenization for transcription, alignment, windowing and
-the take check. Clips use the language last chosen for them (the picker
-next to the title, default US English; switching re-aligns or re-transcribes the version, one undo step). The server's
-first speech-editing call loads the recognition model (about half a minute): the status says so rather than looking
-stuck. An unsupported language shows the server's message.
-
+the alignment tokenization (and, with speech recognition, the Qwen3-ASR language) for transcription, alignment,
+windowing and the take check. Clips use the language last chosen for them (the picker next to the title, default US
+English; switching re-aligns the version, or re-transcribes an automatic transcript when the server can, one undo
+step). On a server with speech recognition its first transcription or take check loads the recognition model (about
+half a minute): the status says so rather than looking stuck. An unsupported language shows the server's message.
 
 Transcript-first editing:
 - Open a Direct take, a voice's reference clip (its `transcript` from `/v2/speakers` when present),
   an upload or a recording. Known text → `POST /v2/edit/align`, otherwise `POST /v2/edit/transcribe`; an
   automatic transcript can be corrected ("Fix the transcript") and is re-aligned. Clips up to
   `edit_align_max_seconds`.
+- Without speech recognition (`edit_transcribe: false`, e.g. the in-browser engine) a clip with no known text opens
+  on "Type what the clip says": type it, Align (`POST /v2/edit/align`), then edit. Voice clips without a transcript
+  are tagged "needs text"; takes are not checked (`verify: false`), so listen and keep the best.
 - Edit the words in place: the word diff against the aligned transcript plans the regions (frames at
   `edit_frame_rate`, `margin_seconds` 0.08, merged when closer than 5 frames, at most `edit_max_spans`). Region
   edges drag on the zoomable waveform; dragging on empty waveform adds a "regenerate as is" region.
@@ -296,13 +300,13 @@ Transcript-first editing:
   `original_text`) once any word was adjusted.
 - Each region can be directed with the spannable controls of `/v2/controls` (`region_controls`), the whole edit
   too (`controls`). `POST /v2/edit` always gets explicit `spans` (frame-exact seconds), `original_text` (the
-  transcript the word timings belong to), `num_takes` 1–4 and `verify: true`; "context per side" (advanced, 2–8 s)
-  sets `context_seconds`. Long clips are edited on windows around the regions; the response's `contexts` show
-  as a faint "model context" band on the waveform.
-- Takes show WER vs the target (best preselected), ASR words that differ, fill length vs the original region and
-  a warning when a region did not stop. A/B maps the playhead between version and take; a region of the
-  selected take can be regenerated on its own. Keeping a take makes a new version (one undo step each); export a
-  WAV, or send the version back to the Direct take it came from.
+  transcript the word timings belong to), `num_takes` 1–4 and `verify: edit_transcribe`; "context per side"
+  (advanced, 2–8 s) sets `context_seconds`. Long clips are edited on windows around the regions; the response's
+  `contexts` show as a faint "model context" band on the waveform.
+- Takes show WER vs the target (best preselected), ASR words that differ (both only with speech recognition), fill
+  length vs the original region and a warning when a region did not stop. A/B maps the playhead between version and
+  take; a region of the selected take can be regenerated on its own. Keeping a take makes a new version (one undo
+  step each); export a WAV, or send the version back to the Direct take it came from.
 
 ## Architecture
 

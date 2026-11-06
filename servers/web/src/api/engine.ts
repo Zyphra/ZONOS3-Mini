@@ -1,4 +1,5 @@
 // What the API routes need from the loaded models (the worker builds it from the GPU classes; tests use stubs).
+import type { AlignedWord } from '../aligner';
 import type { Backbone, ProbeInput } from '../backbone';
 import type { Conditioning, ModelHp } from '../prompt';
 import type { LaciHeads } from '../request/laci';
@@ -35,6 +36,18 @@ export interface DefaultVoice {
   embedding: Float32Array | null; // [speakerDim]
 }
 
+/** Speech editing (/v2/edit/align, /v2/edit): the speech-edit backbone (model directory `edit`, the edit adapter merged)
+ *  and FuseAlign (model directory `aligner`), each loaded on first use. */
+export interface EditModels {
+  /** The speech-edit backbone's hyper-parameters (its manifest meta; nothing is loaded for them). */
+  hp: ModelHp;
+  /** The speech-edit backbone (lazy-loaded), steered by the same bundle as the release backbone. */
+  backbone(): Promise<BackboneApi>;
+  /** FuseAlign (lazy-loaded): word intervals of `tokens` in 16 kHz mono audio (src/aligner Aligner.align; HttpError 400
+   *  past its limits). */
+  align(pcm16k: Float32Array, tokens: string[]): Promise<AlignedWord[]>;
+}
+
 export interface Engine {
   hp: ModelHp;
   modelFile: string;                       // GET /v1/models root
@@ -50,4 +63,6 @@ export interface Engine {
   embedSpeaker(pcm44k: Float32Array): Promise<Float32Array>;
   /** Reference encoder (lazy-loaded): 44.1 kHz mono -> ordinary codes [T][10]. */
   encodeReference(pcm44k: Float32Array): Promise<Int32Array>;
+  /** Speech editing; null when the model export has no `edit` backbone or no `aligner`. */
+  edit: EditModels | null;
 }

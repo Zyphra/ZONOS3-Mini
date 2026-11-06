@@ -27,16 +27,18 @@ json forward(ServerState & s, const char * op, const httplib::Request & req, con
 }  // namespace
 
 // speech_editing: an edit checkpoint, the Python host with FuseAlign (fusealign_hub in the --worker-python
-// interpreter), the ASR interpreter (ZONOS3_ASR_PYTHON / .venv-asr) and the reference encoder (the clip's codes).
+// interpreter) and the reference encoder (the clip's codes). edit_transcribe: speech_editing and the ASR interpreter
+// (ZONOS3_ASR_PYTHON / .venv-asr), which transcribes clips sent without their transcript and runs verify.
 json edit_capabilities(const ServerState & s) {
     const json m = edit_model(s);
     const bool editing = m["max_spans"].get<int>() > 0;
-    const bool available = s.pyhost && s.fusealign_installed && asr_installed(s) && reference_audio_available(s);
+    const bool available = s.pyhost && s.fusealign_installed && reference_audio_available(s);
+    const bool speech_editing = editing && available;
     // The registry's speech-edit clip limit bounds transcribe / align and every edit (zonos3.tts.edit_runtime).
     const double max_seconds = zonos3_generation().edit_max_seconds;
-    return {{"speech_editing", editing && available}, {"edit_max_spans", m["max_spans"]},
-            {"edit_frame_rate", editing ? m["frame_rate"] : json()}, {"edit_max_seconds", max_seconds},
-            {"edit_align_max_seconds", max_seconds}};
+    return {{"speech_editing", speech_editing}, {"edit_transcribe", speech_editing && asr_installed(s)},
+            {"edit_max_spans", m["max_spans"]}, {"edit_frame_rate", editing ? m["frame_rate"] : json()},
+            {"edit_max_seconds", max_seconds}, {"edit_align_max_seconds", max_seconds}};
 }
 
 void register_edit_routes(httplib::Server & svr, ServerState & s) {

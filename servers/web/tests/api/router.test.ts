@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validate } from '../../src/api/validate';
-import { call, haveModels, stubApi } from './stub';
+import { call, haveEditModels, haveModels, stubApi } from './stub';
 
 const SESSION = { 'x-tts-session-id': 's1' };
 type Detail = { detail: Record<string, unknown>[] };
@@ -14,7 +14,9 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(caps.status).toBe(200);
     expect(validate('Capabilities', caps.json())).toEqual([]);
     expect(caps.json()).toMatchObject({
-      speaker_modes: ['reference', 'embedding'], speaker_cfg_supported: true, plugins: [], speech_editing: false,
+      speaker_modes: ['reference', 'embedding'], speaker_cfg_supported: true, plugins: [], speech_editing: haveEditModels,
+      edit_transcribe: false, edit_max_spans: haveEditModels ? 3 : 0, edit_frame_rate: haveEditModels ? 15 : null,
+      edit_max_seconds: 150, edit_align_max_seconds: 30,
       projects: { enabled: false }, laci_languages: ['cmn', 'de', 'en_gb', 'en_us', 'es', 'fr_fr', 'it', 'ja', 'ko', 'pt_br'],
       accents: [],
     });
@@ -32,7 +34,7 @@ describe.skipIf(!haveModels)('engine api', () => {
 
   it('unknown paths and unknown fields', async () => {
     const { api } = stubApi();
-    for (const [m, p] of [['GET', '/v2/nope'], ['POST', '/v2/nope'], ['GET', '/v2/'], ['POST', '/v2/edit'], ['GET', '/v2/projects']]) {
+    for (const [m, p] of [['GET', '/v2/nope'], ['POST', '/v2/nope'], ['GET', '/v2/'], ['GET', '/v2/edit'], ['GET', '/v2/projects']]) {
       const r = await call(api, m, p, m === 'POST' ? {} : undefined);
       expect(r.status, `${m} ${p}`).toBe(404);
       expect(r.json()).toEqual({ detail: 'Not Found' });

@@ -61,10 +61,11 @@ fills][marker]` and splices the fills into the untouched codec frames;
 `servers/sgl/scripts/edit_speech.py` wraps it (`--span START END` in seconds, or spans
 from a word diff over FuseAlign timings; `--max-context-seconds` / `--context-seconds` as below).
 
-Speech editing needs Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`, recognition) in its own venv:
-`bash tools/setup_asr_env.sh` once creates `.venv-asr`. Word timings come from FuseAlign
-(`fusealign-hub`, installed in the workspace by `uv sync`; its checkpoint is the private
-Hugging Face repo `Zyphra/fusealign`). Transcripts are compared as edit tokens
+Speech editing needs word timings from FuseAlign (`fusealign-hub`, installed in the workspace by `uv sync`; its
+checkpoint is the private Hugging Face repo `Zyphra/fusealign`). Speech recognition is optional: Qwen3-ASR
+(`Qwen/Qwen3-ASR-1.7B`) in its own venv (`bash tools/setup_asr_env.sh` once creates `.venv-asr`) transcribes clips
+sent without their transcript and runs `verify`. Without it, send the clip's transcript (`/v2/edit/align`,
+`original_text`). Transcripts are compared as edit tokens
 (`zonos3.tts.textmatch`: upper-cased, every letter or digit of any script and `'` kept,
 everything else a word break).
 
@@ -73,16 +74,22 @@ mkdir -p edit-adapter && cp <downloaded z3m_omni3b_edit_lora.pt> edit-adapter/ed
 servers/sgl/scripts/serve.sh --accent-adapters edit-adapter
 ```
 
-`/v2/capabilities` then reports `speech_editing: true` (a span-end token, the `.venv-asr`
-interpreter and an importable `fusealign_hub`), `edit_max_spans` (3), `edit_frame_rate` (15),
-`edit_max_seconds` and `edit_align_max_seconds` (150, the longest clip transcribed and
-aligned, which every windowed edit needs); without the edit adapter or an edit checkpoint
+`/v2/capabilities` then reports `speech_editing: true` (a span-end token, an importable `fusealign_hub` and the
+reference encoder), `edit_transcribe` (speech editing and the `.venv-asr` interpreter: speech recognition),
+`edit_max_spans` (3), `edit_frame_rate` (15), `edit_max_seconds` and `edit_align_max_seconds` (150, the longest clip
+transcribed and aligned, which every windowed edit needs); without the edit adapter or an edit checkpoint
 `speech_editing` is false and the edit endpoints answer 400. A `<voice>.txt`
 next to a default voice becomes its `transcript` in `GET /v2/speakers`.
 
+Without speech recognition (`edit_transcribe: false`) the requests that need it answer 503 before any encode or
+generation, with the detail `Speech recognition is not available on this server: ` and the fix:
+`/v2/edit/transcribe` (`send the transcript to /v2/edit/align instead`), `verify: true` (`set verify to false`) and
+a `/v2/edit` without `original_text` (or `original_words`) that reads the clip's words, i.e. without `spans` or on a
+clip longer than `max_context_seconds` (`send the clip's transcript as original_text`).
+
 - `POST /v2/edit/transcribe` `{audio_base64}`: Qwen3-ASR transcript, `duration`
   and `words` (`word`, `start`, `end`, `confidence`, edit `tokens`): the
-  transcript's words placed by FuseAlign.
+  transcript's words placed by FuseAlign. Needs `edit_transcribe`.
 - `POST /v2/edit/align` `{audio_base64, text}`: FuseAlign forced alignment, same fields.
   The words are the whitespace words of the text (in ja and cmn one per character or
   Latin run, `zonos3.tts.align_text.align_tokens`); `confidence` is FuseAlign's
@@ -92,9 +99,10 @@ next to a default voice becomes its `transcript` in `GET /v2/speakers`.
 - `POST /v2/edit` `{audio_base64, target_text}` regenerates the edited regions.
   Regions come from `spans` (`[start, end]` seconds in the original, ascending,
   at most `edit_max_spans`) or, without them, from a word diff of `original_text`
-  (Qwen3-ASR transcript when omitted) against the target. Optional: `margin_seconds`,
+  (Qwen3-ASR transcript when omitted; needs `edit_transcribe`) against the target. Optional: `margin_seconds`,
   `max_span_seconds` (30), the `/v2/generate` sampling fields, `seed` (take `k`
-  uses `seed + k`), `num_takes` (1-4), `verify` (Qwen3-ASR WER/CER and FuseAlign words per take),
+  uses `seed + k`), `num_takes` (1-4), `verify` (Qwen3-ASR WER/CER and FuseAlign words per take; needs
+  `edit_transcribe`),
   `speaker_embedding` (default on: the clip's embedding fills the speaker row;
   `false` leaves it out), `condition_buckets` / `condition_values`, `language`,
   `text_normalization`. The response holds `spans`, `original_text`, `words`,
@@ -141,15 +149,16 @@ The frontend runs an edit through the process pipeline: the tokenizer encodes
 the audio (`TTSEncodeAudioMsg`) and builds each fill prompt
 (`TTSTokenizeMsg.edit_*`), the scheduler generates it with `end_token="span"`,
 the detokenizer returns its rows as codes (`TTSCodesReply`), and the tokenizer
-decodes the spliced frames (`TTSDecodeCodesMsg`). Qwen3-ASR runs in one persistent
+decodes the spliced frames (`TTSDecodeCodesMsg`). Qwen3-ASR, when installed, runs in one persistent
 worker per server (`model/src/zonos3/workers/asr.py`: `ping`, `transcribe`; shared with
 plugins) under the `.venv-asr` interpreter (`ZONOS3_ASR_PYTHON`, default
 `.venv-asr/bin/python`; `HF_HUB_OFFLINE=1`, so the model must be cached; `ZONOS3_ASR_DEVICE`
 picks the device, default `cuda:0` when available). `language` of `/v2/edit`,
-`/v2/edit/transcribe` and `/v2/edit/align` (server codes) picks the Qwen3-ASR language
-of every recognition of the request (transcription, verify) and FuseAlign's tokenization
+`/v2/edit/transcribe` and `/v2/edit/align` (server codes) picks FuseAlign's tokenization
 (`zonos3.tts.edit_align.EDIT_LANGUAGES`: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn
-and ko, each served when the ASR worker supports its language; others are a 400).
+and ko; others are a 400) and the Qwen3-ASR language of every recognition of the request
+(transcription, verify; a language the ASR worker does not support is then a 400). No request pings the ASR
+worker unless it recognizes speech.
 FuseAlign runs in one persistent worker per server (`model/src/zonos3/workers/fusealign.py`
 under the server's interpreter, shared with plugins); `ZONOS3_FUSEALIGN_DEVICE` picks its
 device (default `cuda:0` when available). Both workers start on their first call and
@@ -159,10 +168,12 @@ worker's `segments` cuts the clip into Silero VAD speech chunks of at most 25 s,
 transcribes each (in the request's language), and the timed chunk transcripts anchor
 FuseAlign's long-form routing; a clip over 30 s that the server transcribes itself is
 transcribed chunk by chunk the same way (chunk texts joined with a space, without one in
-ja / zh / yue) and its chunks anchor the alignment that follows. FuseAlign's built-in
-Whisper anchoring is never used.
-Explicit spans on clips up to `max_context_seconds`, without `verify` and without
-`original_text` (or with `min_fill_ratio` 0), need neither worker.
+ja / zh / yue) and its chunks anchor the alignment that follows. Without speech recognition a long-form item goes to
+FuseAlign without anchors, which routes it by its own VAD character map (less accurate on long clips). FuseAlign's
+built-in Whisper anchoring is never used.
+Explicit spans on clips up to `max_context_seconds`, without `verify`, need no speech recognition; with
+`original_text` they also align it (for `min_fill_ratio`; `min_fill_ratio` 0 or no `original_text` skips FuseAlign
+too).
 
 ## Accent adapters
 

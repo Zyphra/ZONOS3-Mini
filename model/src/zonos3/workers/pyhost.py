@@ -24,7 +24,9 @@ Ops:
 
 ``init`` comes first after every start; it builds the edit runtime over this process's own ``AsrWorker`` and
 ``FuseAlignWorker`` (ZONOS3_ASR_PYTHON, ZONOS3_ASR_DEVICE, ZONOS3_FUSEALIGN_DEVICE) and loads and mounts the plugins
-(``host``: ``zonos3.server.plugins.HostFacts.to_json``); a re-init closes the previous plugins. ``http`` runs one
+(``host``: ``zonos3.server.plugins.HostFacts.to_json``); a re-init closes the previous plugins. The ASR worker is
+optional: without its interpreter the runtime aligns and edits clips sent with their transcript and answers the
+requests that need speech recognition 503 (``zonos3.tts.edit_align.AsrUnavailable``). ``http`` runs one
 request of a plugin's routes: ``query`` is the encoded query string, ``body`` a file of the request body, and the
 response body is written to ``out``; error statuses are ``ok`` replies with that status.
 

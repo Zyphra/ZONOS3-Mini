@@ -16,7 +16,8 @@ def make_router(get_runtime: Callable[[], "EditRuntime"]) -> APIRouter:  # noqa:
 
     @router.post("/v2/edit/transcribe")
     async def transcribe(req: EditTranscribeRequest):
-        """Qwen3-ASR transcript of the audio to edit (chunk-wise past 30 s) and its words' FuseAlign timings."""
+        """Qwen3-ASR transcript of the audio to edit (chunk-wise past 30 s) and its words' FuseAlign timings; 503
+        without speech recognition."""
         return await call(get_runtime().transcribe(req))
 
     @router.post("/v2/edit/align")

@@ -7,7 +7,10 @@ export interface EngineRequest {
   path: string;                       // path and query, e.g. /v2/speakers/x/preview?y=1
   headers: Record<string, string>;    // lower-case names
   body: ArrayBuffer | null;
-  pcm?: Float32Array;                 // speaker_audio_base64 decoded to 44.1 kHz mono by the client (src/client.ts)
+  /** speaker_audio_base64, or audio_base64 of the edit routes, decoded to 44.1 kHz mono by the client (src/client.ts),
+   *  cropped to the route's limit; pcmSeconds is the decoded upload's whole length. */
+  pcm?: Float32Array;
+  pcmSeconds?: number;
 }
 
 /** Response channel: start() once with status and headers, then chunk() any number of times, then end(). */

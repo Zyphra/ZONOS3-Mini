@@ -27,7 +27,6 @@ import {
 import type { Speakers } from './speakers';
 
 const HOP = 2940;
-const VOCAB = 4098;
 /** Slot rows: native context_capacity = min(context_length, max_frames + 4096). */
 export const CONTEXT_CAPACITY = MAX_FRAMES + 4096;
 /** probe_max_text = min(2048, context_capacity) with LACI heads. */
@@ -71,7 +70,7 @@ interface Plan {
 type Body = Record<string, unknown>;
 
 /** Library errors carry the C++ 400 details: re-raise them as 400 (HttpError passes through). */
-function as400<T>(f: () => T): T {
+export function as400<T>(f: () => T): T {
   try {
     return f();
   } catch (e) {
@@ -144,7 +143,7 @@ export function resolveConditionBuckets(e: Engine, body: Body): number[] {
 }
 
 /** zonos3.languages normalize (R4). */
-function resolveLanguage(body: Body): string {
+export function resolveLanguage(body: Body): string {
   const given = str(body, 'language') ?? 'en_us';
   const lang = given.trim().toLowerCase().replaceAll('-', '_');
   if (!TEXT_NORM_LANGUAGES.includes(lang))
@@ -430,7 +429,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
   };
 
   const slot: SlotState = newSlot(p.prompt.prefillFrames);
-  let smp = new Sampler({ ...p.sp }, ncb, VOCAB);
+  let smp = new Sampler({ ...p.sp }, ncb, e.hp.audioVocab);
   const codes: number[] = Array.from(prefillCodes(p.prompt));   // stream rows: silence prefill first
   let eosFrame = -1;
   let attemptMax = p.maxFrames, historyRows = 0;
@@ -539,7 +538,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
           readout = null;
           historyRows = c.historyRows;
           attemptMax = c.maxTokens;
-          smp = new Sampler({ ...p.sp, seed: (c.seed ?? p.sp.seed) >>> 0 }, ncb, VOCAB);
+          smp = new Sampler({ ...p.sp, seed: (c.seed ?? p.sp.seed) >>> 0 }, ncb, e.hp.audioVocab);
           for (let r = p.prompt.prefillFrames; r < c.nRows; r++) smp.accept(laci.stream[r].subarray(0, ncb));
           smp.generated = 0;
           logits = (await bb.prefill(0, ids, cond)).logits;

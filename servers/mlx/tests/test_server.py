@@ -214,8 +214,40 @@ def test_edit_transcribe_and_align_time_words_with_fusealign(client, monkeypatch
     assert [w["word"] for w in r.json()["words"]] == ["我", "们", "去", "公", "园。"]
     assert len(asr.items) == 1  # aligning a short clip needs no recognition
 
-    r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "hello", "language": "ko"})
+    # transcription is filtered by the ASR worker's languages (FakeAsr has no Korean); alignment by the registry's
+    r = client.post("/v2/edit/transcribe", json={"audio_base64": wav_b64(), "language": "ko"})
     assert r.status_code == 400 and r.json()["detail"].startswith("Speech editing does not serve language 'ko'")
+    r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "hello", "language": "xx"})
+    assert r.status_code == 400, r.text
+
+
+class NoAsr(FakeAsr):
+    """The server's ASR worker without .venv-asr."""
+
+    installed = False
+
+    def transcribe(self, items):
+        raise AssertionError("no ASR installed")
+
+
+def test_edit_without_asr_reports_no_transcription_and_refuses_transcribe(client, monkeypatch):
+    state = client.app.state.zonos3
+    aligner = FakeAligner()
+    monkeypatch.setattr(state, "aligner", aligner)
+    monkeypatch.setattr(state, "asr", NoAsr())
+    monkeypatch.setattr(state, "edit_runtime", None)
+    monkeypatch.setattr(state.options, "fusealign", True)
+    monkeypatch.setattr(type(state.engine), "has_reference_encoder", property(lambda self: True))
+    caps = client.get("/v2/capabilities").json()
+    assert caps["speech_editing"] is True and caps["edit_transcribe"] is False
+    r = client.post("/v2/edit/transcribe", json={"audio_base64": wav_b64(), "language": "en_us"})
+    assert r.status_code == 503
+    assert r.json()["detail"].startswith("Speech recognition is not available on this server: ")
+    assert aligner.items == []
+    # the transcript makes alignment work without recognition
+    r = client.post("/v2/edit/align", json={"audio_base64": wav_b64(), "text": "hello there", "language": "en_us"})
+    assert r.status_code == 200, r.text
+    assert [w["word"] for w in r.json()["words"]] == ["hello", "there"]
 
 
 def test_edit_refuses_bad_condition_buckets_before_recognition(client, monkeypatch):

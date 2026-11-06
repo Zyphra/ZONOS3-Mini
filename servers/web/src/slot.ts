@@ -1,5 +1,5 @@
 // Port of zonos3_slot_sample: sample one frame, track EOS countdown, build the next input row.
-import { AUDIO_PAD, NCB, TEXT_PAD } from './prompt';
+import { NCB, TEXT_PAD } from './prompt';
 import type { Sampler } from './sampler';
 
 export interface SlotState {
@@ -21,7 +21,7 @@ export function sampleFrame(s: SlotState, smp: Sampler, logits: Float32Array, ma
   for (let cb = 0; cb < NCB; cb++) frame.push(smp.sample(logits, cb));
   // cold start: codebooks whose delayed stream has not started are forced to audio pad; r is the stream row
   const r = s.prefill + s.step;
-  for (let cb = r + 1; cb < NCB; cb++) frame[cb] = AUDIO_PAD;
+  for (let cb = r + 1; cb < NCB; cb++) frame[cb] = smp.padId;
   smp.accept(frame);
   for (const c of frame) s.codes.push(c);
   let maxEoa = -1;

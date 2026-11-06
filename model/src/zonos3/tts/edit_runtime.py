@@ -8,6 +8,10 @@ engine-level request checks, one region's span-end-terminated generation and the
 CUDA and MLX servers implement the engine in-process; the ggml server runs this runtime in
 zonos3/workers/pyhost.py and answers the engine's calls over its pipe.
 
+Speech recognition is optional: alignment and edits of a clip whose transcript the caller sends need FuseAlign only.
+Without it (``edit_align.asr_available``), /v2/edit/transcribe, ``verify`` and an edit that needs the words of a clip
+sent without ``original_text`` fail with ``edit_align.AsrUnavailable`` (503) before any encode or generation.
+
 Errors: ``ValueError`` is the request's fault (HTTP 400), ``zonos3.tts.edit_align.WorkerError`` an unavailable ASR /
 FuseAlign worker (503), ``RuntimeError`` a failed generation or decode (500); ``zonos3.server.errors.status_of`` maps
 them.
@@ -109,11 +113,14 @@ class EditEngine(Protocol):
         """Float32 44.1 kHz audio (with the server's output gain) of ordinary codes ``[frames, n_codebooks]``."""
 
 
-def edit_capabilities(model: EditModel, available: bool) -> dict:
-    """The speech-editing keys of /v2/capabilities; ``available``: the server can run the ASR and FuseAlign workers and
-    encode reference audio."""
+def edit_capabilities(model: EditModel, available: bool, transcribe: bool) -> dict:
+    """The speech-editing keys of /v2/capabilities. ``available``: the server can run the FuseAlign worker and encode
+    reference audio (speech editing); ``transcribe``: it also has speech recognition (the ASR worker installed), for
+    /v2/edit/transcribe, transcripts inside /v2/edit and ``verify``."""
     editing = model.max_spans > 0
-    return {"speech_editing": editing and available, "edit_max_spans": model.max_spans if editing else 0,
+    speech_editing = editing and available
+    return {"speech_editing": speech_editing, "edit_transcribe": speech_editing and transcribe,
+            "edit_max_spans": model.max_spans if editing else 0,
             "edit_frame_rate": model.frame_rate if editing else None, "edit_max_seconds": EDIT_MAX_SECONDS,
             "edit_align_max_seconds": EDIT_MAX_SECONDS}
 
@@ -151,16 +158,28 @@ def _wav16(audio: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+# The fixes of AsrUnavailable (what a caller of a server without speech recognition sends instead)
+SEND_ORIGINAL_TEXT = "send the clip's transcript as original_text"
+SEND_TO_ALIGN = "send the transcript to /v2/edit/align instead"
+VERIFY_FALSE = "set verify to false"
+
+
 class EditRuntime:
-    def __init__(self, engine: EditEngine, asr: edit_align.AsrWorker, aligner: edit_align.FuseAlignWorker):
+    def __init__(self, engine: EditEngine, asr: edit_align.AsrWorker | None, aligner: edit_align.FuseAlignWorker):
         self.engine = engine
-        # the server's ASR and FuseAlign workers (shared with plugins; the server closes them)
+        # the server's ASR and FuseAlign workers (shared with plugins; the server closes them); ``asr`` may be None or
+        # not installed: no speech recognition (edit_align.asr_available)
         self.asr = asr
         self.aligner = aligner
 
     @property
     def model(self) -> EditModel:
         return self.engine.model
+
+    @property
+    def transcribes(self) -> bool:
+        """Whether the server has speech recognition (/v2/capabilities ``edit_transcribe``)."""
+        return edit_align.asr_available(self.asr)
 
     def require_editing(self) -> None:
         if self.model.max_spans <= 0:
@@ -169,20 +188,31 @@ class EditRuntime:
 
     # ---- workers ----------------------------------------------------------------------------------------------
 
-    async def language(self, language: str) -> tuple[str, str]:
-        """``(Whisper-style code, Qwen3-ASR name)`` of a request's ``language`` (edit_align.edit_language over the
-        ASR worker's languages; ValueError for one editing does not serve)."""
-        normalized = languages.normalize(language)
-        return edit_align.edit_language(normalized, await asyncio.to_thread(self.asr.languages))
+    def language(self, language: str) -> tuple[str, str]:
+        """``(Whisper-style code, Qwen3-ASR name)`` of a request's ``language`` (edit_align.edit_language over
+        ``EDIT_LANGUAGES``; ValueError for one editing does not serve). No worker is consulted."""
+        return edit_align.edit_language(languages.normalize(language))
+
+    async def require_recognition(self, language: str, fix: str) -> None:
+        """Check that a request's speech recognition can run: ``AsrUnavailable(fix)`` without the ASR worker,
+        ValueError for a ``language`` (a request's) the worker does not transcribe."""
+        if not self.transcribes:
+            raise edit_align.AsrUnavailable(fix)
+        edit_align.edit_language(languages.normalize(language), await asyncio.to_thread(self.asr.languages))
 
     async def _transcribe(self, path: str, language: tuple[str, str]) -> edit_align.Transcript:
-        """Qwen3-ASR transcript of a clip in the edit's language (chunk-wise past 30 s)."""
+        """Qwen3-ASR transcript of a clip in the edit's language (chunk-wise past 30 s). The routes check
+        ``require_recognition`` first; the check here only backs up an edit whose clip turned out windowed after its
+        encode."""
+        if not self.transcribes:
+            raise edit_align.AsrUnavailable(SEND_ORIGINAL_TEXT)
         return await asyncio.to_thread(edit_align.transcribe_audio, self.asr, self.aligner, path, language[1])
 
     async def _aligned_words(self, path: str, text: str, language: tuple[str, str], utterances=None):
         """The words of ``text`` in the clip with their edit tokens (``utterances``: the long-form anchors of a
-        transcript of the same clip)."""
-        return await asyncio.to_thread(edit_align.edit_aligned_words, self.asr, self.aligner, path, text, language,
+        transcript of the same clip; without speech recognition a long clip aligns without them)."""
+        asr = self.asr if self.transcribes else None
+        return await asyncio.to_thread(edit_align.edit_aligned_words, asr, self.aligner, path, text, language,
                                        utterances)
 
     async def _write_audio(self, audio: bytes, directory: str, max_seconds: float) -> tuple[str, float]:
@@ -204,10 +234,11 @@ class EditRuntime:
         from zonos3.reference.synth import decode_base64_blob
 
         self.require_editing()
+        language = self.language(req.language)
+        await self.require_recognition(req.language, SEND_TO_ALIGN)
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             path, duration = await self._write_audio(decode_base64_blob(req.audio_base64, "audio_base64"), tmp,
                                                      EDIT_MAX_SECONDS)
-            language = await self.language(req.language)
             transcript = await self._transcribe(path, language)
             words = await self._aligned_words(path, transcript.text, language, transcript.utterances)
         return {"text": transcript.text, "duration": duration, "words": public_words(words)}
@@ -220,10 +251,11 @@ class EditRuntime:
         text = req.text.strip()
         if not text:
             raise ValueError("text is empty.")
+        language = self.language(req.language)
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             path, duration = await self._write_audio(decode_base64_blob(req.audio_base64, "audio_base64"), tmp,
                                                      EDIT_MAX_SECONDS)
-            words = await self._aligned_words(path, text, await self.language(req.language))
+            words = await self._aligned_words(path, text, language)
         return {"text": text, "duration": duration, "words": public_words(words)}
 
     async def edit(self, req) -> dict:
@@ -246,11 +278,18 @@ class EditRuntime:
         # text and never reach the ASR or FuseAlign (word diff, alignment, verify; target_tokens).
         target_text = canonical_markup(req.target_text.strip())
         plain_target_text = strip_nonverbal_markup(target_text)
-        edit_lang = await self.language(req.language)  # every ASR and FuseAlign call of the edit
+        edit_lang = self.language(req.language)  # every ASR and FuseAlign call of the edit
         if not target_text:
             raise ValueError("target_text is empty.")
         if req.original_words is not None and not (req.original_text or "").strip():
             raise ValueError("original_words needs the original_text they spell.")
+        # Without original_text (or original_words) the clip's words, when read (no explicit spans, or a clip to
+        # window), come from a transcript: refused here without speech recognition, before any model work.
+        untranscribed = req.original_words is None and not req.original_text
+        if req.verify:
+            await self.require_recognition(req.language, VERIFY_FALSE)
+        if untranscribed and req.spans is None:
+            await self.require_recognition(req.language, SEND_ORIGINAL_TEXT)
         doses = region_doses(req, m)
         language = languages.normalize(req.language)
         use_row = m.speaker_row if req.speaker_embedding is None else bool(req.speaker_embedding)
@@ -263,6 +302,8 @@ class EditRuntime:
         audio = decode_base64_blob(req.audio_base64, "audio_base64")
         with tempfile.TemporaryDirectory(prefix="zonos3-edit-") as tmp:
             original_path, duration = await self._write_audio(audio, tmp, EDIT_MAX_SECONDS)
+            if untranscribed and req.spans is not None and duration > req.max_context_seconds:
+                await self.require_recognition(req.language, SEND_ORIGINAL_TEXT)
             speaker_embedding = await self.engine.embed(audio) if use_row else None
             codes = np.asarray(await self.engine.encode(audio, EDIT_MAX_SECONDS), dtype=np.int64)
             # Longer clips are windowed and every fill gets a minimum length; both read word timings of the original

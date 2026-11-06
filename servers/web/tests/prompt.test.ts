@@ -14,7 +14,8 @@ const RATE_EDGES = [
   15.517, 15.865, 16.208, 16.579, 16.972, 17.411, 17.898, 18.434, 19.069, 19.818, 20.816, 22.286, 24.722, 29.25,
 ];
 const hp: ModelHp = {
-  nCodebooks: 10, audioPad: 4097, textVocab: 8196, nCond: 3, condBucketCounts: [10, 10, 30],
+  nCodebooks: 10, audioPad: 4097, textVocab: 8196, audioVocab: 4098, spanEndId: null, textExtraTokens: 0, nCond: 3,
+  condBucketCounts: [10, 10, 30],
   condNames: ['loudness', 'fmax', 'speaking_rate'],
   condEdges: [[1, 2, 3], [1, 2, 3], RATE_EDGES], silenceFrame: silence, speakerDim: 192, contextLength: 32768,
   condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', tagCfgTrained: false, nEmbd: 1024, nLayer: 11,

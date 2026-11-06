@@ -53,6 +53,10 @@ export function kthLargest(a: Float32Array, k: number, scratch: Float32Array): n
   return s[target];
 }
 
+/** spanEnd: the vocabulary ends with span-end after the pad (the edit vocabulary, audio_vocab 4099). spanEndStop (implies
+ *  spanEnd): span-end is the stop id and EOA is never sampled (speech-edit fills, zonos3-sampler.cpp stop_id). */
+export interface SamplerVocab { spanEnd?: boolean; spanEndStop?: boolean }
+
 export class Sampler {
   private rng: MT19937;
   private hist: number[][];
@@ -61,17 +65,27 @@ export class Sampler {
   private seen: Uint32Array;     // repetition penalty: seen[t] === seenGen marks t penalized in this call
   private seenGen = 0;
   private codebookSize: number;
-  stopId = 4096;
+  /** EOA (end of audio), the audio pad (never sampled) and span-end (-1 without one). */
+  readonly eoaId: number;
+  readonly padId: number;
+  readonly spanEndId: number;
+  stopId: number;
   minFrames = 0;
   generated = 0;
 
-  constructor(private sp: Sampling, private ncb = 10, private vocab = 4098) {
+  constructor(private sp: Sampling, private ncb = 10, private vocab = 4098, opts: SamplerVocab = {}) {
     this.rng = new MT19937(sp.seed >>> 0);
     this.hist = Array.from({ length: ncb }, () => []);
     this.logit = new Float32Array(vocab);
     this.kthBuf = new Float32Array(vocab);
     this.seen = new Uint32Array(vocab);
-    this.codebookSize = vocab - 2;
+    const spanEnd = opts.spanEnd === true || opts.spanEndStop === true;
+    this.codebookSize = vocab - (spanEnd ? 3 : 2);
+    if (this.codebookSize < 1) throw new Error(`sampler: vocabulary of ${vocab} has no audio codes`);
+    this.eoaId = this.codebookSize;
+    this.padId = this.codebookSize + 1;
+    this.spanEndId = spanEnd ? this.codebookSize + 2 : -1;
+    this.stopId = opts.spanEndStop ? this.spanEndId : this.eoaId;
   }
 
   accept(frame: ArrayLike<number>): void {
@@ -90,9 +104,10 @@ export class Sampler {
     const sp = this.sp, V = this.vocab;
     const logit = this.logit;
     logit.set(logits.subarray(offset, offset + V));
-    // the audio pad (V-1) is never a target; special ids other than stopId are never sampled, and stopId waits for minFrames
+    // the audio pad is never a target; special ids other than stopId (EOA, span-end) are never sampled, and stopId
+    // waits for minFrames
     for (let i = this.codebookSize; i < V; i++)
-      if (i === V - 1 || i !== this.stopId || this.generated < this.minFrames + cb) logit[i] = -Infinity;
+      if (i === this.padId || i !== this.stopId || this.generated < this.minFrames + cb) logit[i] = -Infinity;
 
     if (sp.rep_penalty !== 1 && cb < sp.rep_codebooks) {
       const pen = f(sp.rep_penalty);

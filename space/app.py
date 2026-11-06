@@ -203,7 +203,7 @@ def capabilities() -> dict:
         "speaker_embedding_blend": True,
         "default_voices_enabled": True,
         "projects": {"enabled": False},
-        **edit_capabilities(EDIT_MODEL, True),
+        **edit_capabilities(EDIT_MODEL, True, True),
         "phoneme_tokens": None if phonemes is None else {
             "open_marker": phonemes["open_marker"], "close_marker": phonemes["close_marker"],
             "symbols": list(phonemes["symbols"])},

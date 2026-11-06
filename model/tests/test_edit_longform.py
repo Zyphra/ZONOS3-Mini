@@ -1,5 +1,6 @@
 """Long-form orchestration of zonos3.tts.edit_align with stub workers: Qwen3-ASR transcripts chunk by chunk past 30 s
-(``transcribe_audio``) and FuseAlign items routed by Qwen3-ASR utterances (``align_words``)."""
+(``transcribe_audio``), FuseAlign items routed by Qwen3-ASR utterances (``align_words``), and long-form items aligned
+without utterances (FuseAlign's VAD map) when the server has no speech recognition."""
 
 import numpy as np
 import pytest
@@ -114,6 +115,26 @@ def test_align_words_anchors_only_long_form_items_in_one_batch(tmp_path):
     assert items[3]["utterances"] == [{"text": "given", "start": 0.0, "end": 40.0}]  # reused, not recomputed
     assert items[4]["utterances"] == [{"text": "text 0.0", "start": 0.0, "end": 5.0}]
     assert all(set(it) <= {"audio", "tokens", "utterances"} for it in items)
+
+
+@pytest.mark.parametrize("asr", [None, E.AsrWorker(python="/nonexistent/.venv-asr/bin/python")])
+def test_align_words_without_asr_sends_long_form_items_without_utterances(tmp_path, asr):
+    short, long = wav(tmp_path / "s.wav", 5.0), wav(tmp_path / "l.wav", 40.0)
+    aligner = StubAligner({})  # a segments call would raise KeyError
+    given = [{"text": "given", "start": 0.0, "end": 40.0, "language": "English"}]
+    wide = [f"token{k}" for k in range(200)]
+    out = E.align_words(asr, aligner, [
+        {"audio": long, "tokens": ["a"], "language": "English"},
+        {"audio": short, "tokens": wide, "language": "English"},
+        {"audio": long, "tokens": ["b"], "language": "English", "utterances": given},
+    ])
+    assert [[w["word"] for w in ws] for ws in out] == [["a"], wide, ["b"]]
+    assert aligner.segment_calls == []
+    (items,) = aligner.align_calls
+    assert "utterances" not in items[0] and "utterances" not in items[1]
+    assert items[2]["utterances"] == [{"text": "given", "start": 0.0, "end": 40.0}]  # anchors given are still used
+    words = E.edit_aligned_words(asr, aligner, long, "hello world", ("en", "English"))
+    assert [w.word for w in words] == ["hello", "world"] and "utterances" not in aligner.align_calls[-1][0]
 
 
 def test_edit_aligned_words_carry_edit_tokens(tmp_path):

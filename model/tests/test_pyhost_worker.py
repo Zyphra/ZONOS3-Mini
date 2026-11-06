@@ -1,7 +1,7 @@
 """zonos3/workers/pyhost.py as the ggml server runs it: a subprocess whose engine calls a Python stand-in for ggml
 answers. Edits use explicit spans and ``min_fill_ratio: 0`` (no FuseAlign), ZONOS3_ASR_PYTHON points the host's
-AsrWorker at a fake that only answers ``ping``, and a fake plugin ``zonos3_fake`` (written to a temp dir on PYTHONPATH)
-exercises ``http`` and ``laci_takes``."""
+AsrWorker at an interpreter that does not exist (no speech recognition), and a fake plugin ``zonos3_fake`` (written to a
+temp dir on PYTHONPATH) exercises ``http`` and ``laci_takes``."""
 
 import base64
 import json
@@ -48,14 +48,7 @@ NOISY = textwrap.dedent("""
     sys.argv = sys.argv[1:]
     runpy.run_path(sys.argv[0], run_name="__main__")
 """)
-FAKE_ASR = """\
-import json, os, sys
-for line in sys.stdin:
-    request = json.loads(line)
-    assert request["op"] == "ping", request
-    print(json.dumps({"id": request["id"], "status": "ok", "model": "fake", "languages": ["English"]}), flush=True)
-open(os.environ["FAKE_ASR_CLOSED"], "w").close()
-"""
+ASR_DETAIL = "Speech recognition is not available on this server: "
 FAKE_PLUGIN = """\
 import os
 
@@ -129,17 +122,13 @@ class Ggml:
     thread by ``engine[op](call)``."""
 
     def __init__(self, tmp: Path, engine: dict):
-        asr = tmp / "fake_asr"
-        asr.write_text(f"#!{sys.executable}\n{FAKE_ASR}")
-        asr.chmod(0o755)
-        self.asr_closed = tmp / "asr_closed"
         self.plugin_closed = tmp / "plugin_closed"
         plugins = tmp / "plugins"
         plugins.mkdir(exist_ok=True)
         (plugins / "zonos3_fake.py").write_text(FAKE_PLUGIN)
         env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-        env.update(PYTHONPATH=os.pathsep.join([str(MODEL_SRC), str(plugins)]), ZONOS3_ASR_PYTHON=str(asr),
-                   FAKE_ASR_CLOSED=str(self.asr_closed), FAKE_PLUGIN_CLOSED=str(self.plugin_closed),
+        env.update(PYTHONPATH=os.pathsep.join([str(MODEL_SRC), str(plugins)]),
+                   ZONOS3_ASR_PYTHON=str(tmp / "no-asr" / "python"), FAKE_PLUGIN_CLOSED=str(self.plugin_closed),
                    HF_HUB_OFFLINE="1")
         self.stderr_path = tmp / "worker.stderr"
         self._stderr = open(self.stderr_path, "w")
@@ -301,12 +290,25 @@ def test_errors(make_ggml):
     assert ggml.request(5, "edit", request=EDIT)["status"] == "ok"  # the worker lives on
 
 
+def test_without_speech_recognition(make_ggml):
+    ggml = make_ggml()
+    transcribe = ggml.request(1, "edit_transcribe", request={"audio_base64": EDIT["audio_base64"]})
+    assert transcribe == {"id": 1, "status": "error", "code": 503,
+                          "message": ASR_DETAIL + "send the transcript to /v2/edit/align instead"}
+    verify = ggml.request(2, "edit", request={**EDIT, "verify": True})
+    assert verify == {"id": 2, "status": "error", "code": 503, "message": ASR_DETAIL + "set verify to false"}
+    untranscribed = ggml.request(3, "edit", request={k: v for k, v in EDIT.items() if k != "spans"})
+    assert untranscribed == {"id": 3, "status": "error", "code": 503,
+                             "message": ASR_DETAIL + "send the clip's transcript as original_text"}
+    assert not [c for c in ggml.calls if c["op"] in ("encode", "embed", "fill")]  # refused before any model work
+
+
 def test_eof_closes_the_workers(make_ggml):
     ggml = make_ggml()
-    assert ggml.request(1, "edit", request=EDIT)["status"] == "ok"  # starts the ASR worker (its ping)
-    assert not ggml.asr_closed.exists()
+    assert ggml.request(1, "edit", request=EDIT)["status"] == "ok"  # explicit spans: no ASR worker
+    assert not ggml.plugin_closed.exists()
     assert ggml.close() == 0
-    assert ggml.asr_closed.exists() and ggml.plugin_closed.exists()
+    assert ggml.plugin_closed.exists()
 
 
 def http(ggml, rid, tmp_path, method, path, query="", headers=(), body: bytes | None = None):

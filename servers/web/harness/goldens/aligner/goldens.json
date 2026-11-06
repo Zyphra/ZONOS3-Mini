@@ -1,0 +1,518 @@
+{
+ "reference": "fusealign_hub.load_aligner(fusealign-multilingual-cjkft-step2500.safetensors, device='cpu', batch_size=1)",
+ "clips": [
+  {
+   "name": "american_male",
+   "file": "american_male.s16",
+   "samples": 170400,
+   "source": "default_voices/AmericanMale.mp3",
+   "source_start": 0.0,
+   "tokens": [
+    "Hi,",
+    "this",
+    "is",
+    "Brad",
+    "Geiger.",
+    "I'm",
+    "an",
+    "American",
+    "cartoonist",
+    "best",
+    "known",
+    "for",
+    "my",
+    "daily",
+    "comic",
+    "strip",
+    "*Evil",
+    "Inc.*,",
+    "along",
+    "with",
+    "websites",
+    "like",
+    "Webcomics.com."
+   ],
+   "words": [
+    {
+     "word": "Hi,",
+     "start": 1.102,
+     "end": 1.423,
+     "presence": 0.999999523,
+     "placed": true
+    },
+    {
+     "word": "this",
+     "start": 1.42,
+     "end": 1.621,
+     "presence": 0.999997497,
+     "placed": true
+    },
+    {
+     "word": "is",
+     "start": 1.622,
+     "end": 1.729,
+     "presence": 0.999999642,
+     "placed": true
+    },
+    {
+     "word": "Brad",
+     "start": 1.729,
+     "end": 2.024,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "Geiger.",
+     "start": 2.025,
+     "end": 2.752,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "I'm",
+     "start": 2.881,
+     "end": 3.094,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "an",
+     "start": 3.094,
+     "end": 3.199,
+     "presence": 0.999999285,
+     "placed": true
+    },
+    {
+     "word": "American",
+     "start": 3.199,
+     "end": 3.726,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "cartoonist",
+     "start": 3.725,
+     "end": 4.329,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "best",
+     "start": 4.33,
+     "end": 4.602,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "known",
+     "start": 4.601,
+     "end": 4.904,
+     "presence": 0.999999762,
+     "placed": true
+    },
+    {
+     "word": "for",
+     "start": 4.904,
+     "end": 5.126,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "my",
+     "start": 5.125,
+     "end": 5.34,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "daily",
+     "start": 5.339,
+     "end": 5.752,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "comic",
+     "start": 5.751,
+     "end": 6.156,
+     "presence": 0.999999404,
+     "placed": true
+    },
+    {
+     "word": "strip",
+     "start": 6.154,
+     "end": 6.437,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "*Evil",
+     "start": 6.585,
+     "end": 6.902,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "Inc.*,",
+     "start": 6.903,
+     "end": 7.166,
+     "presence": 0.999999642,
+     "placed": true
+    },
+    {
+     "word": "along",
+     "start": 7.441,
+     "end": 7.76,
+     "presence": 0.99999547,
+     "placed": true
+    },
+    {
+     "word": "with",
+     "start": 7.761,
+     "end": 7.894,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "websites",
+     "start": 7.895,
+     "end": 8.572,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "like",
+     "start": 8.572,
+     "end": 8.901,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "Webcomics.com.",
+     "start": 8.903,
+     "end": 10.327,
+     "presence": 1.0,
+     "placed": true
+    }
+   ]
+  },
+  {
+   "name": "british_female",
+   "file": "british_female.s16",
+   "samples": 89600,
+   "source": "default_voices/BritishFemale.mp3",
+   "source_start": 0.0,
+   "tokens": [
+    "Hello,",
+    "I'm",
+    "Julie",
+    "Etchingham,",
+    "—",
+    "and",
+    "I",
+    "present",
+    "News",
+    "at",
+    "Ten",
+    "for",
+    "ITV."
+   ],
+   "words": [
+    {
+     "word": "Hello,",
+     "start": 0.27,
+     "end": 0.679,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "I'm",
+     "start": 0.689,
+     "end": 0.971,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "Julie",
+     "start": 0.971,
+     "end": 1.353,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "Etchingham,",
+     "start": 1.352,
+     "end": 1.914,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "—",
+     "start": 1.914,
+     "end": 1.914,
+     "presence": 0.0,
+     "placed": false
+    },
+    {
+     "word": "and",
+     "start": 1.953,
+     "end": 2.049,
+     "presence": 0.999999762,
+     "placed": true
+    },
+    {
+     "word": "I",
+     "start": 2.049,
+     "end": 2.174,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "present",
+     "start": 2.174,
+     "end": 2.586,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "News",
+     "start": 2.584,
+     "end": 2.992,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "at",
+     "start": 2.993,
+     "end": 3.11,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "Ten",
+     "start": 3.109,
+     "end": 3.562,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "for",
+     "start": 3.56,
+     "end": 3.808,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "ITV.",
+     "start": 3.807,
+     "end": 4.633,
+     "presence": 1.0,
+     "placed": true
+    }
+   ]
+  },
+  {
+   "name": "british_female_2",
+   "file": "british_female_2.s16",
+   "samples": 112000,
+   "source": "default_voices/BritishFemale.mp3",
+   "source_start": 6.6,
+   "tokens": [
+    "One",
+    "Ash",
+    "Wednesday,",
+    "a",
+    "couple",
+    "of",
+    "years",
+    "ago,",
+    "I",
+    "was",
+    "looking",
+    "for",
+    "somewhere",
+    "to",
+    "go",
+    "to",
+    "mass",
+    "before",
+    "I",
+    "read",
+    "the",
+    "ten",
+    "o'clock",
+    "news."
+   ],
+   "words": [
+    {
+     "word": "One",
+     "start": 0.107,
+     "end": 0.371,
+     "presence": 0.999996424,
+     "placed": true
+    },
+    {
+     "word": "Ash",
+     "start": 0.371,
+     "end": 0.703,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "Wednesday,",
+     "start": 0.703,
+     "end": 1.334,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "a",
+     "start": 1.332,
+     "end": 1.434,
+     "presence": 0.999975204,
+     "placed": true
+    },
+    {
+     "word": "couple",
+     "start": 1.435,
+     "end": 1.777,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "of",
+     "start": 1.777,
+     "end": 1.875,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "years",
+     "start": 1.874,
+     "end": 2.192,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "ago,",
+     "start": 2.193,
+     "end": 2.527,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "I",
+     "start": 2.721,
+     "end": 2.84,
+     "presence": 0.999961615,
+     "placed": true
+    },
+    {
+     "word": "was",
+     "start": 2.838,
+     "end": 2.96,
+     "presence": 0.999997973,
+     "placed": true
+    },
+    {
+     "word": "looking",
+     "start": 2.959,
+     "end": 3.162,
+     "presence": 0.999999762,
+     "placed": true
+    },
+    {
+     "word": "for",
+     "start": 3.229,
+     "end": 3.347,
+     "presence": 0.999990344,
+     "placed": true
+    },
+    {
+     "word": "somewhere",
+     "start": 3.348,
+     "end": 3.736,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "to",
+     "start": 3.736,
+     "end": 3.838,
+     "presence": 0.999968767,
+     "placed": true
+    },
+    {
+     "word": "go",
+     "start": 3.837,
+     "end": 3.98,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "to",
+     "start": 3.979,
+     "end": 4.143,
+     "presence": 0.999973536,
+     "placed": true
+    },
+    {
+     "word": "mass",
+     "start": 4.13,
+     "end": 4.638,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "before",
+     "start": 4.639,
+     "end": 4.939,
+     "presence": 0.999999881,
+     "placed": true
+    },
+    {
+     "word": "I",
+     "start": 4.937,
+     "end": 5.044,
+     "presence": 0.999961376,
+     "placed": true
+    },
+    {
+     "word": "read",
+     "start": 5.044,
+     "end": 5.28,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "the",
+     "start": 5.278,
+     "end": 5.414,
+     "presence": 0.999999046,
+     "placed": true
+    },
+    {
+     "word": "ten",
+     "start": 5.415,
+     "end": 5.632,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "o'clock",
+     "start": 5.633,
+     "end": 5.888,
+     "presence": 1.0,
+     "placed": true
+    },
+    {
+     "word": "news.",
+     "start": 6.01,
+     "end": 6.427,
+     "presence": 1.0,
+     "placed": true
+    }
+   ]
+  }
+ ]
+}

@@ -79,10 +79,10 @@ def edit_model(state: ServerState) -> EditModel:
 
 
 def edit(state: ServerState) -> dict:
-    """Speech editing needs the checkpoint's span-end/marker rows, Qwen3-ASR (.venv-asr), FuseAlign (fusealign_hub in
-    its worker's interpreter) and the reference encoder."""
-    return edit_capabilities(edit_model(state), state.asr.installed and state.options.fusealign
-                             and state.engine.has_reference_encoder)
+    """Speech editing needs the checkpoint's span-end/marker rows, FuseAlign (fusealign_hub in its worker's
+    interpreter) and the reference encoder; Qwen3-ASR (.venv-asr) is optional and enables transcription."""
+    return edit_capabilities(edit_model(state), state.options.fusealign and state.engine.has_reference_encoder,
+                             state.asr.installed)
 
 
 def speaking_rate_edges(state: ServerState) -> list[float]:

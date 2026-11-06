@@ -1,9 +1,10 @@
 // Main-thread facade of the in-browser server: spawns the engine worker (and the codec worker holding the host half
 // of the codec, connected to the engine worker over a MessageChannel) and exposes a fetch-compatible localFetch()
 // that serves the v2 API in-process. Audio the worker cannot decode (it has no AudioContext) is decoded here: default
-// voices at init, speaker_audio_base64 per request (sent next to the JSON as 44.1 kHz mono PCM).
+// voices at init, speaker_audio_base64 (and the edit routes' audio_base64) per request, sent next to the JSON as
+// 44.1 kHz mono PCM with the upload's whole length.
 import { b64DecodeStrict } from './b64';
-import { REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE } from './generation';
+import { EDIT_MAX_SECONDS, REFERENCE_AUDIO_MAX_SECONDS, SAMPLE_RATE } from './generation';
 import { fetchJson, modelsBaseUrl, type LoadProgress } from './gpu/weights';
 import type { InMsg, OutMsg } from './worker';
 
@@ -17,8 +18,15 @@ interface Pending {
   controller?: ReadableStreamDefaultController<Uint8Array>;
 }
 
-const AUDIO_ROUTES: Record<string, true> = { '/v2/speakers': true, '/v2/generate': true, '/v1/audio/speech': true };
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+/** The routes whose body carries audio the worker reads: its field and the longest stretch decoded (seconds). */
+const AUDIO_ROUTES: Record<string, { field: string; maxSeconds: number }> = {
+  '/v2/speakers': { field: 'speaker_audio_base64', maxSeconds: REFERENCE_AUDIO_MAX_SECONDS },
+  '/v2/generate': { field: 'speaker_audio_base64', maxSeconds: REFERENCE_AUDIO_MAX_SECONDS },
+  '/v1/audio/speech': { field: 'speaker_audio_base64', maxSeconds: REFERENCE_AUDIO_MAX_SECONDS },
+  '/v2/edit': { field: 'audio_base64', maxSeconds: EDIT_MAX_SECONDS },
+  '/v2/edit/align': { field: 'audio_base64', maxSeconds: EDIT_MAX_SECONDS },
+};
 const codecWorker = new Worker(new URL('./codec-worker.ts', import.meta.url), { type: 'module' });
 const pending = new Map<number, Pending>();
 let nextId = 1;
@@ -83,20 +91,21 @@ export interface InitOptions {
   cache?: boolean;
 }
 
-/** Decode any browser-supported audio file to API-rate mono (downmix + resample), cropped to
- *  REFERENCE_AUDIO_MAX_SECONDS. */
-export async function decodeTo44k(bytes: ArrayBuffer): Promise<Float32Array> {
+/** Decode any browser-supported audio file to API-rate mono (downmix + resample), cropped to `maxSeconds`
+ *  (REFERENCE_AUDIO_MAX_SECONDS by default); `seconds` is the whole file's length. */
+export async function decodeTo44k(bytes: ArrayBuffer, maxSeconds = REFERENCE_AUDIO_MAX_SECONDS):
+    Promise<{ pcm: Float32Array; seconds: number }> {
   const probe = new OfflineAudioContext(1, 1, SAMPLE_RATE);
   const decoded = await probe.decodeAudioData(bytes);
-  const len = Math.min(Math.ceil(decoded.duration * SAMPLE_RATE), REFERENCE_AUDIO_MAX_SECONDS * SAMPLE_RATE);
-  if (len <= 0) return new Float32Array(0);
+  const len = Math.min(Math.ceil(decoded.duration * SAMPLE_RATE), maxSeconds * SAMPLE_RATE);
+  if (len <= 0) return { pcm: new Float32Array(0), seconds: decoded.duration };
   const ctx = new OfflineAudioContext(1, len, SAMPLE_RATE);
   const src = ctx.createBufferSource();
   src.buffer = decoded;
   src.connect(ctx.destination);
   src.start();
   const out = await ctx.startRendering();
-  return out.getChannelData(0).slice(0, len);
+  return { pcm: out.getChannelData(0).slice(0, len), seconds: decoded.duration };
 }
 
 /** Each default voice's clip as 44.1 kHz mono (null-free: a clip that fails to decode is left out). */
@@ -107,7 +116,7 @@ async function defaultVoicesPcm(base: string): Promise<Record<string, Float32Arr
   await Promise.all(voices.map(async v => {
     try {
       const r = await fetch(new URL(v.file, voicesBase).href);
-      if (r.ok) out[v.id] = await decodeTo44k(await r.arrayBuffer());
+      if (r.ok) out[v.id] = (await decodeTo44k(await r.arrayBuffer())).pcm;
     } catch (e) {
       console.warn(`zonos3-web: default voice ${v.file} did not decode`, e);
     }
@@ -140,20 +149,22 @@ export const engine = {
   onEncoderProgress(cb: (p: Progress) => void): void { encoderCbs.push(cb); },
 };
 
-/** speaker_audio_base64 of a JSON body decoded to 44.1 kHz mono; undefined when absent or undecodable (the worker
- *  answers the API's 400 for those after validating the body). */
-async function speakerPcm(body: ArrayBuffer | null): Promise<Float32Array | undefined> {
+/** The route's audio field of a JSON body decoded to 44.1 kHz mono (at most the route's maxSeconds) and the upload's
+ *  whole length; undefined when absent or undecodable (the worker answers the API's 400 for those after validating the
+ *  body). */
+async function requestPcm(body: ArrayBuffer | null, route: { field: string; maxSeconds: number }):
+    Promise<{ pcm: Float32Array; seconds: number } | undefined> {
   if (!body) return undefined;
   let json: unknown;
   try { json = JSON.parse(new TextDecoder().decode(body)); } catch { return undefined; }
-  if (!json || typeof json !== 'object' || !('speaker_audio_base64' in json)) return undefined;
-  const v = json.speaker_audio_base64;
+  if (!json || typeof json !== 'object' || !(route.field in json)) return undefined;
+  const v: unknown = Reflect.get(json, route.field);
   if (typeof v !== 'string' || !v.trim()) return undefined;
   const bytes = b64DecodeStrict(v);
   if (!bytes) return undefined;
   try {
-    const pcm = await decodeTo44k(bytes.slice().buffer);
-    return pcm.length ? pcm : undefined;
+    const decoded = await decodeTo44k(bytes.slice().buffer, route.maxSeconds);
+    return decoded.pcm.length ? decoded : undefined;
   } catch {
     return undefined;
   }
@@ -171,7 +182,8 @@ export async function localFetch(input: RequestInfo | URL, init?: RequestInit): 
   if (init?.body !== undefined && init.body !== null) body = await new Response(init.body).arrayBuffer();
   else if (req && method !== 'GET' && method !== 'HEAD') body = await req.arrayBuffer();
   if (body && body.byteLength === 0) body = null;
-  const pcm = method === 'POST' && AUDIO_ROUTES[url.pathname] ? await speakerPcm(body) : undefined;
+  const route = method === 'POST' ? AUDIO_ROUTES[url.pathname] : undefined;
+  const audio = route ? await requestPcm(body, route) : undefined;
   const signal = init?.signal ?? req?.signal ?? null;
   const id = nextId++;
   const { promise, resolve, reject } = Promise.withResolvers<Response>();
@@ -190,7 +202,7 @@ export async function localFetch(input: RequestInfo | URL, init?: RequestInit): 
   }
   const transfer: Transferable[] = [];
   if (body) transfer.push(body);
-  if (pcm) transfer.push(pcm.buffer);
-  send({ type: 'req', id, method, path, headers, body, pcm }, transfer);
+  if (audio) transfer.push(audio.pcm.buffer);
+  send({ type: 'req', id, method, path, headers, body, pcm: audio?.pcm, pcmSeconds: audio?.seconds }, transfer);
   return promise;
 }

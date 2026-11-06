@@ -1,5 +1,5 @@
 """zonos3.tts.edit_runtime.EditRuntime over a fake EditEngine and fake ASR / FuseAlign workers (no model, no
-subprocess): what a /v2/edit caller sees."""
+subprocess): what a /v2/edit caller sees, with and without speech recognition."""
 
 import asyncio
 import base64
@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from zonos3.generation import SAMPLE_RATE
 from zonos3.server.errors import NotFound, status_of
-from zonos3.server.schemas import EditRequest
-from zonos3.tts.edit_align import AsrError, FuseAlignError, WorkerError
-from zonos3.tts.edit_runtime import EditModel, EditRuntime
+from zonos3.server.schemas import EditAlignRequest, EditRequest, EditTranscribeRequest
+from zonos3.tts.edit_align import AsrError, AsrUnavailable, AsrWorker, FuseAlignError, WorkerError
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, edit_capabilities
 
 K = 4
 FRAME_RATE = 10.0
@@ -28,7 +28,7 @@ class FakeEngine:
         self.raw = set(raw)
         self.fill_frames = fill_frames
         self.codes = np.arange(FRAMES * K, dtype=np.int64).reshape(FRAMES, K)
-        self.checked, self.jobs, self.decoded = [], [], []
+        self.checked, self.jobs, self.decoded, self.encoded = [], [], [], 0
 
     async def decode_audio(self, audio):
         assert audio == b"an upload"
@@ -38,6 +38,7 @@ class FakeEngine:
         return [0.25] * 8
 
     async def encode(self, audio, max_seconds):
+        self.encoded += 1
         return self.codes
 
     async def check(self, target_text, doses, condition_buckets, condition_values):
@@ -146,6 +147,76 @@ def test_verify_reports_the_take_transcript_and_words():
     assert [w["word"] for w in take["words"]] == ["hello", "brave", "new", "world"]
     assert set(take["words"][0]) == {"word", "start", "end", "confidence", "tokens"}
     assert len(aligner.aligned) == 1  # the take only: explicit spans never align the original
+
+
+ASR_DETAIL = "Speech recognition is not available on this server: "
+NO_ASR = [None, AsrWorker(python="/nonexistent/.venv-asr/bin/python")]  # no worker; worker not installed
+
+
+def test_edit_capabilities():
+    on = edit_capabilities(MODEL, True, True)
+    assert on == {"speech_editing": True, "edit_transcribe": True, "edit_max_spans": 4, "edit_frame_rate": FRAME_RATE,
+                  "edit_max_seconds": on["edit_max_seconds"], "edit_align_max_seconds": on["edit_align_max_seconds"]}
+    assert edit_capabilities(MODEL, True, False)["edit_transcribe"] is False
+    assert edit_capabilities(MODEL, True, False)["speech_editing"] is True
+    off = edit_capabilities(MODEL, False, True)
+    assert off["speech_editing"] is False and off["edit_transcribe"] is False
+    plain = edit_capabilities(EditModel(**{**MODEL.__dict__, "max_spans": 0}), True, True)
+    assert (plain["speech_editing"], plain["edit_transcribe"], plain["edit_max_spans"]) == (False, False, 0)
+
+
+@pytest.mark.parametrize("asr", NO_ASR)
+def test_without_asr_recognition_is_refused_before_any_model_work(asr):
+    engine = FakeEngine()
+    runtime = EditRuntime(engine, asr, FakeAligner())
+    assert not runtime.transcribes
+    with pytest.raises(AsrUnavailable) as exc:
+        asyncio.run(runtime.transcribe(EditTranscribeRequest(audio_base64=CLIP)))
+    assert str(exc.value) == ASR_DETAIL + "send the transcript to /v2/edit/align instead"
+    assert status_of(exc.value) == 503
+    with pytest.raises(AsrUnavailable) as exc:
+        edit(runtime, spans=[[1.0, 1.5]], min_fill_ratio=0.0, verify=True)
+    assert str(exc.value) == ASR_DETAIL + "set verify to false"
+    with pytest.raises(AsrUnavailable) as exc:
+        edit(runtime)  # no spans and no original_text: the clip's words would be transcribed
+    assert str(exc.value) == ASR_DETAIL + "send the clip's transcript as original_text"
+    assert engine.encoded == 0 and not engine.jobs and not engine.decoded and not engine.checked
+
+
+@pytest.mark.parametrize("asr", NO_ASR)
+def test_without_asr_align_and_edit_with_the_transcript(asr):
+    aligner = FakeAligner(enabled=True)
+    runtime = EditRuntime(FakeEngine(), asr, aligner)
+    out = asyncio.run(runtime.align(EditAlignRequest(audio_base64=CLIP, text="hello brave old world")))
+    assert [w["word"] for w in out["words"]] == ["hello", "brave", "old", "world"]
+    assert "utterances" not in aligner.aligned[0]
+
+    engine = FakeEngine()
+    out = edit(EditRuntime(engine, asr, aligner), original_text="hello brave old world")
+    assert out["original_text"] == "hello brave old world" and [w["word"] for w in out["words"]][2] == "old"
+    assert len(engine.jobs) == 1 and len(out["spans"]) == 1
+    assert edit(EditRuntime(FakeEngine(), asr, FakeAligner()), spans=[[1.0, 1.5]],
+                min_fill_ratio=0.0)["takes"][0]["verify"] is None  # explicit spans need neither worker's words
+
+
+def test_language_is_checked_without_asr():
+    class SilentAsr(FakeAsr):
+        def languages(self):
+            raise AssertionError("the edit pinged the ASR worker")
+
+    runtime = EditRuntime(FakeEngine(), SilentAsr(), FakeAligner())
+    assert runtime.language("en_us")[0] == "en"
+    with pytest.raises(ValueError, match="Unsupported language code"):
+        runtime.language("xx_yy")
+    edit(runtime, spans=[[1.0, 1.5]], min_fill_ratio=0.0)  # explicit spans: no recognition, no ping
+
+
+def test_recognition_languages_come_from_the_asr_worker():
+    engine = FakeEngine()  # FakeAsr transcribes English only
+    with pytest.raises(ValueError, match="does not serve language 'de'"):
+        edit(EditRuntime(engine, FakeAsr(heard="x"), FakeAligner()), spans=[[1.0, 1.5]], verify=True, language="de")
+    assert engine.encoded == 0  # refused before the encode
+    edit(EditRuntime(engine, FakeAsr(), FakeAligner()), spans=[[1.0, 1.5]], min_fill_ratio=0.0, language="de")
 
 
 def test_status_of():

@@ -167,13 +167,15 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
 
 ### Feature prerequisites
 
-- **Speech recognition** (speech editing) is Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`) in its own venv:
+- **Speech recognition** (optional for speech editing: transcripts of clips sent without one, and `verify`) is
+  Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`) in its own venv:
   `bash tools/setup_asr_env.sh` once creates `.venv-asr` (qwen-asr pins its own transformers). One worker process per
   server (`model/src/zonos3/workers/asr.py`) starts on first use; `ZONOS3_ASR_PYTHON` overrides its interpreter
-  (default `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU).
+  (default `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU). Without it
+  `/v2/capabilities` reports `edit_transcribe: false`, and editing needs the clip's transcript.
 - **Speech editing** needs the speech-edit LoRA (sgl: `--accent-adapters <dir with
   lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt>` on the release LM; see [docs/guide.md](docs/guide.md)) or an
-  edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `.venv-asr` and FuseAlign
+  edit checkpoint (`SERVE_MODEL=<edit checkpoint>`) and FuseAlign
   (`fusealign-hub` in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
 - **Phoneme input** needs the release phoneme tokens
   (`lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
@@ -184,7 +186,8 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
   (`model/src/zonos3/workers/fusealign.py`, the workspace interpreter), started on first use;
   `ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0`, else CPU). Recordings over 30 s (or transcripts over
   1022 UTF-8 bytes) are aligned long-form, anchored by Qwen3-ASR transcripts of their voice-activity chunks (at most
-  25 s each); FuseAlign's built-in Whisper anchoring is never used.
+  25 s each), or without speech recognition by FuseAlign's own voice-activity map; FuseAlign's built-in Whisper
+  anchoring is never used.
 - **Accent adapters** need `--accent-adapters <dir>`.
 
 Lingua training checkpoints are converted with `tools/convert_lingua_checkpoint.py`.

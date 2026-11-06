@@ -4,17 +4,20 @@
 // zonos3-graph.cpp: speaker/condition rows replace the summed embedding before emb_norm (prefill), hidden steering
 // deltas join their Full AttnRes sources (decode), and the alignment probe reads the global layers (slot 0 decode).
 // Two state sets: slot 0 = conditional, slot 1 = CFG twin.
+// The vocabulary follows the manifest meta (hp): model 'backbone' is the release LM (audio vocabulary 4098), model
+// 'edit' the speech-edit LM (4099 with span-end, infill-marker text rows, the edit adapter merged into its weights by
+// scripts/export_web_models.py; its merged experts are q8).
 import { MAX_FRAMES } from './generation';
 import type { Gpu } from './gpu/device';
 import {
   ACT, addRmsnorm, attention, attentionMasked, attnres, condRows, elementwise, EW, gdn, gemm, matvec, matvecGlu, moe,
-  probeAccumulate, probeReadout, ropeKv, steerAdd, type ProbeOpts,
+  probeAccumulate, probeReadout, ropeKv, steerAdd, type ProbeOpts, type Weight,
 } from './gpu/ops';
 import { Builder, type Program } from './gpu/program';
 import { ropeTable } from './gpu/rope';
-import type { Model } from './gpu/weights';
+import { loadModel, type Model, type Progress } from './gpu/weights';
 import { clipWindow } from './probe';
-import { conditionBucketCounts, type Conditioning } from './prompt';
+import { modelHp, type Conditioning, type ModelHp } from './prompt';
 
 export const N_LAYER = 11;
 export const D = 1024;
@@ -33,9 +36,7 @@ export const N_LATENT = 256;
 export const N_EXP_FF = 1536;
 export const N_EXPERT = 64;
 export const TOPK = 2;
-export const VOCAB = 4098;
 export const NCB = 10;
-export const LOGITS = VOCAB * NCB;
 /** Rows per slot: native context_capacity = min(context_length, max_frames + 4096). */
 export const CAP = MAX_FRAMES + 4096;
 export const CHUNK = 256;
@@ -43,8 +44,6 @@ export const CHUNK = 256;
 export const PROBE_LMAX = 2048;
 const SPK_DIM = 192;
 const N_COND = 3;
-const AUDIO_PAD = 4097;
-const TEXT_PAD = 8196;
 /** Global attention layers in probe order. */
 const PROBE_LAYERS = [3, 7];
 /** condBuf: speaker_row, condition_row, n_cond, bucket[3], 0, 0 (u32 words), then the projected speaker row [1024]. */
@@ -70,15 +69,16 @@ export interface PrefillOpts { chunk?: number; capture?: boolean }
 
 interface SlotGpuState { kc: Map<number, GPUBuffer>; vc: Map<number, GPUBuffer>; gdnState: Map<number, GPUBuffer>; gdnHist: Map<number, GPUBuffer> }
 
-function isPadRow(ids: Int32Array, r: number): boolean {
-  for (let c = 0; c < NCB; c++) if (ids[r * 11 + c] !== AUDIO_PAD) return false;
-  return ids[r * 11 + NCB] === TEXT_PAD;
+function isPadRow(ids: Int32Array, r: number, hp: ModelHp): boolean {
+  for (let c = 0; c < NCB; c++) if (ids[r * 11 + c] !== hp.audioPad) return false;
+  return ids[r * 11 + NCB] === hp.textVocab;
 }
 
 /** zonos3_check_conditioning + features_ok (speaker delta). */
-function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condNames: string[], counts: number[]): void {
+function checkConditioning(ids: Int32Array, n: number, c: Conditioning, hp: ModelHp): void {
+  const counts = hp.condBucketCounts, condNames = hp.condNames;
   const padRow = (row: number) => {
-    if (row < 0 || row >= n || !isPadRow(ids, row)) throw new Error(`zonos3: conditioning row ${row} is not an all-pad row`);
+    if (row < 0 || row >= n || !isPadRow(ids, row, hp)) throw new Error(`zonos3: conditioning row ${row} is not an all-pad row`);
   };
   if (c.speakerRow >= 0) {
     if (!c.speaker || c.speaker.length !== SPK_DIM) throw new Error(`zonos3: expected a ${SPK_DIM}-value speaker embedding`);
@@ -95,23 +95,23 @@ function checkConditioning(ids: Int32Array, n: number, c: Conditioning, condName
     }
   }
   for (let r = 0; r < n; r++) {
-    if (!isPadRow(ids, r)) continue;
+    if (!isPadRow(ids, r, hp)) continue;
     const speaker = c.speakerRow >= 0 && r === c.speakerRow;
     const cond = c.conditionRow >= 0 && r >= c.conditionRow && r < c.conditionRow + N_COND;
     if (!speaker && !cond) throw new Error(`zonos3: all-pad row ${r} has no speaker/condition embedding`);
   }
 }
 
-/** Validates the backbone meta; returns the per-table condition bucket counts (cond_embd.i has counts[i] + 1 rows). */
-function checkMeta(meta: Record<string, unknown>): number[] {
-  let counts: number[] = [];
-  try { counts = conditionBucketCounts(meta); } catch { /* reported below */ }
-  if (meta['general.architecture'] !== 'zonos3' || meta['residual.type'] !== 'full_attnres' ||
-      meta['attention.pattern'] !== 'gdn3_global1' || Number(meta['speaker.embedding_length']) !== SPK_DIM ||
-      Number(meta['condition.count']) !== N_COND || counts.length !== N_COND ||
-      counts.some(n => !Number.isInteger(n) || n < 2))
+/** Validates the backbone meta: its hyperparameters (vocabulary included, prompt.ts modelHp). */
+function checkMeta(meta: Record<string, unknown>): ModelHp {
+  let hp: ModelHp | null = null;
+  try { hp = modelHp(meta); } catch { /* reported below */ }
+  if (!hp || meta['general.architecture'] !== 'zonos3' || meta['residual.type'] !== 'full_attnres' ||
+      meta['attention.pattern'] !== 'gdn3_global1' || hp.speakerDim !== SPK_DIM || hp.nCodebooks !== NCB ||
+      hp.nCond !== N_COND || hp.condBucketCounts.length !== N_COND ||
+      hp.condBucketCounts.some(n => !Number.isInteger(n) || n < 2))
     throw new Error('backbone: unsupported model; re-export with pnpm export');
-  return counts;
+  return hp;
 }
 
 /** Per-step alignment probe (slot 0 decode): readout heads (weight 1) and ACI windows (unclipped text indices). */
@@ -123,6 +123,9 @@ export interface ProbeInput {
 
 export class Backbone {
   readonly steerSources: number[];
+  /** The model's hyperparameters; its vocabulary sizes the logits (logitsLen = hp.audioVocab * NCB per row). */
+  readonly hp: ModelHp;
+  readonly logitsLen: number;
   private rope: GPUBuffer;
   private slots: [SlotGpuState, SlotGpuState];
   private ids: GPUBuffer;
@@ -141,13 +144,10 @@ export class Backbone {
   private chunkProg: [Program, Program];
   private chunkLogits: [GPUBuffer, GPUBuffer];
   nPast: [number, number] = [0, 0];
-  private condNames: string[];
-  private condBucketCounts: number[];
 
   constructor(private gpu: Gpu, private w: Model, steerSources: number[]) {
-    this.condBucketCounts = checkMeta(w.meta);
-    const names = w.meta['condition.names'];
-    this.condNames = Array.isArray(names) ? names.map(String) : [];
+    this.hp = checkMeta(w.meta);
+    this.logitsLen = this.hp.audioVocab * NCB;
     for (let i = 0; i < steerSources.length; i++) {
       const s = steerSources[i];
       if (!Number.isInteger(s) || s < 0 || s > 2 * N_LAYER || (i > 0 && s <= steerSources[i - 1]))
@@ -201,7 +201,7 @@ export class Backbone {
   /**
    * Record the forward pass of slot `slot` for n rows at absolute positions dyn.a + i. decode=true uses matvec,
    * adds the hidden steering deltas (gated by dyn.b) and, on slot 0, runs the alignment probe. Prefill applies the
-   * conditioning rows of condBuf. Returns the logits buffer [40980] (last row only).
+   * conditioning rows of condBuf. Returns the logits buffer [logitsLen] (last row only).
    */
   private record(b: Builder, n: number, decode: boolean, ids: GPUBuffer, caps: Capture[] | null, slot: 0 | 1): GPUBuffer {
     const w = this.w;
@@ -228,7 +228,7 @@ export class Backbone {
     const po: ProbeOpts = { nl: PROBE_LAYERS.length, nh: NH, nkv: NKV, hd: HD, ring: CAP, scale: ATTN_SCALE, lmax: PROBE_LMAX };
 
     const emb = b.buf(n * D * 4, 'emb');
-    b.dispatch('embed', { ids, E: T('embd_all'), outp: emb }, { n }, [2, n, 1]);
+    b.dispatch('embed', { ids, E: T('embd_all'), outp: emb }, { n, V: this.hp.audioVocab }, [2, n, 1]);
     cap('emb_sum', emb, n * D);
     if (!decode) {
       condRows(b, emb, this.condBuf, [T('cond_embd.0.weight'), T('cond_embd.1.weight'), T('cond_embd.2.weight')], n, dyn);
@@ -315,7 +315,7 @@ export class Backbone {
         lin(rn, p + 'router.weight', lg, N_EXPERT, D);
         cap(`router_logits_${L}`, lg, n * N_EXPERT);
         lin(cur, p + 'ffn_latent_down.weight', z, N_LATENT, D);
-        moe(b, lg, T(p + 'router_bias'), z, w.get(p + 'ffn_up_exps.weight'), w.get(p + 'ffn_gate_exps.weight'),
+        experts(b, lg, T(p + 'router_bias'), z, w.get(p + 'ffn_up_exps.weight'), w.get(p + 'ffn_gate_exps.weight'),
           w.get(p + 'ffn_down_exps.weight'), moeLat, n, ms);
         lin(moeLat, p + 'ffn_latent_up.weight', bank, D, N_LATENT, src(2 * L + 2));
       }
@@ -325,8 +325,8 @@ export class Backbone {
     if (probing) probeAccumulate(b, this.probeBuf, this.probeSc, this.probeAcc, po);
     const hLast = b.buf(D * 4, 'hLast');
     attnres(b, bank, aq, T('output_norm.weight'), hLast, { D, n, ns: N_SRC, qi: 2 * N_LAYER, rows: 1, row0: n - 1, eps: RMS_EPS });
-    const logits = b.buf(LOGITS * 4, 'logits');
-    matvec(b, hLast, w.get('output.weight'), logits, { O: LOGITS, I: D, act: ACT.softcap, cap: SOFTCAP });
+    const logits = b.buf(this.logitsLen * 4, 'logits');
+    matvec(b, hLast, w.get('output.weight'), logits, { O: this.logitsLen, I: D, act: ACT.softcap, cap: SOFTCAP });
     return logits;
   }
 
@@ -355,7 +355,7 @@ export class Backbone {
     const n0 = ids.length / 11;
     if (!Number.isInteger(n0) || n0 < 1) throw new Error('empty prompt');
     if (n0 > CAP) throw new Error(`prompt has ${n0} rows; maximum is ${CAP}`);
-    checkConditioning(ids, n0, cond, this.condNames, this.condBucketCounts);
+    checkConditioning(ids, n0, cond, this.hp);
     const gpu = this.gpu;
     const chunk = opts.capture ? n0 : Math.max(1, opts.chunk ?? CHUNK);
     const adhoc = new Map<number, { prog: Program; ids: GPUBuffer; logits: GPUBuffer; caps: Capture[] | null }>();
@@ -399,7 +399,7 @@ export class Backbone {
         }
         const caps = p.caps ?? [];
         const out = await gpu.submitRead(encode,
-          [{ buf: p.logits, offset: 0, bytes: LOGITS * 4 }, ...caps.map(c => ({ buf: c.buf, offset: 0, bytes: c.floats * 4 }))]);
+          [{ buf: p.logits, offset: 0, bytes: this.logitsLen * 4 }, ...caps.map(c => ({ buf: c.buf, offset: 0, bytes: c.floats * 4 }))]);
         this.nPast[slot] = n0;
         const res: PrefillResult = { logits: out[0] };
         if (p.caps) res.caps = new Map(p.caps.map((c, i) => [c.name, out[i + 1]]));
@@ -468,7 +468,7 @@ export class Backbone {
     this.gpu.write(this.ids, 0, next);
     if (steer && this.steerSources.length) this.gpu.write(this.steerBuf, 0, steer);
     this.writeDyn(slot, steer !== null);
-    const reads = [{ buf: this.decodeLogits[slot], offset: 0, bytes: LOGITS * 4 }];
+    const reads = [{ buf: this.decodeLogits[slot], offset: 0, bytes: this.logitsLen * 4 }];
     if (textLen) reads.push({ buf: this.probeAcc, offset: 0, bytes: textLen * 4 });
     const out = await this.gpu.submitRead(enc => this.decodeProg[slot].encode(enc), reads);
     this.nPast[slot]++;
@@ -488,8 +488,8 @@ export class Backbone {
     this.writeDyn(0, steer !== null);
     this.writeDyn(1, twinSteer !== null);
     const reads = [
-      { buf: this.decodeLogits[0], offset: 0, bytes: LOGITS * 4 },
-      { buf: this.decodeLogits[1], offset: 0, bytes: LOGITS * 4 },
+      { buf: this.decodeLogits[0], offset: 0, bytes: this.logitsLen * 4 },
+      { buf: this.decodeLogits[1], offset: 0, bytes: this.logitsLen * 4 },
     ];
     if (textLen) reads.push({ buf: this.probeAcc, offset: 0, bytes: textLen * 4 });
     const out = await this.gpu.submitRead(enc => {
@@ -500,4 +500,24 @@ export class Backbone {
     this.nPast[1]++;
     return { logits: out[0], twinLogits: out[1], probe: textLen ? out[2] : null };
   }
+}
+
+/** The backbone in model directory `name`: 'backbone' (release LM) or 'edit' (speech-edit LM, adapter merged). */
+export async function loadBackbone(gpu: Gpu, base: string, name: 'backbone' | 'edit',
+                                   opts: { steerSources?: number[]; onProgress?: Progress; cache?: boolean } = {}): Promise<Backbone> {
+  return new Backbone(gpu, await loadModel(gpu, base, name, opts.onProgress, opts.cache ?? true), opts.steerSources ?? []);
+}
+
+/** Top-2 latent MoE experts: q4 stacks (the release export) run ops.ts moe; q8 stacks (the merged speech-edit export,
+ *  scripts/export_web_models.py) run the q8 variants of moe_up / moe_down over the same routing. */
+function experts(b: Builder, lg: GPUBuffer, rbias: GPUBuffer, z: GPUBuffer, up: Weight, gate: Weight, down: Weight,
+                 out: GPUBuffer, n: number, scratch: { sel: GPUBuffer; wts: GPUBuffer; hbuf: GPUBuffer }): void {
+  if (up.dtype !== 'q8' || gate.dtype !== 'q8' || down.dtype !== 'q8') {
+    moe(b, lg, rbias, z, up, gate, down, out, n, scratch);
+    return;
+  }
+  const { sel, wts, hbuf } = scratch;
+  b.dispatch('moe_topk', { lg, rbias, sel, wts }, {}, [n, 1, 1]);
+  b.dispatch('moe_up_q8', { x: z, sel, gq: gate.buf, gs: gate.scales, uq: up.buf, us: up.scales, hbuf }, {}, [48, 2, n]);
+  b.dispatch('moe_down_q8', { hbuf, sel, wts, dq: down.buf, ds: down.scales, outp: out }, {}, [32, 1, n]);
 }

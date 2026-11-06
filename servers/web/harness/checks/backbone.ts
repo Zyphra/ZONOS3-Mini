@@ -1,6 +1,6 @@
 // Backbone parity vs zonos3-cli --cpu goldens: conditioned prefill, teacher-forced decode, alignment probe, CFG-slot
-// isolation, hidden steering and masked probe heads.
-import { Backbone, LOGITS, NCB, VOCAB, type ProbeInput } from '../../src/backbone';
+// isolation, hidden steering and masked probe heads; plus the speech-edit backbone (model 'edit') on an edit prompt.
+import { Backbone, loadBackbone, NCB, type ProbeInput } from '../../src/backbone';
 import { fetchJson, loadModel } from '../../src/gpu/weights';
 import { locateTextSpan, probeReduce } from '../../src/probe';
 import { conditionBucketCounts, type Conditioning } from '../../src/prompt';
@@ -19,7 +19,7 @@ interface Fixture {
   n0: number;
   cond: Conditioning;
   unknown: number[];         // per-table unknown bucket ids (the bucket counts)
-  logits: Float32Array;      // [50][LOGITS]: row 0 prompt, row k decode step k
+  logits: Float32Array;      // [50][4098 * 10]: row 0 prompt, row k decode step k
   probe: Float32Array;       // [49][2]
   probeIn: ProbeInput;
 }
@@ -49,13 +49,14 @@ function load(ctx: Ctx): Promise<Fixture> {
   })();
 }
 
+const LOGITS = 4098 * NCB;
 const row = (f: Fixture, r: number) => f.full.subarray(r * W, (r + 1) * W);
 const want = (f: Fixture, k: number) => f.logits.subarray(k * LOGITS, (k + 1) * LOGITS);
 
 /** Codebooks whose argmax agrees. */
-function argmaxAgree(a: Float32Array, b: Float32Array): number {
+function argmaxAgree(a: Float32Array, b: Float32Array, V = 4098): number {
   let n = 0;
-  for (let cb = 0; cb < NCB; cb++) if (argmax(a, cb * VOCAB, VOCAB) === argmax(b, cb * VOCAB, VOCAB)) n++;
+  for (let cb = 0; cb < NCB; cb++) if (argmax(a, cb * V, V) === argmax(b, cb * V, V)) n++;
   return n;
 }
 
@@ -187,6 +188,37 @@ export const checks: Record<string, Check> = {
       ok: fullCos >= 0.9999 && narrowMax > 1e-2 && narrow.every(Number.isFinite),
       metric: { fullWindowCos: fullCos, fullWindowMaxAbs: maxAbs(full, ref.logits[0]), narrowWindowCos: cosine(narrow, ref.logits[0]),
         narrowWindowMaxAbs: narrowMax },
+    };
+  },
+
+  /** The speech-edit backbone (model 'edit', adapter merged at export) vs MLX with the adapter applied at runtime
+   *  (scripts/check_edit_export.py --goldens): an edit prompt prefill, then teacher-forced fill rows through span-end.
+   *  The bar is the export's own deviation from the runtime adapter (MLX on the exported tensors: min cos 0.998,
+   *  argmax 95 % on these rows) plus the WebGPU kernels' rounding. */
+  async backbone_edit(ctx) {
+    const ids = Int32Array.from((await ctx.npy('edit/ids.npy')).data, Math.round);
+    const ref = (await ctx.npy('edit/logits.npy')).data;
+    const cj = JSON.parse(new TextDecoder().decode(await ctx.golden('edit/cond.json'))) as CondJson & { n0: number };
+    const bb = await loadBackbone(ctx.gpu, ctx.base, 'edit');
+    const V = bb.hp.audioVocab, L = bb.logitsLen;
+    const cond: Conditioning = {
+      speakerRow: cj.speaker_row, speaker: Float32Array.from(cj.speaker_embedding), conditionRow: cj.condition_row,
+      buckets: cj.condition_buckets,
+    };
+    const rows = [(await bb.prefill(0, ids.subarray(0, cj.n0 * W), cond)).logits];
+    for (let r = cj.n0; r < ids.length / W; r++) rows.push((await bb.step(0, ids.subarray(r * W, (r + 1) * W), null, null)).logits);
+    let minCos = 1, agree = 0;
+    rows.forEach((lg, k) => {
+      const want = ref.subarray(k * L, (k + 1) * L);
+      for (let cb = 0; cb < NCB; cb++)
+        minCos = Math.min(minCos, cosine(lg.subarray(cb * V, (cb + 1) * V), want.subarray(cb * V, (cb + 1) * V)));
+      agree += argmaxAgree(lg, want, V);
+    });
+    const total = rows.length * NCB;
+    return {
+      ok: V === 4099 && bb.hp.spanEndId === 4098 && rows.length * L === ref.length && minCos >= 0.99 && agree / total >= 0.9,
+      metric: { rows: rows.length, audioVocab: V, spanEndId: bb.hp.spanEndId, textExtraTokens: bb.hp.textExtraTokens,
+        minCodebookCos: minCos, argmax: agree / total },
     };
   },
 };

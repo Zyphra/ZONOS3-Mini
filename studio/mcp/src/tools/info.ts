@@ -52,7 +52,7 @@ export function registerInfoTools(server: McpServer) {
       const lines = [
         `Server: ${config.server}`,
         `Steering: ${s.steering ? `live (${s.spec.ui.controls.length} controls, ${s.spec.ui.accents.length} accents)` : 'none (no steering bundle: plain voices only)'}`,
-        `Speech editing: ${c.speech_editing ? `yes (clips up to ${Math.min(c.edit_max_seconds, c.edit_align_max_seconds)} s)` : 'no'}`,
+        `Speech editing: ${c.speech_editing ? `yes (clips up to ${Math.min(c.edit_max_seconds, c.edit_align_max_seconds)} s; ${c.edit_transcribe ? 'transcribes clips and checks takes with speech recognition' : 'no speech recognition: zonos_edit_speech needs transcript for files/URLs, takes are not checked'})` : 'no'}`,
         `Projects: ${c.projects.enabled ? 'enabled' : 'disabled (nothing is saved)'}`,
         `Text normalization languages: ${c.text_norm_languages.join(', ')}`,
         `Tag guidance: ${c.tag_cfg.available && c.tag_cfg.trained ? `yes (tags ${c.tag_cfg.tags.join(', ')}; scale ${c.tag_cfg.min_scale}..${c.tag_cfg.max_scale})` : 'no'}`,

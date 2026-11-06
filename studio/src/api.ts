@@ -171,8 +171,9 @@ export type PhonemeStatus = NonNullable<Schemas['PhonemeSegment']['status']>;
 /** Concatenated segment texts give back the input; words carry a status (and IPA when ok / guessed). */
 export type PhonemizeResponse = Schemas['PhonemizeResponse'];
 
-/** `/v2/capabilities` speech-editing fields; `fixture`: edits run on the client-side fixture. */
-export type EditCaps = Pick<Capabilities, 'speech_editing' | 'edit_max_spans' | 'edit_max_seconds' | 'edit_align_max_seconds'> & {
+/** `/v2/capabilities` speech-editing fields; `fixture`: edits run on the client-side fixture. `edit_transcribe`: the
+ * server has speech recognition (without it, a clip's transcript is typed in and only aligned). */
+export type EditCaps = Pick<Capabilities, 'speech_editing' | 'edit_transcribe' | 'edit_max_spans' | 'edit_max_seconds' | 'edit_align_max_seconds'> & {
   edit_frame_rate: number;
   fixture: boolean;
 };
@@ -321,25 +322,29 @@ export function current(): Backend {
 
 const FIXTURE_EDIT: EditCaps = {
   speech_editing: true,
+  edit_transcribe: true,
   edit_max_spans: 3,
   edit_frame_rate: 15,
   edit_max_seconds: 150,
   edit_align_max_seconds: 150,
   fixture: true,
 };
-const NO_EDIT: EditCaps = { ...FIXTURE_EDIT, speech_editing: false, fixture: false };
+const NO_EDIT: EditCaps = { ...FIXTURE_EDIT, speech_editing: false, edit_transcribe: false, fixture: false };
 
 /**
  * Speech editing: the server's `/v2/capabilities` when one answers, the fixture engine offline.
- * `?edit=fixture` forces the fixture engine, `?edit=0` a checkpoint that cannot edit.
+ * `?edit=fixture` forces the fixture engine, `?edit=0` a checkpoint that cannot edit, `?edit_transcribe=0` a server
+ * without speech recognition (transcripts are typed in).
  */
 function editCaps(kind: BackendKind, c: Capabilities | null): EditCaps {
   const want = params.get('edit');
   if (want === '0' || want === 'off') return { ...NO_EDIT, fixture: kind !== 'live' };
-  if (want === 'fixture' || kind === 'offline') return FIXTURE_EDIT;
+  const asr = !/^(0|off)$/.test(params.get('edit_transcribe') ?? '');
+  if (want === 'fixture' || kind === 'offline') return { ...FIXTURE_EDIT, edit_transcribe: asr };
   if (!c) return NO_EDIT;
   return {
     speech_editing: c.speech_editing,
+    edit_transcribe: c.edit_transcribe && asr,
     edit_max_spans: c.edit_max_spans,
     edit_frame_rate: c.edit_frame_rate ?? FIXTURE_EDIT.edit_frame_rate,
     edit_max_seconds: c.edit_max_seconds,
@@ -649,7 +654,7 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
 /** Qwen3-ASR transcript + FuseAlign word timings of a clip (plain base64 WAV). */
 /** `language`: the clip's language (server code); it picks the recognition language and the alignment tokenization. */
 export function transcribe(audio_base64: string, language = 'en_us'): Promise<Alignment> {
-  if (current().edit.fixture) return fixtureEdit.transcribe(audio_base64, language);
+  if (current().edit.fixture) return fixtureEdit.transcribe(current().edit, audio_base64, language);
   return ok<Alignment>(client.POST('/v2/edit/transcribe', { body: { audio_base64, language } }));
 }
 

@@ -54,8 +54,8 @@ class ServerState:
     # reference codes of encoded clips, by sha1 of the audio bytes (LRU of 64)
     reference_codes: OrderedDict = field(default_factory=OrderedDict)
     # speech editing and plugins: the server's ASR worker (zonos3/workers/asr.py, Qwen3-ASR in .venv-asr; every speech
-    # recognition) and FuseAlign worker (zonos3/workers/fusealign.py; every forced alignment); each starts on its
-    # first call
+    # recognition; optional: editing without it needs the clip's transcript) and FuseAlign worker
+    # (zonos3/workers/fusealign.py; every forced alignment); each starts on its first call
     asr: AsrWorker = field(default_factory=lambda: AsrWorker(device=asr_device()))
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     edit_runtime: object | None = None  # zonos3.tts.edit_runtime.EditRuntime (zonos3_mlx.server.edit.runtime)

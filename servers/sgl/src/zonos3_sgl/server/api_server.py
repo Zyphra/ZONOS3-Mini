@@ -1766,8 +1766,9 @@ async def tts_capabilities():
         "speaker_embedding_cache": _model_supports_speaker(state.config),   # cached clips for raw-reference models too
         "speaker_embedding_blend": _model_supports_speaker_embedding(state.config),
         "default_voices_enabled": bool(_default_voice_root(state.config)),
-        # editing needs the checkpoint's span-end/marker rows, Qwen3-ASR (.venv-asr) and FuseAlign (fusealign_hub)
-        **edit_capabilities(_EDIT_RUNTIME.model, _ASR.installed and fusealign_installed()),
+        # editing needs the checkpoint's span-end/marker rows and FuseAlign (fusealign_hub); Qwen3-ASR (.venv-asr) is
+        # optional and enables transcription (edit_transcribe)
+        **edit_capabilities(_EDIT_RUNTIME.model, fusealign_installed(), _ASR.installed),
         **_phoneme_capabilities(state.config),
         # server-side studio projects (/v2/projects, /v2/media; --studio-projects-dir)
         "projects": (store.capabilities() if (store := _project_store()) is not None else {"enabled": False}),

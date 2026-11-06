@@ -198,9 +198,14 @@ function Sources() {
             .filter((s) => s.has_preview !== false)
             .map((s) => (
               <li>
-                <button class={`src-item${loadingVoice.value === s.id ? ' is-busy' : ''}`} disabled={busy} onClick={() => void openVoice(s.id)} title={s.transcript ? `Transcript: ${s.transcript}` : 'No transcript: it will be transcribed'}>
+                <button
+                  class={`src-item${loadingVoice.value === s.id ? ' is-busy' : ''}`}
+                  disabled={busy}
+                  onClick={() => void openVoice(s.id)}
+                  title={s.transcript ? `Transcript: ${s.transcript}` : E.canTranscribe.value ? 'No transcript: it will be transcribed' : 'No transcript: this server can’t transcribe, so you type what the clip says'}
+                >
                   <span class="src-text">{s.label}</span>
-                  <span class="tag">{s.transcript ? 'text' : 'asr'}</span>
+                  <span class="tag">{s.transcript ? 'text' : E.canTranscribe.value ? 'asr' : 'needs text'}</span>
                 </button>
               </li>
             ))}
@@ -288,8 +293,11 @@ function Mirror({ value }: { value: string }) {
 function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } }) {
   const v = E.version.value!;
   const fix = E.fixMode.value;
-  const [draft, setDraft] = useState(v.transcript);
-  useEffect(() => setDraft(v.transcript), [v.id, fix]);
+  // No transcript yet (a server without speech recognition): typing it is the first step.
+  const first = E.needsTranscript.value;
+  const initial = () => v.transcript || E.suggestedTranscript.value;
+  const [draft, setDraft] = useState(initial);
+  useEffect(() => setDraft(initial()), [v.id, fix]);
   const value = fix ? draft : E.text.value;
   const autosize = () => {
     const el = area.current;
@@ -298,16 +306,19 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
     el.style.height = `${Math.max(64, el.scrollHeight)}px`;
   };
   useEffect(autosize, [value, fix]);
+  useEffect(() => {
+    if (first) area.current?.focus();
+  }, [v.id, first]);
   const busy = !!E.busy.value;
   return (
     <section class="ed-text-card" aria-label="Transcript">
       <header class="ed-text-head">
         <div class="segctl" role="tablist" aria-label="Transcript mode">
-          <button role="tab" aria-selected={!fix} class={`seg-btn${!fix ? ' is-on' : ''}`} onClick={() => E.setFix(false)}>
+          <button role="tab" aria-selected={!fix} class={`seg-btn${!fix ? ' is-on' : ''}`} onClick={() => E.setFix(false)} disabled={first} title={first ? 'Type what the clip says first: edits are planned against it' : undefined}>
             Edit the words
           </button>
-          <button role="tab" aria-selected={fix} class={`seg-btn${fix ? ' is-on' : ''}`} onClick={() => E.setFix(true)} disabled={busy} title="Correct what was actually said; the audio is re-aligned to it">
-            Fix the transcript
+          <button role="tab" aria-selected={fix} class={`seg-btn${fix ? ' is-on' : ''}`} onClick={() => E.setFix(true)} disabled={busy} title={first ? 'Type what is said in the clip; the audio is aligned to it' : 'Correct what was actually said; the audio is re-aligned to it'}>
+            {first ? 'Type what the clip says' : 'Fix the transcript'}
           </button>
         </div>
         {!fix && E.text.value !== v.transcript && (
@@ -316,6 +327,14 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
           </button>
         )}
       </header>
+      {first && (
+        <div class="ed-banner" role="note">
+          <span>
+            {E.canTranscribe.value ? 'No words were recognized in this clip. ' : 'This server can’t transcribe speech. '}
+            <b>Type exactly what the clip says</b> (play it to check), then align: edits are planned against it.
+          </span>
+        </div>
+      )}
       {!fix && v.automatic && (
         <div class="ed-banner" role="note">
           <span>
@@ -334,7 +353,8 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
           value={value}
           spellcheck={false}
           data-tags={fix ? undefined : true}
-          aria-label={fix ? 'Correct transcript of the audio' : 'Edited transcript: change the words to change the speech'}
+          aria-label={first ? 'What the clip says' : fix ? 'Correct transcript of the audio' : 'Edited transcript: change the words to change the speech'}
+          placeholder={first ? 'Type what is said in the clip…' : undefined}
           onInput={(e) => {
             const t = (e.currentTarget as HTMLTextAreaElement).value;
             if (fix) setDraft(t);
@@ -355,12 +375,16 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
       )}
       {fix && (
         <div class="ed-fix-bar">
-          <span class="hint">Type what is actually said in the audio, then re-align. Low-confidence words are underlined in the waveform’s word lane.</span>
-          <button class="btn sm ghost" onClick={() => E.setFix(false)}>
-            Cancel
-          </button>
+          <span class="hint">
+            {first ? 'Type what is said in the audio, word for word, then align it.' : 'Type what is actually said in the audio, then re-align. Low-confidence words are underlined in the waveform’s word lane.'}
+          </span>
+          {!first && (
+            <button class="btn sm ghost" onClick={() => E.setFix(false)}>
+              Cancel
+            </button>
+          )}
           <button class="btn sm primary" disabled={busy || !draft.trim() || draft.trim() === v.transcript} onClick={() => void E.saveFix(draft)}>
-            Re-align
+            {first ? 'Align' : 'Re-align'}
           </button>
         </div>
       )}
@@ -554,7 +578,7 @@ function Takes() {
     return (
       <div class="takes-empty">
         <Icon name="wand" size={20} />
-        <p>Takes appear here. Each one is checked by speech recognition; the closest to your text is picked for you.</p>
+        <p>{E.canTranscribe.value ? 'Takes appear here. Each one is checked by speech recognition; the closest to your text is picked for you.' : 'Takes appear here. Listen to each one and keep the best (this server can’t check takes with speech recognition).'}</p>
       </div>
     );
   }
@@ -659,7 +683,7 @@ function Unavailable() {
       <Icon name="edit" size={28} />
       <h2>This server can’t edit speech</h2>
       <p>
-        The checkpoint it serves has no span-end token, so it can only speak whole utterances. Serve the speech-editing checkpoint to edit words in recordings:
+        Speech editing needs the speech-editing checkpoint (the one it serves may have no span-end token, so it can only speak whole utterances), the FuseAlign forced aligner and the reference encoder. Speech recognition is optional: without it you type each clip’s transcript. Serve the speech-editing checkpoint to edit words in recordings:
       </p>
       <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=steering/studio_bundle_mect60k.json</pre>
       <p class="muted small">{b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
@@ -733,7 +757,7 @@ function Workspace() {
             void E.setLanguage(next);
           }}
           aria-label="Language of the clip"
-          title="The clip's language: transcription, alignment and the take check use its speech model (the first use of a language loads it, about half a minute)"
+          title={E.canTranscribe.value ? "The clip's language: transcription, alignment and the take check use its speech model (the first use of a language loads it, about half a minute)" : "The clip's language: alignment uses it (switching aligns the transcript again)"}
         >
           {EDIT_LANGUAGES.map((l) => (
             <option value={l}>{langLabel(l)}</option>

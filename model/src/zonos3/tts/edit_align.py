@@ -5,7 +5,8 @@ Both workers are JSON-lines processes, one of each per server, started on first 
 ``AsrWorker`` runs zonos3/workers/asr.py in .venv-asr (``ZONOS3_ASR_PYTHON``; tools/setup_asr_env.sh) and
 ``FuseAlignWorker`` runs zonos3/workers/fusealign.py in the server's interpreter. Their failures are ``WorkerError``s
 (``AsrError`` / ``FuseAlignError``: the worker is unavailable, HTTP 503) or ``ValueError``s (the input is at fault,
-HTTP 400), each with its final message.
+HTTP 400), each with its final message. Speech recognition is optional (``asr_available``): alignment needs FuseAlign
+only, and a request that needs recognition on a server without it fails with ``AsrUnavailable`` (503).
 
 Long-form alignment: a FuseAlign item whose audio is longer than ``LONG_FORM_SECONDS`` or whose tokens (joined with
 spaces) exceed ``MAX_TEXT_BYTES`` UTF-8 bytes is routed by approximate word times. They come from Qwen3-ASR on the
@@ -13,6 +14,8 @@ recording's VAD chunks (the FuseAlign worker's ``segments``): every chunk transc
 utterance ``{text, start, end}`` (empty texts dropped), sent as the item's ``utterances``; FuseAlign's built-in
 Whisper anchoring never runs. A transcript Qwen3-ASR makes of a recording over ``LONG_FORM_SECONDS``
 (``transcribe_audio``) is made the same way, chunk by chunk, and its utterances anchor the alignments that follow.
+Without speech recognition a long-form item goes to FuseAlign without utterances: FuseAlign routes it by its own VAD
+character map.
 """
 from dataclasses import dataclass
 import difflib
@@ -44,14 +47,15 @@ UNSPACED_LANGUAGES = frozenset(lang.name for lang in languages.SPOKEN if lang.un
 
 # Server language codes (normalized, as /v2/generate) -> (the Whisper-style code the edit's words are tokenized by,
 # zonos3.tts.align_text.align_tokens; the Qwen3-ASR language name its recognition is forced to). Speech editing serves
-# the entries whose Qwen3-ASR language the ASR worker supports (its ping).
+# every entry; recognition (transcripts, verify) only those whose Qwen3-ASR language the ASR worker supports (its ping).
 EDIT_LANGUAGES = {lang.code: (lang.speech, languages.SPOKEN_BY_CODE[lang.speech].name) for lang in languages.SERVER}
 
 
-def edit_language(language: str, supported) -> tuple[str, str]:
-    """``(code, Qwen3-ASR name)`` of a normalized server language code, given the ASR worker's ``supported`` language
-    names; ValueError for languages speech editing does not serve."""
-    served = [k for k, (_, name) in EDIT_LANGUAGES.items() if name in supported]
+def edit_language(language: str, supported=None) -> tuple[str, str]:
+    """``(code, Qwen3-ASR name)`` of a normalized server language code; ValueError for languages speech editing does
+    not serve. ``supported``: the ASR worker's language names, when the caller transcribes (None: every
+    ``EDIT_LANGUAGES`` entry)."""
+    served = [k for k, (_, name) in EDIT_LANGUAGES.items() if supported is None or name in supported]
     if language not in served:
         raise ValueError(f"Speech editing does not serve language {language!r} (supported: {', '.join(served)}).")
     return EDIT_LANGUAGES[language]
@@ -68,6 +72,23 @@ class AsrError(WorkerError):
 
 class FuseAlignError(WorkerError):
     """The FuseAlign worker is unavailable (``FuseAlign alignment is unavailable: ...``)."""
+
+
+class AsrUnavailable(WorkerError):
+    """The request needs speech recognition and the server has none (``asr_available``): HTTP 503 with
+    ``Speech recognition is not available on this server: <fix>`` (``fix``: what the caller can send instead)."""
+
+    PREFIX = 'Speech recognition is not available on this server: '
+
+    def __init__(self, fix: str):
+        super().__init__(self.PREFIX + fix)
+        self.fix = fix
+
+
+def asr_available(asr) -> bool:
+    """Whether ``asr`` (an ``AsrWorker``, an object with its ``transcribe`` / ``languages``, or None) can recognize
+    speech: not None and, when it reports ``installed`` (the worker's interpreter exists), installed."""
+    return asr is not None and getattr(asr, 'installed', True)
 
 
 def fusealign_installed() -> bool:
@@ -286,22 +307,23 @@ def transcribe_audio(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, langu
                       [{k: u[k] for k in ('text', 'start', 'end')} for u in utterances])
 
 
-def align_words(asr: AsrWorker, aligner: FuseAlignWorker, items: list[dict]) -> list[list[dict]]:
+def align_words(asr: AsrWorker | None, aligner: FuseAlignWorker, items: list[dict]) -> list[list[dict]]:
     """FuseAlign words of ``[{audio, tokens, language, utterances?}]`` (``language``: the Qwen3-ASR name anchors are
     recognized in, None to detect; ``utterances``: anchors already made for the audio, e.g. ``Transcript.utterances``)
     -> per item one ``{word, start, end, presence, placed}`` per token.
 
     An item that ``needs_anchors`` carries ``utterances``: its own, else ``chunk_utterances`` of its audio (one batch
-    for every such item); the other items carry none."""
+    for every such item), else, without speech recognition (``asr_available``), none (FuseAlign's VAD map); the other
+    items carry none."""
     long = [k for k, it in enumerate(items) if it['tokens'] and needs_anchors(audio_seconds(it['audio']), it['tokens'])]
-    missing = [k for k in long if items[k].get('utterances') is None]
+    missing = [k for k in long if items[k].get('utterances') is None] if asr_available(asr) else []
     made = dict(zip(missing, chunk_utterances(asr, aligner, [items[k]['audio'] for k in missing],
                                               [items[k].get('language') for k in missing])))
     requests = []
     for k, it in enumerate(items):
         request = {'audio': it['audio'], 'tokens': list(it['tokens'])}
-        if k in long:
-            utterances = made[k] if k in made else it['utterances']
+        utterances = made[k] if k in made else it.get('utterances')
+        if k in long and utterances is not None:
             request['utterances'] = [{'text': u['text'], 'start': u['start'], 'end': u['end']} for u in utterances]
         requests.append(request)
     return aligner.align(requests)
@@ -384,8 +406,8 @@ def aligned_words(words: list[dict], word_tokens: list[list[str]]) -> list[Align
     return out
 
 
-def edit_aligned_words(asr: AsrWorker, aligner: FuseAlignWorker, audio: str, text: str, language: tuple[str, str],
-                       utterances: list[dict] | None = None) -> list[AlignedWord]:
+def edit_aligned_words(asr: AsrWorker | None, aligner: FuseAlignWorker, audio: str, text: str,
+                       language: tuple[str, str], utterances: list[dict] | None = None) -> list[AlignedWord]:
     """The words of ``text`` in a sound file with their edit tokens: FuseAlign over ``align_tokens(text, code)``
     (``align_words``; ``language`` is the ``edit_language`` pair, ``utterances`` anchors already made for the file)."""
     code, name = language

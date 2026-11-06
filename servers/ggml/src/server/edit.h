@@ -10,7 +10,7 @@
 
 namespace zs {
 
-// {speech_editing, edit_max_spans, edit_frame_rate, edit_max_seconds, edit_align_max_seconds}
+// {speech_editing, edit_transcribe, edit_max_spans, edit_frame_rate, edit_max_seconds, edit_align_max_seconds}
 nlohmann::json edit_capabilities(const ServerState & s);
 void register_edit_routes(httplib::Server & svr, ServerState & s);
 
