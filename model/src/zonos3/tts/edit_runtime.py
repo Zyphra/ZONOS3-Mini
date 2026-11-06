@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import os
 import random
 import tempfile
@@ -33,6 +32,7 @@ import numpy as np
 from zonos3 import languages
 from zonos3.generation import EDIT_MAX_SECONDS, SAMPLE_RATE
 from zonos3.tts import edit_align, textmatch
+from zonos3.tts.audio import pcm16_wav_bytes
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
     GROUP_OPEN,
@@ -148,14 +148,6 @@ def region_doses(req, model: EditModel) -> list[dict[str, float]] | None:
             merged[did] = merged.get(did, 0.0) + float(v)
         doses.append({did: v for did, v in merged.items() if v != 0.0})
     return doses if any(doses) else None
-
-
-def _wav16(audio: np.ndarray) -> bytes:
-    import soundfile as sf
-
-    buf = io.BytesIO()
-    sf.write(buf, audio, SAMPLE_RATE, subtype="PCM_16", format="WAV")
-    return buf.getvalue()
 
 
 # The fixes of AsrUnavailable (what a caller of a server without speech recognition sends instead)
@@ -408,7 +400,8 @@ class EditRuntime:
                 for (start, length), fill in zip(spans, fills, strict=True):
                     edited_regions.append([(start + shift) / frame_rate, (start + shift + len(fill)) / frame_rate])
                     shift += len(fill) - length
-                return {"seed": base_seed + k, "audio_base64": base64.b64encode(_wav16(edited)).decode("ascii"),
+                return {"seed": base_seed + k,
+                        "audio_base64": base64.b64encode(pcm16_wav_bytes(edited, SAMPLE_RATE)).decode("ascii"),
                         "duration": len(edited) / SAMPLE_RATE, "edited_regions": edited_regions,
                         "fill_seconds": [len(fill) / frame_rate for fill in fills], "stopped": stopped,
                         "verify": verify, "words": take_words}

@@ -10,7 +10,6 @@ import secrets
 import subprocess
 import time
 import uuid
-import wave
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +41,8 @@ from zonos3.tts.audio import (
     _decode_audio_bytes,
     _decode_wav_bytes,
     _transcode_audio_bytes_to_wav,
+    pcm16_wav_bytes,
+    write_pcm16_wav,
 )
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
@@ -1466,18 +1467,6 @@ async def _tts_generate_msg(
     )
 
 
-def _pcm16_wav(audio_bytes: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
-    """float32 PCM bytes as a 16-bit mono WAV file, samples clipped to [-1, 1]."""
-    samples = np.clip(np.frombuffer(audio_bytes, dtype=np.float32), -1.0, 1.0)
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        f.writeframes((samples * 32767).astype("<i2").tobytes())
-    return buf.getvalue()
-
-
 async def _generate_response(state: FrontendManager, req: GenerateRequest, session_id: str | None) -> Response:
     """Run a GenerateRequest: streamed or buffered float32 PCM, or a buffered 16-bit WAV."""
     if req.stream and req.format == "wav":
@@ -1504,7 +1493,8 @@ async def _generate_response(state: FrontendManager, req: GenerateRequest, sessi
         )
     audio_data = await state.wait_for_tts_audio(uid, fade_out_ms=req.fade_out_ms, gain=gain)
     if req.format == "wav":
-        return Response(content=_pcm16_wav(audio_data), media_type="audio/wav", headers=headers)
+        return Response(content=pcm16_wav_bytes(np.frombuffer(audio_data, np.float32), SAMPLE_RATE),
+                        media_type="audio/wav", headers=headers)
     return Response(content=audio_data, media_type="audio/pcm", headers=headers)
 
 
@@ -2178,7 +2168,7 @@ async def tts_shell():
                     if last_audio is None:
                         print("No audio to save. Generate some speech first.")
                         continue
-                    _save_wav(last_audio, filename)
+                    write_pcm16_wav(filename, np.frombuffer(last_audio, np.float32), SAMPLE_RATE)
                     print(f"Saved to {filename}")
                     continue
                 elif cmd == "/play":
@@ -2291,11 +2281,6 @@ async def tts_shell():
         parent = psutil.Process()
         for child in parent.children(recursive=True):
             child.kill()
-
-
-def _save_wav(audio_bytes: bytes, path: str, sample_rate: int = SAMPLE_RATE) -> None:
-    """Save float32 PCM bytes as a 16-bit WAV file."""
-    Path(path).write_bytes(_pcm16_wav(audio_bytes, sample_rate))
 
 
 def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_shell: bool) -> None:

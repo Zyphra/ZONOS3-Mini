@@ -21,6 +21,7 @@ import torch
 from conftest import FIXTURES, REPO
 from fastapi.testclient import TestClient
 from zonos3.server.schemas import GenerateRequest
+from zonos3.tts.audio import pcm16_samples
 from zonos3.tts.phonemes import normalize_headword
 from zonos3.tts.plan import Speaker
 from zonos3.tts.steering import controls_document, load_bundle
@@ -134,7 +135,7 @@ def test_edit_keeps_the_unedited_audio_and_reports_the_fill(client, monkeypatch)
     assert d["spans"] == [[1.0, 1.6]] and [t["seed"] for t in d["takes"]] == [7, 8]
     client_app = client.app.state.zonos3
     original = client_app.engine.decoder.decode(CODES.astype(np.int64)) * np.float32(client_app.engine.output_gain(None))
-    original = (np.clip(original, -1, 1) * 32767).astype(np.int16)
+    original = pcm16_samples(original)
     for take in d["takes"]:
         fill = round(take["fill_seconds"][0] * 15)
         assert take["edited_regions"] == [[1.0, (15 + fill) / 15]]

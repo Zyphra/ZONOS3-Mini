@@ -148,7 +148,7 @@ def test_generate_wav_is_buffered_pcm16_and_clipped(client, frontend):
     with wave.open(io.BytesIO(r.content)) as w:
         assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (44100, 1, 2)
         samples = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
-    assert samples.tolist() == [16383, -32767, 32767, 0]
+    assert samples.tolist() == [16384, -32767, 32767, 0]  # 0.5 * 32767 = 16383.5 rounds half to even
 
 
 def test_stream_with_wav_is_400(client, frontend):

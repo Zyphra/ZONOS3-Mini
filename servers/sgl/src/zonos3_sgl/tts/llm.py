@@ -808,26 +808,13 @@ class TTSLLM(TTSScheduler):
         path: str,
         sample_rate: int = SAMPLE_RATE,
     ) -> None:
-        """Save PCM audio bytes to a WAV file.
-
-        Args:
-            audio_bytes: PCM audio data (float32)
-            path: Output file path
-            sample_rate: Audio sample rate
-        """
-        import wave
-
+        """Save float32 PCM bytes as a 16-bit mono WAV file (:func:`zonos3.tts.audio.write_pcm16_wav`)."""
         import numpy as np
 
-        audio = np.frombuffer(audio_bytes, dtype=np.float32)
-        # Convert to int16 for WAV
-        audio_int16 = (audio * 32767).astype(np.int16)
+        from zonos3.tts.audio import write_pcm16_wav
 
-        with wave.open(path, "wb") as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)  # 16-bit
-            f.setframerate(sample_rate)
-            f.writeframes(audio_int16.tobytes())
+        write_pcm16_wav(path, np.frombuffer(audio_bytes, np.float32), sample_rate)
+
 
 # CONDITION_ROWS_RUNTIME_20261016
 # EMBEDDING_CFG_20261016

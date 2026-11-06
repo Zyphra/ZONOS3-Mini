@@ -9,10 +9,8 @@ the chunks in order) and posts the audio chunks to the event loop. Gain and fade
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
-import wave
 
 import numpy as np
 from fastapi import APIRouter, Header, HTTPException
@@ -20,6 +18,7 @@ from fastapi.responses import Response, StreamingResponse
 from zonos3.generation import SAMPLE_RATE
 from zonos3.reference.synth import Sampling, fade_out
 from zonos3.server.schemas import GenerateRequest, SpeechRequest
+from zonos3.tts.audio import pcm16_wav_bytes
 from zonos3.tts.plan import parse_request, request_head
 
 from zonos3_mlx.engine import Plan, plan_request
@@ -129,18 +128,6 @@ class JobRun:
         return b"".join([chunk async for chunk in self.chunks()])
 
 
-def pcm16_wav(audio: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
-    """float32 PCM bytes as a 16-bit mono WAV file, samples clipped to [-1, 1]."""
-    samples = np.clip(np.frombuffer(audio, dtype=np.float32), -1.0, 1.0)
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        f.writeframes((samples * 32767).astype("<i2").tobytes())
-    return buf.getvalue()
-
-
 def finish_pcm(audio: bytes, gain: float, fade_out_ms: float) -> np.ndarray:
     pcm = np.frombuffer(audio, dtype=np.float32) * np.float32(gain)
     return fade_out(pcm.astype(np.float32), float(fade_out_ms))
@@ -196,7 +183,7 @@ async def generate_response(state: ServerState, req: GenerateRequest, session_id
         run.abort()  # a no-op once finished; frees the slot of a cancelled request
     pcm = finish_pcm(audio, gain, float(req.fade_out_ms))
     if req.format == "wav":
-        return Response(content=pcm16_wav(pcm.tobytes()), media_type="audio/wav", headers=headers)
+        return Response(content=pcm16_wav_bytes(pcm, SAMPLE_RATE), media_type="audio/wav", headers=headers)
     return Response(content=pcm.tobytes(), media_type="audio/pcm", headers=headers)
 
 

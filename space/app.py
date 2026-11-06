@@ -37,7 +37,6 @@ from typing import Literal
 
 import gradio as gr
 import numpy as np
-import soundfile as sf
 import torch
 from fastapi import Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -81,7 +80,7 @@ from zonos3.tokenizer import matched_codec
 from zonos3.tokenizer.dual_reference import encode_dual_reference
 from zonos3.tokenizer.matched_codec import decode_model
 from zonos3.tts import plan as P
-from zonos3.tts.audio import _decode_audio_bytes, _transcode_audio_bytes_to_wav
+from zonos3.tts.audio import _decode_audio_bytes, _transcode_audio_bytes_to_wav, pcm16_wav_bytes
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, edit_capabilities
@@ -733,12 +732,6 @@ async def audio_of(take: Take):
         print(f"[gpu] take ended early: {message}", flush=True)
 
 
-def pcm16_wav(pcm: np.ndarray) -> bytes:
-    buf = io.BytesIO()
-    sf.write(buf, np.clip(pcm, -1.0, 1.0), SAMPLE_RATE, subtype="PCM_16", format="WAV")
-    return buf.getvalue()
-
-
 # ----------------------------------------------------------------------------------------------------- app
 
 app = gr.Server(title="ZONOS3 Mini", openapi_url=None, docs_url=None, redoc_url=None)
@@ -888,7 +881,7 @@ async def generate(req: GenerateRequest, request: Request,
         raise HTTPException(status_code=400 if kind == "invalid" else 500, detail=payload)
     pcm = np.concatenate(pcm) if pcm else np.zeros(0, dtype=np.float32)
     if req.format == "wav":
-        return Response(content=pcm16_wav(pcm), media_type="audio/wav", headers=headers)
+        return Response(content=pcm16_wav_bytes(pcm, SAMPLE_RATE), media_type="audio/wav", headers=headers)
     return Response(content=pcm.astype(np.float32).tobytes(), media_type="audio/pcm", headers=headers)
 
 

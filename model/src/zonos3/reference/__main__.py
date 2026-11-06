@@ -11,13 +11,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import wave
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from zonos3.generation import SAMPLE_RATE
+from zonos3.tts.audio import write_pcm16_wav
 
 
 def _cond_path(ids_path: Path) -> Path:
@@ -27,15 +27,6 @@ def _cond_path(ids_path: Path) -> Path:
 def _dump(path: Path, rows: torch.Tensor, cond: dict) -> None:
     np.save(path, rows.to(torch.float32).numpy())
     _cond_path(path).write_text(json.dumps(cond) + "\n")
-
-
-def write_wav(path: str | Path, pcm: np.ndarray, sample_rate: int = SAMPLE_RATE) -> None:
-    samples = (np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2")
-    with wave.open(str(path), "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        f.writeframes(samples.tobytes())
 
 
 def main(argv=None) -> int:
@@ -88,7 +79,7 @@ def main(argv=None) -> int:
         print(f"prompt: {len(plan.cond.input_ids)} rows -> {path}" + (f" (+ {plan.cfg_kind} twin)" if plan.twin is not None else ""))
     if args.out:
         result = synthesize(lm, request, assets=assets, device=device, dtype=dtype)
-        write_wav(args.out, result.pcm)
+        write_pcm16_wav(args.out, result.pcm, SAMPLE_RATE)
         seconds = len(result.pcm) / SAMPLE_RATE
         print(f"{seconds:.2f} s, seed {result.seed}, {len(result.rows)} rows, eos frame {result.eos_frame} -> {args.out}")
         if result.laci is not None:
