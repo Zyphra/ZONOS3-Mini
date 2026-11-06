@@ -138,8 +138,7 @@ class Engine:
         self.steer_bundle: SteeringBundle | None = companions.load_steer(paths["steer"]) if paths.get("steer") else None
         self.steering_sources = () if self.steer_bundle is None else tuple(self.steer_bundle.hidden_sources)
         self.accents = (companions.AccentBank.load(paths["accent_adapters"],
-                                                   head_rows=lm.config.n_codebooks * lm.config.audio_vocab,
-                                                   n_codebooks=lm.config.n_codebooks)
+                                                   head_rows=lm.config.n_codebooks * lm.config.audio_vocab)
                         if paths.get("accent_adapters") else None)
         self.accent_names = [] if self.accents is None else list(self.accents.accent_names)
         if self.accents is not None and self.accents.edit is not None and lm.config.span_end_id is None:

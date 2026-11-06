@@ -84,45 +84,66 @@ class SteeringBundle:
         return dims.pop() if dims else None
 
 
-def load_bundle(path: str | Path) -> SteeringBundle:
-    path = Path(path).expanduser()
-    spec = json.loads(path.read_text())
-    sets: Dict[str, DirectionSet] = {}
+def no_steering_message(hint: str, *, field: str | None = None) -> str:
+    """The error of a steering request on a server without a bundle (``hint``: how to load one; ``field``: the request
+    field that needs it)."""
+    if field is None:
+        return f"This server has no steering bundle ({hint})."
+    return f"This server has no steering bundle ({hint}); `{field}` are unavailable."
+
+
+def build_bundle(origin: Path, name: str, sets: Dict[str, DirectionSet], *, timing: dict, ui: dict,
+                 rate_extension: dict | None) -> SteeringBundle:
+    """A bundle of loaded direction sets (``origin``: the bundle file, for messages and ``path``): every check of the
+    bundle file format (set names, non-empty sets, one raw embedding dim, timing of known directions, a hidden
+    rate_extension direction), the directions and the rate extension."""
     directions: Dict[str, Direction] = {}
     raw_dims = set()
-    for set_name, rel in spec["sets"].items():
+    for set_name, loaded in sets.items():
         if "." in set_name:
-            raise ValueError(f"{path}: set name {set_name!r} must not contain '.'")
-        directory = (path.parent / rel).resolve()
-        loaded = DirectionSet.load(directory)
-        if loaded is None or loaded.is_empty():
-            raise ValueError(f"{path}: set {set_name!r} has no directions at {directory}")
+            raise ValueError(f"{origin}: set name {set_name!r} must not contain '.'")
+        if loaded.is_empty():
+            raise ValueError(f"{origin}: set {set_name!r} has no directions")
         if loaded.space == RAW_SPACE:
             raw_dims.add(int(loaded.dim))
-        sets[set_name] = loaded
-        for name, vec in {**loaded.named, **loaded.axes}.items():
-            did = f"{set_name}.{name}"
-            directions[did] = Direction(did, set_name, name, loaded.space, vec,
+        for direction, vec in {**loaded.named, **loaded.axes}.items():
+            did = f"{set_name}.{direction}"
+            directions[did] = Direction(did, set_name, direction, loaded.space, vec,
                                         loaded.source_index if loaded.space == HIDDEN_SPACE else None)
     if len(raw_dims) > 1:
-        raise ValueError(f"{path}: raw sets disagree on the embedding dim: {sorted(raw_dims)}")
-    timing = spec.get("timing", {})
+        raise ValueError(f"{origin}: raw sets disagree on the embedding dim: {sorted(raw_dims)}")
     unknown = sorted(set(timing) - set(directions))
     if unknown:
-        raise ValueError(f"{path}: timing for unknown directions {unknown}")
-    rate_extension = None
-    if spec.get("rate_extension"):
-        r = spec["rate_extension"]
+        raise ValueError(f"{origin}: timing for unknown directions {unknown}")
+    extension = None
+    if rate_extension:
+        r = rate_extension
         if r["direction"] not in directions or directions[r["direction"]].space != HIDDEN_SPACE:
-            raise ValueError(f"{path}: rate_extension direction {r['direction']!r} is not a hidden direction of the bundle")
-        rate_extension = RateExtension(
+            raise ValueError(f"{origin}: rate_extension direction {r['direction']!r} is not a hidden direction of the "
+                             "bundle")
+        extension = RateExtension(
             direction=r["direction"], row_edges=tuple(float(e) for e in r["row_edges"]),
             below=tuple(float(e) for e in r["below"]), above=tuple(float(e) for e in r["above"]),
             doses={lang: {int(b): float(d) for b, d in doses.items()} for lang, doses in r["languages"].items()},
             reference_sides=tuple(r.get("reference_sides", ("slower", "faster"))),
         )
-    return SteeringBundle(name=spec.get("name", path.stem), path=path, sets=sets, directions=directions,
-                          timing=timing, ui=spec.get("ui", {}), rate_extension=rate_extension)
+    return SteeringBundle(name=name, path=origin, sets=dict(sets), directions=directions, timing=timing, ui=ui,
+                          rate_extension=extension)
+
+
+def load_bundle(path: str | Path) -> SteeringBundle:
+    """A bundle file (``--steer-bundle``): its JSON and the set directories relative to it."""
+    path = Path(path).expanduser()
+    spec = json.loads(path.read_text())
+    sets: Dict[str, DirectionSet] = {}
+    for set_name, rel in spec["sets"].items():
+        directory = (path.parent / rel).resolve()
+        loaded = DirectionSet.load(directory)
+        if loaded is None:
+            raise ValueError(f"{path}: set {set_name!r} has no directions at {directory}")
+        sets[set_name] = loaded
+    return build_bundle(path, spec.get("name", path.stem), sets, timing=spec.get("timing", {}), ui=spec.get("ui", {}),
+                        rate_extension=spec.get("rate_extension"))
 
 
 def _duration_factor(bundle: SteeringBundle, controls: Mapping[str, float]) -> float:

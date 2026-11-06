@@ -148,7 +148,7 @@ def main():
     print("\n(b) logits: MLX runtime adapter (accents.gguf) vs MLX runtime adapter (exported factors)")
     lm = Zonos3MLX.load(gguf)
     c = lm.config
-    bank = AccentBank.load(acc, head_rows=c.n_codebooks * c.audio_vocab, n_codebooks=c.n_codebooks)
+    bank = AccentBank.load(acc, head_rows=c.n_codebooks * c.audio_vocab)
     builder = TTSPromptBuilder(TTSPromptConfig(n_codebooks=c.n_codebooks, codebook_sizes=c.codebook_sizes,
                                                audio_pad_id=c.audio_pad_id, text_vocab=c.text_vocab,
                                                text_tokenizer_spec=c.text_tokenizer_spec))

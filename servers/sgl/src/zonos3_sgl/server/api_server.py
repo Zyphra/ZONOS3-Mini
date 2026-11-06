@@ -54,6 +54,7 @@ from zonos3.tts.steering import (
     controls_document,
     disabled_controls,
     load_bundle,
+    no_steering_message,
     resolve_controls,
 )
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
@@ -1695,7 +1696,7 @@ async def tts_controls():
     state = get_global_state()
     bundle = _steer_bundle(state.config)
     if bundle is None:
-        raise HTTPException(status_code=404, detail="This server has no steering bundle (--steer-bundle).")
+        raise HTTPException(status_code=404, detail=no_steering_message("--steer-bundle"))
     return controls_document(
         bundle, speaker_embedding_dim=getattr(state.config.model_config, "speaker_embedding_dim", None)
     )
@@ -1909,7 +1910,7 @@ class _SglEditEngine:
         if doses is not None:
             bundle = ctx.steer_bundle
             if bundle is None:
-                raise ValueError(f"This server has no steering bundle ({ctx.steer_hint}); `controls` are unavailable.")
+                raise ValueError(no_steering_message(ctx.steer_hint, field="controls"))
             for region in doses:
                 check_controls(bundle, region)
             raw = {did for region in doses for did in region if bundle.directions[did].space == RAW_SPACE}

@@ -86,7 +86,11 @@ class Calibration:
         path = Path(directory).expanduser() / CALIBRATION_NAME
         if not path.is_file():
             return None
-        data = json.loads(path.read_text())
+        return cls.from_document(json.loads(path.read_text()))
+
+    @classmethod
+    def from_document(cls, data: dict) -> "Calibration":
+        """A parsed calibration.json."""
         return cls(
             by_speaker={k: {e: float(v) for e, v in d.items()} for k, d in data.get("by_speaker", {}).items()},
             default={e: float(v) for e, v in data.get("default", {}).items()},

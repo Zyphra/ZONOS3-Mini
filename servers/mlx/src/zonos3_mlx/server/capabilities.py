@@ -18,7 +18,7 @@ from zonos3.server.schemas import PhonemizeRequest
 from zonos3.tts.edit_runtime import EditModel, edit_capabilities
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
 from zonos3.tts.plan import silence_prefill_default
-from zonos3.tts.steering import controls_document
+from zonos3.tts.steering import controls_document, no_steering_message
 
 from zonos3_mlx.server.state import ServerState
 
@@ -160,8 +160,7 @@ def router(state: ServerState) -> APIRouter:
     async def controls():
         bundle = state.engine.steer_bundle
         if bundle is None:
-            raise HTTPException(status_code=404,
-                                detail=f"This server has no steering bundle ({state.engine.steer_hint}).")
+            raise HTTPException(status_code=404, detail=no_steering_message(state.engine.steer_hint))
         return controls_document(bundle, speaker_embedding_dim=state.config.speaker_embedding_dim or None)
 
     @r.post("/v2/phonemize")

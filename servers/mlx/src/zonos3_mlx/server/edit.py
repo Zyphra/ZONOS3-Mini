@@ -19,7 +19,7 @@ from zonos3.reference.synth import Sampling
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_runtime import EditRuntime, FillJob
 from zonos3.tts.plan import Speaker, resolve_condition_buckets, validate_phoneme_groups
-from zonos3.tts.steering import check_controls, resolve_controls
+from zonos3.tts.steering import check_controls, no_steering_message, resolve_controls
 
 from zonos3_mlx.audio_io import decode_pcm
 from zonos3_mlx.engine import EditLayout, plan_request
@@ -55,8 +55,7 @@ class MlxEditEngine:
         raw = set()
         if doses is not None:
             if bundle is None:
-                raise ValueError(f"This server has no steering bundle ({engine.steer_hint}); `controls` are "
-                                 "unavailable.")
+                raise ValueError(no_steering_message(engine.steer_hint, field="controls"))
             for region in doses:
                 check_controls(bundle, region)
             raw = {did for region in doses for did in region if bundle.directions[did].space == RAW_SPACE}

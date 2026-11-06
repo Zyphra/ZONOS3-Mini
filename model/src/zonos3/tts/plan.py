@@ -41,7 +41,7 @@ from zonos3.speaker_cfg import speaker_cfg_twin
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip_nonverbal_markup
 from zonos3.tts.prompt import TTSPromptBuilder, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
-from zonos3.tts.steering import SteeringBundle, resolve_controls
+from zonos3.tts.steering import SteeringBundle, no_steering_message, resolve_controls
 
 # v2 GenerateRequest (api/openapi.yaml): every field and its default.
 GENERATE_DEFAULTS: dict = {
@@ -425,7 +425,7 @@ def request_rules(ctx: RulesContext, req: Request, head: RequestHead, speaker: S
     delta = schedule = span_chars = None
     if req.controls or req.control_spans:
         if ctx.steer_bundle is None:
-            raise ValueError(f"This server has no steering bundle ({ctx.steer_hint}); `controls` are unavailable.")
+            raise ValueError(no_steering_message(ctx.steer_hint, field="controls"))
         resolved = resolve_controls(ctx.steer_bundle, req.controls, list(req.control_spans or []), text=req.text,
                                     speaker_embedding=embedding, sources=sources, hidden_size=int(ctx.hidden_size),
                                     frames_per_char=req.control_span_rate)

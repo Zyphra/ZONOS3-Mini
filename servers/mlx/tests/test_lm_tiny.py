@@ -231,7 +231,7 @@ def test_edit_adapter_backbone_keeps_plain_logits_and_fits_old_head_factors(tiny
     grown = Zonos3MLX.load(grown_gguf)
     assert grown.config.span_end_id == 4098 and grown.config.text_extra_tokens == 3
     c = grown.config
-    bank = AccentBank.load(accents, head_rows=c.n_codebooks * c.audio_vocab, n_codebooks=c.n_codebooks)
+    bank = AccentBank.load(accents, head_rows=c.n_codebooks * c.audio_vocab)
     assert bank.edit == "edit" and bank.accent_names == ["plain"]
 
     plain, _ = run_both(ref, mlx)
