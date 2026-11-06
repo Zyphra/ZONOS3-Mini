@@ -33,11 +33,17 @@ The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model
 ```bash
 hf auth login
 hf download Zyphra/ZONOS3_Mini_GGUF zonos3-ptq.gguf zac-keep2.gguf spk-encoder.gguf --local-dir models
-# Optional raw-reference cloning companions:
-hf download Zyphra/ZONOS3_Mini_GGUF zac-encoder.gguf ssl-teacher.gguf --local-dir models
+# Optional raw-reference cloning companions (the repo keeps the encoder under its previous name dac-encoder.gguf):
+hf download Zyphra/ZONOS3_Mini_GGUF dac-encoder.gguf ssl-teacher.gguf --local-dir models
+mv models/dac-encoder.gguf models/zac-encoder.gguf
 # Optional voice-direction steering bundle (request `controls`: voice design, emotion, accent directions; the
 # studio's design controls; tempo-steered speaking-rate buckets; hidden-state directions fitted on lm/mect_60k):
 hf download Zyphra/ZONOS3_Mini_GGUF steer.gguf --local-dir models
+# Optional speech editing (/v2/edit; also needs spk-encoder.gguf, the encoder companions above and --worker-python):
+# the release LM with the speech-edit LoRA's vocabulary, and the LoRA as an edit adapter bank. Keep edit/accents.gguf
+# where it lands: as models/accents.gguf it would be picked up by zonos3-ptq.gguf, which refuses it.
+hf download Zyphra/ZONOS3_Mini_GGUF zonos3-ptq-edit.gguf edit/accents.gguf --local-dir models
+./build/zonos3-server models/zonos3-ptq-edit.gguf --accent-adapters models/edit/accents.gguf --worker-python <PY>
 ```
 
 The server picks up every companion it finds next to the backbone. `zonos3-ptq.gguf` carries per-table condition bucket
