@@ -9,12 +9,7 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0a0a0a" />
-    <script>
-      // The saved theme before the first paint (no dark flash on the light theme).
-      try {
-        if (JSON.parse(localStorage.getItem('zvs.theme') || '"dark"') === 'light') document.documentElement.dataset.theme = 'light';
-      } catch {}
-    </script>
+    <script src="/theme-boot.js"></script>
   </head>
   <body>
     <div id="app"></div>

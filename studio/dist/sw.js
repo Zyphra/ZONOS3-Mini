@@ -6,14 +6,15 @@
 // untouched: no respondWith):
 //   navigations to /studio, /studio.html  network-first, the precached studio.html when offline
 //   /assets/*                             cache-first (hashed, immutable)
-//   /web-engine/*                         stale-while-revalidate (unhashed engine.js, worker.js, codec-worker.js)
+//   /web-engine/*, /theme-boot.js         stale-while-revalidate (unhashed engine.js, worker.js, codec-worker.js,
+//                                         the theme boot script)
 //
 // No skipWaiting: a new version waits until every page the old one controls has closed, so an open studio keeps the
 // old worker and the old cache, i.e. the asset set its studio.html was built with (activating early would delete that
 // cache under it). clients.claim on activate only takes over pages nothing controls yet (the first visit), which then
 // read this version's cache; a cache miss still falls back to the network.
 
-const VERSION = "962eead6f8f1";
+const VERSION = "e4d8fcb431fd";
 const PRECACHE = [
   "/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2",
   "/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2",
@@ -26,13 +27,14 @@ const PRECACHE = [
   "/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2",
   "/assets/jetbrains-mono-latin-500-normal-BWZEU5yA.woff2",
   "/assets/jetbrains-mono-latin-500-normal-CJOVTJB7.woff",
-  "/assets/latin-500-CQUMCpbC.js",
   "/assets/latin-500-DKfSw4PI.css",
+  "/assets/latin-500-mEzu5PAv.js",
   "/assets/marks-vWJYJ6hZ.js",
   "/assets/marks-xKv10YAh.css",
-  "/assets/studio-4ZAzduiP.js",
   "/assets/studio-duKmS6ht.css",
-  "/studio.html"
+  "/assets/studio-pFxQWImG.js",
+  "/studio.html",
+  "/theme-boot.js"
 ];
 const PREFIX = 'zvs-shell-';
 const CACHE = PREFIX + VERSION;
@@ -66,7 +68,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (path.startsWith('/assets/')) event.respondWith(cacheFirst(request));
-  else if (path.startsWith('/web-engine/')) {
+  else if (path.startsWith('/web-engine/') || path === '/theme-boot.js') {
     const cache = caches.open(CACHE);
     const network = cache.then((c) => revalidate(c, request));
     event.waitUntil(network.catch(() => {}));

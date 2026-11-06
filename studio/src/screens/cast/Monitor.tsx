@@ -45,35 +45,33 @@ function statusText(): string {
   return a ? `${(a.pcm.length / a.sr).toFixed(1)} s · ${Math.round(a.ttfbMs)} ms` : '';
 }
 
-/** The side of the preview being shown: what to draw and whether it is still coming. */
-function shown() {
+/** The waveform of the side being shown (A: the design, still coming while it renders; B: the unsteered voice). */
+function PreviewWave() {
   const p = preview.value;
   const ref = reference.value;
   const isA = side.value === 'A';
-  return {
-    isA,
-    pcm: isA ? (p.status === 'rendering' && p.partial ? p.partial : p.a?.pcm) : ref.take?.pcm,
-    busy: isA ? p.status === 'waiting' || p.status === 'rendering' : !ref.take && !ref.error,
-    take: (isA ? p.a : ref.take) as Rendered | null,
-  };
+  const id = isA ? ID_A : ID_B;
+  const take = (isA ? p.a : ref.take) as Rendered | null;
+  return (
+    <Waveform
+      pcm={isA ? (p.status === 'rendering' && p.partial ? p.partial : p.a?.pcm) : ref.take?.pcm}
+      color={isA ? 'var(--o)' : 'var(--text-2)'}
+      playId={id}
+      busy={isA ? p.status === 'waiting' || p.status === 'rendering' : !ref.take && !ref.error}
+      height={40}
+      label={isA ? 'Designed voice waveform' : 'Original voice waveform'}
+      onSeek={(f) => take && player.play(id, take.pcm, take.sr, f * (take.pcm.length / take.sr))}
+    />
+  );
 }
 
 /** One-line preview for dialogs: A/B, waveform, render status. */
 export function PreviewStrip() {
   const p = preview.value;
-  const v = shown();
   return (
     <div class="preview-strip" aria-label="Preview">
       <ABButtons />
-      <Waveform
-        pcm={v.pcm}
-        color={v.isA ? 'var(--o)' : 'var(--text-2)'}
-        playId={v.isA ? ID_A : ID_B}
-        busy={v.busy}
-        height={40}
-        label={v.isA ? 'Designed voice waveform' : 'Original voice waveform'}
-        onSeek={(f) => v.take && player.play(v.isA ? ID_A : ID_B, v.take.pcm, v.take.sr, f * (v.take.pcm.length / v.take.sr))}
-      />
+      <PreviewWave />
       <span class={`metrics${p.status === 'rendering' || p.status === 'waiting' ? ' is-busy' : ''}`} aria-live="polite">
         {p.status === 'error' ? <span class="error-line">{isPronError(p.error) ? 'not rendered: fix the pronunciation' : p.error}</span> : statusText()}
       </span>
@@ -93,7 +91,6 @@ function setPhrase(text: string) {
 export function SpeakPanel() {
   const p = preview.value;
   const a = p.a;
-  const v = shown();
   const [draft, setDraft] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const noSteer = backend.value?.kind === 'fixture';
@@ -162,15 +159,7 @@ export function SpeakPanel() {
         >
           <Icon name={playingA ? 'stop' : 'play'} size={14} /> {playingA ? 'Stop' : pending ? 'Rendering…' : 'Speak'}
         </button>
-        <Waveform
-          pcm={v.pcm}
-          color={v.isA ? 'var(--o)' : 'var(--text-2)'}
-          playId={v.isA ? ID_A : ID_B}
-          busy={v.busy}
-          height={40}
-          label={v.isA ? 'Designed voice waveform' : 'Original voice waveform'}
-          onSeek={(f) => v.take && player.play(v.isA ? ID_A : ID_B, v.take.pcm, v.take.sr, f * (v.take.pcm.length / v.take.sr))}
-        />
+        <PreviewWave />
         <ABButtons />
         <span class="metrics" title="clip length · time to first audio">
           {statusText()}

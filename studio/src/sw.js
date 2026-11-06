@@ -6,7 +6,8 @@
 // untouched: no respondWith):
 //   navigations to /studio, /studio.html  network-first, the precached studio.html when offline
 //   /assets/*                             cache-first (hashed, immutable)
-//   /web-engine/*                         stale-while-revalidate (unhashed engine.js, worker.js, codec-worker.js)
+//   /web-engine/*, /theme-boot.js         stale-while-revalidate (unhashed engine.js, worker.js, codec-worker.js,
+//                                         the theme boot script)
 //
 // No skipWaiting: a new version waits until every page the old one controls has closed, so an open studio keeps the
 // old worker and the old cache, i.e. the asset set its studio.html was built with (activating early would delete that
@@ -47,7 +48,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (path.startsWith('/assets/')) event.respondWith(cacheFirst(request));
-  else if (path.startsWith('/web-engine/')) {
+  else if (path.startsWith('/web-engine/') || path === '/theme-boot.js') {
     const cache = caches.open(CACHE);
     const network = cache.then((c) => revalidate(c, request));
     event.waitUntil(network.catch(() => {}));

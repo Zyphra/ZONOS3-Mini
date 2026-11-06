@@ -51,8 +51,8 @@ function cleanOutDir(keep: string[]): Plugin {
 
 /**
  * /sw.js, at build time only (the dev server has no service worker): src/sw.js with its precache list (studio.html and
- * every assets/ file it reaches: its chunks, their imports, CSS and fonts) and a version hashing studio.html and that
- * list (asset names carry content hashes).
+ * every assets/ file it reaches: its chunks, their imports, CSS and fonts, plus /theme-boot.js) and a version hashing
+ * studio.html, theme-boot.js and that list (asset names carry content hashes).
  */
 function serviceWorker(page: string): Plugin {
   let root = '';
@@ -77,8 +77,14 @@ function serviceWorker(page: string): Plugin {
         const source = text(fileName);
         for (const asset of assets) if (!reached.has(asset) && source.includes(basename(asset))) reached.add(asset);
       }
-      const precache = [...reached].map((fileName) => `/${fileName}`).sort();
-      const version = createHash('sha256').update(text(`${page}.html`)).update(precache.join('\n')).digest('hex').slice(0, 12);
+      // The unhashed theme-boot.js every page loads: precached, its content in the version.
+      const precache = [...[...reached].map((fileName) => `/${fileName}`), '/theme-boot.js'].sort();
+      const version = createHash('sha256')
+        .update(text(`${page}.html`))
+        .update(readFileSync(resolve(root, 'public/theme-boot.js')))
+        .update(precache.join('\n'))
+        .digest('hex')
+        .slice(0, 12);
       const sw = readFileSync(resolve(root, 'src/sw.js'), 'utf8')
         .replace('__ZVS_VERSION__', JSON.stringify(version))
         .replace('__ZVS_PRECACHE__', JSON.stringify(precache, null, 2));
