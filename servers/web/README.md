@@ -10,7 +10,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 | voices: default voices (shipped codes), session uploads (reference encoder + MECT speaker encoder), embedding files, slerp blends | plugins (`plugins` is empty) |
 | `/v2/controls` steering-bundle controls (with set calibrations), condition rows | phonemize, text normalization |
 | speaker, tag and controls CFG; LACI and span-follow reading | server projects (the studio keeps projects in the browser) |
-| speech editing with the clip's transcript: `/v2/edit/align` (FuseAlign, clips ≤ 30 s: `edit_align_max_seconds`), `/v2/edit` (clips ≤ 150 s; `original_text` aligns clips ≤ 30 s, longer clips need `original_words`, or `spans` within `max_context_seconds`) | accent adapters (`accents` is empty; the speech-edit adapter is merged into the `edit` backbone) |
+| speech editing with the clip's transcript: `/v2/edit/align` (FuseAlign, clips ≤ 30 s: `edit_align_max_seconds`), `/v2/edit` (clips ≤ 150 s; `original_text` aligns clips ≤ 30 s, longer clips need `original_words`, or `spans` within `max_context_seconds`) | accent adapters (`accents` is empty; the only adapter shipped is the speech-edit one, `edit/`, applied at runtime on the backbone's weights) |
 | capabilities, health, models | |
 
 ## Layout
@@ -25,8 +25,8 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 | `src/aligner/` | FuseAlign on WebGPU (Dia text encoder, joint transformer, refinement heads), one forward per clip ≤ 30 s |
 | `src/request/` | Pure ports of the ggml request logic: steering bundle, markup, LACI, span follow |
 | `src/generation.ts` | The generation registry ([`model/src/zonos3/registries/generation.json`](../../model/src/zonos3/registries/generation.json)): sampling defaults, the API rate, tag-CFG range, silence prefill (default 3, at most 30 frames), decode context (30), the 900-frame reference prefix (longer reference codes keep their first 900 frames), the 2000-frame budget (shrunk to the slot rows the prompt leaves), 60 s reference clips |
-| `src/backbone.ts`, `zac.ts`, `istft.ts`, `speaker.ts`, `encoder.ts`, `ssl.ts`, `rvq.ts` | The networks on WebGPU (`src/gpu/kernels/*.wgsl`) and their host parts. `ZacStream.create` times the codec gemms at load and repacks the matrices of each row class to k-major f16 (`src/gpu/h8.ts`, `gemm_h8*.wgsl`) when an h8 kernel beats the q8 one on the device |
-| `scripts/export_web_models.py` | GGUF → sharded web format (`zonos3-web-v1`; the backbone's `output.weight` becomes q8_0), voices, companions, LACI heads |
+| `src/backbone.ts`, `zac.ts`, `istft.ts`, `speaker.ts`, `encoder.ts`, `ssl.ts`, `rvq.ts` | The networks on WebGPU (`src/gpu/kernels/*.wgsl`) and their host parts. `Backbone.withEdit` runs the speech-edit LM on the release backbone's GPU weights: the edit vocabulary's grown rows and the speech-edit LoRA (`lora_*.wgsl`, `moe_*_lora.wgsl`, `embed_edit.wgsl`, `edit_logits.wgsl`) at runtime, as the ggml and MLX servers apply it. `ZacStream.create` times the codec gemms at load and repacks the matrices of each row class to k-major f16 (`src/gpu/h8.ts`, `gemm_h8*.wgsl`) when an h8 kernel beats the q8 one on the device |
+| `scripts/export_web_models.py` | GGUF → sharded web format (`zonos3-web-v1`; the backbone's `output.weight` becomes q8_0), the speech-edit adapter `edit/` (grown vocabulary rows, f16 LoRA factors, shifted router biases), voices, companions, LACI heads. `scripts/check_edit_export.py` checks `edit/` against the MLX runtime adapter and writes the `backbone_edit` goldens |
 | `harness/` | Headless-Chrome harness: `server.mjs` (HTTP front for conformance), `parity.mjs` (WebGPU parity checks), `bench.mjs` (desktop / Android benchmark) |
 | `worker/`, `wrangler.jsonc` | Cloudflare deployment: the studio with the engine as static assets, models from R2 |
 
@@ -34,7 +34,7 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 
 ```bash
 hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
-pnpm --dir servers/web export          # public/models/ (~5.4 GB; first load fetches backbone + zac (zac-keep2.gguf), ~1.0 GB; uploads add encoder + teacher, ~2.8 GB, and spk; speech editing adds edit (~1.1 GB) and aligner (~0.5 GB))
+pnpm --dir servers/web export          # public/models/ (~4.5 GB; first load fetches backbone + zac (zac-keep2.gguf), ~1.0 GB; uploads add encoder + teacher, ~2.8 GB, and spk; speech editing adds edit (the speech-edit adapter on the backbone's weights, ~0.13 GB) and aligner (~0.5 GB))
 pnpm --dir servers/web build           # dist/engine.js + dist/worker.js + dist/codec-worker.js
 pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (or /lite?api=web)
 ```

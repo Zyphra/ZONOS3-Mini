@@ -35,8 +35,8 @@ export function laciLanguages(e: Engine): string[] {
   return [...e.laci.keys()].sort();
 }
 
-/** Accent adapters a request can pick with `accent` (`accents.gguf`): the web export ships none (the speech-edit
- *  adapter is merged into the `edit` backbone). */
+/** Accent adapters a request can pick with `accent` (`accents.gguf`): the web export ships none (its one adapter, the
+ *  speech-edit LoRA of `edit/`, serves edit fills only). */
 export const ACCENT_ADAPTERS: string[] = [];
 
 /** Edit regions per request: the speech-edit backbone's marker rows (zonos3.tts.edit edit_marker_rows; this export's

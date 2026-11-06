@@ -8,8 +8,9 @@ block scales.
 
 Besides the models the export writes voices/ (default voices with their shipped reference codes), companions/ (the
 steering bundle steer.gguf, parsed directly by the worker) and laci/ (alignment heads and their language index).
-The speech-edit LM edit/ (zonos3-ptq-edit.gguf with edit/accents.gguf merged, see "backbone" below) is checked against
-the MLX server's runtime adapter by scripts/check_edit_export.py.
+The speech-edit adapter edit/ (the edit vocabulary's grown rows and the edit/accents.gguf factors that the web backbone
+applies at runtime on top of backbone/, see "speech-edit adapter" below) is checked against the MLX server's runtime
+adapter by scripts/check_edit_export.py.
 """
 import argparse
 import hashlib
@@ -205,13 +206,14 @@ def dequantize(g, name):
 # --------------------------------------------------------------------------- shard writer
 
 class Writer:
-    def __init__(self, out_dir, model, meta):
+    def __init__(self, out_dir, model, meta, shard_prefix="shard-"):
         self.dir = out_dir
         self.model = model
         self.meta = meta
+        self.prefix = shard_prefix
         os.makedirs(out_dir, exist_ok=True)
         for f in os.listdir(out_dir):
-            if f.startswith("shard-") or f == "manifest.json":
+            if f.startswith("shard-") or f.startswith(shard_prefix) or f == "manifest.json":
                 os.remove(os.path.join(out_dir, f))
         self.shards = []
         self.tensors = {}
@@ -222,7 +224,7 @@ class Writer:
     def _open(self):
         if self.f:
             self.f.close()
-        name = f"shard-{len(self.shards):03d}.bin"
+        name = f"{self.prefix}{len(self.shards):03d}.bin"
         self.shards.append(name)
         self.f = open(os.path.join(self.dir, name), "wb")
         self.pos = 0
@@ -318,24 +320,89 @@ def copy_plain(w, g, name):
 
 # --------------------------------------------------------------------------- backbone
 #
-# backbone/ is the release LM (zonos3-ptq.gguf). edit/ is the speech-edit LM, loaded lazily by the edit routes:
-# zonos3-ptq-edit.gguf (the release LM with the edit vocabulary: span_end_id 4098 after the audio pad, audio_vocab 4099,
-# three infill-marker text rows after the text pad) with the zonos-accent-lora/3 adapter of edit/accents.gguf merged
-# at strength 1, so the web backbone runs it with no adapter path (the native servers apply it at runtime:
-# servers/mlx/src/zonos3_mlx/companions.py AccentState, servers/ggml/src/zonos3-accent.h):
-#   - every adapted linear W [out, in] becomes W + up @ down (q|k|v|gate before the qkvg fusion; the logits head with
-#     the factor's span-end rows zero-filled when it predates the grown vocabulary, as AccentBank.load fits it);
-#   - every expert e of an adapted stack becomes W[e] + up[e] @ down[e];
-#   - each adapted router's balancing bias becomes router_bias + shift.
-# Storage of a merged tensor (measured against the MLX runtime adapter, edit-prompt logits): F16 sources stay f16; the
-# Q8_0 mixers (gdn_in, attn_*) become f16, since a q8 requantization of W + up @ down doubles the logits error (rms
-# 0.116 vs 0.056, argmax agreement 92 % vs 97 %); the Q4_0 experts become q8 (a q4 requantization keeps only 5-30 % of
-# their rank-16 shifts, which sit below the q4 step: argmax agreement 77 %); the logits head is q8 as in backbone/.
-# Unadapted tensors are copied as in backbone/. The manifest meta adds text_extra_tokens (the marker rows) and
-# edit_adapter.
+# backbone/ is the release LM (zonos3-ptq.gguf).
+
+def check_tokenizer(meta, path):
+    """Pops tokenizer.json from a backbone meta; it must be src/superbpe8192.json."""
+    tok = meta.pop("tokenizer.json")
+    with open(os.path.join(HERE, "..", "src", "superbpe8192.json"), "rb") as f:
+        ref_hash = hashlib.sha256(f.read()).hexdigest()
+    if hashlib.sha256(tok.encode("utf-8")).hexdigest() != ref_hash:
+        raise SystemExit(f"{path}: backbone tokenizer differs from src/superbpe8192.json")
+
+
+def open_backbone(path):
+    g = Gguf(path)
+    g.check_types()
+    if g.kv.get("general.architecture") != "zonos3" or g.kv.get("zonos3.residual.type") != "full_attnres":
+        raise SystemExit(f"{path}: not a zonos3 GDN backbone GGUF")
+    return g
+
+
+def export_backbone(path, out):
+    g = open_backbone(path)
+    meta = g.meta()
+    check_tokenizer(meta, path)
+    ncb = g.kv["zonos3.n_codebooks"]
+    nl = g.kv["zonos3.block_count"]
+    w = Writer(os.path.join(out, "backbone"), "backbone", meta)
+    parts = [g.arr(f"audio_embd.{k}.weight").astype(np.float16) for k in range(ncb)]
+    parts.append(g.arr("text_embd.weight").astype(np.float16))
+    embd = np.concatenate(parts, axis=0)
+    w.add("embd_all", embd, "f16", [embd.shape[1], embd.shape[0]])
+    del embd, parts
+    skip = {f"audio_embd.{k}.weight" for k in range(ncb)} | {"text_embd.weight"}
+    # global-attention layers: fuse q | k | v | gate into one projection (GDN layers keep gdn_in;
+    # gdn_conv.weight stays f32 C-order [1536][4] via copy_plain)
+    for L in range(nl):
+        if f"blk.{L}.attn_q.weight" not in g.tensors:
+            continue
+        names = [f"blk.{L}.attn_{s}.weight" for s in ("q", "k", "v", "gate")]
+        types = {g.tensors[n].type for n in names}
+        if types == {GGUF_Q8_0}:
+            # each output row is 1024/32 contiguous blocks: row concat is a byte concat (q|k|v|gate)
+            raw = np.concatenate([np.asarray(g.raw(n)) for n in names])
+            rows = sum(g.tensors[n].ne[1] for n in names)
+            w.add_q8(f"blk.{L}.attn_qkvg.weight", raw, [g.tensors[names[0]].ne[0], rows])
+        elif types == {GGUF_F16}:
+            cat = np.concatenate([g.arr(n).astype(np.float16) for n in names], axis=0)
+            w.add(f"blk.{L}.attn_qkvg.weight", cat, "f16", [cat.shape[1], cat.shape[0]])
+        else:
+            raise SystemExit(f"blk.{L}: mixed attention projection types")
+        skip.update(names)
+    for name in g.order:
+        if name in skip:
+            continue
+        t = g.tensors[name]
+        if name == "output.weight":
+            # web only: the 84 MB F16 logits head as q8_0 (half the bytes of every decode step)
+            w.add_q8_from(name, g.arr(name), t.ne)
+        else:
+            copy_plain(w, g, name)
+    w.finish()
+
+
+# --------------------------------------------------------------------------- speech-edit adapter
+#
+# edit/ turns backbone/ into the speech-edit LM at runtime (src/backbone.ts Backbone.withEdit), as the native servers
+# apply the adapter (servers/mlx/src/zonos3_mlx/companions.py AccentState, servers/ggml/src/zonos3-accent.h):
+#   - the edit vocabulary: zonos3-ptq-edit.gguf is zonos3-ptq.gguf with grown tables (span_end_id = audio pad + 1 in
+#     every audio table and logits-head block, text_extra_tokens infill-marker rows after the text pad); edit/ keeps
+#     only the grown rows: embd_extra (f16 [n_codebooks audio rows, then the marker rows]) and output_extra (q8_0 as
+#     backbone/'s head, one span-end row per codebook block). Every other row and tensor must equal backbone/'s;
+#   - the zonos-accent-lora/3 adapter of edit/accents.gguf at strength 1, as f16 factors (rms relative rounding error
+#     below 3e-4): every adapted linear <base> adds up @ (down @ x) (<base>.lora_down [K, in], .lora_up [out, K];
+#     the global layers' q|k|v|gate factors stacked as blk.L.attn_qkvg: downs row-concatenated, ups block-diagonal;
+#     the head factor zero-filled at the span-end rows when it predates the grown vocabulary, as AccentBank.load fits
+#     it); every routed (token, expert e) of an adapted stack adds up[e] @ (down[e] @ row) to its gate/up
+#     pre-activations (blk.L.ffn_gate_up_exps: downs [E, 2r, in] gate rows then up rows, ups [E, 2, out, r]) and to its
+#     expert output (blk.L.ffn_down_exps: [E, r, in], [E, out, r]);
+#   - each adapted router's balancing bias, replaced by router_bias + shift (f32).
+# The manifest meta is the edit GGUF's (its vocabulary) plus text_extra_tokens and adapter.{base,name,rank}; adapter.base
+# is backbone/'s general.name, which the runtime requires.
 
 def edit_adapter(path, ncb, head_rows):
-    """The zonos-accent-lora/3 slot of an accents.gguf: (name, {base: (down, up)} f32 factors, {layer: shift})."""
+    """The zonos-accent-lora/3 slot of an accents.gguf: (name, rank, {base: (down, up)} f32 factors, {layer: shift})."""
     a = Gguf(path)
     a.check_types()
     if a.kv.get("general.architecture") != "zonos3_accents":
@@ -362,92 +429,110 @@ def edit_adapter(path, ncb, head_rows):
             k = up.shape[1]
             up = np.concatenate([up.reshape(ncb, -1, k), np.zeros((ncb, 1, k), np.float32)], axis=1).reshape(head_rows, k)
         factors[base] = (down, up)
-    return names[edits[0]], factors, shifts
+    return names[edits[0]], int(a.kv["zonos3_accents.rank"][edits[0]]), factors, shifts
 
 
-def export_backbone(path, out, model="backbone", adapter=None):
-    """backbone/ (adapter None), or the speech-edit LM with the adapter of `adapter` (edit/accents.gguf) merged."""
-    g = Gguf(path)
-    g.check_types()
-    if g.kv.get("general.architecture") != "zonos3" or g.kv.get("zonos3.residual.type") != "full_attnres":
-        raise SystemExit(f"{path}: not a zonos3 GDN backbone GGUF")
-    meta = g.meta()
-    tok = meta.pop("tokenizer.json")
-    with open(os.path.join(HERE, "..", "src", "superbpe8192.json"), "rb") as f:
-        ref_hash = hashlib.sha256(f.read()).hexdigest()
-    if hashlib.sha256(tok.encode("utf-8")).hexdigest() != ref_hash:
-        raise SystemExit("backbone tokenizer differs from src/superbpe8192.json")
+def grown_rows(g, ge, name, blocks):
+    """The rows `name` of the edit GGUF `ge` adds per block (of `blocks`) over the release GGUF `g`, which must equal
+    every other row: [blocks, extra, ...] in the edit tensor's dtype."""
+    old, new = g.arr(name), ge.arr(name)
+    old = old.reshape(blocks, -1, *old.shape[1:])
+    new = new.reshape(blocks, -1, *new.shape[1:])
+    n = old.shape[1]
+    if new.shape[1] <= n or not np.array_equal(new[:, :n].view(np.uint16), old.view(np.uint16)):
+        raise SystemExit(f"{name}: the edit GGUF does not grow the release tensor by trailing rows")
+    return new[:, n:]
+
+
+def export_edit(release, edit, adapter, out):
+    g, ge = open_backbone(release), open_backbone(edit)
+    meta = ge.meta()
+    check_tokenizer(meta, edit)
+    if "span_end_id" not in meta:
+        raise SystemExit(f"{edit}: the speech-edit adapter needs the edit vocabulary (zonos3-ptq-edit.gguf)")
     ncb = g.kv["zonos3.n_codebooks"]
-    nl = g.kv["zonos3.block_count"]
-    factors, shifts = {}, {}
-    if adapter is not None:
-        if "span_end_id" not in meta:
-            raise SystemExit(f"{path}: the speech-edit adapter needs the edit vocabulary (zonos3-ptq-edit.gguf)")
-        name, factors, shifts = edit_adapter(adapter, ncb, g.tensors["output.weight"].ne[1])
-        for base in factors:
-            if base + ".weight" not in g.tensors:
-                raise SystemExit(f"{adapter}: adapter module {base} is not a tensor of {path}")
-        for layer in shifts:
-            if f"blk.{layer}.router_bias" not in g.tensors:
-                raise SystemExit(f"{adapter}: router shift of layer {layer} has no router in {path}")
-        meta["text_extra_tokens"] = g.tensors["text_embd.weight"].ne[1] - meta["text_vocab"] - 1
-        meta["edit_adapter"] = f"{name} (zonos-accent-lora/3) merged at strength 1"
-
-    def merged(name):
-        """W + up @ down (float32, [..., out, in]) of an adapted tensor; None when the adapter leaves it alone."""
-        f = factors.get(name.removesuffix(".weight"))
-        return None if f is None else dequantize(g, name) + np.matmul(f[1], f[0])
-
-    w = Writer(os.path.join(out, model), model, meta)
-    parts = [g.arr(f"audio_embd.{k}.weight").astype(np.float16) for k in range(ncb)]
-    parts.append(g.arr("text_embd.weight").astype(np.float16))
-    embd = np.concatenate(parts, axis=0)
-    w.add("embd_all", embd, "f16", [embd.shape[1], embd.shape[0]])
-    del embd, parts
-    skip = {f"audio_embd.{k}.weight" for k in range(ncb)} | {"text_embd.weight"}
-    # global-attention layers: fuse q | k | v | gate into one projection (GDN layers keep gdn_in;
-    # gdn_conv.weight stays f32 C-order [1536][4] via copy_plain)
-    for L in range(nl):
-        if f"blk.{L}.attn_q.weight" not in g.tensors:
-            continue
-        names = [f"blk.{L}.attn_{s}.weight" for s in ("q", "k", "v", "gate")]
-        types = {g.tensors[n].type for n in names}
-        mats = [merged(n) for n in names]
-        if any(m is not None for m in mats):
-            # merged: f16 rows (an unadapted Q8_0 projection beside them is dequantized)
-            cat = np.concatenate([(dequantize(g, n) if m is None else m).astype(np.float16) for n, m in zip(names, mats)])
-            w.add(f"blk.{L}.attn_qkvg.weight", cat, "f16", [cat.shape[1], cat.shape[0]])
-        elif types == {GGUF_Q8_0}:
-            # each output row is 1024/32 contiguous blocks: row concat is a byte concat (q|k|v|gate)
-            raw = np.concatenate([np.asarray(g.raw(n)) for n in names])
-            rows = sum(g.tensors[n].ne[1] for n in names)
-            w.add_q8(f"blk.{L}.attn_qkvg.weight", raw, [g.tensors[names[0]].ne[0], rows])
-        elif types == {GGUF_F16}:
-            cat = np.concatenate([g.arr(n).astype(np.float16) for n in names], axis=0)
-            w.add(f"blk.{L}.attn_qkvg.weight", cat, "f16", [cat.shape[1], cat.shape[0]])
-        else:
-            raise SystemExit(f"blk.{L}: mixed attention projection types")
-        skip.update(names)
+    grown = {f"audio_embd.{k}.weight" for k in range(ncb)} | {"text_embd.weight", "output.weight"}
+    if g.order != ge.order:
+        raise SystemExit(f"{edit}: tensor list differs from {release}")
     for name in g.order:
-        if name in skip:
+        if name in grown:
+            if g.tensors[name].type != GGUF_F16 or ge.tensors[name].type != GGUF_F16:
+                raise SystemExit(f"{name}: expected F16")
+        elif g.tensors[name].ne != ge.tensors[name].ne or not np.array_equal(g.raw(name), ge.raw(name)):
+            raise SystemExit(f"{name}: differs between {release} and {edit}")
+    audio = [grown_rows(g, ge, f"audio_embd.{k}.weight", 1)[0] for k in range(ncb)]
+    text = grown_rows(g, ge, "text_embd.weight", 1)[0]
+    head = grown_rows(g, ge, "output.weight", ncb).reshape(-1, g.tensors["output.weight"].ne[0])
+    ax = audio[0].shape[0]
+    if meta["audio_vocab"] != g.kv["zonos3.audio_vocab"] + ax or head.shape[0] != ncb * ax:
+        raise SystemExit(f"{edit}: grown audio rows do not match audio_vocab")
+    name, rank, factors, shifts = edit_adapter(adapter, ncb, ge.tensors["output.weight"].ne[1])
+    for base in factors:
+        if base + ".weight" not in g.tensors:
+            raise SystemExit(f"{adapter}: adapter module {base} is not a tensor of {release}")
+    for layer in shifts:
+        if f"blk.{layer}.router_bias" not in g.tensors:
+            raise SystemExit(f"{adapter}: router shift of layer {layer} has no router in {release}")
+    meta["text_extra_tokens"] = text.shape[0]
+    meta["adapter.base"] = g.kv["general.name"]
+    meta["adapter.name"] = name
+    meta["adapter.rank"] = rank
+
+    # lora-NNN.bin: URLs the merged speech-edit LM never used, so a Cache Storage copy of its shard-NNN.bin cannot stand
+    # in for them (CACHE_NAME, and so backbone/'s cached shards, stay as they are).
+    w = Writer(os.path.join(out, "edit"), "edit", meta, shard_prefix="lora-")
+    embd = np.concatenate(audio + [text], axis=0)
+    w.add("embd_extra", embd, "f16", [embd.shape[1], embd.shape[0]])
+    w.add_q8_from("output_extra", head, [head.shape[1], head.shape[0]])
+
+    def f16(arr):
+        return np.ascontiguousarray(arr, dtype=np.float16)
+
+    def add(tname, arr):
+        a16 = f16(arr)
+        w.add(tname, a16, "f16", list(reversed(a16.shape)))
+
+    done = set()
+    for L in range(g.kv["zonos3.block_count"]):
+        # q | k | v | gate as one rank-4K linear over the fused projection
+        qkvg = [f"blk.{L}.attn_{s}" for s in ("q", "k", "v", "gate")]
+        if any(b in factors for b in qkvg):
+            rows = [g.tensors[b + ".weight"].ne[1] for b in qkvg]
+            downs, ups, k0 = [], [], 0
+            for b in qkvg:
+                if b in factors:
+                    downs.append(factors[b][0])
+            K = sum(d.shape[0] for d in downs)
+            up = np.zeros((sum(rows), K), np.float32)
+            r0 = 0
+            for b, nr in zip(qkvg, rows):
+                if b in factors:
+                    d, u = factors[b]
+                    up[r0:r0 + nr, k0:k0 + d.shape[0]] = u
+                    k0 += d.shape[0]
+                r0 += nr
+            add(f"blk.{L}.attn_qkvg.lora_down", np.concatenate(downs, axis=0))
+            add(f"blk.{L}.attn_qkvg.lora_up", up)
+            done.update(qkvg)
+        exps = {s: f"blk.{L}.ffn_{s}_exps" for s in ("gate", "up", "down")}
+        if exps["gate"] in factors or exps["up"] in factors:
+            if exps["gate"] not in factors or exps["up"] not in factors:
+                raise SystemExit(f"blk.{L}: the adapter must shape both the gate and up experts")
+            (dg, ug), (du, uu) = factors[exps["gate"]], factors[exps["up"]]
+            add(f"blk.{L}.ffn_gate_up_exps.lora_down", np.concatenate([dg, du], axis=1))
+            add(f"blk.{L}.ffn_gate_up_exps.lora_up", np.stack([ug, uu], axis=1))
+            done.update((exps["gate"], exps["up"]))
+    for base, (down, up) in factors.items():
+        if base in done:
             continue
-        t = g.tensors[name]
-        if name.endswith(".router_bias") and int(name.split(".")[1]) in shifts:
-            w.add(name, g.arr(name).astype(np.float32) + shifts[int(name.split(".")[1])], "f32", t.ne)
-            continue
-        m = merged(name)
-        if name == "output.weight":
-            # web only: the 84 MB F16 logits head as q8_0 (half the bytes of every decode step)
-            w.add_q8_from(name, g.arr(name) if m is None else m, t.ne)
-        elif m is None:
-            copy_plain(w, g, name)
-        elif t.type == GGUF_Q4_0:
-            w.add_q8_from(name, m, t.ne)
-        elif t.type in (GGUF_Q8_0, GGUF_F16):
-            w.add(name, m.astype(np.float16), "f16", t.ne)
-        else:
-            w.add(name, m, "f32", t.ne)
+        add(base + ".lora_down", down)
+        add(base + ".lora_up", up)
+    for layer, shift in sorted(shifts.items()):
+        bias = f"blk.{layer}.router_bias"
+        w.add(bias, g.arr(bias).astype(np.float32) + shift, "f32", g.tensors[bias].ne)
     w.finish()
+
+
 
 
 # --------------------------------------------------------------------------- codec decoder (mossdual_istft)
@@ -756,7 +841,7 @@ def main():
     m = a.models
     os.makedirs(a.out, exist_ok=True)
     export_backbone(os.path.join(m, "zonos3-ptq.gguf"), a.out)
-    export_backbone(os.path.join(m, EDIT_FILES[0]), a.out, "edit", os.path.join(m, EDIT_FILES[1]))
+    export_edit(os.path.join(m, "zonos3-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out)
     export_zac(os.path.join(m, "zac-keep2.gguf"), a.out)
     export_encoder(os.path.join(m, "zac-encoder.gguf"), a.out)
     export_teacher(os.path.join(m, "ssl-teacher.gguf"), a.out)

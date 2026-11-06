@@ -36,12 +36,12 @@ export interface DefaultVoice {
   embedding: Float32Array | null; // [speakerDim]
 }
 
-/** Speech editing (/v2/edit/align, /v2/edit): the speech-edit backbone (model directory `edit`, the edit adapter merged)
- *  and FuseAlign (model directory `aligner`), each loaded on first use. */
+/** Speech editing (/v2/edit/align, /v2/edit): the speech-edit LM (the speech-edit adapter of model directory `edit` on
+ *  the release backbone's weights) and FuseAlign (model directory `aligner`), each loaded on first use. */
 export interface EditModels {
-  /** The speech-edit backbone's hyper-parameters (its manifest meta; nothing is loaded for them). */
+  /** The speech-edit LM's hyper-parameters (the `edit` manifest meta; nothing is loaded for them). */
   hp: ModelHp;
-  /** The speech-edit backbone (lazy-loaded), steered by the same bundle as the release backbone. */
+  /** The speech-edit LM (its adapter lazy-loaded), steered by the same bundle as the release backbone. */
   backbone(): Promise<BackboneApi>;
   /** FuseAlign (lazy-loaded): word intervals of `tokens` in 16 kHz mono audio (src/aligner Aligner.align; HttpError 400
    *  past its limits). */

@@ -1,6 +1,7 @@
 // Backbone parity vs zonos3-cli --cpu goldens: conditioned prefill, teacher-forced decode, alignment probe, CFG-slot
-// isolation, hidden steering and masked probe heads; plus the speech-edit backbone (model 'edit') on an edit prompt.
-import { Backbone, loadBackbone, NCB, type ProbeInput } from '../../src/backbone';
+// isolation, hidden steering and masked probe heads; plus the speech-edit LM (the edit/ adapter on the backbone's
+// weights, Backbone.withEdit) on an edit prompt.
+import { Backbone, NCB, type ProbeInput } from '../../src/backbone';
 import { fetchJson, loadModel } from '../../src/gpu/weights';
 import { locateTextSpan, probeReduce } from '../../src/probe';
 import { conditionBucketCounts, type Conditioning } from '../../src/prompt';
@@ -191,15 +192,14 @@ export const checks: Record<string, Check> = {
     };
   },
 
-  /** The speech-edit backbone (model 'edit', adapter merged at export) vs MLX with the adapter applied at runtime
-   *  (scripts/check_edit_export.py --goldens): an edit prompt prefill, then teacher-forced fill rows through span-end.
-   *  The bar is the export's own deviation from the runtime adapter (MLX on the exported tensors: min cos 0.998,
-   *  argmax 95 % on these rows) plus the WebGPU kernels' rounding. */
+  /** The speech-edit LM (backbone/ weights + the edit/ adapter at runtime) vs MLX with the adapter applied at runtime
+   *  (scripts/check_edit_export.py --goldens): an edit prompt prefill, then teacher-forced fill rows through span-end. */
   async backbone_edit(ctx) {
     const ids = Int32Array.from((await ctx.npy('edit/ids.npy')).data, Math.round);
     const ref = (await ctx.npy('edit/logits.npy')).data;
     const cj = JSON.parse(new TextDecoder().decode(await ctx.golden('edit/cond.json'))) as CondJson & { n0: number };
-    const bb = await loadBackbone(ctx.gpu, ctx.base, 'edit');
+    const f = await load(ctx);
+    const bb = f.bb.withEdit(await loadModel(ctx.gpu, ctx.base, 'edit'));
     const V = bb.hp.audioVocab, L = bb.logitsLen;
     const cond: Conditioning = {
       speakerRow: cj.speaker_row, speaker: Float32Array.from(cj.speaker_embedding), conditionRow: cj.condition_row,
@@ -207,18 +207,19 @@ export const checks: Record<string, Check> = {
     };
     const rows = [(await bb.prefill(0, ids.subarray(0, cj.n0 * W), cond)).logits];
     for (let r = cj.n0; r < ids.length / W; r++) rows.push((await bb.step(0, ids.subarray(r * W, (r + 1) * W), null, null)).logits);
-    let minCos = 1, agree = 0;
+    let minCos = 1, agree = 0, maxDiff = 0;
     rows.forEach((lg, k) => {
       const want = ref.subarray(k * L, (k + 1) * L);
       for (let cb = 0; cb < NCB; cb++)
         minCos = Math.min(minCos, cosine(lg.subarray(cb * V, (cb + 1) * V), want.subarray(cb * V, (cb + 1) * V)));
       agree += argmaxAgree(lg, want, V);
+      maxDiff = Math.max(maxDiff, maxAbs(lg, want));
     });
     const total = rows.length * NCB;
     return {
-      ok: V === 4099 && bb.hp.spanEndId === 4098 && rows.length * L === ref.length && minCos >= 0.99 && agree / total >= 0.9,
+      ok: V === 4099 && bb.hp.spanEndId === 4098 && rows.length * L === ref.length && minCos >= 0.999 && agree / total >= 0.98,
       metric: { rows: rows.length, audioVocab: V, spanEndId: bb.hp.spanEndId, textExtraTokens: bb.hp.textExtraTokens,
-        minCodebookCos: minCos, argmax: agree / total },
+        minCodebookCos: minCos, argmax: agree / total, maxAbs: maxDiff },
     };
   },
 };

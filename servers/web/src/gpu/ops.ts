@@ -134,6 +134,31 @@ export function moe(b: Builder, lg: Buf, rbias: Buf, z: Buf, up: Weight, gate: W
   b.dispatch('moe_down', { hbuf, sel, wts, dq: down.buf, ds: down.scales, outp: out }, {}, [32, 1, n]);
 }
 
+/** moe with the speech-edit adapter's expert factors (f16, ggml shapes): per routed (token, expert e), the gate/up
+ *  pre-activations += Ugu[e][gate|up] . (Dgu[e] . z) (Dgu [64][32][256]: 16 gate rows, then 16 up rows;
+ *  Ugu [64][2][1536][16]) and the expert output += Ud[e] . (Dd[e] . h) (Dd [64][16][1536], Ud [64][256][16]).
+ *  scratch.hbuf holds n x 2 x (1536 + 32) floats (the gate/up down-projections after the expert activations);
+ *  scratch.td n x 2 x 16. */
+export function moeLora(b: Builder, lg: Buf, rbias: Buf, z: Buf, up: Weight, gate: Weight, down: Weight, out: Buf, n: number,
+                        scratch: { sel: Buf; wts: Buf; hbuf: Buf; td: Buf },
+                        f: { gateUpDown: GpuTensor; gateUpUp: GpuTensor; downDown: GpuTensor; downUp: GpuTensor }): void {
+  if (up.dtype !== 'q4' || gate.dtype !== 'q4' || down.dtype !== 'q4') throw new Error('moe: experts must be q4; re-export with npm run export');
+  const fits = (w: GpuTensor, shape: number[]) =>
+    w.dtype === 'f16' && w.shape.length === shape.length && w.shape.every((d, i) => d === shape[i]);
+  if (!fits(f.gateUpDown, [256, 32, 64]) || !fits(f.gateUpUp, [16, 1536, 2, 64]) || !fits(f.downDown, [1536, 16, 64]) ||
+      !fits(f.downUp, [16, 256, 64]))
+    throw new Error('moe: the speech-edit expert factors must be rank-16 f16; re-export with pnpm export');
+  const { sel, wts, hbuf, td } = scratch;
+  const tlOff = n * 2 * 1536;
+  if (hbuf.size < (tlOff + n * 2 * 32) * 4) throw new Error('moe: hbuf too small for the adapter');
+  b.dispatch('moe_topk', { lg, rbias, sel, wts }, {}, [n, 1, 1]);
+  b.dispatch('moe_lora_t', { x: z, sel, D: f.gateUpDown.buf, tout: hbuf }, { R: 32, I: 256, x_t: 256, x_j: 0, t_off: tlOff }, [n, 2, 1]);
+  b.dispatch('moe_up_lora', { x: z, sel, gq: gate.buf, gs: gate.scales, uq: up.buf, us: up.scales, hbuf, U: f.gateUpUp.buf },
+    { tl_off: tlOff }, [48, 2, n]);
+  b.dispatch('moe_lora_t', { x: hbuf, sel, D: f.downDown.buf, tout: td }, { R: 16, I: 1536, x_t: 3072, x_j: 1536 }, [n, 2, 1]);
+  b.dispatch('moe_down_lora', { hbuf, sel, wts, dq: down.buf, ds: down.scales, outp: out, td, U: f.downUp.buf }, {}, [32, 1, n]);
+}
+
 /** Time-major patch up: y[t*h + j][ch] = x[t][ch*h + j], C = output channels. */
 export function patchUp(b: Builder, x: Buf, y: Buf, T: number, C: number, h: number): void {
   const n = T * h * C;

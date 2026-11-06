@@ -4,14 +4,16 @@
 // zonos3-graph.cpp: speaker/condition rows replace the summed embedding before emb_norm (prefill), hidden steering
 // deltas join their Full AttnRes sources (decode), and the alignment probe reads the global layers (slot 0 decode).
 // Two state sets: slot 0 = conditional, slot 1 = CFG twin.
-// The vocabulary follows the manifest meta (hp): model 'backbone' is the release LM (audio vocabulary 4098), model
-// 'edit' the speech-edit LM (4099 with span-end, infill-marker text rows, the edit adapter merged into its weights by
-// scripts/export_web_models.py; its merged experts are q8).
+// The vocabulary follows the manifest meta (hp): the release LM (backbone/, audio vocabulary 4098). Backbone.withEdit
+// runs the speech-edit LM on the same GPU weights: the edit vocabulary (4099 with span-end, infill-marker text rows) from
+// the grown rows of edit/, and the speech-edit adapter applied at runtime (scripts/export_web_models.py "speech-edit
+// adapter"; zonos3-accent.h in the ggml server): rank-K side paths on the adapted linears, the routed experts'
+// factors in the MoE kernels and the shifted router biases.
 import { MAX_FRAMES } from './generation';
 import type { Gpu } from './gpu/device';
 import {
   ACT, addRmsnorm, attention, attentionMasked, attnres, condRows, elementwise, EW, gdn, gemm, matvec, matvecGlu, moe,
-  probeAccumulate, probeReadout, ropeKv, steerAdd, type ProbeOpts, type Weight,
+  moeLora, probeAccumulate, probeReadout, ropeKv, steerAdd, type ProbeOpts,
 } from './gpu/ops';
 import { Builder, type Program } from './gpu/program';
 import { ropeTable } from './gpu/rope';
@@ -114,6 +116,22 @@ function checkMeta(meta: Record<string, unknown>): ModelHp {
   return hp;
 }
 
+/** The speech-edit adapter (model directory edit/) over the release backbone `w`: its meta must name `w`
+ *  (adapter.base) and its vocabulary must grow the release one by the rows edit/ holds. Returns the edit hp. */
+function checkEdit(w: Model, e: Model, base: ModelHp): ModelHp {
+  const hp = checkMeta(e.meta);
+  const ax = hp.audioVocab - base.audioVocab;
+  const rank = e.meta['adapter.rank'];
+  if (e.meta['adapter.base'] !== w.meta['general.name'] || hp.spanEndId === null || ax < 1 || hp.textExtraTokens < 1 ||
+      hp.textVocab !== base.textVocab || hp.audioPad !== base.audioPad || typeof rank !== 'number' ||
+      e.get('embd_extra').shape[1] !== NCB * ax + hp.textExtraTokens || e.get('output_extra').shape[1] !== NCB * ax)
+    throw new Error('backbone: the speech-edit adapter does not fit this backbone; re-export with pnpm export');
+  return hp;
+}
+
+/** Largest adapter rank of a linear (lora_up's kernel stages t in 256 floats). */
+const LORA_MAX_K = 256;
+
 /** Per-step alignment probe (slot 0 decode): readout heads (weight 1) and ACI windows (unclipped text indices). */
 export interface ProbeInput {
   textStart: number; textLen: number;
@@ -123,9 +141,12 @@ export interface ProbeInput {
 
 export class Backbone {
   readonly steerSources: number[];
-  /** The model's hyperparameters; its vocabulary sizes the logits (logitsLen = hp.audioVocab * NCB per row). */
+  /** The model's hyperparameters; its vocabulary sizes the logits (logitsLen = hp.audioVocab * NCB per row). With the
+   *  speech-edit adapter, the edit vocabulary's. */
   readonly hp: ModelHp;
   readonly logitsLen: number;
+  /** The release vocabulary of the weights (the edit adapter's grown rows follow it). */
+  private baseHp: ModelHp;
   private rope: GPUBuffer;
   private slots: [SlotGpuState, SlotGpuState];
   private ids: GPUBuffer;
@@ -145,8 +166,11 @@ export class Backbone {
   private chunkLogits: [GPUBuffer, GPUBuffer];
   nPast: [number, number] = [0, 0];
 
-  constructor(private gpu: Gpu, private w: Model, steerSources: number[]) {
-    this.hp = checkMeta(w.meta);
+  /** `edit`: the speech-edit adapter (model directory edit/, loadEdit) run on top of `w`; null = the release LM, whose
+   *  programs carry no adapter work at all. */
+  constructor(private gpu: Gpu, private w: Model, steerSources: number[], private edit: Model | null = null) {
+    this.baseHp = checkMeta(w.meta);
+    this.hp = edit ? checkEdit(w, edit, this.baseHp) : this.baseHp;
     this.logitsLen = this.hp.audioVocab * NCB;
     for (let i = 0; i < steerSources.length; i++) {
       const s = steerSources[i];
@@ -204,7 +228,7 @@ export class Backbone {
    * conditioning rows of condBuf. Returns the logits buffer [logitsLen] (last row only).
    */
   private record(b: Builder, n: number, decode: boolean, ids: GPUBuffer, caps: Capture[] | null, slot: 0 | 1): GPUBuffer {
-    const w = this.w;
+    const w = this.w, ed = this.edit;
     const T = (name: string) => w.get(name).buf;
     const dyn = this.dyn[slot];
     const st = this.slots[slot];
@@ -215,9 +239,28 @@ export class Backbone {
       b.copy(buf, off * 4, c, 0, floats * 4);
       caps.push({ name, buf: c, off: 0, floats });
     };
+    // The speech-edit adapter's rank-K side path of an adapted linear: y += up . (down . x). Decode fuses both halves
+    // (lora_vec); prefill runs down . x as a gemm into lt, then lora_up.
+    const lt = ed ? b.buf(n * LORA_MAX_K * 4, 'loraT') : null;
+    const adapted = (base: string) => ed !== null && ed.has(base + '.lora_down');
+    const lora = (x: GPUBuffer, base: string, y: GPUBuffer, O: number, I: number, y_off: number) => {
+      const down = ed!.get(base + '.lora_down'), up = ed!.get(base + '.lora_up');
+      const K = down.shape[1];
+      if (down.shape[0] !== I || up.shape[0] !== K || up.shape[1] !== O || K < 8 || K > LORA_MAX_K || (K & (K - 1)) ||
+          I > 2048)
+        throw new Error(`backbone: adapter factors of ${base} do not fit [${O}, ${I}]`);
+      if (decode) {
+        b.dispatch('lora_vec', { x, D: down.buf, U: up.buf, y }, { O, I, K, y_off }, [Math.ceil(O / 256), 1, 1]);
+        return;
+      }
+      gemm(b, x, down, lt!, { T: n, O: K, IC: I });
+      b.dispatch('lora_up', { t: lt, U: up.buf, Y: y }, { O, K, y_off }, [Math.ceil(O / 256), n, 1]);
+    };
     const lin = (x: GPUBuffer, W: string, y: GPUBuffer, O: number, I: number, y_off = 0) => {
       if (decode) matvec(b, x, w.get(W), y, { O, I, y_off });
       else gemm(b, x, w.get(W), y, { T: n, O, IC: I, y_off });
+      const base = W.slice(0, -'.weight'.length);
+      if (adapted(base)) lora(x, base, y, O, I, y_off);
     };
     const src = (s: number) => s * n * D;   // bank float offset of source s
     // Hidden-space steering: the delta joins source s as it enters the bank (zonos3-graph.cpp:610-615).
@@ -228,7 +271,12 @@ export class Backbone {
     const po: ProbeOpts = { nl: PROBE_LAYERS.length, nh: NH, nkv: NKV, hd: HD, ring: CAP, scale: ATTN_SCALE, lmax: PROBE_LMAX };
 
     const emb = b.buf(n * D * 4, 'emb');
-    b.dispatch('embed', { ids, E: T('embd_all'), outp: emb }, { n, V: this.hp.audioVocab }, [2, n, 1]);
+    if (ed) {
+      b.dispatch('embed_edit', { ids, E: T('embd_all'), X: ed.get('embd_extra').buf, outp: emb },
+        { n, V: this.baseHp.audioVocab, AX: this.hp.audioVocab - this.baseHp.audioVocab, TV: this.baseHp.textVocab + 1 }, [2, n, 1]);
+    } else {
+      b.dispatch('embed', { ids, E: T('embd_all'), outp: emb }, { n, V: this.hp.audioVocab }, [2, n, 1]);
+    }
     cap('emb_sum', emb, n * D);
     if (!decode) {
       condRows(b, emb, this.condBuf, [T('cond_embd.0.weight'), T('cond_embd.1.weight'), T('cond_embd.2.weight')], n, dyn);
@@ -249,12 +297,17 @@ export class Backbone {
       decay: b.buf(n * GDN_H * 4, 'gdnDecay'), beta: b.buf(n * GDN_H * 4, 'gdnBeta'), o: b.buf(n * GDN_I * 4, 'gdnO'),
     };
     const gated = b.buf(n * GDN_I * 4, 'gdnGated');
-    const ffA = decode ? null : b.buf(n * N_FF * 4, 'ffA');
-    const ffG = decode ? null : b.buf(n * N_FF * 4, 'ffG');
+    // Dense layer-0 FFN: decode fuses up/gate (matvec_glu) except under the speech-edit adapter (it shifts both).
+    const ffnSplit = !decode || ed !== null;
+    const ffA = ffnSplit ? b.buf(n * N_FF * 4, 'ffA') : null;
+    const ffG = ffnSplit ? b.buf(n * N_FF * 4, 'ffG') : null;
     const ffH = b.buf(n * N_FF * 4, 'ffH');
     const rn = b.buf(n * D * 4, 'routerIn');
     const lg = b.buf(n * N_EXPERT * 4, 'routerLogits');
-    const ms = { sel: b.buf(n * TOPK * 4, 'sel'), wts: b.buf(n * TOPK * 4, 'wts'), hbuf: b.buf(n * TOPK * N_EXP_FF * 4, 'hbuf') };
+    // With the adapter, hbuf also holds the routed experts' gate/up down-projections (ops.ts moeLora).
+    const ms = { sel: b.buf(n * TOPK * 4, 'sel'), wts: b.buf(n * TOPK * 4, 'wts'),
+      hbuf: b.buf(n * TOPK * (N_EXP_FF + (ed ? 32 : 0)) * 4, 'hbuf') };
+    const td = ed ? b.buf(n * TOPK * 16 * 4, 'moeLoraDown') : null;
     const z = b.buf(n * N_LATENT * 4, 'z');
     const moeLat = b.buf(n * N_LATENT * 4, 'moeLat');
 
@@ -302,11 +355,11 @@ export class Backbone {
       attnres(b, bank, aq, T(p + 'ffn_norm.weight'), cur, { D, n, ns: 2 * L + 2, qi: 2 * L + 1, rows: n, eps: RMS_EPS });
       cap(`ffn_in_${L}`, cur, n * D);
       if (!w.has(p + 'router.weight')) {
-        if (decode) {
+        if (!ffnSplit) {
           matvecGlu(b, cur, T(p + 'ffn_up.weight'), T(p + 'ffn_gate.weight'), ffH, N_FF, D);
         } else {
-          gemm(b, cur, w.get(p + 'ffn_up.weight'), ffA!, { T: n, O: N_FF, IC: D });
-          gemm(b, cur, w.get(p + 'ffn_gate.weight'), ffG!, { T: n, O: N_FF, IC: D });
+          lin(cur, p + 'ffn_up.weight', ffA!, N_FF, D);
+          lin(cur, p + 'ffn_gate.weight', ffG!, N_FF, D);
           elementwise(b, EW.siluMul, n * N_FF, ffA!, ffH, {}, ffG!);
         }
         lin(ffH, p + 'ffn_down.weight', bank, D, N_FF, src(2 * L + 2));
@@ -315,8 +368,19 @@ export class Backbone {
         lin(rn, p + 'router.weight', lg, N_EXPERT, D);
         cap(`router_logits_${L}`, lg, n * N_EXPERT);
         lin(cur, p + 'ffn_latent_down.weight', z, N_LATENT, D);
-        experts(b, lg, T(p + 'router_bias'), z, w.get(p + 'ffn_up_exps.weight'), w.get(p + 'ffn_gate_exps.weight'),
-          w.get(p + 'ffn_down_exps.weight'), moeLat, n, ms);
+        // The adapter's router shift replaces the balancing bias (edit/ stores bias + shift).
+        const rbias = ed?.has(p + 'router_bias') ? ed.get(p + 'router_bias').buf : T(p + 'router_bias');
+        const up = w.get(p + 'ffn_up_exps.weight'), gate = w.get(p + 'ffn_gate_exps.weight'), down = w.get(p + 'ffn_down_exps.weight');
+        if (adapted(p + 'ffn_gate_up_exps') && adapted(p + 'ffn_down_exps')) {
+          moeLora(b, lg, rbias, z, up, gate, down, moeLat, n, { ...ms, td: td! }, {
+            gateUpDown: ed!.get(p + 'ffn_gate_up_exps.lora_down'), gateUpUp: ed!.get(p + 'ffn_gate_up_exps.lora_up'),
+            downDown: ed!.get(p + 'ffn_down_exps.lora_down'), downUp: ed!.get(p + 'ffn_down_exps.lora_up'),
+          });
+        } else if (adapted(p + 'ffn_gate_up_exps') || adapted(p + 'ffn_down_exps')) {
+          throw new Error(`backbone: the speech-edit adapter must shape every expert stack of layer ${L}`);
+        } else {
+          moe(b, lg, rbias, z, up, gate, down, moeLat, n, ms);
+        }
         lin(moeLat, p + 'ffn_latent_up.weight', bank, D, N_LATENT, src(2 * L + 2));
       }
       steer(2 * L + 2);
@@ -326,7 +390,22 @@ export class Backbone {
     const hLast = b.buf(D * 4, 'hLast');
     attnres(b, bank, aq, T('output_norm.weight'), hLast, { D, n, ns: N_SRC, qi: 2 * N_LAYER, rows: 1, row0: n - 1, eps: RMS_EPS });
     const logits = b.buf(this.logitsLen * 4, 'logits');
-    matvec(b, hLast, w.get('output.weight'), logits, { O: this.logitsLen, I: D, act: ACT.softcap, cap: SOFTCAP });
+    if (!ed) {
+      matvec(b, hLast, w.get('output.weight'), logits, { O: this.logitsLen, I: D, act: ACT.softcap, cap: SOFTCAP });
+      return logits;
+    }
+    // Edit vocabulary: the release head, the grown rows (output_extra) and the head adapter, softcapped together.
+    const V = this.baseHp.audioVocab, AX = this.hp.audioVocab - V;
+    const headBase = b.buf(V * NCB * 4, 'headBase'), headExtra = b.buf(AX * NCB * 4, 'headExtra');
+    matvec(b, hLast, w.get('output.weight'), headBase, { O: V * NCB, I: D });
+    matvec(b, hLast, ed.get('output_extra'), headExtra, { O: AX * NCB, I: D });
+    const down = ed.get('output.lora_down'), up = ed.get('output.lora_up');
+    const K = down.shape[1];
+    if (down.shape[0] !== D || up.shape[0] !== K || up.shape[1] !== this.logitsLen || K % 8 || K > LORA_MAX_K)
+      throw new Error('backbone: the head adapter does not fit the edit vocabulary');
+    matvec(b, hLast, down, lt!, { O: K, I: D });
+    b.dispatch('edit_logits', { base: headBase, extra: headExtra, t: lt, U: up.buf, outp: logits },
+      { n: this.logitsLen, V, AX, K, cap: SOFTCAP }, [Math.ceil(this.logitsLen / 256), 1, 1]);
     return logits;
   }
 
@@ -500,24 +579,10 @@ export class Backbone {
     this.nPast[1]++;
     return { logits: out[0], twinLogits: out[1], probe: textLen ? out[2] : null };
   }
-}
 
-/** The backbone in model directory `name`: 'backbone' (release LM) or 'edit' (speech-edit LM, adapter merged). */
-export async function loadBackbone(gpu: Gpu, base: string, name: 'backbone' | 'edit',
-                                   opts: { steerSources?: number[]; onProgress?: Progress; cache?: boolean } = {}): Promise<Backbone> {
-  return new Backbone(gpu, await loadModel(gpu, base, name, opts.onProgress, opts.cache ?? true), opts.steerSources ?? []);
-}
-
-/** Top-2 latent MoE experts: q4 stacks (the release export) run ops.ts moe; q8 stacks (the merged speech-edit export,
- *  scripts/export_web_models.py) run the q8 variants of moe_up / moe_down over the same routing. */
-function experts(b: Builder, lg: GPUBuffer, rbias: GPUBuffer, z: GPUBuffer, up: Weight, gate: Weight, down: Weight,
-                 out: GPUBuffer, n: number, scratch: { sel: GPUBuffer; wts: GPUBuffer; hbuf: GPUBuffer }): void {
-  if (up.dtype !== 'q8' || gate.dtype !== 'q8' || down.dtype !== 'q8') {
-    moe(b, lg, rbias, z, up, gate, down, out, n, scratch);
-    return;
+  /** The speech-edit LM on this backbone's GPU weights: `edit` = the speech-edit adapter (model directory edit/: the
+   *  grown vocabulary rows and the adapter factors). Its own slots and programs; no second copy of the weights. */
+  withEdit(edit: Model): Backbone {
+    return new Backbone(this.gpu, this.w, this.steerSources, edit);
   }
-  const { sel, wts, hbuf } = scratch;
-  b.dispatch('moe_topk', { lg, rbias, sel, wts }, {}, [n, 1, 1]);
-  b.dispatch('moe_up_q8', { x: z, sel, gq: gate.buf, gs: gate.scales, uq: up.buf, us: up.scales, hbuf }, {}, [48, 2, n]);
-  b.dispatch('moe_down_q8', { hbuf, sel, wts, dq: down.buf, ds: down.scales, outp: out }, {}, [32, 1, n]);
 }

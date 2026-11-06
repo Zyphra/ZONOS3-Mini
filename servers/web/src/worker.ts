@@ -5,7 +5,7 @@ import type { Engine, DefaultVoice, EditModels } from './api/engine';
 import { loadEmbeddingVector } from './api/speakers';
 import { Api } from './api/router';
 import { Aligner } from './aligner';
-import { Backbone, loadBackbone } from './backbone';
+import { Backbone } from './backbone';
 import { BLOCK_FRAMES, ZacStream } from './zac';
 import { RefEncoder } from './encoder';
 import { parseGguf } from './gguf';
@@ -76,9 +76,10 @@ async function manifestMeta(base: string, name: string): Promise<Record<string, 
   return man.meta;
 }
 
-/** Speech editing when the export has the speech-edit backbone (`edit`) and FuseAlign (`aligner`): each loads on the
- *  first request that needs it (its download reported like the encoders'). */
-async function editModels(gpu: Gpu, base: string, cache: boolean, steerSources: number[],
+/** Speech editing when the export has the speech-edit adapter (`edit`) and FuseAlign (`aligner`): each loads on the
+ *  first request that needs it (its download reported like the encoders'). The speech-edit LM runs the adapter on the
+ *  release backbone's GPU weights (Backbone.withEdit). */
+async function editModels(gpu: Gpu, base: string, cache: boolean, release: Backbone,
                           progress: (p: LoadProgress) => void): Promise<EditModels | null> {
   const [editMeta, alignerMeta] = await Promise.all([manifestMeta(base, 'edit'), manifestMeta(base, 'aligner')]);
   if (!editMeta || !alignerMeta) return null;
@@ -90,7 +91,8 @@ async function editModels(gpu: Gpu, base: string, cache: boolean, steerSources: 
     hp,
     backbone() {
       return bb ??= batchProgress(base, ['edit'], progress)
-        .then(p => loadBackbone(gpu, base, 'edit', { steerSources, onProgress: p, cache }))
+        .then(p => loadModel(gpu, base, 'edit', p, cache))
+        .then(edit => release.withEdit(edit))
         .catch((e: unknown) => { bb = null; throw e; });
     },
     async align(pcm16k, tokens) {
@@ -138,7 +140,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   const zac = await ZacStream.create(gpu, zacw, p => new RemoteSpecSink(codecPort, p));
   const tokenizer = createTokenizer();
   await warmup(backbone, zac, hp);
-  const edit = await editModels(gpu, base, cache, steerSources, progress);
+  const edit = await editModels(gpu, base, cache, backbone, progress);
 
   let spk: Promise<SpeakerEncoder> | null = null;
   let ref: Promise<RefEncoder> | null = null;

@@ -45,10 +45,10 @@ function asrUnavailable(fix: string): never {
   fail(503, ASR_UNAVAILABLE + fix);
 }
 
-/** EditRuntime.require_editing: the export's speech-edit backbone and aligner. */
+/** EditRuntime.require_editing: the export's speech-edit adapter and aligner. */
 function requireEditing(e: Engine): EditModels {
   if (!e.edit || editMaxSpans(e) <= 0)
-    fail(503, 'Speech editing is not available on this server: the model export has no speech-edit backbone (edit) ' +
+    fail(503, 'Speech editing is not available on this server: the model export has no speech-edit adapter (edit) ' +
       'or FuseAlign aligner (aligner).');
   return e.edit;
 }
