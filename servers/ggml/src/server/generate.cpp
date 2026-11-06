@@ -291,7 +291,7 @@ void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
     gr.follow_tokens.assign(tokens.begin(), tokens.end());
 }
 
-// sgl _resolve_stream_decode for a streaming response.
+// zonos3.server.speech.resolve_stream_decode for a streaming response.
 bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
     if (!streaming) return false;
     if (!set(body, "stream_decode")) return s.stream_decode_default == "prefix";

@@ -209,8 +209,11 @@ uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0
 The ggml parity tests compare the C++ build with the reference:
 `uv run --package zonos3-tools pytest servers/ggml/tests/parity --ggml-build servers/ggml/build`. On Apple Silicon,
 `uv run --package zonos3-mlx pytest servers/mlx/tests` runs the MLX server's tests (they skip elsewhere).
-`pnpm --dir servers/web test` runs the in-browser server's unit tests, and `pnpm --dir servers/web parity` its WebGPU
-parity checks against CPU ggml goldens in headless Chrome.
+`pnpm install` at the root installs the pnpm workspace (`studio`, `studio/mcp`, `servers/web`; one `pnpm-lock.yaml`);
+every `typecheck`, `build` and `test` script regenerates the untracked `src/api/schema.ts` from `api/openapi.json`
+first (`gen:api`). `pnpm --dir servers/web test` runs the in-browser server's unit tests, `pnpm --dir studio/mcp test`
+the MCP server's, and `pnpm --dir servers/web parity` the WebGPU parity checks against CPU ggml goldens in headless
+Chrome.
 
 ## License
 

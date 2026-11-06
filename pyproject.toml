@@ -26,7 +26,7 @@ dev = [
     "ruff>=0.11.0",
     "matplotlib>=3.10.5",
 ]
-# Opt-in: espeak-ng guesses pronunciations the gold lexicon lacks (/tts/phonemize).
+# Opt-in: espeak-ng guesses pronunciations the gold lexicon lacks (/v2/phonemize).
 # espeak-ng is GPL-3.0, so it stays out of the default install.
 phonemize = [
     "espeakng-loader>=0.2.4",

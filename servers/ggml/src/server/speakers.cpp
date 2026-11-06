@@ -96,7 +96,7 @@ static bool is_audio_ext(const std::string & ext) {
     return std::find(exts.begin(), exts.end(), lower_ascii(ext)) != exts.end();
 }
 
-// sgl _default_voice_source_type: audio files and .npy/.npz embeddings; an audio voice's .codes.npy and
+// zonos3.server.voices.voice_source_type: audio files and .npy/.npz embeddings; an audio voice's .codes.npy and
 // .embedding.npy sidecars are no voice.
 static const char * default_source_type(const fs::path & p) {
     const std::string name = lower_ascii(p.filename().string());
@@ -248,7 +248,7 @@ bool parse_npz(const std::vector<uint8_t> & z, std::vector<std::pair<std::string
 
 } // namespace
 
-// sgl _load_embedding_vector: a .npy, or a .npz with an `emb` array (or exactly one array); squeezed; (D,) or (N, D)
+// zonos3.reference.synth.load_embedding_vector: a .npy, or a .npz with an `emb` array (or exactly one array); squeezed; (D,) or (N, D)
 // averaged over rows; dimension checked. Throws HttpError 400.
 static std::vector<float> load_embedding_vector(const std::vector<uint8_t> & bytes, int expected_dim,
                                                 const std::optional<std::string> & file_name) {
@@ -546,7 +546,7 @@ static std::vector<int32_t> voice_codes(ServerState & s, const std::optional<std
     return v.codes;
 }
 
-// sgl _slerp_embeddings (float32).
+// zonos3.reference.synth.slerp (float32), as the Python servers blend.
 static std::vector<float> slerp(const std::vector<float> & v0, const std::vector<float> & v1, double t) {
     if (v0.size() != v1.size())
         fail(400, "Cannot blend speaker embeddings with different shapes (" + std::to_string(v0.size()) + ",) and (" +
@@ -663,7 +663,7 @@ ResolvedSpeaker resolve_request_speaker(ServerState & s, const json & req, const
 
 // ------------------------------------------------------------------------------------------------ routes
 
-// sgl _default_speaker_label: the explicit label, else the file name's stem, else the fallback.
+// zonos3.server.voices.speaker_label: the explicit label, else the file name's stem, else the fallback.
 static std::string upload_label(const std::optional<std::string> & label, const std::optional<std::string> & file_name,
                                 const char * fallback) {
     if (label && !strip(*label).empty()) return strip(*label);

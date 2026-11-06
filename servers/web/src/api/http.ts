@@ -45,7 +45,7 @@ export function sendBytes(sink: Sink, data: Uint8Array, contentType: string, hea
   sink.end();
 }
 
-/** X-TTS-Session-ID, stripped; null when absent or blank (sgl _normalize_session_id). */
+/** X-TTS-Session-ID, stripped; null when absent or blank (zonos3.server.voices.normalize_session_id). */
 export function sessionId(req: EngineRequest): string | null {
   const v = req.headers['x-tts-session-id']?.trim();
   return v ? v : null;

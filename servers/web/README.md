@@ -54,7 +54,8 @@ what one storage binding of the device holds (60 s on Apple Silicon); an edit's 
 ## Tests
 
 ```bash
-pnpm --dir servers/web test            # unit tests (Node): tokenizer, sampler, prompt, iSTFT, companions, LACI, API router and edit routes, request rules (model/tests/fixtures/request_errors.json), the speech-edit logic against tests/edit/goldens.json
+pnpm install                           # at the repo root, once: the pnpm workspace
+pnpm --dir servers/web test            # gen:api (src/api/schema.ts, untracked), then the unit tests (Node): tokenizer, sampler, prompt, iSTFT, companions, LACI, API router and edit routes, request rules (model/tests/fixtures/request_errors.json), the speech-edit logic against tests/edit/goldens.json
 .venv/bin/python servers/web/tests/edit/make_goldens.py   # regenerate tests/edit/goldens.json from the Python edit logic
 pnpm --dir servers/web goldens         # CPU ggml goldens (needs a CPU ggml build at $GGML_BUILD, default /tmp/ggml-build)
 pnpm --dir servers/web parity          # WebGPU parity vs the goldens in headless Chrome

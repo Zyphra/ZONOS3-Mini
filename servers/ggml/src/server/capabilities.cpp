@@ -47,7 +47,7 @@ static json condition_tokens(const ServerState & s) {
     return {{"enabled", true}, {"names", hp.cond_names}, {"flags", json::object()}, {"count", (int) hp.n_cond}, {"bucket_counts", counts}, {"unknown_ids", counts}, {"edges", edges}, {"units", units}, {"layout", layout + " BOS text EOS"}};
 }
 
-// sgl _silence_prefill_spec (the matched dual codec has codec-matched silence frames).
+// zonos3.server.capabilities.silence_prefill_spec (the matched dual codec has codec-matched silence frames).
 static json silence_prefill(const ServerState & s) {
     const int hop = zac_samples_per_frame(s.zac);
     const double rate = zonos3_generation().sample_rate;
@@ -57,7 +57,7 @@ static json silence_prefill(const ServerState & s) {
                                                                                                                                                                                                                                            "turns it off and silence_prefill_frames=N sets the length"}};
 }
 
-// sgl _decoder_capability: the iSTFT head decoder (zac.gguf) behind the matched codec.
+// zonos3.server.capabilities.decoder_capability: the iSTFT head decoder (zac.gguf) behind the matched codec.
 static json decoder(const ServerState & s, const std::string & zac_name) {
     return {{"kind", "istft_mr"}, {"label", "Multi-resolution iSTFT head (" + zac_name + "); causal"}, {"checkpoint", zac_name}, {"expect_step", nullptr}, {"headroom_db", (double) s.zac.headroom_db}, {"causal", true}, {"codec", AUDIO_CODEC}};
 }

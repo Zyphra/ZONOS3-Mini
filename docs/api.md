@@ -68,7 +68,7 @@ CORS allows every origin and exposes the response headers above.
 | `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `de`, `es`, `it`, `pt_br`, `ja`, `cmn`, `ko` (the `server` rows of `model/src/zonos3/registries/languages.json`) |
 | `text_normalization` | `true` | Verbalize numbers, dates and currency first |
 | `stream` | `true` | Chunked PCM; `stream_decode` (`prefix` / `whole`, null = server default) picks the decode |
-| `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV, needs `stream: false` |
+| `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV (samples NaN → 0, clipped to [-1, 1], × 32767, rounded half to even; the same encoder in every server), needs `stream: false` |
 | `seed` | `null` | 0..4294967295; echoed in `X-Seed` |
 | `temperature`, `topk`, `top_p`, `min_p` | `0.75`, `80`, `0.69`, `0` | Sampling (the defaults of `model/src/zonos3/registries/generation.json`) |
 | `repetition_window`, `repetition_penalty`, `repetition_codebooks` | `96`, `2.4`, `6` | Per-codebook repetition penalty |

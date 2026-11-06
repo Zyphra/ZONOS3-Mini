@@ -62,7 +62,7 @@ is in `src/styles/mobile.css` (`@media (max-width: 760px)`, loaded after `styles
 ## Develop and build
 
 ```bash
-pnpm --dir studio install
+pnpm install                 # at the repo root: the pnpm workspace (studio, studio/mcp, servers/web)
 echo "ZONOS_SERVER=https://<server>" > studio/.env.local   # or export ZONOS_SERVER; /v1 and /v2 are proxied there
 pnpm --dir studio dev         # http://localhost:5173/ (the chooser), /studio, /lite
 pnpm --dir studio typecheck   # gen:api, then tsc
@@ -77,13 +77,13 @@ phones included. Every server maps `/<page>` to
 static assets do the same).
 
 `studio/dist/` is committed so a checkout serves the studio without Node: every server serves it (pages uncached,
-hashed assets immutable; `--studio-dir` points elsewhere). The API contract is `../api/openapi.json`:
-`pnpm gen:api` (run by `build` and `typecheck`) regenerates `src/api/schema.ts` from it (committed with the spec), and
+hashed assets immutable, other files revalidated; `--studio-dir` points elsewhere). The API contract is `../api/openapi.json`:
+`pnpm gen:api` (run by `build`, `typecheck` and `test`) regenerates the untracked `src/api/schema.ts` from it, and
 `src/api.ts` aliases its schemas and sends every JSON call through an `openapi-fetch` client typed by its `paths`;
 the streamed `/v2/generate` and the raw-body / binary routes (`/v2/speakers/{id}/preview`,
 `/v2/media/{sha256}`) stay on `fetch` / XHR. `openapi-typescript`
-drives the TypeScript 5 compiler API, which the native TypeScript 7 the app type-checks with lacks: `.pnpmfile.cjs`
-gives it its own TypeScript 5.
+drives the TypeScript 5 compiler API, which the native TypeScript 7 the app type-checks with lacks: the root
+`.pnpmfile.cjs` gives it its own TypeScript 5.
 
 Backends are detected at startup: **live** (server has `GET /v2/controls`), **fixture** (server answers but
 `/v2/controls` is 404: bundled controls, renders sent without steering fields), **web** (no server answered, but the

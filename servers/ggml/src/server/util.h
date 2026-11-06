@@ -11,8 +11,8 @@
 
 namespace zs {
 
-// Python's base64.b64decode(payload, validate=True) after stripping and an optional "data:...," prefix (sgl
-// _decode_base64_blob). Returns false on an invalid payload.
+// Python's base64.b64decode(payload, validate=True) after stripping and an optional "data:...," prefix
+// (zonos3.reference.synth.decode_base64_blob). Returns false on an invalid payload.
 bool b64_decode_strict(const std::string & in, std::vector<uint8_t> & out);
 std::string b64_encode(const uint8_t * data, size_t n);
 

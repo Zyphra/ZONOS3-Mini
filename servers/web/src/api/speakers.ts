@@ -275,7 +275,7 @@ function randomHex(n: number): string {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('').slice(0, n);
 }
 
-/** sgl _default_speaker_label: the explicit label, else the file name's stem, else the fallback. */
+/** zonos3.server.voices.speaker_label: the explicit label, else the file name's stem, else the fallback. */
 function uploadLabel(label: string | null, fileName: string | null, fallback: string): string {
   if (label && label.trim()) return label.trim();
   if (fileName) {
@@ -305,7 +305,7 @@ function decodedAudio(body: Record<string, unknown>, pcm: Float32Array | undefin
   return pcm;
 }
 
-/** sgl _slerp_embeddings (float32). */
+/** zonos3.reference.synth.slerp (float32). */
 export function slerp(v0: Float32Array, v1: Float32Array, t: number): Float32Array {
   const f = Math.fround;
   if (v0.length !== v1.length)
@@ -425,7 +425,7 @@ function parseNpz(z: Uint8Array): [string, Uint8Array][] | string {
   return out;
 }
 
-/** sgl _load_embedding_vector: .npy, or .npz with `emb` (or exactly one array); squeezed; (D,) or (N, D) averaged. */
+/** zonos3.reference.synth.load_embedding_vector: .npy, or .npz with `emb` (or exactly one array); squeezed; (D,) or (N, D) averaged. */
 export function loadEmbeddingVector(bytes: Uint8Array, expectedDim: number, fileName: string | null): Float32Array {
   const desc = fileName ? fileName : 'Speaker embedding file';
   const invalid = `${desc} must be a valid .npy or .npz file saved without pickle.`;
