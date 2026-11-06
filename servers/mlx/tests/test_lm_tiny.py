@@ -12,7 +12,7 @@ import pytest
 import torch
 from conftest import FIXTURES
 from gguf import GGUFReader
-from zonos3.models.accent_format import FORMAT_EXPERTS, load_adapter
+from zonos3.models.accent_format import FORMAT_EXPERTS, grow_adapter, load_adapter
 from zonos3.reference.accents import AccentState as RefAccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig
 from zonos3_mlx.companions import AccentBank
@@ -201,6 +201,47 @@ def test_accent_adapter(tiny):
     pairs, _ = run_both(ref, mlx, ref_accents=ref_state, mlx_accents=bank.state("beta", strength))
     plain, _ = run_both(ref, mlx)
     assert cosine(pairs[0][0][-1], plain[0][0][-1]) < 0.99999, "the adapter barely moves the logits"
+    for i, (want, got) in enumerate(pairs):
+        for row in range(len(want)):
+            assert cosine(got[row], want[row]) >= 0.9999, f"call {i} row {row}"
+
+
+def test_edit_adapter_backbone_keeps_plain_logits_and_fits_old_head_factors(tiny):
+    """`lm --edit-adapter`: a backbone with the /3 adapter's vocabulary; plain logits on the old ids are the ungrown
+    backbone's, the /3 slot is the bank's edit adapter (not an accent), and an adapter trained before the vocabulary
+    grew still matches the reference on the grown model."""
+    root, ref, mlx = tiny
+    adapters = root / "edit-adapters"
+    adapters.mkdir(exist_ok=True)
+    write_adapter(ref, adapters / "plain.pt", seed=7, rank=2)
+    write_adapter(ref, root / "export.pt", seed=11)
+    g = torch.Generator().manual_seed(4)
+    dim = ref.config.dim
+    rows = {f"multi_embedder.embedders.{i}.weight": torch.randn(1, dim, generator=g) * 0.05 for i in range(10)}
+    rows |= {"multi_embedder.embedders.10.weight": torch.randn(3, dim, generator=g) * 0.05,
+             "multi_output.weight": torch.randn(10, dim, generator=g) * 0.05}
+    rows_before = dict.fromkeys(rows, 4098) | {"multi_embedder.embedders.10.weight": 8197}
+    torch.save(grow_adapter(torch.load(root / "export.pt"), rows_before,
+                            {"span_end_id": 4098, "text_extra_tokens": 3, "rows": rows}), adapters / "edit.pt")
+    accents = root / "edit-accents.gguf"
+    convert_gguf.main(["accents", str(adapters), "-o", str(accents)])
+    grown_gguf = root / "grown.gguf"
+    convert_gguf.main(["lm", str(root / "lm"), "--outtype", "f32", "--silence-frame", str(root / "silence.json"),
+                       "--edit-adapter", str(adapters / "edit.pt"), "-o", str(grown_gguf)])
+    grown = Zonos3MLX.load(grown_gguf)
+    assert grown.config.span_end_id == 4098 and grown.config.text_extra_tokens == 3
+    c = grown.config
+    bank = AccentBank.load(accents, head_rows=c.n_codebooks * c.audio_vocab, n_codebooks=c.n_codebooks)
+    assert bank.edit == "edit" and bank.accent_names == ["plain"]
+
+    plain, _ = run_both(ref, mlx)
+    on_grown, _ = run_both(ref, grown)
+    for (_, want), (_, got) in zip(plain, on_grown):
+        np.testing.assert_array_equal(got[..., :4098], want)
+
+    ref_grown = Zonos3LM.load(root / "lm").grow(load_adapter(adapters / "edit.pt").grown)
+    ref_state = RefAccentState.for_model(ref_grown, load_adapter(adapters / "plain.pt"), 0.8)
+    pairs, _ = run_both(ref_grown, grown, ref_accents=ref_state, mlx_accents=bank.state("plain", 0.8))
     for i, (want, got) in enumerate(pairs):
         for row in range(len(want)):
             assert cosine(got[row], want[row]) >= 0.9999, f"call {i} row {row}"

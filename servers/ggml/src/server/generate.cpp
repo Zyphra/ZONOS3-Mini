@@ -540,7 +540,7 @@ int fit_frame_budget(const ServerState & s, int64_t prompt_rows, int budget) {
 }
 
 std::vector<std::string> server_accents(const ServerState & s) {
-    return s.accent_adapters ? s.accent_adapters->names : std::vector<std::string>{};
+    return s.accent_adapters ? zonos3_accent_names(*s.accent_adapters) : std::vector<std::string>{};
 }
 
 bool load_accent_adapters(ServerState & s, std::string & err) {

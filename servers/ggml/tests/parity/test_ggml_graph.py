@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO / "tools"))
 
 import convert_gguf  # noqa: E402
 from gguf import GGUFReader  # noqa: E402
-from zonos3.models.accent_format import FORMAT_EXPERTS, load_adapter  # noqa: E402
+from zonos3.models.accent_format import FORMAT_EXPERTS, grow_adapter, load_adapter  # noqa: E402
 from zonos3.reference.accents import AccentState  # noqa: E402
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig  # noqa: E402
 
@@ -111,7 +111,8 @@ def run_cli(ggml_build: Path, gguf: Path, work: Path, *flags: str, max_frames: i
     cmd = [str(ggml_build / "zonos3-cli"), str(gguf), "--cpu", "--generate", str(prompt), str(work / "codes.npy"),
            "--greedy", "--max", str(max_frames), "--dump-ids", str(work / "ids.npy"),
            "--dump-logits", str(work / "logits.npy"), *flags]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    done = subprocess.run(cmd, capture_output=True, text=True)
+    assert done.returncode == 0, f"{' '.join(cmd)}\n{done.stderr[-3000:]}"
     return np.load(work / "ids.npy").astype(np.int64), np.load(work / "logits.npy")
 
 
@@ -206,3 +207,49 @@ def test_accent_logits(tiny, ggml_build, tmp_path):
     assert cosine(ref_logits[0], plain_logits[0]) < 0.99999, "the adapter barely moves the logits"
     for step, (got, want) in enumerate(zip(logits, ref_logits)):
         assert cosine(got, want) >= 0.9999, f"row {step}: cos {cosine(got, want)}"
+
+
+def test_edit_adapter_grows_the_backbone_and_is_no_accent(tiny, ggml_build, tmp_path):
+    """`lm --edit-adapter`: a backbone with the /3 adapter's vocabulary whose plain logits on the old ids are the
+    ungrown backbone's; the /3 slot of accents.gguf loads on it and is refused as an accent name."""
+    lm_dir, gguf, lm = tiny
+    adapters = tmp_path / "adapters"
+    adapters.mkdir()
+    write_adapter(lm, adapters / "plain.pt", seed=7, rank=2)
+    write_adapter(lm, tmp_path / "export.pt", seed=11)
+    g = torch.Generator().manual_seed(4)
+    dim = lm.config.dim
+    rows = {f"multi_embedder.embedders.{i}.weight": torch.randn(1, dim, generator=g) * 0.05 for i in range(10)}
+    rows |= {"multi_embedder.embedders.10.weight": torch.randn(3, dim, generator=g) * 0.05,
+             "multi_output.weight": torch.randn(10, dim, generator=g) * 0.05}
+    rows_before = dict.fromkeys(rows, 4098) | {"multi_embedder.embedders.10.weight": 8197}
+    edit = grow_adapter(torch.load(tmp_path / "export.pt"), rows_before,
+                        {"span_end_id": 4098, "text_extra_tokens": 3, "rows": rows})
+    torch.save(edit, adapters / "edit.pt")
+    accents = tmp_path / "accents.gguf"
+    convert_gguf.main(["accents", str(adapters), "-o", str(accents)])
+    silence = tmp_path / "silence.json"
+    silence.write_text(json.dumps({"codec": CODEC, "frame": [11 * i for i in range(10)]}))
+    grown = tmp_path / "grown.gguf"
+    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(silence),
+                       "--edit-adapter", str(adapters / "edit.pt"), "-o", str(grown)])
+    assert GGUFReader(grown).fields["zonos3.span_end_id"].parts[-1][0] == 4098
+
+    work_plain, work_grown = tmp_path / "plain", tmp_path / "grown"
+    work_plain.mkdir(), work_grown.mkdir()
+    ids, logits = run_cli(ggml_build, gguf, work_plain, max_frames=6)
+    grown_ids, grown_logits = run_cli(ggml_build, grown, work_grown, "--accents", str(accents), "--accent", "plain",
+                                      "--accent-strength", "0", max_frames=6)
+    assert np.array_equal(ids, grown_ids)
+    for got, want in zip(grown_logits, logits):
+        got = got.reshape(10, 4099)[:, :4098]
+        assert np.array_equal(got, want.reshape(10, 4098))
+
+    refused = subprocess.run([str(ggml_build / "zonos3-cli"), str(grown), "--cpu", "--accents", str(accents),
+                              "--accent", "edit", "--generate", str(work_grown / "prompt.npy"),
+                              str(work_grown / "x.npy")], capture_output=True, text=True)
+    assert refused.returncode != 0 and "speech-edit adapter is not an accent" in refused.stderr
+    ungrown = subprocess.run([str(ggml_build / "zonos3-cli"), str(gguf), "--cpu", "--accents", str(accents),
+                              "--accent", "plain", "--generate", str(work_plain / "prompt.npy"),
+                              str(work_plain / "x.npy")], capture_output=True, text=True)
+    assert ungrown.returncode != 0 and "lacks its vocabulary" in ungrown.stderr

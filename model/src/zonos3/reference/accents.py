@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import torch
 
-from zonos3.models.accent_format import AccentAdapter
+from zonos3.models.accent_format import AccentAdapter, fit_head
 
 
 @dataclass(frozen=True)
@@ -22,9 +22,11 @@ class AccentState:
 
     @classmethod
     def for_model(cls, lm, adapter: AccentAdapter, strength: float) -> "AccentState":
-        """The adapter's factors on ``lm``'s device and dtype, checked against its weights."""
+        """The adapter's factors on ``lm``'s device and dtype, checked against its weights (an output-head factor of
+        an adapter trained before the vocabulary grew is fitted to the grown head: accent_format.fit_head)."""
         params = dict(lm.named_parameters())
         device, dtype = lm.device, lm.dtype
+        adapter = fit_head(adapter, params["multi_output.weight"].shape[0])
 
         def weight(module: str) -> torch.Tensor:
             found = params.get(module + ".weight")

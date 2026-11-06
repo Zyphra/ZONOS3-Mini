@@ -47,6 +47,13 @@ int zonos3_accent_index(const zonos3_accents & bank, const std::string & name) {
     return it == bank.names.end() ? -1 : (int) (it - bank.names.begin());
 }
 
+std::vector<std::string> zonos3_accent_names(const zonos3_accents & bank) {
+    std::vector<std::string> out;
+    for (int i = 0; i < bank.n; ++i)
+        if (i != bank.edit) out.push_back(bank.names[i]);
+    return out;
+}
+
 bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_model & model, std::string & err) {
     zonos3_accents_free(bank);
     ggml_context * data = nullptr;
@@ -91,8 +98,18 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
         return fail("names, format and rank must list the same adapters");
     if (std::set<std::string>(bank.names.begin(), bank.names.end()).size() != bank.names.size())
         return fail("duplicate adapter names");
-    for (const auto & f : bank.formats)
-        if (f != "zonos-accent-lora/1" && f != "zonos-accent-lora/2") return fail("unsupported adapter format " + f);
+    for (int i = 0; i < bank.n; ++i) {
+        const std::string & f = bank.formats[i];
+        if (f == "zonos-accent-lora/3") {
+            if (bank.edit >= 0) return fail("more than one zonos-accent-lora/3 (speech-edit) adapter");
+            if (model.hp.span_end_id < 0)
+                return fail("adapter " + bank.names[i] + " is a speech-edit adapter; the backbone lacks its vocabulary "
+                            "(convert it with tools/convert_gguf.py lm --edit-adapter)");
+            bank.edit = i;
+        } else if (f != "zonos-accent-lora/1" && f != "zonos-accent-lora/2") {
+            return fail("unsupported adapter format " + f);
+        }
+    }
 
     // Collect the per-adapter tensors.
     std::map<std::string, std::vector<host_factor>> linear, experts;
@@ -145,8 +162,12 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
             if (!f.down && !f.up) continue;
             if (!f.down || !f.up) return fail(bank.names[a] + ": " + entry.first + " needs lora_down and lora_up");
             const int64_t k = f.down->ne[1];
+            // An adapter trained before the vocabulary grew shifts the old rows of the grown head only (accent_format.
+            // fit_head): its output factor lacks each codebook block's span-end row.
+            const bool head_fit = entry.first == "output" && model.hp.span_end_id >= 0 &&
+                                  f.up->ne[1] == w->ne[1] - (int64_t) model.hp.n_codebooks;
             if (ggml_n_dims(f.down) > 2 || ggml_n_dims(f.up) > 2 || f.down->ne[0] != w->ne[0] || f.up->ne[0] != k ||
-                f.up->ne[1] != w->ne[1] || k <= 0)
+                (f.up->ne[1] != w->ne[1] && !head_fit) || k <= 0)
                 return fail(bank.names[a] + ": " + entry.first + " factors do not match the model weight");
             bank.K = std::max(bank.K, (int) k);
         }
@@ -162,7 +183,7 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
             if (f.down->ne[0] != w->ne[0] || f.down->ne[2] != w->ne[2] || f.up->ne[0] != r || f.up->ne[1] != w->ne[1] ||
                 f.up->ne[2] != w->ne[2] || r <= 0)
                 return fail(bank.names[a] + ": " + entry.first + " factors do not match the model expert stack");
-            if (bank.formats[a] != "zonos-accent-lora/2")
+            if (bank.formats[a] == "zonos-accent-lora/1")
                 return fail(bank.names[a] + ": a zonos-accent-lora/1 adapter shifts expert weights");
             bank.R = std::max(bank.R, (int) r);
         }
@@ -202,8 +223,12 @@ bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_
             const float * d = (const float *) f.down->data, * u = (const float *) f.up->data;
             for (int64_t j = 0; j < k; ++j)
                 memcpy(hd.data() + ((size_t) a * bank.K + j) * in, d + (size_t) j * in, (size_t) in * sizeof(float));
-            for (int64_t o = 0; o < out; ++o)
-                for (int64_t j = 0; j < k; ++j) hu[(size_t) o * NK + (size_t) a * bank.K + j] = u[(size_t) o * k + j];
+            // Factor row o -> model row (an ungrown head factor skips each block's last, span-end, row).
+            const int64_t rows = f.up->ne[1], block = rows == out ? out : rows / (int64_t) model.hp.n_codebooks;
+            for (int64_t o = 0; o < rows; ++o) {
+                const int64_t m = rows == out ? o : o + o / block;
+                for (int64_t j = 0; j < k; ++j) hu[(size_t) m * NK + (size_t) a * bank.K + j] = u[(size_t) o * k + j];
+            }
         }
         bank.linear[entry.first] = {down, up};
         staged.emplace_back(down, std::move(hd));

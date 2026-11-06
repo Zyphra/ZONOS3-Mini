@@ -59,8 +59,10 @@ zonos3.condition.bucket_counts. The silence frame defaults to
 <lm_dir>/../../registries/silence_frame_<audio_codec>.json; pass --silence-frame when the directory sits elsewhere.
 The silence frame (codec-silence prefill), condition edges/units, the tokenizer and the tokenizer spec are embedded
 verbatim. Checkpoints fine-tuned on nonverbal markup (zonos3.tts.markup.trained_on_tags: a config.yaml data source with
-`nonverbal: true`) get `zonos3.tag_cfg_trained = true`; the key is absent otherwise. Tensors are written in LM_NAMES
-order."""
+`nonverbal: true`) get `zonos3.tag_cfg_trained = true`; the key is absent otherwise. --edit-adapter <.pt> grows the
+model to a zonos-accent-lora/3 speech-edit adapter's vocabulary first (zonos3.reference.lm.Zonos3LM.grow: span_end_id,
+the edit marker rows; plain requests never read them): serve it with that adapter in accents.gguf. Tensors are written
+in LM_NAMES order."""
 
 ARCH = "zonos3"
 MODEL_NAME = "bingua2-gdn-fullattnres-sbpe8k-375k-zv3ft-srcmix-cond3-mect-60k-20261015"
@@ -459,6 +461,15 @@ def write_lm_metadata(writer, src: LMSource, outtype):
 
 def cmd_lm(args, parser):
     src = load_lm(args.lm_dir, args.silence_frame)
+    if args.edit_adapter:
+        from zonos3.models.accent_format import load_adapter
+
+        adapter = load_adapter(args.edit_adapter)
+        if adapter.grown is None:
+            parser.error(f"--edit-adapter {args.edit_adapter}: a {adapter.format} adapter carries no vocabulary "
+                         "(zonos-accent-lora/3 needed)")
+        src.model.grow(adapter.grown)
+        src.meta["name"] += f" + {adapter.name} vocabulary"
     qat = src.meta["qat"]
     args.outtype = args.outtype or (MIX_OUTTYPE if qat else "f16")
     if qat and args.outtype != MIX_OUTTYPE:
@@ -1426,7 +1437,7 @@ def cmd_steer(args, parser):
 # ===================================================================================================== accents
 
 ACCENTS_DOC = """Pack the accent adapters of a directory (zonos3.models.accent_format: list_accent_adapters order,
-zonos-accent-lora/1 and /2) into a zonos3_accents GGUF (accents.gguf beside the backbone).
+zonos-accent-lora/1, /2 and /3) into a zonos3_accents GGUF (accents.gguf beside the backbone).
 
   zonos3_accents.names    [str] adapter names; slot s = index in this list
   zonos3_accents.format   [str] adapter format per slot
@@ -1441,7 +1452,10 @@ Expert factors (/2), SonicExperts layout de-interleaved:
   both with lora_down = w13 down [E, r, in]; acc.<s>.blk.<L>.ffn_down_exps.lora_{down,up} = w2 down [E, r, H] /
   up [E, out, r].
   acc.<s>.blk.<L>.router_bias  F32 [E], added to the router's balancing biases.
-Modules an adapter does not shift are absent."""
+Modules an adapter does not shift are absent.
+A zonos-accent-lora/3 adapter (at most one: accent_format.edit_adapter) is the speech-edit adapter: its slot is written
+like a /2 one with format "zonos-accent-lora/3"; the servers run edit fills on it at strength 1 and do not offer it as an
+accent. Its vocabulary rows are not stored here: export the backbone with `lm --edit-adapter <the same .pt>`."""
 
 ACC_ARCH = "zonos3_accents"
 
@@ -1482,9 +1496,10 @@ def accent_tensors(slot: int, adapter):
 
 
 def cmd_accents(args, parser):
-    from zonos3.models.accent_format import list_accent_adapters, load_adapter
+    from zonos3.models.accent_format import edit_adapter, list_accent_adapters, load_adapter
 
     directory = Path(args.directory)
+    edit_adapter(directory)  # at most one speech-edit (/3) adapter
     adapters = [load_adapter(directory / f"{name}.pt") for name in list_accent_adapters(directory)]
     w = GGUFWriter(str(args.out), ACC_ARCH)
     w.add_name(f"zonos3 accent adapters {directory.name}")
@@ -1518,6 +1533,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("lm", LM_DOC, cmd_lm)
     p.add_argument("lm_dir", help="release directory lm/mect_60k, a derived checkpoint, or a QAT-baked directory (bake.json)")
     p.add_argument("--silence-frame", help="silence-frame registry JSON (default <lm_dir>/../../registries/silence_frame_<audio_codec>.json)")
+    p.add_argument("--edit-adapter", help="a zonos-accent-lora/3 speech-edit adapter: the backbone gets its vocabulary "
+                                          "(span_end_id and the grown rows)")
     p.add_argument("-o", "--out", required=True)
     p.add_argument("--outtype", choices=("f32", "f16", "q8_0", MIX_OUTTYPE),
                    help=f"default f16 (plain directory) or {MIX_OUTTYPE} (QAT directory; the only valid type for it). "

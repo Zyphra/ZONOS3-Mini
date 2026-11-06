@@ -1,4 +1,4 @@
-// Accent adapters (accents.gguf, `tools/convert_gguf.py accents`; lingua zonos-accent-lora/1 and /2).
+// Accent adapters (accents.gguf, `tools/convert_gguf.py accents`; lingua zonos-accent-lora/1, /2 and /3).
 //
 // A request served with adapter a at strength s runs `base + s * adapter` (zonos3_sgl/layers/accent.py,
 // zonos3/reference/accents.py): every adapted linear adds s * ((x @ down.T) @ up) to its product, the MoE routers add
@@ -14,6 +14,9 @@
 // blk.L.ffn_up, blk.L.ffn_gate, blk.L.ffn_down, blk.L.ffn_latent_down, blk.L.ffn_latent_up, blk.L.router, output);
 // expert factors acc.<slot>.blk.L.{ffn_gate_exps,ffn_up_exps,ffn_down_exps}.lora_down (numpy [E, r, in]) / .lora_up
 // (numpy [E, out, r]); router shifts acc.<slot>.blk.L.router_bias (numpy [E]).
+// A zonos-accent-lora/3 slot (at most one) is the speech-edit adapter: edit fills run on it at strength 1 and requests
+// cannot name it as an accent; its vocabulary is in the backbone (`convert_gguf.py lm --edit-adapter`), which the
+// loader requires (span_end_id).
 #pragma once
 
 #include "ggml.h"
@@ -31,6 +34,7 @@ struct zonos3_accents {
     int n = 0;                                // adapters
     int K = 0;                                // mask columns per adapter for linears (largest linear rank)
     int R = 0;                                // mask columns per adapter for experts (largest expert rank; 0 = none)
+    int edit = -1;                            // slot of the speech-edit (/3) adapter; -1 = none
     struct factors { ggml_tensor * down = nullptr, * up = nullptr; };
     // Linear base name -> down ne [in, n*K], up ne [n*K, out] (zero columns where an adapter lacks the module).
     std::map<std::string, factors> linear;
@@ -46,3 +50,5 @@ struct zonos3_accents {
 bool zonos3_accents_load(zonos3_accents & bank, const char * path, const zonos3_model & model, std::string & err);
 void zonos3_accents_free(zonos3_accents & bank);
 int zonos3_accent_index(const zonos3_accents & bank, const std::string & name);  // -1 if unknown
+// The names requests may use as accents: every adapter but the speech-edit one.
+std::vector<std::string> zonos3_accent_names(const zonos3_accents & bank);

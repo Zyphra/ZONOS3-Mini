@@ -98,13 +98,21 @@ class _Slot:
 
 
 class AccentBank:
-    """The adapters of a ``zonos3_accents`` GGUF (accents.gguf)."""
+    """The adapters of a ``zonos3_accents`` GGUF (accents.gguf). A ``zonos-accent-lora/3`` slot (at most one) is the
+    speech-edit adapter (``edit``): edit fills run on it at strength 1, and it is not in ``accent_names``."""
 
     def __init__(self, names: list[str], formats: list[str], slots: list[_Slot]):
         self.names, self.formats, self._slots = names, formats, slots
+        edits = [name for name, fmt in zip(names, formats) if fmt == "zonos-accent-lora/3"]
+        if len(edits) > 1:
+            raise ValueError(f"accents.gguf holds more than one speech-edit adapter ({', '.join(edits)})")
+        self.edit = edits[0] if edits else None
+        self.accent_names = [name for name in names if name != self.edit]
 
     @classmethod
-    def load(cls, path: str | Path) -> "AccentBank":
+    def load(cls, path: str | Path, *, head_rows: int | None = None, n_codebooks: int = 0) -> "AccentBank":
+        """``head_rows`` / ``n_codebooks``: the backbone's output head, to fit the head factor of an adapter trained
+        before the vocabulary grew (zonos3.models.accent_format.fit_head: zero rows at each block's span-end row)."""
         f = GGUFFile(path)
         _expect(f, ACC_ARCH)
         names = list(f.meta(f"{ACC_ARCH}.names"))
@@ -129,6 +137,10 @@ class AccentBank:
                 kind = base.rsplit(".", 1)[1].removeprefix("ffn_").removesuffix("_exps")
                 slots[slot].experts.setdefault(layer, {})[kind] = (down, up)
             else:
+                if base == "output" and head_rows is not None and n_codebooks and up.shape[0] == head_rows - n_codebooks:
+                    k = up.shape[1]
+                    blocks = up.reshape(n_codebooks, -1, k)
+                    up = mx.concatenate([blocks, mx.zeros((n_codebooks, 1, k), up.dtype)], axis=1).reshape(head_rows, k)
                 slots[slot].linear[base] = (down, up)
         return cls(names, formats, slots)
 

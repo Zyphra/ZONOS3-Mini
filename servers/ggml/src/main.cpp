@@ -893,8 +893,10 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "accents: %s\n", err.c_str()); zonos3_model_free(model); return 1;
         }
         extras.accent = zonos3_accent_index(accents.bank, accent_name);
-        if (extras.accent < 0) {
-            fprintf(stderr, "error: unknown accent '%s'\n", accent_name.c_str()); zonos3_model_free(model); return 1;
+        if (extras.accent < 0 || extras.accent == accents.bank.edit) {
+            fprintf(stderr, "error: unknown accent '%s'%s\n", accent_name.c_str(),
+                    extras.accent >= 0 ? " (the speech-edit adapter is not an accent)" : "");
+            zonos3_model_free(model); return 1;
         }
         model.accents = &accents.bank;
     }

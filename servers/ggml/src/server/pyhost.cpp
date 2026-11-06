@@ -150,10 +150,17 @@ Generated generate_fill(ServerState & s, const std::string & text, const std::ve
     layout.span_end_id = hp.span_end_id;
     job->prompt.ids = E::edit_prompt_tokens(job->prompt.ids, window_codes, window_spans, window_fills, layout);
     job->prompt.n_rows = (int) (job->prompt.ids.size() / W);
+    // The fill runs on the speech-edit adapter (zonos-accent-lora/3), if loaded, at strength 1.
+    if (s.accent_adapters && s.accent_adapters->edit >= 0) {
+        job->prompt.cond.accent = s.accent_adapters->edit;
+        job->prompt.cond.accent_strength = 1.0f;
+    }
     const int budget = fit_frame_budget(s, job->prompt.n_rows, max_frames);
     job->idf.assign(job->prompt.ids.begin(), job->prompt.ids.end());
     job->n0 = job->prompt.n_rows;
     GenReq & gr = job->gr;
+    gr.accent = job->prompt.cond.accent;
+    gr.accent_strength = job->prompt.cond.accent_strength;
     gr.sp = sp;
     gr.max_frames = budget;
     gr.stream = false;

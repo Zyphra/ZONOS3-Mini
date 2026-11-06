@@ -25,7 +25,7 @@ move only the new rows) into them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import torch
@@ -186,6 +186,21 @@ def load_adapter(path: str | Path) -> AccentAdapter:
         linear[module] = (pair["down"].float(), pair["up"].float().T)
         shapes[module] = tuple(pair["shape"])
     return AccentAdapter(path.stem, fmt, linear, shapes, experts, router_bias, grown)
+
+
+def fit_head(adapter: AccentAdapter, head_rows: int) -> AccentAdapter:
+    """``adapter`` on an output head of ``head_rows`` rows. An adapter trained before the vocabulary grew (one span-end
+    row per codebook block, a ``/3`` adapter's) shifts the head's old rows only: its ``multi_output`` factor gains zero
+    up columns at each block's new row. Any other mismatch is left for the caller's shape check."""
+    shape = adapter.shapes.get("multi_output")
+    if shape is None or shape[0] >= head_rows or shape[0] % (head_rows - shape[0]):
+        return adapter
+    n_codebooks = head_rows - shape[0]
+    down, up = adapter.linear["multi_output"]
+    k = up.shape[0]
+    up = torch.cat((up.view(k, n_codebooks, -1), up.new_zeros(k, n_codebooks, 1)), 2).reshape(k, head_rows)
+    return replace(adapter, linear={**adapter.linear, "multi_output": (down, up)},
+                   shapes={**adapter.shapes, "multi_output": (head_rows, *shape[1:])})
 
 
 def adapter_format(path: str | Path) -> str | None:

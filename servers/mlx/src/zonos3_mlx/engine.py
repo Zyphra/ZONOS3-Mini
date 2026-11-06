@@ -137,8 +137,14 @@ class Engine:
             self.speaker_encoder = SpeakerEncoder.load(paths["spk_encoder"])
         self.steer_bundle: SteeringBundle | None = companions.load_steer(paths["steer"]) if paths.get("steer") else None
         self.steering_sources = () if self.steer_bundle is None else tuple(self.steer_bundle.hidden_sources)
-        self.accents = companions.AccentBank.load(paths["accent_adapters"]) if paths.get("accent_adapters") else None
-        self.accent_names = [] if self.accents is None else list(self.accents.names)
+        self.accents = (companions.AccentBank.load(paths["accent_adapters"],
+                                                   head_rows=lm.config.n_codebooks * lm.config.audio_vocab,
+                                                   n_codebooks=lm.config.n_codebooks)
+                        if paths.get("accent_adapters") else None)
+        self.accent_names = [] if self.accents is None else list(self.accents.accent_names)
+        if self.accents is not None and self.accents.edit is not None and lm.config.span_end_id is None:
+            raise ValueError(f"{paths['accent_adapters']}: {self.accents.edit} is a speech-edit adapter; the backbone "
+                             "lacks its vocabulary (convert it with tools/convert_gguf.py lm --edit-adapter)")
         self.laci_heads = {lang: LaciHeads.load(path) for lang, path in (laci_heads or {}).items()}
         self.laci_paths = dict(laci_heads or {})
         self.laci_languages = frozenset(self.laci_heads)
@@ -267,8 +273,11 @@ def plan_request(engine: Engine, request: Mapping, speaker: Speaker | None, *, l
     HTTP layer resolved (None: none, in the request's speaker mode). ``laci_take``: a LACI take's duration target
     and rate scale (zonos3.server.plugins.LaciTakeRequest);
     ``edit``: a speech-edit region (the edit layout, no silence prefill, stop on span-end; ``hidden_delta`` its
-    steering delta). Raises ValueError for a request the server refuses (HTTP 400)."""
+    steering delta; it runs on the speech-edit adapter at strength 1 when accents.gguf has one). Raises ValueError for
+    a request the server refuses (HTTP 400)."""
     plan = plan_prompt(engine, request, lambda req, mode: Speaker(mode) if speaker is None else speaker,
                        hidden_delta=hidden_delta, edit=edit, duration_target=laci_take is not None)
+    if edit is not None and engine.accents is not None and engine.accents.edit is not None:
+        plan.accent = (engine.accents.edit, 1.0)
     return Plan(**vars(plan), laci_take=laci_take, edit=edit,
                 follow_language=plan.language if plan.follow_tokens is not None else None)

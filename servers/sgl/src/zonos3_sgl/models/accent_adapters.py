@@ -61,6 +61,7 @@ import torch
 from zonos3.models.accent_format import (
     EXPERT_WEIGHTS,
     TARGETS,
+    fit_head,
     list_accent_adapters,
     load_adapter,
     lora_target,
@@ -210,8 +211,11 @@ def attach_accent_adapters(
     biases: dict[str, list[tuple[int, torch.Tensor]]] = {}
     experts: dict[str, dict[int, dict[str, tuple[torch.Tensor, torch.Tensor]]]] = {}
     widths = []
+    head = getattr(model, "multi_output", None)
     for index, name in enumerate(names):
         adapter = load_adapter(Path(directory) / f"{name}.pt")
+        if head is not None:
+            adapter = fit_head(adapter, head.weight.shape[0])
         slot = index + 1
         for router, shift in adapter.router_bias.items():
             biases.setdefault(router, []).append((slot, shift))

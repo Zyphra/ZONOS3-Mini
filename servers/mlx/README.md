@@ -42,7 +42,9 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
   Recordings over 30 s are aligned long-form on Qwen3-ASR transcripts of their speech chunks (never Whisper).
 - **Speech recognition** (speech editing and plugins) is Qwen3-ASR in `.venv-asr` (`bash tools/setup_asr_env.sh`
   once): one worker per server (`ZONOS3_ASR_PYTHON` overrides the interpreter; `ZONOS3_ASR_DEVICE`, default `mps` on
-  macOS). **Speech editing** needs an edit checkpoint, FuseAlign and `.venv-asr`.
+  macOS). **Speech editing** needs an edit backbone, FuseAlign and `.venv-asr`: the release LM converted with
+  `tools/convert_gguf.py lm --edit-adapter <z3m_omni3b_edit_lora.pt>` plus that adapter in `accents.gguf` (edit fills
+  run on it at strength 1; it is not a request `accent`), or an edit checkpoint.
 - **Plugins** (`--plugins NAME...`, `PLUGINS="..."` in `serve.sh`) import `zonos3_<NAME>` from the server's
   interpreter and mount its routes under `/v2/<NAME>/` and `/<NAME>`; they share the server's ASR and FuseAlign
   workers. Dubbing is the `dub` plugin of [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) (its README

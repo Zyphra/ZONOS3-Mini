@@ -210,6 +210,19 @@ def test_accent_lora_v3_grows_the_vocabulary_without_changing_plain_logits(tmp_p
     assert torch.equal(after[..., : CODEBOOK + 2], before)  # old ids: plain requests are untouched
     assert model.grow(adapter.grown) is model  # same vocabulary again: no-op
 
+    # an accent trained before the vocabulary grew shifts the grown head's old rows as it shifted the ungrown head
+    from zonos3.reference.accents import AccentState
+
+    head = base.multi_output.weight
+    accent = {"format": FORMAT_EXPERTS, "exact": {}, "factors": {"multi_output.weight": {
+        "down": torch.randn(2, dim, generator=g), "up": torch.randn(head.shape[0], 2, generator=g),
+        "shape": tuple(head.shape)}}}
+    torch.save(accent, tmp_path / "accent.pt")
+    old = load_adapter(tmp_path / "accent.pt")
+    on_base = base(prompt(), LMCache(), accents=AccentState.for_model(base, old, 0.7), **conditioning()).logits
+    on_grown = model(prompt(), LMCache(), accents=AccentState.for_model(model, old, 0.7), **conditioning()).logits
+    assert torch.equal(on_grown[..., : CODEBOOK + 2], on_base)
+
     text_shift[0, 0] = 1.0  # a shift of a row the base already had would change plain requests
     with pytest.raises(ValueError, match="rows the base had"):
         grow_adapter(export, rows_before, {"span_end_id": span_end, "text_extra_tokens": 3, "rows": init})
