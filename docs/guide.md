@@ -40,17 +40,19 @@ identical codes.
 
 ## Speech editing
 
-Edit checkpoints (speech-editing fine-tunes of `lm/mect_60k`; not released, served
-with `SERVE_MODEL=<edit checkpoint>`; an edit checkpoint with phoneme tokens also
-reads pronunciation input, see "Pronunciation input") add three text marker rows
-(`text_extra_tokens: 3`) and a span-end audio token (`span_end_id` =
-`audio_pad_id + 1` = 4098: one more embedding and head row per codebook). The
-runtime loads them as they are. Every request has an end token: utterances
-(`end_token="utterance"`, all of `/v2/generate`) stop on EOA and never sample
-span-end; edit fills (`"span"`) stop on span-end and never sample EOA. An
-utterance is drawn over codes, EOA and pad only, so the same seed gives the same
-audio as a copy of the checkpoint without the span-end row. Stop boundaries count
-host-processed frames, not submitted GPU work.
+Speech editing runs on the release LM with the speech-edit LoRA
+(`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt`),
+an accent adapter in the `zonos-accent-lora/3` format (see [Accent adapters](#accent-adapters)): it
+carries the vocabulary it was trained with, three text marker rows (`text_extra_tokens: 3`) and a
+span-end audio token (`span_end_id` = `audio_pad_id + 1` = 4098: one more embedding and head row per
+codebook). Loading it grows the served model by those rows; every edit fill runs on the adapter at
+strength 1 and every other request on the release LM. Edit checkpoints (fine-tunes that already have
+the rows; one with phoneme tokens also reads pronunciation input, see "Pronunciation input") are
+served as they are with `SERVE_MODEL=<edit checkpoint>`. Every request has an end token: utterances
+(`end_token="utterance"`, all of `/v2/generate`) stop on EOA and never sample span-end; edit fills
+(`"span"`) stop on span-end and never sample EOA. An utterance is drawn over codes, EOA and pad only,
+and plain requests never read the new rows, so takes are bit-identical to the release LM without the
+adapter (checked on sgl). Stop boundaries count host-processed frames, not submitted GPU work.
 
 `TTSLLM.edit(codes, target_text, spans)` generates each masked span
 (`(start_frame, length_frames)`, ascending, at most `text_extra_tokens`) as its
@@ -67,14 +69,14 @@ Hugging Face repo `Zyphra/fusealign`). Transcripts are compared as edit tokens
 everything else a word break).
 
 ```bash
-SERVE_MODEL=<edit checkpoint> \
-STEER_BUNDLE=steering/studio_bundle_mect60k.json servers/sgl/scripts/serve.sh
+mkdir -p edit-adapter && cp <downloaded z3m_omni3b_edit_lora.pt> edit-adapter/edit.pt
+servers/sgl/scripts/serve.sh --accent-adapters edit-adapter
 ```
 
-`/v2/capabilities` then reports `speech_editing: true` (the checkpoint, the `.venv-asr`
+`/v2/capabilities` then reports `speech_editing: true` (a span-end token, the `.venv-asr`
 interpreter and an importable `fusealign_hub`), `edit_max_spans` (3), `edit_frame_rate` (15),
 `edit_max_seconds` and `edit_align_max_seconds` (150, the longest clip transcribed and
-aligned, which every windowed edit needs); on other checkpoints
+aligned, which every windowed edit needs); without the edit adapter or an edit checkpoint
 `speech_editing` is false and the edit endpoints answer 400. A `<voice>.txt`
 next to a default voice becomes its `transcript` in `GET /v2/speakers`.
 
@@ -174,6 +176,11 @@ the file stem is the name requests use and
 `/v2/capabilities` lists the loaded names under `accents`. An unknown name
 returns 400. The studio shows an accent selector and a strength slider when
 adapters are loaded. Tensor parallelism is not supported with adapters.
+A `zonos-accent-lora/3` adapter (at most one per directory) is the speech-edit adapter: `/2` plus
+`grown`, the trained rows of the vocabulary it adds (`zonos3.models.accent_format.grow_adapter` writes
+it from lingua's export, folding the export's embedding and head shifts, which move only the new rows,
+into them). It is not listed under `accents` and requests cannot name it; edit fills use it (see
+[Speech editing](#speech-editing)).
 Accent directions (hidden-space or speaker-embedding vectors) are steering-bundle
 controls, not accents (see [Accent directions](#accent-directions)).
 

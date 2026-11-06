@@ -43,10 +43,34 @@ class EngineConfig:
         return cached_load_checkpoint_config(self.model_path)
 
     @cached_property
+    def grown_vocabulary(self):
+        """The vocabulary the ``zonos-accent-lora/3`` adapters of ``accent_adapters`` grow the model to (None: as is)."""
+        from zonos3.models.accent_format import grown_vocabulary
+
+        return grown_vocabulary(self.accent_adapters)
+
+    @cached_property
     def model_config(self) -> ModelConfig:
+        from dataclasses import replace
+
         from zonos3.models.config import ModelConfig
 
-        return ModelConfig.from_checkpoint_config(self.checkpoint_config)
+        config = ModelConfig.from_checkpoint_config(self.checkpoint_config)
+        grown = self.grown_vocabulary
+        if grown is None or (config.span_end_id, config.text_extra_tokens) == (grown.span_end_id, grown.text_extra_tokens):
+            return config
+        if config.span_end_id is not None or config.text_extra_tokens:
+            raise ValueError(
+                f"the accent adapters grow the vocabulary (span_end_id {grown.span_end_id}, {grown.text_extra_tokens} "
+                f"extra text rows) of a checkpoint that already has span_end_id {config.span_end_id} and "
+                f"{config.text_extra_tokens} extra text rows"
+            )
+        return replace(
+            config,
+            span_end_id=grown.span_end_id,
+            text_extra_tokens=grown.text_extra_tokens,
+            vocab_size=config.vocab_size + config.n_codebooks + grown.text_extra_tokens,
+        )
 
     @property
     def max_seq_len(self) -> int:

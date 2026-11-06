@@ -634,11 +634,7 @@ class Zonos3LM(nn.Module):
         self._capture, self._accents = capture, accents
         try:
             embedders = self.multi_embedder.embedders
-
-            def embed(cb):
-                rows = F.embedding(ids[:, cb], embedders[cb].weight)
-                return rows if accents is None else accents.embedding(cb, ids[:, cb], rows)
-            x = sum(embed(cb) for cb in range(c.n_codebooks + 1))
+            x = sum(F.embedding(ids[:, cb], embedders[cb].weight) for cb in range(c.n_codebooks + 1))
             self._save("emb_sum", x)
             x = self._replace_rows(x, lo, speaker_rows, condition_rows)
             self._save("emb_cond", x)

@@ -284,11 +284,13 @@ def _resolve_stream_decode(config: ServerArgs, value: str | None, streaming: boo
 
 
 def _adapter_accents(config: ServerArgs) -> list[str]:
+    """The accents requests may name: every adapter but the speech-edit one."""
     if not config.accent_adapters:
         return []
-    from zonos3.models.accent_format import list_accent_adapters
+    from zonos3.models.accent_format import edit_adapter, list_accent_adapters
 
-    return list_accent_adapters(config.accent_adapters)
+    edit = edit_adapter(config.accent_adapters)
+    return [name for name in list_accent_adapters(config.accent_adapters) if name != edit]
 
 
 def _steering_sources(config: ServerArgs) -> tuple[int, ...]:
@@ -1834,6 +1836,13 @@ def _decoder_capability(config: ServerArgs) -> dict | None:
 # =============================================================================
 
 
+def _edit_adapter(config: ServerArgs) -> str | None:
+    """The speech-edit adapter (zonos3.models.accent_format.edit_adapter) edit fills run on; None without one."""
+    from zonos3.models.accent_format import edit_adapter
+
+    return edit_adapter(config.accent_adapters)
+
+
 def _edit_max_spans(config: ServerArgs) -> int:
     """Edit marker rows: the extra text rows not claimed by phoneme tokens (0 without span_end_id: no editing)."""
     if getattr(config.model_config, "span_end_id", None) is None:
@@ -1954,6 +1963,8 @@ class _SglEditEngine:
                 speaker_embedding=speaker_embedding,
                 steering_delta=delta,
                 condition_buckets=condition_ids,
+                accent=_edit_adapter(state.config),
+                accent_strength=1.0,
             ),
         )
         return np.asarray(reply.codes), -1 if reply.eos_frame is None else int(reply.eos_frame)

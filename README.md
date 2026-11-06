@@ -171,7 +171,9 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
   `bash tools/setup_asr_env.sh` once creates `.venv-asr` (qwen-asr pins its own transformers). One worker process per
   server (`model/src/zonos3/workers/asr.py`) starts on first use; `ZONOS3_ASR_PYTHON` overrides its interpreter
   (default `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU).
-- **Speech editing** needs an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `.venv-asr` and FuseAlign
+- **Speech editing** needs the speech-edit LoRA (sgl: `--accent-adapters <dir with
+  lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt>` on the release LM; see [docs/guide.md](docs/guide.md)) or an
+  edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `.venv-asr` and FuseAlign
   (`fusealign-hub` in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
 - **Phoneme input** and **nonverbal tags** need checkpoints merged with the phoneme / NV rows
   (`tools/add_text_extra_rows.py`) and `PHONEME_LEXICON=<lexicon dir>`.

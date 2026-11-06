@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Dict, Tuple
 
 import torch
+from zonos3.models.config import ModelConfig
 from zonos3_sgl.attention import create_attention_backend
 from zonos3_sgl.core import (
     Context,
@@ -88,6 +89,17 @@ class Engine:
         logger.info_rank0(f"Expected kv_dim per TP rank: {expected_kv_dim}")
 
         state_dict = self._load_weight_state_dict(config)
+        grown = config.grown_vocabulary
+        if grown is not None and ModelConfig.from_checkpoint_config(config.checkpoint_config).span_end_id is None:
+            if config.tp_info.size != 1:
+                raise ValueError("accent adapters do not support tensor parallelism")
+            from zonos3.models.accent_format import grow_state_dict
+
+            grow_state_dict(state_dict, grown, n_codebooks=self.model_config.n_codebooks)
+            logger.info_rank0(
+                "Vocabulary grown by the accent adapters: span_end_id %d, %d extra text rows",
+                grown.span_end_id, grown.text_extra_tokens,
+            )
         self._check_speaker_lda_weights(state_dict)
 
         # Debug: Check for temp keys in state_dict

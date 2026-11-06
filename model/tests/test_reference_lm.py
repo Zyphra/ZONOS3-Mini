@@ -173,6 +173,50 @@ def test_edit_fill_generation_stops_on_span_end_and_is_seeded():
     assert eos[0] is None or eos[0] >= 2  # min_frames masks the span-end before frame 2
 
 
+def test_accent_lora_v3_grows_the_vocabulary_without_changing_plain_logits(tmp_path):
+    from zonos3.models.accent_format import (
+        FORMAT_EXPERTS,
+        grow_adapter,
+        grow_state_dict,
+        load_adapter,
+    )
+
+    base = tiny_model()
+    before = base(prompt(), LMCache(), **conditioning()).logits
+    dim, span_end = base.config.dim, CODEBOOK + 2
+    g = torch.Generator().manual_seed(5)
+    init = {f"multi_embedder.embedders.{i}.weight": torch.randn(1, dim, generator=g) for i in range(N_CB)}
+    init |= {f"multi_embedder.embedders.{N_CB}.weight": torch.randn(3, dim, generator=g),
+             "multi_output.weight": torch.randn(N_CB, dim, generator=g)}
+    rows_before = dict.fromkeys(init, CODEBOOK + 2) | {f"multi_embedder.embedders.{N_CB}.weight": TEXT_VOCAB + 1}
+    # lingua's export: the trained shift of the text table moves only its new rows
+    text_shift = torch.zeros(TEXT_VOCAB + 4, dim)
+    text_shift[-3:] = torch.randn(3, dim, generator=g)
+    export = {"format": FORMAT_EXPERTS, "factors": {},
+              "exact": {f"multi_embedder.embedders.{N_CB}.weight": text_shift}}
+    torch.save(grow_adapter(export, rows_before, {"span_end_id": span_end, "text_extra_tokens": 3, "rows": init}),
+               tmp_path / "edit.pt")
+    adapter = load_adapter(tmp_path / "edit.pt")
+    assert adapter.grown.span_end_id == span_end and not adapter.router_bias
+    assert torch.equal(adapter.grown.rows[f"multi_embedder.embedders.{N_CB}.weight"],
+                       init[f"multi_embedder.embedders.{N_CB}.weight"] + text_shift[-3:])
+
+    # the servers' state-dict growth (sgl) lays the rows out as the reference model's grow
+    grown_state = grow_state_dict(dict(base.state_dict()), adapter.grown, n_codebooks=N_CB)
+    model = tiny_model().grow(adapter.grown)
+    assert all(torch.equal(grown_state[k], v) for k, v in model.state_dict().items())
+    after = model(prompt(), LMCache(), **conditioning()).logits
+    assert after.shape == (12, N_CB, CODEBOOK + 3)
+    assert torch.equal(after[..., : CODEBOOK + 2], before)  # old ids: plain requests are untouched
+    assert model.grow(adapter.grown) is model  # same vocabulary again: no-op
+
+    text_shift[0, 0] = 1.0  # a shift of a row the base already had would change plain requests
+    with pytest.raises(ValueError, match="rows the base had"):
+        grow_adapter(export, rows_before, {"span_end_id": span_end, "text_extra_tokens": 3, "rows": init})
+    with pytest.raises(ValueError, match="already has"):
+        tiny_model(text_vocab=TEXT_VOCAB, text_extra_tokens=2).grow(adapter.grown)
+
+
 def test_laci_rollback_keeps_the_rows_before_the_failure(monkeypatch):
     import zonos3.reference.synth as synth
     from zonos3.tts import plan as P
