@@ -321,46 +321,39 @@ compares against.
 
 ## Pronunciation input (phoneme tokens)
 
-The ZONOS3 Mini release LM `lm/mect_60k` with E2-TTS "X2" pronunciation control: a word can be
-written as its IPA. The model is the release LM plus phoneme tokens trained on it
-in lingua (`apps/zonos/configs/z3m_mect60k_phoneme_tokens.yaml`, see
-`lingua/apps/zonos/PHONEMES.md`): 138 text rows after the padding row, a group
-open token, a group close token and one token per IPA symbol of the 136-symbol
-inventory of the gold pronunciation lexicon. Only those rows were trained, so the
-checkpoint is the release LM bit for bit on text without groups: every steering
-direction (`steering/studio_bundle_mect60k.json`) and
-the release accent adapters apply to it unchanged. Phoneme checkpoints are not
-released; build one from the release LM and an exported row file.
+E2-TTS "X2" pronunciation control: a word can be written as its IPA. The release LM `lm/rate30_20k_r2grpo` has
+phoneme tokens trained on it in lingua (`apps/zonos/configs/z3m_rate30_r2grpo_phoneme_tokens.yaml`, see
+`lingua/apps/zonos/PHONEMES.md`), released as
+`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`
+(`zonos-text-extra/1`): 138 text rows, a group open token, a group close token and one token per IPA symbol of the
+136-symbol inventory of the gold pronunciation lexicon (`lexicons/gold_phonemes_v1` in the same repo). Only those rows
+were trained, on the frozen release LM, so on text without groups the model is the release LM bit for bit: every
+steering direction and accent adapter applies unchanged. In the lingua evaluation, a name written as IPA was said as
+written 95% of the time (18% for the release LM reading the same IPA as text), with plain-text WER unchanged.
+
+The servers append the rows at load (`zonos3.models.text_extra`), after any extra rows the model already has:
 
 ```bash
-uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <release LM dir> \
-    --rows <phoneme_tokens.pt> --out <phoneme checkpoint>
-SERVE_MODEL=<phoneme checkpoint> STEER_BUNDLE=steering/studio_bundle_mect60k.json \
-PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh
+# sgl: release LM + speech-edit adapter + phoneme rows + lexicon
+PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh --accent-adapters <dir with the edit adapter> \
+    --phoneme-rows <phoneme_tokens_s15000.pt>
+# reference
+uv run python -m zonos3.reference --model <LM> --phoneme-rows <phoneme_tokens_s15000.pt> --text '...' -o out.wav
+# GGUF (ggml, MLX): the rows go into the backbone
+uv run --package zonos3-tools python tools/convert_gguf.py lm <LM dir> --outtype q4_0-exp-q8_0-mix \
+    --edit-adapter <z3m_omni3b_edit_lora.pt> --phoneme-rows <phoneme_tokens_s15000.pt> -o zonos3-ptq-edit.gguf
 ```
 
-`add_text_extra_rows.py` appends the rows (`zonos-text-extra/1`, exported by
-`apps.zonos.text_extra`) to the text table of a converted checkpoint and writes
-`text_extra_tokens` and `text_tokenizer_spec.phonemes` (group markers, token ids,
-symbols) into `params.json`. `text_extra_tokens` is the same field the
-speech-edit checkpoints use for their marker rows. The phoneme block is always the
-last extra rows: right after the padding row, or after the edit marker rows (which
-stay at text_vocab + 1 + j, where edit training put them); `superbpe.load_spec`
-checks that markers plus the phoneme block fill `text_extra_tokens`, and
-`edit_max_spans` counts the marker rows. A base with extra rows keeps them and the
-new rows' ids shift:
-
-```bash
-uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <edit checkpoint> \
-    --rows <phoneme_tokens.pt> --out <edit + phoneme checkpoint>
-```
-
-The result has `text_extra_tokens` 141 (3 markers, open / close 8200 / 8201, phones
-from 8202), `speech_editing` with `edit_max_spans` 3 and the 136 phone symbols. On
-text without groups it is the edit checkpoint bit for bit. The rows were trained on
-the frozen release LM, not on the edit fine-tune. `PHONEME_LEXICON`
-(`servers/sgl/scripts/serve.sh`) passes `--tts-phoneme-lexicon`; the launcher runs with the
-`phonemize` dependency group.
+The Space (`space/`) serves the release LM with both. A converted checkpoint can also carry the rows on disk:
+`tools/add_text_extra_rows.py --base <checkpoint> --rows <phoneme_tokens.pt> --out <phoneme checkpoint>` writes
+`text_extra_tokens` and `text_tokenizer_spec.phonemes` (group markers, token ids, symbols) into `params.json`.
+`text_extra_tokens` is the same field the speech-edit vocabulary uses for its marker rows. The phoneme block is always
+the last extra rows: right after the padding row, or after the edit marker rows (which stay at text_vocab + 1 + j,
+where edit training put them); `superbpe.load_spec` checks that markers plus the phoneme block fill
+`text_extra_tokens`, and `edit_max_spans` counts the marker rows. With the speech-edit vocabulary the result has
+`text_extra_tokens` 141 (3 markers, open / close 8200 / 8201, phones from 8202), `speech_editing` with
+`edit_max_spans` 3 and the 136 phone symbols. `PHONEME_LEXICON` (`servers/sgl/scripts/serve.sh`) passes
+`--tts-phoneme-lexicon`; the launcher runs with the `phonemize` dependency group.
 
 - **Request text.** A group is U+E000 IPA U+E001 in `text`
   (`zonos3.tts.superbpe`): the open id, one id per IPA code point, the close id;

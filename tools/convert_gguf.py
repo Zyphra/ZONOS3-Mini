@@ -61,8 +61,9 @@ The silence frame (codec-silence prefill), condition edges/units, the tokenizer 
 verbatim. Checkpoints fine-tuned on nonverbal markup (zonos3.tts.markup.trained_on_tags: a config.yaml data source with
 `nonverbal: true`) get `zonos3.tag_cfg_trained = true`; the key is absent otherwise. --edit-adapter <.pt> grows the
 model to a zonos-accent-lora/3 speech-edit adapter's vocabulary first (zonos3.reference.lm.Zonos3LM.grow: span_end_id,
-the edit marker rows; plain requests never read them): serve it with that adapter in accents.gguf. Tensors are written
-in LM_NAMES order."""
+the edit marker rows; plain requests never read them): serve it with that adapter in accents.gguf. --phoneme-rows <.pt>
+then appends zonos-text-extra/1 phoneme tokens after them (zonos3.models.text_extra; the spec gains their phonemes):
+text without pronunciation groups never reads them. Tensors are written in LM_NAMES order."""
 
 ARCH = "zonos3"
 MODEL_NAME = "bingua2-gdn-fullattnres-sbpe8k-375k-zv3ft-srcmix-cond3-mect-60k-20261015"
@@ -470,6 +471,14 @@ def cmd_lm(args, parser):
                          "(zonos-accent-lora/3 needed)")
         src.model.grow(adapter.grown)
         src.meta["name"] += f" + {adapter.name} vocabulary"
+    if args.phoneme_rows:
+        from zonos3.models.text_extra import TextExtraRows
+
+        extra = TextExtraRows.load(args.phoneme_rows)
+        existing = src.model.config.text_extra_tokens
+        src.model.append_text_rows(extra)
+        src.spec = extra.spec(src.spec, text_vocab=src.model.config.text_vocab, existing=existing)
+        src.meta["name"] += " + phoneme tokens"
     qat = src.meta["qat"]
     args.outtype = args.outtype or (MIX_OUTTYPE if qat else "f16")
     if qat and args.outtype != MIX_OUTTYPE:
@@ -1535,6 +1544,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--silence-frame", help="silence-frame registry JSON (default <lm_dir>/../../registries/silence_frame_<audio_codec>.json)")
     p.add_argument("--edit-adapter", help="a zonos-accent-lora/3 speech-edit adapter: the backbone gets its vocabulary "
                                           "(span_end_id and the grown rows)")
+    p.add_argument("--phoneme-rows", help="zonos-text-extra/1 phoneme tokens appended to the text table (after "
+                                          "--edit-adapter's rows): pronunciation groups")
     p.add_argument("-o", "--out", required=True)
     p.add_argument("--outtype", choices=("f32", "f16", "q8_0", MIX_OUTTYPE),
                    help=f"default f16 (plain directory) or {MIX_OUTTYPE} (QAT directory; the only valid type for it). "

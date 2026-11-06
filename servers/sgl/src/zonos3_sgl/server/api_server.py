@@ -366,7 +366,7 @@ class _RulesContext:
 
     @property
     def text_tokenizer_spec(self) -> dict | None:
-        return _text_tokenizer_spec(str(self.config.model_path))
+        return _text_tokenizer_spec(self.config)
 
     @property
     def accent_names(self) -> list[str]:
@@ -502,11 +502,9 @@ def _get_phoneme_lexicon(config: ServerArgs) -> "PhonemeLexicon | None":
     return _PHONEME_LEXICON_CACHE[path]
 
 
-@functools.lru_cache(maxsize=4)
-def _text_tokenizer_spec(model_path: str) -> dict | None:
-    from zonos3.tts.superbpe import load_spec
-
-    return load_spec(model_path)
+def _text_tokenizer_spec(config: ServerArgs) -> dict | None:
+    """The served text tokenizer spec (EngineConfig.text_tokenizer_spec: the checkpoint's, with --phoneme-rows)."""
+    return config.text_tokenizer_spec
 
 
 @functools.lru_cache(maxsize=4)
@@ -1721,7 +1719,7 @@ async def tts_capabilities():
 
     state = get_global_state()
     return {
-        "text_tokenizer_spec": _text_tokenizer_spec(str(state.config.model_path)),
+        "text_tokenizer_spec": _text_tokenizer_spec(state.config),
         "text_normalization_enabled": normalization_enabled(),
         "text_norm_languages": list(languages.CODES),
         "accents": _adapter_accents(state.config),
@@ -1778,7 +1776,7 @@ async def tts_capabilities():
 
 def _phoneme_capabilities(config: ServerArgs) -> dict:
     """Pronunciation input: the checkpoint's phoneme tokens (if any) and the configured lexicon."""
-    spec = _text_tokenizer_spec(str(config.model_path))
+    spec = _text_tokenizer_spec(config)
     phonemes = None if spec is None else spec.get("phonemes")
     lexicon = _get_phoneme_lexicon(config)
     return {
@@ -1807,16 +1805,9 @@ async def tts_phonemize(request: PhonemizeRequest):
     if lexicon is None:
         raise HTTPException(status_code=404, detail="This server has no pronunciation lexicon.")
     try:
-        result = lexicon.phonemize(request.text, request.language, guess=request.guess)
+        return lexicon.phonemize_for(request.text, request.language, _text_tokenizer_spec(config), guess=request.guess)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    spec = _text_tokenizer_spec(str(config.model_path))
-    if spec is not None and spec.get("phonemes") is not None:
-        symbols = set(spec["phonemes"]["symbols"])
-        for segment in result["segments"]:
-            if segment["ipa"] and not symbols.issuperset(segment["ipa"]):
-                segment.update(ipa=None, status="unsupported")
-    return result
 
 
 def _decoder_capability(config: ServerArgs) -> dict | None:
@@ -1848,7 +1839,7 @@ def _edit_max_spans(config: ServerArgs) -> int:
     if getattr(config.model_config, "span_end_id", None) is None:
         return 0
     return edit_marker_rows(
-        int(getattr(config.model_config, "text_extra_tokens", 0)), _text_tokenizer_spec(str(config.model_path))
+        int(getattr(config.model_config, "text_extra_tokens", 0)), _text_tokenizer_spec(config)
     )
 
 

@@ -114,3 +114,51 @@ def test_add_text_extra_rows_appends_after_existing_rows(spec, tmp_path):
     merged = torch.load(out / "model.pth", weights_only=True)["multi_embedder.embedders.1.weight"]
     assert torch.equal(merged[: len(table)], table) and torch.equal(merged[len(table):], rows)
     assert json.loads((out / "text_extra.json").read_text())["first_row"] == TEXT_VOCAB + 4
+
+
+def test_runtime_rows_follow_the_edit_vocabulary_and_leave_plain_text_alone(spec, tmp_path):
+    """Zonos3LM.append_text_rows (the servers' --phoneme-rows) on a model that already has 3 edit marker rows: the
+    rows follow them, the served spec encodes groups with the shifted ids, text without groups gives the same logits,
+    and the result equals tools/add_text_extra_rows.py's checkpoint."""
+    import importlib.util
+    from pathlib import Path
+
+    import torch
+    from test_reference_lm import N_CB, TINY, tiny_model
+    from zonos3.models.text_extra import TextExtraRows
+    from zonos3.reference.lm import LMCache, Zonos3LM
+
+    text_vocab = spec["vocab_size"] + 4
+    params = {**TINY, "text_vocab": text_vocab, "text_extra_tokens": 3, "text_tokenizer_spec": dict(spec)}
+    base = tmp_path / "base"
+    base.mkdir()
+    torch.save(tiny_model(text_vocab=text_vocab, text_extra_tokens=3, text_tokenizer_spec=dict(spec)).state_dict(),
+               base / "model.pth")
+    (base / "params.json").write_text(json.dumps({"model": params}))
+    phonemes = dict(open_id=text_vocab + 1, close_id=text_vocab + 2, symbols=list("kæt"), open_marker=O,
+                    close_marker=C, inventory_sha256="0" * 64)
+    rows = torch.randn(5, TINY["dim"], generator=torch.Generator().manual_seed(1))
+    torch.save({"format": "zonos-text-extra/1", "text_vocab": text_vocab, "rows": rows, "phonemes": phonemes},
+               tmp_path / "rows.pt")
+
+    def prompt(ids):
+        out = torch.full((len(ids), N_CB + 1), TINY["audio_pad_id"], dtype=torch.long)
+        out[:, N_CB] = torch.tensor(ids)
+        return out
+
+    plain_model = Zonos3LM.load(base)
+    grown = Zonos3LM.load(base).append_text_rows(TextExtraRows.load(tmp_path / "rows.pt"))
+    served = grown.config.text_tokenizer_spec
+    assert (served["phonemes"]["open_id"], grown.config.text_extra_tokens) == (text_vocab + 4, 8)
+    plain = prompt(text_ids("hello world", served))
+    assert torch.equal(grown(plain, LMCache()).logits, plain_model(plain, LMCache()).logits)
+    group = prompt(text_ids(f"hello {O}kæt{C}", served))
+    assert {text_vocab + 4, text_vocab + 5} <= set(group[:, N_CB].tolist())
+
+    script = Path(__file__).resolve().parents[2] / "tools" / "add_text_extra_rows.py"
+    module = importlib.util.spec_from_file_location("add_text_extra_rows", script)
+    add = importlib.util.module_from_spec(module)
+    module.loader.exec_module(add)
+    merged = Zonos3LM.load(add.add_text_extra_rows(base, tmp_path / "rows.pt", tmp_path / "merged"))
+    assert merged.config.text_tokenizer_spec["phonemes"] == served["phonemes"]
+    assert torch.equal(merged(group, LMCache()).logits, grown(group, LMCache()).logits)

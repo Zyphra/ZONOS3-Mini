@@ -172,15 +172,9 @@ def router(state: ServerState) -> APIRouter:
         if lexicon is None:
             raise HTTPException(status_code=404, detail="This server has no pronunciation lexicon.")
         try:
-            result = await asyncio.to_thread(lexicon.phonemize, request.text, request.language, guess=request.guess)
+            return await asyncio.to_thread(lexicon.phonemize_for, request.text, request.language,
+                                           state.config.text_tokenizer_spec, guess=request.guess)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        spec = state.config.text_tokenizer_spec
-        if spec and spec.get("phonemes") is not None:
-            symbols = set(spec["phonemes"]["symbols"])
-            for segment in result["segments"]:
-                if segment["ipa"] and not symbols.issuperset(segment["ipa"]):
-                    segment.update(ipa=None, status="unsupported")
-        return result
 
     return r

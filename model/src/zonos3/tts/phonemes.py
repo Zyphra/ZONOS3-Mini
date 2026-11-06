@@ -118,6 +118,19 @@ class PhonemeLexicon:
             self._ties[code] = tied > untied
         return self._ties[code]
 
+    def phonemize_for(self, text: str, language: str, spec: dict | None, guess: bool = True) -> dict:
+        """``phonemize`` for a server whose tokenizer spec is ``spec``: on a phoneme-token checkpoint a pronunciation
+        with a symbol outside its inventory becomes ``status`` "unsupported" (no ``ipa``): the model has no token for
+        it. The ``/v2/phonemize`` body of every Python server."""
+        result = self.phonemize(text, language, guess=guess)
+        phonemes = spec.get("phonemes") if spec else None
+        if phonemes is not None:
+            symbols = set(phonemes["symbols"])
+            for segment in result["segments"]:
+                if segment["ipa"] and not symbols.issuperset(segment["ipa"]):
+                    segment.update(ipa=None, status="unsupported")
+        return result
+
     def phonemize(self, text: str, language: str, guess: bool = True) -> dict:
         """Split ``text`` into segments; word segments carry their lexicon result.
 

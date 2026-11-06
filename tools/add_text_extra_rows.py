@@ -26,6 +26,7 @@ import shutil
 from pathlib import Path
 
 import torch
+from zonos3.models.text_extra import TextExtraRows
 
 
 def _sha256(path: Path) -> str:
@@ -39,34 +40,20 @@ def _sha256(path: Path) -> str:
 def add_text_extra_rows(base: Path, rows_path: Path, out: Path) -> Path:
     if out.exists() and any(out.iterdir()):
         raise ValueError(f"{out} is not empty")
-    extra = torch.load(rows_path, map_location="cpu", weights_only=True)
-    if extra.get("format") != "zonos-text-extra/1":
-        raise ValueError(f"{rows_path} is not a zonos-text-extra/1 export")
+    extra = TextExtraRows.load(rows_path)
     params = json.loads((base / "params.json").read_text())
     model = params["model"]
     text_vocab, existing = int(model["text_vocab"]), int(model.get("text_extra_tokens", 0))
-    if text_vocab != int(extra["text_vocab"]):
-        raise ValueError(f"text_vocab {text_vocab} != rows' {extra['text_vocab']}")
-    spec = model.get("text_tokenizer_spec")
-    if spec is not None and spec.get("phonemes") is not None:
-        raise ValueError("base checkpoint already has phoneme tokens")
+    spec = extra.spec(model.get("text_tokenizer_spec"), text_vocab=text_vocab, existing=existing)
     state = torch.load(base / "model.pth", map_location="cpu", weights_only=True)
     key = f"multi_embedder.embedders.{int(model['n_codebooks'])}.weight"
-    table, rows = state[key], extra["rows"]
+    table, rows = state[key], extra.rows
     if table.shape != (text_vocab + 1 + existing, rows.shape[1]):
         raise ValueError(f"unexpected text table {tuple(table.shape)} for {existing} extra rows and rows {tuple(rows.shape)}")
-    state[key] = torch.cat((table, rows.to(table.dtype)), dim=0).contiguous()
-    model["text_extra_tokens"] = existing + int(rows.shape[0])
-    if "phonemes" in extra:
-        if spec is None:
-            raise ValueError("phoneme tokens need a SuperBPE text_tokenizer_spec")
-        phonemes = {k: extra["phonemes"][k] for k in
-                    ("open_id", "close_id", "symbols", "open_marker", "close_marker", "inventory_sha256")}
-        if (phonemes["open_id"], phonemes["close_id"]) != (text_vocab + 1, text_vocab + 2):
-            raise ValueError("exported phoneme rows must start at the padding row + 1")
-        phonemes["open_id"] += existing   # the rows' table position; the vectors are position-free
-        phonemes["close_id"] += existing
-        spec["phonemes"] = phonemes
+    state[key] = extra.append(table)
+    model["text_extra_tokens"] = existing + extra.count
+    if spec is not None:
+        model["text_tokenizer_spec"] = spec
 
     staging = out.with_name(out.name + ".staging")
     if staging.exists():
@@ -80,7 +67,7 @@ def add_text_extra_rows(base: Path, rows_path: Path, out: Path) -> Path:
     (staging / "params.json").write_text(json.dumps(params, indent=2, ensure_ascii=False) + "\n")
     (staging / "text_extra.json").write_text(json.dumps({
         "base": str(base), "base_model_sha256": _sha256(base / "model.pth"),
-        "rows": str(rows_path), "rows_sha256": _sha256(rows_path), "rows_run": extra.get("run"),
+        "rows": str(rows_path), "rows_sha256": _sha256(rows_path), "rows_run": extra.run,
         "text_extra_tokens": int(rows.shape[0]), "base_text_extra_tokens": existing,
         "first_row": text_vocab + 1 + existing, "table_key": key,
     }, indent=1) + "\n")

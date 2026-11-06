@@ -20,3 +20,5 @@ nagisa==0.2.11
 soynlp==0.0.493
 qwen-omni-utils==0.0.9
 sox==1.5.0
+lmdb==3.0.0
+espeakng-loader==0.2.4

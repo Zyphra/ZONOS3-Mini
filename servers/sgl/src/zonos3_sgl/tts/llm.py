@@ -183,7 +183,7 @@ class TTSLLM(TTSScheduler):
                 n_codebooks=self.n_codebooks,
                 audio_pad_id=self.audio_pad_id,
                 text_vocab=self.text_vocab,
-                text_tokenizer_spec=__import__("zonos3.tts.superbpe", fromlist=["load_spec"]).load_spec(model_path),
+                text_tokenizer_spec=config.text_tokenizer_spec,
                 codebook_sizes=tuple(self.codebook_sizes) if getattr(self, "codebook_sizes", None) else None,
                 speaking_rate_num_buckets=self.speaking_rate_num_buckets,
                 quality_bucket_counts=tuple(self.quality_bucket_counts),

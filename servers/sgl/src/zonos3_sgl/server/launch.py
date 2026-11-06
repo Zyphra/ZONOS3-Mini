@@ -117,7 +117,7 @@ def launch_server(run_shell: bool = False) -> None:
                 else 0
             ),
             "condition_bucket_counts": list(server_args.model_config.condition_bucket_counts),
-            "model_path": server_args.model_path,
+            "text_tokenizer_spec": server_args.text_tokenizer_spec,
         }
 
         # DeTokenizer, only 1

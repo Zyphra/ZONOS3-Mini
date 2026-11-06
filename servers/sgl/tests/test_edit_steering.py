@@ -66,7 +66,7 @@ def serve(monkeypatch):
         config = SimpleNamespace(steer_bundle=bundle, model_path="",
                                  model_config=SimpleNamespace(condition_tokens_enabled=False))
         monkeypatch.setattr(api_server, "get_global_state", lambda: SimpleNamespace(config=config))
-        monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda model_path: None)  # byte text, no groups
+        monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda config: None)  # byte text, no groups
         return EditRuntime(_Engine(speaker_row), _Asr(), None)
 
     return serve

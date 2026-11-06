@@ -32,6 +32,9 @@ class EngineConfig:
     # Directory of accent adapters (<accent>.pt) served per request; see
     # zonos3_sgl.models.accent_adapters. None serves the base model only.
     accent_adapters: str | None = None
+    # zonos-text-extra/1 rows (phoneme tokens; zonos3.models.text_extra) appended to the text table at load, after the
+    # vocabulary a speech-edit adapter grows. None serves the checkpoint's text rows only.
+    phoneme_rows: str | None = None
     # Alignment probes (zonos3_sgl.tts.align_probe) inside the decode CUDA graphs: text keys read per request (0 = graphs
     # carry no probe and any decode batch with a probe runs eager), masked requests per batch, keys per masked request.
     align_probe_max_text: int = 0
@@ -50,6 +53,13 @@ class EngineConfig:
         return grown_vocabulary(self.accent_adapters)
 
     @cached_property
+    def text_extra_rows(self):
+        """The ``phoneme_rows`` export (zonos3.models.text_extra.TextExtraRows), or None."""
+        from zonos3.models.text_extra import TextExtraRows
+
+        return TextExtraRows.load(self.phoneme_rows) if self.phoneme_rows else None
+
+    @cached_property
     def model_config(self) -> ModelConfig:
         from dataclasses import replace
 
@@ -57,20 +67,38 @@ class EngineConfig:
 
         config = ModelConfig.from_checkpoint_config(self.checkpoint_config)
         grown = self.grown_vocabulary
-        if grown is None or (config.span_end_id, config.text_extra_tokens) == (grown.span_end_id, grown.text_extra_tokens):
-            return config
-        if config.span_end_id is not None or config.text_extra_tokens:
-            raise ValueError(
-                f"the accent adapters grow the vocabulary (span_end_id {grown.span_end_id}, {grown.text_extra_tokens} "
-                f"extra text rows) of a checkpoint that already has span_end_id {config.span_end_id} and "
-                f"{config.text_extra_tokens} extra text rows"
+        if grown is not None and (config.span_end_id, config.text_extra_tokens) != (grown.span_end_id,
+                                                                                     grown.text_extra_tokens):
+            if config.span_end_id is not None or config.text_extra_tokens:
+                raise ValueError(
+                    f"the accent adapters grow the vocabulary (span_end_id {grown.span_end_id}, "
+                    f"{grown.text_extra_tokens} extra text rows) of a checkpoint that already has span_end_id "
+                    f"{config.span_end_id} and {config.text_extra_tokens} extra text rows"
+                )
+            config = replace(
+                config,
+                span_end_id=grown.span_end_id,
+                text_extra_tokens=grown.text_extra_tokens,
+                vocab_size=config.vocab_size + config.n_codebooks + grown.text_extra_tokens,
             )
-        return replace(
-            config,
-            span_end_id=grown.span_end_id,
-            text_extra_tokens=grown.text_extra_tokens,
-            vocab_size=config.vocab_size + config.n_codebooks + grown.text_extra_tokens,
-        )
+        extra = self.text_extra_rows
+        if extra is not None:
+            config = replace(config, text_extra_tokens=config.text_extra_tokens + extra.count,
+                             vocab_size=config.vocab_size + extra.count)
+        return config
+
+    @cached_property
+    def text_tokenizer_spec(self) -> dict | None:
+        """The served text tokenizer spec: the checkpoint's (zonos3.tts.superbpe.load_spec) with the phoneme block of
+        ``phoneme_rows``, its ids after the extra rows the model already has."""
+        from zonos3.tts.superbpe import load_spec
+
+        spec = load_spec(self.model_path)
+        extra = self.text_extra_rows
+        if extra is None:
+            return spec
+        existing = self.model_config.text_extra_tokens - extra.count
+        return extra.spec(spec, text_vocab=int(self.model_config.text_vocab), existing=existing)
 
     @property
     def max_seq_len(self) -> int:

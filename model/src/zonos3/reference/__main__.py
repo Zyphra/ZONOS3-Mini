@@ -50,6 +50,8 @@ def main(argv=None) -> int:
     parser.add_argument("--dtype", choices=("f32", "bf16"), default="f32")
     parser.add_argument("--steer-bundle")
     parser.add_argument("--accent-adapters")
+    parser.add_argument("--phoneme-rows", help="zonos-text-extra/1 rows (phoneme tokens) appended at load, after the "
+                                               "vocabulary a speech-edit adapter grows")
     parser.add_argument("--laci-heads", action="append", default=[], metavar="LANG=PATH")
     parser.add_argument("--dump-prompt", metavar="IDS_NPY")
     args = parser.parse_args(argv)
@@ -72,6 +74,10 @@ def main(argv=None) -> int:
     assets = ReferenceAssets.load(steer_bundle=args.steer_bundle, accent_adapters=args.accent_adapters,
                                   laci_heads=heads)
     assets.grow(lm)
+    if args.phoneme_rows:
+        from zonos3.models.text_extra import TextExtraRows
+
+        lm.append_text_rows(TextExtraRows.load(args.phoneme_rows))
     if args.dump_prompt:
         plan = plan_prompt(lm, request, assets=assets, device=device)
         path = Path(args.dump_prompt)

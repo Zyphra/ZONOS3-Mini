@@ -180,10 +180,15 @@ def silence_frame(codec: str, device) -> torch.Tensor:
 
 
 def prompt_builder(lm: Zonos3LM) -> TTSPromptBuilder:
+    """The LM's prompt builder: its checkpoint's tokenizer spec (path resolved), with the phoneme block of its config
+    (rows appended at load, ``Zonos3LM.append_text_rows``)."""
     from zonos3.tts.superbpe import load_spec
 
     c = lm.config
     spec = load_spec(lm.root) if lm.root is not None else None
+    phonemes = (c.text_tokenizer_spec or {}).get("phonemes")
+    if spec is not None and phonemes is not None:
+        spec = {**spec, "phonemes": phonemes}
     return TTSPromptBuilder(TTSPromptConfig(n_codebooks=c.n_codebooks, codebook_sizes=c.codebook_sizes,
                                             audio_pad_id=c.audio_pad_id, text_vocab=c.text_vocab,
                                             text_tokenizer_spec=spec))

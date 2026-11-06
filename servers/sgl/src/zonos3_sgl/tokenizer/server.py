@@ -112,7 +112,7 @@ def tokenize_worker(
     span_end_id: int | None = None,
     condition_count: int = 0,
     condition_bucket_counts: Sequence[int] = (),
-    model_path: str = "",
+    text_tokenizer_spec: dict | None = None,  # the served spec (EngineConfig.text_tokenizer_spec)
 ) -> None:
     send_backend = ZmqPushQueue(backend_addr, create=False, encoder=BaseBackendMsg.encoder)
     send_frontend = ZmqPushQueue(frontend_addr, create=False, encoder=BaseFrontendMsg.encoder)
@@ -143,7 +143,7 @@ def tokenize_worker(
             codebook_sizes=tuple(codebook_sizes) if codebook_sizes else None,
             audio_pad_id=audio_pad_id,
             text_vocab=text_vocab,
-            text_tokenizer_spec=__import__("zonos3.tts.superbpe", fromlist=["load_spec"]).load_spec(model_path),
+            text_tokenizer_spec=text_tokenizer_spec,
             speaking_rate_num_buckets=speaking_rate_num_buckets,
             quality_bucket_counts=tuple(quality_bucket_counts or ()),
             speaker_background_num_buckets=speaker_background_num_buckets,

@@ -164,7 +164,7 @@ def test_raw_reference_model_steers_without_speaker_embedding(tmp_path, monkeypa
     from types import SimpleNamespace
 
     api_server._STEER_BUNDLE_CACHE.clear()
-    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda model_path: None)  # byte text
+    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda config: None)  # byte text
     config = _RawReferenceConfig(tmp_path / "voices", _write_bank_bundle(tmp_path))
 
     assert api_server._steering_sources(config) == (4,)

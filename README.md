@@ -175,8 +175,11 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
   lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt>` on the release LM; see [docs/guide.md](docs/guide.md)) or an
   edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), `.venv-asr` and FuseAlign
   (`fusealign-hub` in the workspace; its checkpoint downloads from `Zyphra/fusealign`) for the word timings.
-- **Phoneme input** and **nonverbal tags** need checkpoints merged with the phoneme / NV rows
-  (`tools/add_text_extra_rows.py`) and `PHONEME_LEXICON=<lexicon dir>`.
+- **Phoneme input** needs the release phoneme tokens
+  (`lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
+  `convert_gguf.py lm --phoneme-rows`) or a checkpoint merged with them (`tools/add_text_extra_rows.py`), and
+  `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the release repo) for "Phonemize selection".
+  **Nonverbal tags** need a checkpoint with the NV rows.
 - **Forced alignment** (FuseAlign, speech editing) runs in one worker process per server
   (`model/src/zonos3/workers/fusealign.py`, the workspace interpreter), started on first use;
   `ZONOS3_FUSEALIGN_DEVICE` picks its device (default `cuda:0`, else CPU). Recordings over 30 s (or transcripts over

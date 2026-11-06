@@ -44,7 +44,7 @@ class _Frontend:
 def frontend(monkeypatch):
     state = _Frontend()
     monkeypatch.setattr(api_server, "get_global_state", lambda: state)
-    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda model_path: None)  # byte text, no phoneme groups
+    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda config: None)  # byte text, no phoneme groups
     return state
 
 

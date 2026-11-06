@@ -437,6 +437,17 @@ class Zonos3LM(nn.Module):
         self.config = new
         return self
 
+    def append_text_rows(self, extra) -> "Zonos3LM":
+        """This model with ``extra`` (a ``zonos3.models.text_extra.TextExtraRows``, e.g. phoneme tokens) after its text
+        table's rows, the extra rows it already has included; ``config.text_tokenizer_spec`` gains their phonemes.
+        Text that never reads them runs exactly as before."""
+        c = self.config
+        spec = extra.spec(c.text_tokenizer_spec, text_vocab=c.text_vocab, existing=c.text_extra_tokens)
+        table = self.multi_embedder.embedders[c.n_codebooks]
+        table.weight = nn.Parameter(extra.append(table.weight), requires_grad=False)
+        self.config = replace(c, text_extra_tokens=c.text_extra_tokens + extra.count, text_tokenizer_spec=spec)
+        return self
+
     def cast(self, dtype: torch.dtype) -> "Zonos3LM":
         """Weights in ``dtype``; the routers' balancing biases stay float32 (as in the checkpoint)."""
         for name, param in self.named_parameters():

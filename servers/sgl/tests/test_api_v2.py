@@ -84,7 +84,7 @@ def frontend(tmp_path, monkeypatch):
     np.save(voices / "Alice.npy", np.array([0.25, 0.5, 0.75], dtype=np.float32))
     state = _Frontend(_config(tmp_path, tts_default_voices_dir=str(voices)))
     monkeypatch.setattr(api_server, "_GLOBAL_STATE", state)
-    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda model_path: None)
+    monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda config: None)
     monkeypatch.delenv("ZONOS3_ACCESS_TOKEN", raising=False)
     api_server._DEFAULT_SPEAKER_CACHE.clear()
     api_server._SESSION_SPEAKER_CACHE.clear()

@@ -134,13 +134,12 @@ def _tokenize(monkeypatch, tmp_path, messages, *, normalizer=None):
     monkeypatch.setattr("zonos3_sgl.tokenizer.vocoder.TTSVocoderManager", _Vocoder)
     monkeypatch.setattr(textnorm, "TTSTextNormalizer", Normalizer)
     monkeypatch.setattr(textnorm, "normalization_enabled", lambda: normalizer is not None)
-    (tmp_path / "params.json").write_text(json.dumps({"model": {"text_vocab": TEXT_VOCAB, "audio_codec": "opus_dual_3n_600k_sched600k_r4096_step600000"}}))
     tokenizer_server.tokenize_worker(
         addr="tokenizer", create=True, backend_addr="backend", frontend_addr="frontend", local_bs=1,
         n_codebooks=C, audio_pad_id=PAD, audio_codec="matched", text_vocab=TEXT_VOCAB,
         speaking_rate_num_buckets=RATE, quality_bucket_counts=list(QUALITY), quality_buckets=[1],
         speaker_background_num_buckets=BACKGROUND, accurate_mode_num_buckets=ACCURATE,
-        condition_count=CONDITIONS, condition_bucket_counts=UNKNOWNS, model_path=str(tmp_path),
+        condition_count=CONDITIONS, condition_bucket_counts=UNKNOWNS, text_tokenizer_spec=None,
     )
     return sent
 

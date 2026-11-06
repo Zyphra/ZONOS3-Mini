@@ -11,6 +11,8 @@
 #   LACI_ALL=1                  LACI heads for every LACI language from LACI_HEADS_DIR (default laci_heads/: the zh
 #                               file for Chinese, the English file for the rest)
 #   PLUGINS                     "name ..." server plugins (--plugins), e.g. dub (Zyphra/ZONOS3-dub)
+# Speech editing and pronunciation groups on the release LM: --accent-adapters <dir with the edit adapter>
+# --phoneme-rows <phoneme_tokens_s15000.pt> (docs/guide.md).
 # Speech recognition (speech editing and plugins) is Qwen3-ASR in .venv-asr (tools/setup_asr_env.sh); ZONOS3_ASR_PYTHON
 # and ZONOS3_ASR_DEVICE override its interpreter and its device.
 set -euo pipefail

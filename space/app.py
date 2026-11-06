@@ -2,14 +2,15 @@
 reference (zonos3.reference) with generation on ZeroGPU.
 
 ``gr.Server`` is the FastAPI app; its ``launch()`` runs through ``gr.Blocks.launch``, where ``spaces`` starts ZeroGPU.
-The routes are the part of api/openapi.yaml the studio and the lite page use when the server has no plugins, project
-store or pronunciation lexicon (``/v2/capabilities`` says so and the studio adapts): GET ``/v2/capabilities``,
-``/v2/controls``, ``/v2/speakers``, ``/v2/speakers/{id}/preview``, ``/v2/speakers/{id}/embedding``, POST
-``/v2/speakers``, ``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first chunk) and speech editing
-(``/v2/edit/transcribe``, ``/v2/edit/align``, ``/v2/edit``: the edit LoRA per request). Speaker embeddings run on this
-process's CPU; generation, edit regions, Qwen3-ASR and FuseAlign run in a held GPU session (``gpu_session`` /
-``GpuSessions``), on the visitor's ZeroGPU quota through the X-IP-Token the studio forwards from huggingface.co
-(studio/src/lib/zerogpu.ts).
+The routes are the part of api/openapi.yaml the studio and the lite page use when the server has no plugins or project
+store (``/v2/capabilities`` says so and the studio adapts): GET ``/v2/capabilities``, ``/v2/controls``,
+``/v2/speakers``, ``/v2/speakers/{id}/preview``, ``/v2/speakers/{id}/embedding``, POST ``/v2/speakers``,
+``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first chunk), ``/v2/phonemize`` (the gold lexicon, espeak-ng
+guesses) and speech editing (``/v2/edit/transcribe``, ``/v2/edit/align``, ``/v2/edit``: the edit LoRA per request).
+Pronunciation groups read the release phoneme tokens, appended at load after the edit vocabulary. Speaker embeddings
+run on this process's CPU; generation, edit regions, Qwen3-ASR and FuseAlign run in a held GPU session
+(``gpu_session`` / ``GpuSessions``), on the visitor's ZeroGPU quota through the X-IP-Token the studio forwards from
+huggingface.co (studio/src/lib/zerogpu.ts).
 """
 
 import spaces  # noqa: I001  (ZeroGPU: must be imported before torch)
@@ -52,6 +53,7 @@ from zonos3.generation import (
     TAG_CFG_MIN_SCALE,
 )
 from zonos3.models.accent_format import load_adapter
+from zonos3.models.text_extra import TextExtraRows
 from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import Zonos3LM
 from zonos3.reference.synth import (
@@ -72,6 +74,7 @@ from zonos3.server.schemas import (
     EditRequest,
     EditTranscribeRequest,
     GenerateRequest,
+    PhonemizeRequest,
     SpeakerCreateRequest,
 )
 from zonos3.tokenizer import matched_codec
@@ -83,6 +86,7 @@ from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, edit_capabilities
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, trained_on_tags
+from zonos3.tts.phonemes import PhonemeLexicon
 from zonos3.tts.steering import (
     check_controls,
     controls_document,
@@ -102,14 +106,21 @@ CPU = torch.device("cpu")
 
 # The edit LoRA (zonos-accent-lora/3) brings the vocabulary it was trained with: its span-end audio row and edit-marker
 # text rows, which plain takes never read or sample (so they run exactly as on the release LM). Edit regions add the
-# LoRA per request (EDIT_LORA). Grown on the CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with
-# CPU ones in this process.
+# LoRA per request (EDIT_LORA). The phoneme tokens (zonos-text-extra/1, trained on the frozen release LM) follow the
+# edit marker rows: pronunciation groups (U+E000 IPA U+E001) read them, text without groups never does. Grown on the
+# CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with CPU ones in this process.
 EDIT_ADAPTER = load_adapter(resolve_file(f"{RELEASE_LM}/edit_lora/z3m_omni3b_edit_lora.pt"))
-LM = Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32).grow(EDIT_ADAPTER.grown).to(DEVICE)
+PHONEME_ROWS = TextExtraRows.load(resolve_file(f"{RELEASE_LM}/phoneme_tokens/phoneme_tokens_s15000.pt"))
+LM = (Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32).grow(EDIT_ADAPTER.grown)
+      .append_text_rows(PHONEME_ROWS).to(DEVICE))
 CONFIG = LM.config
 ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k.json"))
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
 EDIT_LORA = AccentState.for_model(LM, EDIT_ADAPTER, 1.0)
+# The gold pronunciation lexicon behind "Phonemize selection"; espeak-ng (espeakng-loader) guesses the words it lacks.
+_LEXICON = "hf://Zyphra/ZONOS3_Mini_release_ckpts/lexicons/gold_phonemes_v1"
+resolve_file(f"{_LEXICON}/manifest.json")
+LEXICON = PhonemeLexicon(str(Path(resolve_file(f"{_LEXICON}/data.mdb")).parent))
 ASSETS.decoder(CONFIG.audio_codec, DEVICE)
 ASSETS.speaker_encoder(CONFIG.speaker_embedding_codec, CONFIG.speaker_embedding_dim, CPU)
 # A clip in reference mode is encoded by the dual codec inside the GPU call; fetch its teacher folder now.
@@ -196,9 +207,9 @@ def capabilities() -> dict:
         "phoneme_tokens": None if phonemes is None else {
             "open_marker": phonemes["open_marker"], "close_marker": phonemes["close_marker"],
             "symbols": list(phonemes["symbols"])},
-        "phonemize_enabled": False,
-        "phonemize_languages": [],
-        "phonemize_guess_languages": [],
+        "phonemize_enabled": True,
+        "phonemize_languages": LEXICON.server_languages,
+        "phonemize_guess_languages": LEXICON.guess_languages,
     }
 
 
@@ -754,6 +765,17 @@ async def edit(req: EditRequest, request: Request):
 @app.get("/v2/capabilities")
 async def get_capabilities():
     return CAPABILITIES
+
+
+@app.post("/v2/phonemize")
+async def phonemize(req: PhonemizeRequest):
+    """Gold-lexicon IPA for the words of a text (espeak-ng guesses for the words it lacks); a pronunciation with a symbol
+    outside the phoneme tokens is "unsupported"."""
+    try:
+        return await asyncio.to_thread(LEXICON.phonemize_for, req.text, req.language, CONTEXT.text_tokenizer_spec,
+                                       guess=req.guess)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/v2/controls")
