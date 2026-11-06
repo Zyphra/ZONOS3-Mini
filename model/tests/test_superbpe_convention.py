@@ -1,7 +1,6 @@
 """SuperBPE text ids: BOS 2, payload ids + 4, EOS 3, pinned to the training artifact by SHA-256."""
 from __future__ import annotations
 
-import hashlib
 import json
 
 import pytest
@@ -9,6 +8,7 @@ import pytest
 tokenizers = pytest.importorskip("tokenizers")
 
 from zonos3.tts.superbpe import load_spec, text_ids, validate_spec  # noqa: E402
+from zonos3.utils.hashing import sha256_file  # noqa: E402
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def spec(tmp_path):
     tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
     path = tmp_path / "superbpe.json"
     tokenizer.save(str(path))
-    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    sha = sha256_file(path)
     return dict(kind="superbpe", path=str(path), sha256=sha, vocab_size=3, offset=4, bos=2, eos=3)
 
 

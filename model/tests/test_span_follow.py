@@ -2,7 +2,6 @@
 per-request gate (ramps, smoothing, decisions per frame, LACI rollbacks)."""
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from zonos3.tts.span_follow import (  # noqa: E402
     token_char_ranges,
 )
 from zonos3.tts.superbpe import load_spec, text_ids  # noqa: E402
+from zonos3.utils.hashing import sha256_file  # noqa: E402
 
 O, C = "\ue000", "\ue001"
 
@@ -33,7 +33,7 @@ def spec(tmp_path):
     tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
     path = tmp_path / "superbpe.json"
     tokenizer.save(str(path))
-    return dict(kind="superbpe", path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+    return dict(kind="superbpe", path=str(path), sha256=sha256_file(path),
                 vocab_size=len(vocab), offset=4, bos=2, eos=3)
 
 

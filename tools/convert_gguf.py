@@ -20,7 +20,6 @@ checkpoint tensor is an error; `--help` on a subcommand describes its GGUF layou
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import re
@@ -33,6 +32,7 @@ import torch
 import yaml
 from gguf import GGMLQuantizationType, GGUFWriter
 import gguf.quants as gquants
+from zonos3.utils.hashing import sha256_bytes
 
 
 def _finish(writer: GGUFWriter, progress: bool = False) -> None:
@@ -269,8 +269,8 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
     if not isinstance(spec, dict) or any(spec.get(k) != v for k, v in TOKENIZER_SPEC.items()) or not spec.get("path"):
         unsupported("params.text_tokenizer_spec", spec)
     raw = (lm_dir / spec["path"]).read_bytes()
-    if spec.get("sha256") and hashlib.sha256(raw).hexdigest() != spec["sha256"]:
-        unsupported("tokenizer SHA256", hashlib.sha256(raw).hexdigest())
+    if spec.get("sha256") and sha256_bytes(raw) != spec["sha256"]:
+        unsupported("tokenizer SHA256", sha256_bytes(raw))
     silence_path = (Path(silence_frame) if silence_frame
                     else lm_dir / ".." / ".." / "registries" / f"silence_frame_{cfg.audio_codec}.json")
     silence = read_json(silence_path)

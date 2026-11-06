@@ -20,21 +20,13 @@ ids; the new rows go after them and the phoneme ids shift by their count:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import shutil
 from pathlib import Path
 
 import torch
 from zonos3.models.text_extra import TextExtraRows
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        while chunk := handle.read(16 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
+from zonos3.utils.hashing import sha256_file
 
 
 def add_text_extra_rows(base: Path, rows_path: Path, out: Path) -> Path:
@@ -66,8 +58,8 @@ def add_text_extra_rows(base: Path, rows_path: Path, out: Path) -> Path:
     torch.save(state, staging / "model.pth")
     (staging / "params.json").write_text(json.dumps(params, indent=2, ensure_ascii=False) + "\n")
     (staging / "text_extra.json").write_text(json.dumps({
-        "base": str(base), "base_model_sha256": _sha256(base / "model.pth"),
-        "rows": str(rows_path), "rows_sha256": _sha256(rows_path), "rows_run": extra.run,
+        "base": str(base), "base_model_sha256": sha256_file(base / "model.pth"),
+        "rows": str(rows_path), "rows_sha256": sha256_file(rows_path), "rows_run": extra.run,
         "text_extra_tokens": int(rows.shape[0]), "base_text_extra_tokens": existing,
         "first_row": text_vocab + 1 + existing, "table_key": key,
     }, indent=1) + "\n")

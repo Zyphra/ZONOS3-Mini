@@ -22,13 +22,13 @@ of SYMBOLS) as the last extra text rows, and --span-end writes zonos3.span_end_i
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
 
 import numpy as np
 from gguf import GGUFReader, GGUFWriter
+from zonos3.utils.hashing import sha256_bytes
 
 ARCH = "zonos3"
 TOKENIZER_SHA256 = "90322f910600027dee7fe63d400d1d9dc1035c167d560aadf0871e3661d08bf3"
@@ -101,7 +101,7 @@ def main():
         field = reader.fields[f"{ARCH}.tokenizer.json"]
         raw = bytes(field.parts[field.data[0]])
         del field, reader  # release the input mmap before potentially overwriting this fixture
-    if hashlib.sha256(raw).hexdigest() != TOKENIZER_SHA256:
+    if sha256_bytes(raw) != TOKENIZER_SHA256:
         raise ValueError("tokenizer does not match the pinned target SHA256")
     tok_json = raw.decode("utf-8")
 

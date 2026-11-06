@@ -4,9 +4,10 @@ Decoding goes through the causal multi-resolution iSTFT head declared by the reg
 KEEP-2 pruned head (``codec_registry_keep2_plain.json``, istft_head_a_20261002 full-unfreezeall-mr-drop30-4x10).
 The 600k conv-tail decoder is never used. The 600k generator.pt only supplies the frozen encoder/quantizer and the
 initial decoder stages that the head checkpoint then overrides."""
-import functools,hashlib,json,os,time
+import functools,json,os,time
 from pathlib import Path
 import torch
+from zonos3.utils.hashing import sha256_file
 from zonos3.utils.release import hf_join,resolve_file  # RELEASE_HF_20261021
 REGISTRY=Path(__file__).resolve().parents[1]/'registries'/'codec_registry_keep2_plain.json'
 _CACHE={}
@@ -33,11 +34,6 @@ def decoder_info(codec):
               expect_step=spec.get('expect_step'),headroom_db=float(spec.get('headroom_db',0.0)),causal=True)
     info.update(_INFO.get(codec,{}))
     return info
-def _sha256(path):
-    h=hashlib.sha256()
-    with open(path,'rb') as f:
-        for chunk in iter(lambda:f.read(16*1024*1024),b''):h.update(chunk)
-    return h.hexdigest()
 def load_model(codec,device,prune=True):
     """Build the iSTFT-head decoder exactly as the listening viewer's decode.py does: ISTFTCodec(cfg['model'], cfg['head']),
     pretrained generator weights, then the run's trainable state (decoder stages + head) from the pinned checkpoint."""
@@ -96,7 +92,7 @@ def decode(codes,codec):
     if codes.ndim!=3 or codes.shape[-1]!=e['codebooks'] or bool(((codes<0)|(codes>=4096)).any()):raise ValueError('Invalid matched codec tokens')
     device=os.environ.get('ZONOS3_AUDIO_CODEC_DEVICE','cuda:0');key=(codec,device)
     if key not in _CACHE:
-        actual=_sha256(resolve_file(e['checkpoint']))
+        actual=sha256_file(resolve_file(e['checkpoint']))
         assert actual==e['checkpoint_sha256'],('generator checkpoint sha256',actual,e['checkpoint_sha256'])
         _CACHE[key]=load_model(codec,device)
     return decode_model(_CACHE[key],codes,e)

@@ -8,15 +8,16 @@ SuperBPE on its own -- lingua apps.zonos.text_tokenization._phoneme_payload_ids.
 is the last block of the extra rows: right after the padding row (open_id = text_vocab + 1), or
 after the speech-edit marker rows of an edit checkpoint (open_id = text_vocab + 1 + markers).
 """
-import hashlib,json
+import json
 from functools import lru_cache
 from pathlib import Path
+from zonos3.utils.hashing import sha256_bytes
 PHONEME_OPEN,PHONEME_CLOSE="\ue000","\ue001"  # lingua apps.zonos.phonemes markers (the spec carries its own)
 @lru_cache(maxsize=8)
 def tokenizer(path,sha,size):
     from tokenizers import Tokenizer
     raw=Path(path).read_bytes()
-    if hashlib.sha256(raw).hexdigest()!=sha: raise ValueError("SuperBPE SHA mismatch")
+    if sha256_bytes(raw)!=sha: raise ValueError("SuperBPE SHA mismatch")
     t=Tokenizer.from_str(raw.decode())
     if t.get_vocab_size(with_added_tokens=True)!=size or t.padding is not None or t.truncation is not None: raise ValueError("SuperBPE artifact mismatch")
     return t

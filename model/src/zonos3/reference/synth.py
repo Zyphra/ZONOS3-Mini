@@ -93,10 +93,11 @@ class ReferenceAssets:
         key = (codec, str(device))
         if key not in self._decoders:
             from zonos3.tokenizer import matched_codec
+            from zonos3.utils.hashing import sha256_file
             from zonos3.utils.release import resolve_file
 
             entry = matched_codec.entry(codec)
-            actual = matched_codec._sha256(resolve_file(entry["checkpoint"]))
+            actual = sha256_file(resolve_file(entry["checkpoint"]))
             if actual != entry["checkpoint_sha256"]:
                 raise ValueError(f"codec generator checkpoint sha256 {actual} != {entry['checkpoint_sha256']}")
             self._decoders[key] = matched_codec.load_model(codec, device)

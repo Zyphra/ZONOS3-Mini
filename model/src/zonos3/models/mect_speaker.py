@@ -12,7 +12,6 @@ checkpoint, sha256, backbone_type, backbone_config, pooling, embed_dim, sample_r
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from functools import cache
@@ -22,6 +21,8 @@ import torch
 import torch.nn as nn
 import torchaudio
 import torchaudio.compliance.kaldi as kaldi
+
+from zonos3.utils.hashing import sha256_file
 
 REGISTRY_ENV = "ZONOS3_SPEAKER_ENCODER_REGISTRY"
 DEFAULT_REGISTRY = Path(__file__).resolve().parents[1] / "registries" / "speaker_encoder_registry.json"
@@ -50,14 +51,6 @@ def registry_entry(codec: str | None) -> dict | None:
     if entry is None:
         return None
     return dict(entry, codec=str(codec))
-
-
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for block in iter(lambda: fh.read(1 << 22), b""):
-            h.update(block)
-    return h.hexdigest()
 
 
 class MECTFbankSpeakerEmbedding(nn.Module):
@@ -108,7 +101,7 @@ class MECTFbankSpeakerEmbedding(nn.Module):
                 raise FileNotFoundError(f"speaker encoder checkpoint for {self.codec!r} not found: {path}")
             expected = str(entry.get("sha256") or "").strip().lower()
             if expected:
-                actual = _sha256(path)
+                actual = sha256_file(path)
                 if actual != expected:
                     raise ValueError(f"speaker encoder checkpoint {path} sha256 {actual} != registry {expected}")
             state = torch.load(path, map_location="cpu", weights_only=True)

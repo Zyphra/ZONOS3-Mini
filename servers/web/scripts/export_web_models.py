@@ -21,6 +21,7 @@ import struct
 
 import numpy as np
 from zonos3.languages import CODES
+from zonos3.utils.hashing import sha256_bytes, sha256_file
 
 SHARD_CAP = 64 << 20
 ALIGN = 256
@@ -325,9 +326,8 @@ def copy_plain(w, g, name):
 def check_tokenizer(meta, path):
     """Pops tokenizer.json from a backbone meta; it must be src/superbpe8192.json."""
     tok = meta.pop("tokenizer.json")
-    with open(os.path.join(HERE, "..", "src", "superbpe8192.json"), "rb") as f:
-        ref_hash = hashlib.sha256(f.read()).hexdigest()
-    if hashlib.sha256(tok.encode("utf-8")).hexdigest() != ref_hash:
+    ref_hash = sha256_file(os.path.join(HERE, "..", "src", "superbpe8192.json"))
+    if sha256_bytes(tok.encode("utf-8")) != ref_hash:
         raise SystemExit(f"{path}: backbone tokenizer differs from src/superbpe8192.json")
 
 
