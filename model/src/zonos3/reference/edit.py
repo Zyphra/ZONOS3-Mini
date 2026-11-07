@@ -39,8 +39,10 @@ def generate_edit_fill(
     span) masks the span-end token until the fill has that many frames."""
     c = lm.config
     if c.span_end_id is None:
-        raise ValueError("Speech editing needs a checkpoint with a span-end audio token (span_end_id); "
-                         "this checkpoint only has the end-of-utterance token")
+        raise ValueError(
+            "Speech editing needs a checkpoint with a span-end audio token (span_end_id); "
+            "this checkpoint only has the end-of-utterance token"
+        )
     builder = prompt_builder(lm)
     max_spans = edit_marker_rows(c.text_extra_tokens, builder.config.text_tokenizer_spec)
     if max_spans <= 0:
@@ -59,14 +61,30 @@ def generate_edit_fill(
     eos_frames: list[int | None] = []
     for region in range(len(spans)):
         prompt = edit_prompt_tokens(text_rows, codes, spans, fills, builder.config, span_end_id=c.span_end_id)
-        branch = Branch(torch.cat(lead + [prompt]).to(torch.int32), speaker_embedding,
-                        0 if speaker_embedding is not None else -1, values, start, steered=False)
+        branch = Branch(
+            torch.cat(lead + [prompt]).to(torch.int32),
+            speaker_embedding,
+            0 if speaker_embedding is not None else -1,
+            values,
+            start,
+            steered=False,
+        )
         region_sampling = replace(sampling, min_frames=min_frames[region] if min_frames else sampling.min_frames)
-        attempt = generate_rows(lm, branch, sampling=region_sampling, seed=seed, max_tokens=max_tokens,
-                                stop_id=c.span_end_id, accents=accents)
+        attempt = generate_rows(
+            lm,
+            branch,
+            sampling=region_sampling,
+            seed=seed,
+            max_tokens=max_tokens,
+            stop_id=c.span_end_id,
+            accents=accents,
+        )
         # the finishing row is not part of the generated span (it only completes the delayed codebooks' flush)
-        rows = torch.stack(attempt.rows[:-1])[:, : c.n_codebooks] if len(attempt.rows) > 1 else \
-            torch.zeros((0, c.n_codebooks), dtype=torch.int32)
+        rows = (
+            torch.stack(attempt.rows[:-1])[:, : c.n_codebooks]
+            if len(attempt.rows) > 1
+            else torch.zeros((0, c.n_codebooks), dtype=torch.int32)
+        )
         fill, _ = extract_fill(rows, attempt.eos_frame, audio_pad_id=c.audio_pad_id, codebook_sizes=c.codebook_sizes)
         fills.append(fill)
         eos_frames.append(attempt.eos_frame)

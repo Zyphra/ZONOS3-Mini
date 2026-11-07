@@ -3,23 +3,23 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 import torch
-from zonos3_sgl.utils.registry import Registry
-from zonos3_sgl.utils.logger import init_logger
+
 from zonos3_sgl.utils.arch import is_sm90_supported, is_sm100_supported
+from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.registry import Registry
 
 from .base import BaseAttnBackend, BaseAttnMetadata, HybridBackend
 
 if TYPE_CHECKING:
-    from zonos3_sgl.kvcache import BaseKVCache
     from zonos3.models.config import ModelConfig
+
+    from zonos3_sgl.kvcache import BaseKVCache
 
 logger = init_logger(__name__)
 
 
 class BackendCreator(Protocol):
-    def __call__(
-        self, config: ModelConfig, kvcache: BaseKVCache, page_table: torch.Tensor
-    ) -> BaseAttnBackend: ...
+    def __call__(self, config: ModelConfig, kvcache: BaseKVCache, page_table: torch.Tensor) -> BaseAttnBackend: ...
 
 
 SUPPORTED_ATTENTION_BACKENDS = Registry[BackendCreator]("Attention Backend")
@@ -57,9 +57,7 @@ def validate_backend(backend: str):
             if b not in supported:
                 from argparse import ArgumentTypeError
 
-                raise ArgumentTypeError(
-                    f"Unsupported attention backend: {b}. Supported backends: {supported}"
-                )
+                raise ArgumentTypeError(f"Unsupported attention backend: {b}. Supported backends: {supported}")
     return backend
 
 

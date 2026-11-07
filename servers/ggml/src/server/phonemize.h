@@ -1,4 +1,4 @@
-// POST /v2/phonemize and the pronunciation capabilities (sgl _phoneme_capabilities / tts_phonemize): the gold lexicon
+// POST /v2/phonemize and the pronunciation capabilities (zonos3.server.capabilities.phoneme_capabilities): the gold lexicon
 // of --tts-phoneme-lexicon (zonos3-phonemes, espeak-ng guessing when ZONOS3_ESPEAK_NG_LIBRARY is set), restricted to
 // the checkpoint's phone inventory on a phoneme-token checkpoint ("unsupported" segments).
 #pragma once
@@ -18,4 +18,4 @@ bool open_phoneme_lexicon(ServerState & s, std::string & err);
 nlohmann::json phoneme_capabilities(const ServerState & s);
 void register_phonemize_routes(httplib::Server & svr, ServerState & s);
 
-}  // namespace zs
+} // namespace zs

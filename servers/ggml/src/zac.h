@@ -15,9 +15,16 @@
 #include <string>
 #include <vector>
 
-namespace pocketfft { namespace detail { template<typename T0> class pocketfft_r; } }
+namespace pocketfft {
+namespace detail {
+template <typename T0>
+class pocketfft_r;
+}
+} // namespace pocketfft
 
-struct zac_stage_hp { int in_dim, out_dim, d_model, n_head, n_layer, n_ff, context, patch; };
+struct zac_stage_hp {
+    int in_dim, out_dim, d_model, n_head, n_layer, n_ff, context, patch;
+};
 
 struct zac_model {
     ggml_context * ctx_w = nullptr;
@@ -25,15 +32,15 @@ struct zac_model {
     ggml_backend_buffer_type_t buft = nullptr;
     ggml_backend_buffer_t buf_w = nullptr;
     bool is_gpu = false;
-    bool use_fattn = false;                // MOSS attention via ggml_flash_attn_ext (backend supports it)
-    bool use_conv1d = false;               // encoder K>1 convs via ggml_conv_1d_implicit (backend supports it)
+    bool use_fattn = false;  // MOSS attention via ggml_flash_attn_ext (backend supports it)
+    bool use_conv1d = false; // encoder K>1 convs via ggml_conv_1d_implicit (backend supports it)
     // CPU only: matmul offload to an accelerator device (BLAS/Accelerate) when one is built in;
     // graphs then run through `sched` instead of a plain CPU allocator.
     ggml_backend_t accel = nullptr;
     ggml_backend_sched_t sched = nullptr;
     // GPU only: allocator reused across calls (graphs have a fixed width). One thread per zac_model.
     mutable ggml_gallocr_t galloc = nullptr;
-    bool owns_weights = true;              // false for zac_clone copies sharing another model's weights
+    bool owns_weights = true; // false for zac_clone copies sharing another model's weights
     std::map<std::string, ggml_tensor *> t;
     int n_codebooks = 10, codebook_size = 4096, latent_dim = 1024, semantic_dim = 768, sem_depth = 4;
     int sample_rate = 44100, internal_rate = 44160, frame_rate = 15, hop = 2940, internal_hop = 2944;
@@ -43,36 +50,37 @@ struct zac_model {
     int head_depth = 0, head_hop = 0, fir_kernel = 0;
     std::array<int, 2> n_fft{};
     float max_log_mag = 0, headroom_db = 0;
-    std::vector<float> mixer;                                          // [2][fir_kernel]
-    std::array<std::vector<float>, 2> window;                          // periodic Hann, [n_fft[i]]
+    std::vector<float> mixer;                                                          // [2][fir_kernel]
+    std::array<std::vector<float>, 2> window;                                          // periodic Hann, [n_fft[i]]
     std::array<std::shared_ptr<const pocketfft::detail::pocketfft_r<float>>, 2> irfft; // shared by clones
     int rs_orig = 736, rs_new = 735, rs_width = 17;
-    std::vector<float> rs_kernel;          // host [rs_new][2*rs_width + rs_orig]
+    std::vector<float> rs_kernel; // host [rs_new][2*rs_width + rs_orig]
     ggml_tensor * get(const std::string & n) const;
 };
 
 // Incremental decode state. Frames are decoded in order; each call appends 44.1 kHz audio.
 // Owns a per-stream MOSS K/V ring buffer on the codec backend (allocated on first decode).
 struct zac_stream {
-    int n_done = 0;                                   // 15 Hz frames decoded
-    std::vector<std::vector<float>> conv;             // per history-consuming conv op, [C, R]
+    int n_done = 0;                       // 15 Hz frames decoded
+    std::vector<std::vector<float>> conv; // per history-consuming conv op, [C, R]
     // Host iSTFT, per branch i: overlap-add / window-envelope of padded positions [ola_base[i], ..).
     std::array<std::vector<float>, 2> ola, env;
     std::array<int64_t, 2> ola_base{};
-    int64_t head_frames = 0;                          // 240 Hz head frames synthesized so far
-    bool head_done = false;                           // flushed
+    int64_t head_frames = 0; // 240 Hz head frames synthesized so far
+    bool head_done = false;  // flushed
     // Mixer input: branch samples s_c, offset by the FIR half-width h (index j holds s[j - h]);
     // mix_in[i][0] has absolute index mix_base, mix_avail[i] = count of indices produced, mix_next = next output sample.
     std::array<std::vector<float>, 2> mix_in;
     std::array<int64_t, 2> mix_avail{};
     int64_t mix_base = 0, mix_next = 0;
-    std::vector<float> rs_buf; int64_t rs_base = 0;   // retained internal samples, absolute index of rs_buf[0]
-    int64_t rs_in = 0, rs_next_block = 0;             // internal samples received; next 735-sample output block
-    const zac_model * owner = nullptr;                // model whose backend holds the cache
+    std::vector<float> rs_buf;
+    int64_t rs_base = 0;                  // retained internal samples, absolute index of rs_buf[0]
+    int64_t rs_in = 0, rs_next_block = 0; // internal samples received; next 735-sample output block
+    const zac_model * owner = nullptr;    // model whose backend holds the cache
     ggml_context * ctx_kv = nullptr;
     ggml_backend_buffer_t buf_kv = nullptr;
-    std::vector<ggml_tensor *> kc, vc;                // per MOSS layer, stage-major: [head_dim, cap_s, n_head], F16 GPU / F32 CPU
-    std::vector<int> cap;                             // per stage ring capacity (rows)
+    std::vector<ggml_tensor *> kc, vc; // per MOSS layer, stage-major: [head_dim, cap_s, n_head], F16 GPU / F32 CPU
+    std::vector<int> cap;              // per stage ring capacity (rows)
 
     zac_stream() = default;
     ~zac_stream();
@@ -104,5 +112,3 @@ bool zac_decode(const zac_model & m, const int32_t * codes, int H, int W, int eo
 // Linear output gain 10^(-db/20) for the decoder's headroom (db < 0 selects the model's own headroom_db).
 // zac_decode / zac_stream_* output is raw decoder level; callers apply the gain.
 float zac_output_gain(const zac_model & m, double headroom_db);
-std::vector<uint8_t> zac_wav_bytes(const std::vector<float> & audio, int sample_rate);
-bool zac_write_wav(const char * path, const std::vector<float> & audio, int sample_rate);

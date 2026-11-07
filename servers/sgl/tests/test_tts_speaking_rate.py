@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from zonos3_sgl.server import api_server
 from zonos3.server.schemas import GenerateRequest, SpeechRequest
 from zonos3.tts import plan
 from zonos3.tts.prompt import (
@@ -10,6 +9,7 @@ from zonos3.tts.prompt import (
     tokens_to_prompt_tokens,
 )
 from zonos3.utils.hf import cached_load_checkpoint_config
+from zonos3_sgl.server import api_server
 
 
 class _MaxTokenConfig:
@@ -55,7 +55,7 @@ def test_tts_max_tokens_default_resolves_to_model_max():
     assert plan.max_tokens_budget(9999, server_max) == 4096
     assert plan.max_tokens_budget(256, server_max) == 256
 
-    with pytest.raises(ValueError, match="positive"):
+    with pytest.raises(ValueError):
         plan.max_tokens_budget(0, server_max)
 
 

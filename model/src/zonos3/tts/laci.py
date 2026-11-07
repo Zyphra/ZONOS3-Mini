@@ -28,6 +28,7 @@ from __future__ import annotations
 import bisect
 import json
 import math
+import os
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,12 +54,12 @@ class LaciConfig:
 
 @dataclass(frozen=True)
 class Failure:
-    kind: str           # "skip" | "hallucination" | "truncation"
+    kind: str  # "skip" | "hallucination" | "truncation"
     detect_row: int
     onset_row: int
     rollback_row: int
-    bin: int            # skip: first skipped bin; hallucination/truncation: first unread bin
-    frontier: int       # skip: the bin the reading jumped to; otherwise the frontier
+    bin: int  # skip: first skipped bin; hallucination/truncation: first unread bin
+    frontier: int  # skip: the bin the reading jumped to; otherwise the frontier
 
 
 class Detector:
@@ -142,7 +143,7 @@ class Detector:
         if self._done_row is not None:
             return math.inf
         onsets = [next_row if self._last_advance_row is None else self._last_advance_row, next_row]
-        onsets += [r for r in self._first_row[self._frontier + 2:] if r is not None]
+        onsets += [r for r in self._first_row[self._frontier + 2 :] if r is not None]
         return self._rollback(min(onsets))
 
     # -- observation ---------------------------------------------------------
@@ -173,35 +174,47 @@ class Detector:
         if b > self._frontier and self._counts[b] >= cfg.cover_frac * self._share(b):
             for x in range(self._frontier + 1, b):
                 if self._counts[x] < cfg.skip_frac * self._share(x):
-                    onset = min(self._first_row[y] for y in range(x + 1, self.nb)
-                                if self._first_row[y] is not None)
-                    return Failure("skip", detect_row=row, onset_row=onset,
-                                   rollback_row=self._rollback(onset), bin=x, frontier=b)
+                    onset = min(self._first_row[y] for y in range(x + 1, self.nb) if self._first_row[y] is not None)
+                    return Failure(
+                        "skip", detect_row=row, onset_row=onset, rollback_row=self._rollback(onset), bin=x, frontier=b
+                    )
             self._frontier = b
             self._last_advance_row = row
 
         # 3. stall
         if self._done_row is None:
-            limit = max(cfg.stall_factor * self.pace_tok() * cfg.bin_tokens,
-                        cfg.min_stall_frames)
+            limit = max(cfg.stall_factor * self.pace_tok() * cfg.bin_tokens, cfg.min_stall_frames)
             if row - self._last_advance_row > limit:
                 onset = self._last_advance_row
-                return Failure("hallucination", detect_row=row, onset_row=onset,
-                               rollback_row=self._rollback(onset),
-                               bin=self._frontier + 1, frontier=self._frontier)
+                return Failure(
+                    "hallucination",
+                    detect_row=row,
+                    onset_row=onset,
+                    rollback_row=self._rollback(onset),
+                    bin=self._frontier + 1,
+                    frontier=self._frontier,
+                )
 
         # 4. text done
-        if (self._done_row is None and self._frontier >= self.nb - 2
-                and self._counts[self.nb - 1] >= self._share(self.nb - 1)):
+        if (
+            self._done_row is None
+            and self._frontier >= self.nb - 2
+            and self._counts[self.nb - 1] >= self._share(self.nb - 1)
+        ):
             self._done_row = row
         return None
 
     def on_eos(self, row):
         """Model emitted EOS at `row`: truncation iff two or more bins are unread."""
         if self._frontier < self.nb - 2:
-            return Failure("truncation", detect_row=row, onset_row=row,
-                           rollback_row=self._rollback(row),
-                           bin=self._frontier + 1, frontier=self._frontier)
+            return Failure(
+                "truncation",
+                detect_row=row,
+                onset_row=row,
+                rollback_row=self._rollback(row),
+                bin=self._frontier + 1,
+                frontier=self._frontier,
+            )
         return None
 
     def truncate(self, row):
@@ -266,7 +279,7 @@ class AciCenter:
 
 @dataclass(frozen=True)
 class LaciHeads:
-    """Alignment heads of one model and language (the JSON files in laci_heads/)."""
+    """Alignment heads of one model and language (the JSON files in assets/laci_heads/)."""
 
     heads: tuple[Head, ...]
     radius: dict[Head, int]  # ACI mask half-width per head
@@ -423,9 +436,14 @@ class PaceMonitor:
             return None
         if row - self._best_row > self.stall_frames(text_len):
             onset = self._best_row
-            return Failure("hallucination", detect_row=int(row), onset_row=onset,
-                           rollback_row=max(onset - self.cfg.rollback_margin_frames, self.min_rollback_row),
-                           bin=int(frontier) + 1, frontier=int(frontier))
+            return Failure(
+                "hallucination",
+                detect_row=int(row),
+                onset_row=onset,
+                rollback_row=max(onset - self.cfg.rollback_margin_frames, self.min_rollback_row),
+                bin=int(frontier) + 1,
+                frontier=int(frontier),
+            )
         if elapsed > self.target + self.margin:
             share = (smooth - self._pos[0]) / max(1, last - self._pos[0])  # of the text, read so far
             lower = elapsed / self.target  # the take is at least this long
@@ -435,9 +453,15 @@ class PaceMonitor:
 
     def _failure(self, kind, row, frontier, ratio):
         lo, hi = PACE_RATIO_RANGE
-        return PaceFailure(kind, detect_row=int(row), onset_row=self.min_rollback_row,
-                           rollback_row=self.min_rollback_row, bin=int(frontier), frontier=int(frontier),
-                           ratio=float(min(hi, max(lo, ratio))))
+        return PaceFailure(
+            kind,
+            detect_row=int(row),
+            onset_row=self.min_rollback_row,
+            rollback_row=self.min_rollback_row,
+            bin=int(frontier),
+            frontier=int(frontier),
+            ratio=float(min(hi, max(lo, ratio))),
+        )
 
     def truncate(self, row: int) -> None:
         """Drop the observations at rows >= ``row`` (the stream was rolled back there)."""
@@ -471,13 +495,24 @@ class Continuation:
     swap_delta: bool = False
 
 
-def _failure_record(f, retry_seed, ignored: bool, resume_row: int | None = None, retry_bucket: int | None = None) -> dict:
+def _failure_record(
+    f, retry_seed, ignored: bool, resume_row: int | None = None, retry_bucket: int | None = None
+) -> dict:
     """``rollback_row`` is where the regeneration resumed: the failure's own rollback row, or the first unsent row when
     that lies above it (``clamped``). ``retry_bucket``: the speaking-rate bucket the regeneration switched to."""
     rollback = f.rollback_row if resume_row is None else int(resume_row)
-    return dict(kind=f.kind, detect_row=f.detect_row, onset_row=f.onset_row, rollback_row=rollback,
-                clamped=rollback != f.rollback_row, bin=f.bin, frontier=f.frontier, retry_seed=retry_seed,
-                ignored=ignored, retry_bucket=retry_bucket)
+    return {
+        "kind": f.kind,
+        "detect_row": f.detect_row,
+        "onset_row": f.onset_row,
+        "rollback_row": rollback,
+        "clamped": rollback != f.rollback_row,
+        "bin": f.bin,
+        "frontier": f.frontier,
+        "retry_seed": retry_seed,
+        "ignored": ignored,
+        "retry_bucket": retry_bucket,
+    }
 
 
 @dataclass(eq=False)
@@ -528,7 +563,7 @@ class LaciSession:
     follower: object | None = None
 
     def __post_init__(self):
-        self.stream = [r for r in self.prefill_rows.to(torch.int32)]
+        self.stream = list(self.prefill_rows.to(torch.int32))
         self.attempt_start = self.n_prefill
         if self.duration is not None:
             self.pace = PaceMonitor(self.duration.frames, self.n_prefill, self.n_prefill, self.cfg)
@@ -537,7 +572,9 @@ class LaciSession:
         if self.bucket is None and self.rates is not None and self.condition_values is not None:
             self.bucket = int(self.condition_values[self.rates.index])
         if self.rate_deltas is not None and len(self.rate_deltas) != self.rates.last - self.rates.first + 1:
-            raise ValueError(f"rate_deltas: {len(self.rate_deltas)} for {self.rates.last - self.rates.first + 1} buckets")
+            raise ValueError(
+                f"rate_deltas: {len(self.rate_deltas)} for {self.rates.last - self.rates.first + 1} buckets"
+            )
 
     @property
     def rate_bucket(self) -> int | None:
@@ -614,8 +651,13 @@ class LaciSession:
 
     def _pace_open(self) -> bool:
         """Whether a pace failure can still roll the whole attempt back (then every generated row is held)."""
-        return (self.pace is not None and self.duration.adjust_rate and self.pace.read_row is None
-                and self.pace_retries < PACE_MAX_RETRIES and self.attempts < self.cfg.max_retries)
+        return (
+            self.pace is not None
+            and self.duration.adjust_rate
+            and self.pace.read_row is None
+            and self.pace_retries < PACE_MAX_RETRIES
+            and self.attempts < self.cfg.max_retries
+        )
 
     def _ignore(self, f: Failure) -> None:
         key = (f.kind, f.bin, f.onset_row)
@@ -713,12 +755,15 @@ class LaciSession:
             self.probation = (f, AciCenter(self.detector.last_pos_before(resume), self.text_len))
         self.pending_failure, self.text_done, self.eos_row = None, False, None
         self.attempt_start = resume
-        return Continuation(torch.stack(self.stream), resume - self.n_prefill, seed,
-                            self.max_tokens - (resume - self.n_prefill),
-                            None if self.condition_values is None else list(self.condition_values),
-                            steering_delta=(None if self.rate_deltas is None
-                                            else self.rate_deltas[self.bucket - self.rates.first]),
-                            swap_delta=self.rate_deltas is not None)
+        return Continuation(
+            torch.stack(self.stream),
+            resume - self.n_prefill,
+            seed,
+            self.max_tokens - (resume - self.n_prefill),
+            None if self.condition_values is None else list(self.condition_values),
+            steering_delta=(None if self.rate_deltas is None else self.rate_deltas[self.bucket - self.rates.first]),
+            swap_delta=self.rate_deltas is not None,
+        )
 
     # -- final -----------------------------------------------------------------------------------------------------
 
@@ -731,8 +776,83 @@ class LaciSession:
         det = self.detector
         kind, eos = self.end
         final_rows = (len(self.stream) if eos is None else int(eos)) - self.n_prefill
-        return dict(attempts=self.attempts, capped=self.attempts >= self.cfg.max_retries, end=kind,
-                    text_len=self.text_len, n_bins=det.nb if det else 0, final_rows=final_rows,
-                    final_eos_row=None if eos is None else int(eos), generated_total=self.generated_total,
-                    pace_tok=det.pace_tok() if det else None, heads=[list(h) for h in self.heads.heads],
-                    failures=list(self.failures), pace_retries=self.pace_retries, rate_bucket=self.rate_bucket)
+        return {
+            "attempts": self.attempts,
+            "capped": self.attempts >= self.cfg.max_retries,
+            "end": kind,
+            "text_len": self.text_len,
+            "n_bins": det.nb if det else 0,
+            "final_rows": final_rows,
+            "final_eos_row": None if eos is None else int(eos),
+            "generated_total": self.generated_total,
+            "pace_tok": det.pace_tok() if det else None,
+            "heads": [list(h) for h in self.heads.heads],
+            "failures": list(self.failures),
+            "pace_retries": self.pace_retries,
+            "rate_bucket": self.rate_bucket,
+        }
+
+
+# ----------------------------------------------------------------------------------------------------- head files
+
+
+def parse_laci_heads(entries) -> dict[str, str]:
+    """``--laci-heads LANG=PATH ...`` -> {request code: path}: the code lowercased with ``-`` as ``_``, the path
+    user-expanded and an existing file; ValueError otherwise."""
+    heads = {}
+    for entry in entries or ():
+        lang, sep, path = entry.partition("=")
+        if not sep or not lang or not path:
+            raise ValueError(f"--laci-heads takes LANG=PATH entries, got {entry!r}")
+        path = os.path.expanduser(path)
+        if not os.path.isfile(path):
+            raise ValueError(f"--laci-heads {lang}: no file {path}")
+        heads[lang.strip().lower().replace("-", "_")] = path
+    return heads
+
+
+def discover_laci_heads(directory: str | Path) -> dict[str, str]:
+    """The head files of a directory for every server language (in ``zonos3.languages.CODES`` order): exactly one
+    ``*_heads.json`` is the default; a ``*_heads_<code>.json`` serves the server languages whose speech code is
+    ``<code>``. ValueError for zero or several default files, or a ``<code>`` no server language speaks."""
+    from zonos3 import languages
+
+    root = Path(directory).expanduser().resolve()
+    defaults = sorted(root.glob("*_heads.json"))
+    if len(defaults) != 1:
+        raise ValueError(f"{root}: needs exactly one *_heads.json default head file, found {len(defaults)}")
+    spoken = {lang.speech for lang in languages.SERVER}
+    by_speech: dict[str, Path] = {}
+    for path in sorted(root.glob("*_heads_*.json")):
+        code = path.stem.rpartition("_heads_")[2]
+        if code not in spoken:
+            raise ValueError(f"{path}: no server language speaks {code!r}")
+        by_speech[code] = path
+    return {lang.code: str(by_speech.get(lang.speech, defaults[0])) for lang in languages.SERVER}
+
+
+def main(argv=None) -> int:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="python -m zonos3.tts.laci", description="LANG=PATH --laci-heads arguments of a head directory"
+    )
+    parser.add_argument(
+        "--all",
+        required=True,
+        metavar="DIR",
+        help="every server language: the directory's *_heads.json, or its *_heads_<speech code>.json",
+    )
+    args = parser.parse_args(argv)
+    try:
+        heads = discover_laci_heads(args.all)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(" ".join(f"{lang}={path}" for lang, path in heads.items()))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

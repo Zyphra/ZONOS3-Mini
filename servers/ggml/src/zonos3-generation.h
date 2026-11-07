@@ -4,7 +4,7 @@
 
 struct zonos3_generation_registry {
     int sample_rate;                    // the API's audio rate (Hz)
-    struct {                            // the v2 sampling defaults (api/openapi.yaml repeats them)
+    struct {                            // the v2 sampling defaults (servers/api/openapi.yaml repeats them)
         float temperature, top_p, min_p, repetition_penalty;
         int topk, repetition_window;
         int repetition_codebooks;       // < 0 in a request means every codebook

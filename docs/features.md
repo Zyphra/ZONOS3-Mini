@@ -2,7 +2,7 @@
 
 ## TTS Serving
 
-Zonos3 serves Zonos3 TTS checkpoints from the Hugging Face Hub (e.g. `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo`, the default) or a local path. The HTTP API ([api.md](api.md), schemas in [api/openapi.yaml](../api/openapi.yaml)) exposes:
+Zonos3 serves Zonos3 TTS checkpoints from the Hugging Face Hub (e.g. `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo`, the default) or a local path. The HTTP API ([api.md](api.md), schemas in [servers/api/openapi.yaml](../servers/api/openapi.yaml)) exposes:
 
 - `POST /v2/generate` for the native TTS API.
 - `POST /v1/audio/speech` for an OpenAI-style speech endpoint.

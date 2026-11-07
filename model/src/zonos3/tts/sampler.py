@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import List
 
 import torch
@@ -9,6 +10,42 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 EOA_TOKEN = 1024  # End of audio token
+
+
+@dataclass(frozen=True)
+class ClampedSampling:
+    """One request's sampler settings as every sampler applies them (:func:`clamp_sampling`)."""
+
+    temperature: float
+    topk: int
+    top_p: float
+    min_p: float
+    repetition_window: int
+    repetition_penalty: float
+    repetition_codebooks: int
+
+
+def clamp_sampling(p, *, n_codebooks: int, codebook_size: int) -> ClampedSampling:
+    """Request sampling fields (``temperature``, ``topk``, ``top_p``, ``min_p``, ``repetition_window``,
+    ``repetition_penalty``, ``repetition_codebooks``) clamped to their usable ranges: topk < 1 = the whole codebook,
+    repetition_codebooks < 0 = every codebook."""
+    codebooks = int(p.repetition_codebooks)
+    return ClampedSampling(
+        temperature=max(float(p.temperature), 1e-6),
+        topk=int(p.topk) if int(p.topk) >= 1 else int(codebook_size),
+        top_p=min(max(float(p.top_p), 0.0), 1.0),
+        min_p=max(float(p.min_p), 0.0),
+        repetition_window=max(int(p.repetition_window), 0),
+        repetition_penalty=max(float(p.repetition_penalty), 1.0),
+        repetition_codebooks=n_codebooks if codebooks < 0 else min(max(codebooks, 0), n_codebooks),
+    )
+
+
+def active_repetition_window(c: ClampedSampling, available: int) -> int:
+    """The repetition-penalty window over the ``available`` history rows (0 = no penalty)."""
+    if c.repetition_window > 0 and c.repetition_penalty > 1.0 and c.repetition_codebooks > 0:
+        return min(c.repetition_window, available)
+    return 0
 
 
 def sample_logits_in_fp32(model_config) -> bool:
@@ -154,14 +191,9 @@ def sample_tts(
     codebook_size = int(codebook_size)
     audio_pad_id = int(audio_pad_id)
     if not 0 < codebook_size < V or not codebook_size <= audio_pad_id < V:
-        raise ValueError(
-            f"Invalid codebook_size={codebook_size} / audio_pad_id={audio_pad_id} "
-            f"for vocabulary {V}"
-        )
+        raise ValueError(f"Invalid codebook_size={codebook_size} / audio_pad_id={audio_pad_id} for vocabulary {V}")
     if tuple(stop_token_ids.shape) != (B,):
-        raise ValueError(
-            f"Expected stop_token_ids of shape ({B},), received {tuple(stop_token_ids.shape)}"
-        )
+        raise ValueError(f"Expected stop_token_ids of shape ({B},), received {tuple(stop_token_ids.shape)}")
 
     # Padding targets are ignored during training, so their logits are
     # unconstrained and padding must never be sampled as an audio code. Of the
@@ -170,34 +202,28 @@ def sample_tts(
     # the other end token (EOA vs span-end) would end the wrong kind of segment.
     token_ids = torch.arange(V, device=logits.device).view(1, 1, V)
     stop_ids = stop_token_ids.to(device=logits.device, dtype=token_ids.dtype).view(B, 1, 1)
-    invalid = (token_ids == audio_pad_id) | (
-        (token_ids >= codebook_size) & (token_ids != stop_ids)
-    )
+    invalid = (token_ids == audio_pad_id) | ((token_ids >= codebook_size) & (token_ids != stop_ids))
 
     if codebook_sizes is not None:
         sizes = tuple(int(item) for item in codebook_sizes)
         if len(sizes) != C:
-            raise ValueError(
-                f"Expected {C} per-codebook sizes, received {len(sizes)}"
-            )
+            raise ValueError(f"Expected {C} per-codebook sizes, received {len(sizes)}")
         if any(size <= 0 or size > codebook_size for size in sizes):
-            raise ValueError(
-                f"Invalid per-codebook sizes {sizes!r} for codebook size {codebook_size}"
-            )
+            raise ValueError(f"Invalid per-codebook sizes {sizes!r} for codebook size {codebook_size}")
         limits = torch.tensor(sizes, device=logits.device).view(1, C, 1)
-        invalid = invalid | (
-            (token_ids >= limits) & (token_ids < codebook_size)
-        )
+        invalid = invalid | ((token_ids >= limits) & (token_ids < codebook_size))
     if stop_blocked is not None:
         invalid = invalid | ((token_ids == stop_ids) & stop_blocked.to(logits.device).view(B, C, 1))
     logits = logits.masked_fill(invalid, float("-inf"))
 
     # Debug: print detailed stats matching reference format for first 10 samples
     # Guard with is_current_stream_capturing to avoid CUDA graph capture errors
-    if (logger.isEnabledFor(logging.DEBUG)
-            and _debug_sample_count < 10
-            and EOA_TOKEN < V
-            and not torch.cuda.is_current_stream_capturing()):
+    if (
+        logger.isEnabledFor(logging.DEBUG)
+        and _debug_sample_count < 10
+        and EOA_TOKEN < V
+        and not torch.cuda.is_current_stream_capturing()
+    ):
         _debug_sample_count += 1
         step = _debug_sample_count
 
@@ -208,8 +234,12 @@ def sample_tts(
             top5 = stats["top5_ids"][cb]
             logger.debug(
                 "  CB%d: entropy=%.4f, top1_prob=%.4f, top1_id=%d, margin=%.2f, top5=%s",
-                cb, stats["entropy"][cb], stats["top1_prob"][cb],
-                top5[0], stats["margin"][cb], top5,
+                cb,
+                stats["entropy"][cb],
+                stats["top1_prob"][cb],
+                top5[0],
+                stats["margin"][cb],
+                top5,
             )
 
         probs_raw = F.softmax(logits[0], dim=-1)
@@ -217,11 +247,13 @@ def sample_tts(
         eoa_logits = logits[0, :, EOA_TOKEN].tolist()
         logger.debug(
             "Step %d EOA(1024) logits: [%s]",
-            step, ", ".join(f"{x:.2f}" for x in eoa_logits),
+            step,
+            ", ".join(f"{x:.2f}" for x in eoa_logits),
         )
         logger.debug(
             "Step %d EOA(1024) probs:  [%s]",
-            step, ", ".join(f"{x:.4f}" for x in eoa_probs),
+            step,
+            ", ".join(f"{x:.4f}" for x in eoa_probs),
         )
 
     logits = apply_repetition_penalty(
@@ -290,22 +322,20 @@ def sample_tts(
             for i in range(B):
                 row_probs = probs[i * C : (i + 1) * C, : widths[i]].contiguous()  # (C, width)
                 gen = generators[i] if i < len(generators) else None
-                rows.append(
-                    torch.multinomial(row_probs, num_samples=1, generator=gen)
-                )
+                rows.append(torch.multinomial(row_probs, num_samples=1, generator=gen))
             next_ids = torch.cat(rows, dim=0).view(B, C)
         else:
-            next_ids = torch.multinomial(
-                probs[:, : max(widths)].contiguous(), num_samples=1
-            ).view(B, C)
+            next_ids = torch.multinomial(probs[:, : max(widths)].contiguous(), num_samples=1).view(B, C)
 
     # Return unpacked format: list of (audio codes + text placeholder)
     next_ids_list = next_ids.tolist()
 
     # Debug: print sampled tokens for first 10 samples
-    if (logger.isEnabledFor(logging.DEBUG)
-            and _debug_sample_count <= 10
-            and not torch.cuda.is_current_stream_capturing()):
+    if (
+        logger.isEnabledFor(logging.DEBUG)
+        and _debug_sample_count <= 10
+        and not torch.cuda.is_current_stream_capturing()
+    ):
         step = _debug_sample_count
         sampled = next_ids_list[0] if next_ids_list else []
         logger.debug("Step %d sampled: %s", step, sampled)
@@ -314,7 +344,9 @@ def sample_tts(
             if eoa_positions:
                 logger.debug(
                     "Step %d *** EOA SAMPLED at CB %s for batch %d ***",
-                    step, eoa_positions, i,
+                    step,
+                    eoa_positions,
+                    i,
                 )
 
     return [row + [text_vocab] for row in next_ids_list]

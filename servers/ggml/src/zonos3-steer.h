@@ -11,22 +11,22 @@
 #include <vector>
 struct zonos3_model;
 
-constexpr int    ZONOS3_STEER_RAMP_FRAMES = 3;        // 0.2 s at 15 frames/s
-constexpr double ZONOS3_STEER_FRAMES_PER_CHAR = 1.0;  // default control_span_rate
+constexpr int ZONOS3_STEER_RAMP_FRAMES = 3;          // 0.2 s at 15 frames/s
+constexpr double ZONOS3_STEER_FRAMES_PER_CHAR = 1.0; // default control_span_rate
 
 struct zonos3_steer_direction {
-    std::string id, set, name;     // id = "<set>.<name>"
+    std::string id, set, name; // id = "<set>.<name>"
     bool axis = false, hidden = false;
-    int source = -1;               // bank source (hidden only)
-    std::vector<float> vec;        // [speaker_dim] raw | [hidden_size] hidden
+    int source = -1;        // bank source (hidden only)
+    std::vector<float> vec; // [speaker_dim] raw | [hidden_size] hidden
 };
 // Per-speaker, per-direction raw dose chosen offline (directions.Calibration). A dose of 0 disables the direction
 // for that speaker; a "<name>-" key is the negative pole's own dose.
 struct zonos3_steer_calibration {
     std::map<std::string, std::map<std::string, double>> by_speaker;
-    std::map<std::string, double> defaults;   // Python `default`
+    std::map<std::string, double> defaults; // Python `default`
     double global_default = 1.0;
-    std::string document_json;                // Calibration.document() as JSON, file key order
+    std::string document_json; // Calibration.document() as JSON, file key order
     // `speaker` empty = no speaker key.
     double strength(const std::string & speaker, const std::string & name) const;
     // Calibration.disabled: the names whose dose is 0 for `speaker`, "<name>-" when only the negative pole is 0.
@@ -53,12 +53,12 @@ struct zonos3_steer_bundle {
     std::string name;
     uint32_t speaker_dim = 0, hidden_size = 0;
     std::vector<zonos3_steer_set> sets;
-    std::vector<zonos3_steer_direction> dirs;                               // file order
-    std::map<std::string, std::vector<std::pair<double, double>>> timing;  // id -> (dose, factor), dose-sorted
-    std::string timing_json, ui_json;                                       // verbatim from the file
-    std::map<std::string, size_t> index;                                    // id -> dirs[i] (zonos3_steer_index)
-    std::vector<int> sources;                                               // ascending distinct hidden sources
-    std::optional<zonos3_steer_rate_extension> rate_extension;              // zonos3_steer.rate_extension ("" = none)
+    std::vector<zonos3_steer_direction> dirs;                             // file order
+    std::map<std::string, std::vector<std::pair<double, double>>> timing; // id -> (dose, factor), dose-sorted
+    std::string timing_json, ui_json;                                     // verbatim from the file
+    std::map<std::string, size_t> index;                                  // id -> dirs[i] (zonos3_steer_index)
+    std::vector<int> sources;                                             // ascending distinct hidden sources
+    std::optional<zonos3_steer_rate_extension> rate_extension;            // zonos3_steer.rate_extension ("" = none)
 };
 void zonos3_steer_index(zonos3_steer_bundle & b);
 bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_model & model, std::string & err);
@@ -67,13 +67,15 @@ std::string zonos3_steer_controls_json(const zonos3_steer_bundle & b, int embedd
 // direction calibrated to 0 for `speaker`.
 std::vector<std::string> zonos3_steer_disabled_controls(const zonos3_steer_bundle & b, const std::string & speaker);
 double zonos3_steer_duration_factor(const zonos3_steer_bundle & b, const std::map<std::string, double> & doses);
-int zonos3_steer_text_chars(const std::string & utf8);   // Unicode code points ((c & 0xC0) != 0x80 bytes)
 
-struct zonos3_control_span { int start = 0, end = 0; std::map<std::string, double> controls; };
+struct zonos3_control_span {
+    int start = 0, end = 0;
+    std::map<std::string, double> controls;
+};
 struct zonos3_steering {
-    std::vector<int> sources;   // layout of every delta: [sources.size() * hidden_size]
+    std::vector<int> sources; // layout of every delta: [sources.size() * hidden_size]
     int hidden_size = 0;
-    std::vector<float> hidden;  // constant delta; empty = none
+    std::vector<float> hidden; // constant delta; empty = none
     // frames [start, end) of the character-rate schedule; chars = the request's character span [char_start, char_end)
     // (ResolvedControls.span_chars, for control_span_follow "reading")
     struct span {
@@ -81,11 +83,11 @@ struct zonos3_steering {
         std::vector<float> delta;
         int char_start = 0, char_end = 0;
     };
-    std::vector<span> spans;    // sorted, non-overlapping
+    std::vector<span> spans; // sorted, non-overlapping
     bool hidden_active() const { return !hidden.empty() || !spans.empty(); }
-    void delta_at(int frames, std::vector<float> & out) const;  // out.clear() when the delta is zero
+    void delta_at(int frames, std::vector<float> & out) const; // out.clear() when the delta is zero
 };
 bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::string, double> & controls,
                           const std::vector<zonos3_control_span> & spans, int text_chars, double frames_per_char,
-                          std::vector<float> * speaker_embedding,   // in/out; nullptr = no embedding-mode speaker
+                          std::vector<float> * speaker_embedding, // in/out; nullptr = no embedding-mode speaker
                           zonos3_steering & out, std::string & err);

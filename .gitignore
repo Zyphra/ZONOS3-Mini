@@ -44,10 +44,11 @@ env/
 /out/
 
 # personal files
-default_voices/*
-!default_voices/AmericanFemale.mp3
-!default_voices/AmericanMale.mp3
-!default_voices/BritishFemale.mp3
-!default_voices/*.codes.npy
-!default_voices/*.embedding.npy
-steering/**/pooled.npz
+assets/default_voices/*
+!assets/default_voices/AmericanFemale.mp3
+!assets/default_voices/AmericanMale.mp3
+!assets/default_voices/BritishFemale.mp3
+!assets/default_voices/*.codes.npy
+!assets/default_voices/*.embedding.npy
+assets/steering/**/pooled.npz
+/node_modules/

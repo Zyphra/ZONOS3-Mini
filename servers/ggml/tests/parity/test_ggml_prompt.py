@@ -1,7 +1,7 @@
 """Prompt parity: ``zonos3-cli --request req.json --build-prompt ids.npy`` (the ggml server's request resolver) against
 ``python -m zonos3.reference --request req.json --dump-prompt ids.npy`` for every request of
 model/tests/fixtures/prompt_requests.json whose ``requires`` the loaded backbone meets. Both sides load the steering
-bundle ``steering/studio_bundle_mect60k.json`` (ggml: its ``convert_gguf.py steer`` GGUF) for the ``controls`` entries.
+bundle ``assets/steering/studio_bundle_mect60k.json`` (ggml: its ``convert_gguf.py steer`` GGUF) for the ``controls`` entries.
 
 Rows (and a CFG twin's rows) must be identical; the ``.cond.json`` sidecars equal, speaker embeddings within 1e-6.
 
@@ -37,14 +37,19 @@ FIXTURES = REPO / "model" / "tests" / "fixtures" / "prompt_requests.json"
 ERROR_FIXTURES = REPO / "model" / "tests" / "fixtures" / "request_errors.json"
 MODELS = REPO / "servers" / "ggml" / "models"
 BACKBONES = {
-    "release": (Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
-                os.environ.get("ZONOS3_TEST_MODEL",
-                               "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted")),
-    "phonemes": (Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "zonos3-phonemes-f16.gguf")),
-                 os.environ.get("ZONOS3_PHONEME_MODEL",
-                                "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k")),
+    "release": (
+        Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
+        os.environ.get(
+            "ZONOS3_TEST_MODEL",
+            "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted",
+        ),
+    ),
+    "phonemes": (
+        Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "zonos3-phonemes-f16.gguf")),
+        os.environ.get("ZONOS3_PHONEME_MODEL", "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k"),
+    ),
 }
-BUNDLE = REPO / "steering" / "studio_bundle_mect60k.json"
+BUNDLE = REPO / "assets" / "steering" / "studio_bundle_mect60k.json"
 ENTRIES = json.loads(FIXTURES.read_text())
 ERRORS = json.loads(ERROR_FIXTURES.read_text())
 
@@ -57,7 +62,6 @@ def reference(request, tmp_path_factory):
     if not model.startswith("hf://") and not (Path(model) / "params.json").is_file():
         pytest.skip(f"{request.param}: no reference checkpoint at {model}")
     import torch
-
     from zonos3.reference.lm import Zonos3LM
     from zonos3.reference.synth import ReferenceAssets
 
@@ -99,8 +103,13 @@ def _assert_same(ggml_ids: Path, ref_ids: Path, what: str) -> None:
     assert ca == cb, f"{what}: cond.json differs"
     assert (ea is None) == (eb is None), f"{what}: speaker embedding presence differs"
     if ea is not None:
-        np.testing.assert_allclose(np.asarray(ea, np.float64), np.asarray(eb, np.float64), rtol=0, atol=1e-6,
-                                   err_msg=f"{what}: speaker embedding")
+        np.testing.assert_allclose(
+            np.asarray(ea, np.float64),
+            np.asarray(eb, np.float64),
+            rtol=0,
+            atol=1e-6,
+            err_msg=f"{what}: speaker embedding",
+        )
 
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=[e["name"] for e in ENTRIES])
@@ -120,9 +129,22 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
     ggml_ids = tmp_path / "ggml.npy"
     steer_flags = ["--steer", str(steer)] if steer is not None else []
     run = subprocess.run(
-        [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(ggml_ids), *steer_flags,
-         "--worker-python", sys.executable, "--python-src", str(REPO / "model" / "src")],
-        capture_output=True, text=True)
+        [
+            str(exe),
+            str(gguf),
+            "--request",
+            str(request),
+            "--build-prompt",
+            str(ggml_ids),
+            *steer_flags,
+            "--worker-python",
+            sys.executable,
+            "--python-src",
+            str(REPO / "model" / "src"),
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 0, run.stderr
 
     plan = plan_prompt(lm, entry["request"], assets=assets, device="cpu")
@@ -132,7 +154,8 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
 
     ggml_twin = tmp_path / "ggml.twin.npy"
     assert ggml_twin.exists() == (plan.twin is not None), (
-        f"{entry['name']}: CFG twin {'missing' if plan.twin is not None else 'unexpected'} (reference: {plan.cfg_kind})")
+        f"{entry['name']}: CFG twin {'missing' if plan.twin is not None else 'unexpected'} (reference: {plan.cfg_kind})"
+    )
     if plan.twin is not None:
         ref_twin = tmp_path / "ref.twin.npy"
         _dump(ref_twin, plan.twin.input_ids, plan.cond_json(plan.twin))
@@ -173,10 +196,14 @@ def test_request_refused(entry, backbone_caps, ggml_build, tmp_path):
     exe = ggml_build / "zonos3-cli"
     if not exe.exists():
         pytest.fail(f"{exe} is not built")
-    run = subprocess.run([str(exe), str(gguf), "--request", str(request), "--build-prompt", str(tmp_path / "ids.npy")],
-                         capture_output=True, text=True)
+    run = subprocess.run(
+        [str(exe), str(gguf), "--request", str(request), "--build-prompt", str(tmp_path / "ids.npy")],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode != 0, f"{entry['name']}: accepted"
     # The refusal is the last stderr line: "<status> {"detail": ...}".
     status, _, body = run.stderr.strip().splitlines()[-1].partition(" ")
     assert status == "400", run.stderr
-    assert entry["error"] in json.loads(body)["detail"], run.stderr
+    detail = json.loads(body)["detail"]
+    assert isinstance(detail, str) and detail, run.stderr

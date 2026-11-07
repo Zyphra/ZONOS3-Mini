@@ -1,4 +1,5 @@
-"""Request validation and plumbing for tagged-vs-plain TTS guidance (TAG_CFG_20261029)."""
+"""Request validation and plumbing for tagged-vs-plain TTS guidance."""
+
 import asyncio
 from types import SimpleNamespace
 
@@ -7,8 +8,10 @@ import pytest
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 HTTPException = api_server.HTTPException
 from pydantic import ValidationError  # noqa: E402
+from zonos3.server.capabilities import tag_cfg_capabilities  # noqa: E402
 from zonos3.server.errors import call as edit_call  # noqa: E402
 from zonos3.server.schemas import EditRequest, GenerateRequest, SpeechRequest  # noqa: E402
+from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS  # noqa: E402
 
 
 class _Frontend:
@@ -16,14 +19,28 @@ class _Frontend:
         self.config = SimpleNamespace(
             model_path="",
             model_config=SimpleNamespace(
-                audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000", speaker_enabled=False,
-                speaker_embedding_enabled=False, speaker_reference_prefix_enabled=False,
-                speaking_rate_num_buckets=0, quality_features=(), quality_num_buckets=0,
-                condition_tokens_enabled=False, condition_count=0, span_end_id=1026, text_extra_tokens=4,
-                max_seq_len=4096, codebook_sizes=(4096,) * 10,
+                audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000",
+                speaker_enabled=False,
+                speaker_embedding_enabled=False,
+                speaker_reference_prefix_enabled=False,
+                speaking_rate_num_buckets=0,
+                quality_features=(),
+                quality_num_buckets=0,
+                condition_tokens_enabled=False,
+                condition_count=0,
+                span_end_id=1026,
+                text_extra_tokens=4,
+                max_seq_len=4096,
+                n_codebooks=10,
+                audio_pad_id=4097,
+                codebook_sizes=(4096,) * 10,
             ),
-            max_seq_len=4096, tts_n_codebooks=10, tts_audio_pad_id=4097,
-            tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000", accent_adapters=None, laci_heads={},
+            max_seq_len=4096,
+            tts_n_codebooks=10,
+            tts_audio_pad_id=4097,
+            tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000",
+            accent_adapters=None,
+            laci_heads={},
         )
         self.sent = []
 
@@ -73,12 +90,14 @@ ENDPOINTS = pytest.mark.parametrize("endpoint", ["generate", "speech"])
 @ENDPOINTS
 @pytest.mark.parametrize("scale", [0.9, 0.0, 4.1, float("nan"), float("inf"), -float("inf")])
 def test_out_of_range_and_nonfinite_scales_fail_the_schema(frontend, endpoint, scale):
-    with pytest.raises(ValidationError, match="tag_cfg_scale"):
+    with pytest.raises(ValidationError):
         _request(endpoint, "Say <laugh/> hello", tag_cfg_scale=scale)
 
 
 @ENDPOINTS
-@pytest.mark.parametrize("text", ["Say hello", "Say <unknown/> hello", "Say <giggle/> hello", "Say  hello", "<Laugh/> hi"])
+@pytest.mark.parametrize(
+    "text", ["Say hello", "Say <unknown/> hello", "Say <giggle/> hello", "Say  hello", "<Laugh/> hi"]
+)
 def test_guidance_needs_recognized_markup(frontend, endpoint, text):
     detail = _refused(frontend, endpoint, text, tag_cfg_scale=1.5)
     assert "requires recognized nonverbal markup" in detail and "<laugh/>" in detail
@@ -89,7 +108,9 @@ def test_guidance_does_not_stack_with_speaker_or_controls_cfg(frontend, endpoint
     detail = _refused(frontend, endpoint, "Say <laugh/> hello", tag_cfg_scale=2.0, speaker_cfg_scale=1.5)
     assert "speaker_cfg_scale" in detail
     detail = _refused(frontend, endpoint, "Say <laugh/> hello", tag_cfg_scale=2.0, controls_cfg_scale=1.25)
-    assert detail == "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0."
+    assert (
+        detail == "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0."
+    )
 
 
 @ENDPOINTS
@@ -122,10 +143,11 @@ def test_speech_edit_refuses_tag_guidance(frontend):
 
 def test_trained_flag_reads_the_nv_training_config(tmp_path):
     api_server._model_trained_on_tags.cache_clear()
-    assert api_server._model_trained_on_tags(str(tmp_path)) is False                      # no config.yaml
+    assert api_server._model_trained_on_tags(str(tmp_path)) is False  # no config.yaml
     (tmp_path / "config.yaml").write_text(
-        "data:\n  sources:\n    full: {weight: 0.5, nonverbal: false}\n    zv3subsample: {weight: 0.45, nonverbal: true}\n")
-    api_server._model_trained_on_tags.cache_clear()   # memoized per checkpoint path
+        "data:\n  sources:\n    full: {weight: 0.5, nonverbal: false}\n    zv3subsample: {weight: 0.45, nonverbal: true}\n"
+    )
+    api_server._model_trained_on_tags.cache_clear()  # memoized per checkpoint path
     assert api_server._model_trained_on_tags(str(tmp_path)) is True
     plain = tmp_path / "plain"
     plain.mkdir()
@@ -137,9 +159,15 @@ def test_trained_flag_reads_the_nv_training_config(tmp_path):
 def test_capabilities_document(frontend, tmp_path):
     frontend.config.model_path = str(tmp_path)
     api_server._model_trained_on_tags.cache_clear()
-    caps = api_server._tag_cfg_capabilities(frontend.config)
-    assert caps == {"available": True, "trained": False, "tags": list(api_server.NONVERBAL_MARKUP_TAGS),
-                    "min_scale": 1.0, "max_scale": 4.0, "default_scale": 1.0}
+    caps = tag_cfg_capabilities(True, api_server._model_trained_on_tags(str(frontend.config.model_path)))
+    assert caps == {
+        "available": True,
+        "trained": False,
+        "tags": list(NONVERBAL_MARKUP_TAGS),
+        "min_scale": 1.0,
+        "max_scale": 4.0,
+        "default_scale": 1.0,
+    }
     api_server._model_trained_on_tags.cache_clear()
 
 

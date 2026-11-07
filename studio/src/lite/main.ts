@@ -7,12 +7,13 @@ import '@fontsource/jetbrains-mono/latin-400.css';
 import '@fontsource/jetbrains-mono/latin-500.css';
 import './lite.css';
 import { mountChrome, setLabel } from '../lib/chrome';
-import { bytesToBase64, download, encodeNpy, encodeWav, slug } from '../lib/files';
+import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
+import { wavBytes } from '../lib/wav';
 import { langLabel } from '../lib/languages';
 import { drawWave } from '../lib/wave';
 import { onEncoderProgress, usingWebEngine, type Download } from '../lib/web-engine';
+import { ApiError } from '../lib/http';
 import {
-  ApiError,
   connect,
   createSpeaker,
   generateStream,
@@ -256,7 +257,7 @@ async function recordingAsWav(blob: Blob): Promise<{ blob: Blob; name: string; s
       const data = decoded.getChannelData(c);
       for (let i = 0; i < mono.length; i++) mono[i] += data[i] / decoded.numberOfChannels;
     }
-    return { blob: new Blob([encodeWav(mono, decoded.sampleRate)], { type: 'audio/wav' }), name: 'recording.wav', samples: mono.length };
+    return { blob: new Blob([wavBytes(mono, decoded.sampleRate)], { type: 'audio/wav' }), name: 'recording.wav', samples: mono.length };
   } catch {
     return { blob, name: `recording.${blob.type.includes('ogg') ? 'ogg' : 'webm'}`, samples: 0 };
   }
@@ -350,7 +351,7 @@ async function generate() {
     player.flush();
     if (!samples) throw new ApiError(200, 'The server returned no audio.');
     if (resultUrl) URL.revokeObjectURL(resultUrl);
-    resultUrl = URL.createObjectURL(new Blob([encodeWav(audio.subarray(0, samples), SAMPLE_RATE)], { type: 'audio/wav' }));
+    resultUrl = URL.createObjectURL(new Blob([wavBytes(audio.subarray(0, samples), SAMPLE_RATE)], { type: 'audio/wav' }));
     ui.resultDownload.href = resultUrl;
     ui.resultDownload.download = `${slug(voice.label)}${seed ? `-seed${seed}` : ''}.wav`;
     ui.resultDownload.hidden = false;

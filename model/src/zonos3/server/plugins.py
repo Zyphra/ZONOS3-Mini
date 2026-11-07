@@ -46,30 +46,49 @@ class HostFacts:
     def to_json(self) -> dict:
         ext = self.rate_extension
         if ext is not None:
-            ext = {"direction": ext.direction, "row_edges": list(ext.row_edges), "below": list(ext.below),
-                   "above": list(ext.above),
-                   "doses": {lang: {str(b): float(d) for b, d in doses.items()} for lang, doses in ext.doses.items()},
-                   "reference_sides": list(ext.reference_sides)}
-        return {"model_name": self.model_name, "rate_edges": list(self.rate_edges), "rate_buckets": self.rate_buckets,
-                "laci_languages": sorted(self.laci_languages), "speaker_modes": list(self.speaker_modes),
-                "raw_controls": sorted(self.raw_controls), "phoneme_tokens": self.phoneme_tokens,
-                "rate_extension": ext, "worker_device": self.worker_device}
+            ext = {
+                "direction": ext.direction,
+                "row_edges": list(ext.row_edges),
+                "below": list(ext.below),
+                "above": list(ext.above),
+                "doses": {lang: {str(b): float(d) for b, d in doses.items()} for lang, doses in ext.doses.items()},
+                "reference_sides": list(ext.reference_sides),
+            }
+        return {
+            "model_name": self.model_name,
+            "rate_edges": list(self.rate_edges),
+            "rate_buckets": self.rate_buckets,
+            "laci_languages": sorted(self.laci_languages),
+            "speaker_modes": list(self.speaker_modes),
+            "raw_controls": sorted(self.raw_controls),
+            "phoneme_tokens": self.phoneme_tokens,
+            "rate_extension": ext,
+            "worker_device": self.worker_device,
+        }
 
     @classmethod
     def from_json(cls, d: dict) -> HostFacts:
         ext = d.get("rate_extension")
         if ext is not None:
-            ext = RateExtension(direction=ext["direction"], row_edges=tuple(float(e) for e in ext["row_edges"]),
-                                below=tuple(float(e) for e in ext["below"]),
-                                above=tuple(float(e) for e in ext["above"]),
-                                doses={lang: {int(b): float(x) for b, x in doses.items()}
-                                       for lang, doses in ext["doses"].items()},
-                                reference_sides=tuple(ext["reference_sides"]))
-        return cls(model_name=d["model_name"], rate_edges=tuple(float(e) for e in d["rate_edges"]),
-                   rate_buckets=int(d["rate_buckets"]), laci_languages=frozenset(d["laci_languages"]),
-                   speaker_modes=tuple(d["speaker_modes"]), raw_controls=frozenset(d["raw_controls"]),
-                   phoneme_tokens=bool(d["phoneme_tokens"]), rate_extension=ext,
-                   worker_device=d.get("worker_device"))
+            ext = RateExtension(
+                direction=ext["direction"],
+                row_edges=tuple(float(e) for e in ext["row_edges"]),
+                below=tuple(float(e) for e in ext["below"]),
+                above=tuple(float(e) for e in ext["above"]),
+                doses={lang: {int(b): float(x) for b, x in doses.items()} for lang, doses in ext["doses"].items()},
+                reference_sides=tuple(ext["reference_sides"]),
+            )
+        return cls(
+            model_name=d["model_name"],
+            rate_edges=tuple(float(e) for e in d["rate_edges"]),
+            rate_buckets=int(d["rate_buckets"]),
+            laci_languages=frozenset(d["laci_languages"]),
+            speaker_modes=tuple(d["speaker_modes"]),
+            raw_controls=frozenset(d["raw_controls"]),
+            phoneme_tokens=bool(d["phoneme_tokens"]),
+            rate_extension=ext,
+            worker_device=d.get("worker_device"),
+        )
 
 
 @dataclass(frozen=True)
@@ -90,10 +109,19 @@ class LaciTakeRequest:
         """The take as the ggml server's ``laci_takes`` engine call carries it (WAV written to ``out``)."""
         scale = None
         if self.rate_edges is not None:
-            scale = {"edges": [float(e) for e in self.rate_edges], "first": int(self.rate_first),
-                     "bucket": self.rate_bucket, "doses": {str(b): float(d) for b, d in self.rate_doses.items()}}
-        return {"request": self.request.model_dump(exclude_unset=True), "target_frames": float(self.target_frames),
-                "adjust_rate": bool(self.adjust_rate), "scale": scale, "out": out}
+            scale = {
+                "edges": [float(e) for e in self.rate_edges],
+                "first": int(self.rate_first),
+                "bucket": self.rate_bucket,
+                "doses": {str(b): float(d) for b, d in self.rate_doses.items()},
+            }
+        return {
+            "request": self.request.model_dump(exclude_unset=True),
+            "target_frames": float(self.target_frames),
+            "adjust_rate": bool(self.adjust_rate),
+            "scale": scale,
+            "out": out,
+        }
 
 
 # float32 mono at zonos3.generation.SAMPLE_RATE with the server's output gain (None: no audio), the LACI record
@@ -164,7 +192,8 @@ def mount(app: FastAPI, loaded: Sequence[Plugin], host: Host, keepalive_paths: l
             raise ValueError(f"plugin {plugin.name!r} serves {stray} outside /v2/{plugin.name} and /{plugin.name}")
         app.include_router(router)
     routes = app.router.routes
-    routes[:] = ([r for r in routes if getattr(r, "path", None) != CATCH_ALL]
-                 + [r for r in routes if getattr(r, "path", None) == CATCH_ALL])
+    routes[:] = [r for r in routes if getattr(r, "path", None) != CATCH_ALL] + [
+        r for r in routes if getattr(r, "path", None) == CATCH_ALL
+    ]
     for plugin in loaded:
         keepalive_paths.extend(plugin.keepalive_paths)

@@ -4,6 +4,7 @@
 // FIR mixer on the host) at 44160 Hz, and the exact 44160->44100 sinc resampler (host side).
 #include "zac.h"
 #include "zac-encoder.h"
+#include "zonos3-text.h"
 
 #define POCKETFFT_NO_MULTITHREADING
 #include "pocketfft_hdronly.hpp"
@@ -35,10 +36,12 @@
 
 ggml_tensor * zac_model::get(const std::string & n) const {
     auto it = t.find(n);
-    if (it == t.end()) { fprintf(stderr, "zac: missing tensor '%s'\n", n.c_str()); return nullptr; }
+    if (it == t.end()) {
+        fprintf(stderr, "zac: missing tensor '%s'\n", n.c_str());
+        return nullptr;
+    }
     return it->second;
 }
-
 
 // Creates the backend for `dev`; on CPU also the ZAC_THREADS setting and the BLAS offload.
 static bool zac_init_backend(zac_model & m, ggml_backend_dev_t dev) {
@@ -61,7 +64,7 @@ static bool zac_init_backend(zac_model & m, ggml_backend_dev_t dev) {
         if (ggml_backend_dev_t accel = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_ACCEL)) {
             m.accel = ggml_backend_dev_init(accel, nullptr);
             if (m.accel) {
-                ggml_backend_t backends[2] = { m.accel, m.backend };
+                ggml_backend_t backends[2] = {m.accel, m.backend};
                 m.sched = ggml_backend_sched_new(backends, nullptr, 2, 16384, false, false);
             }
         }
@@ -71,9 +74,12 @@ static bool zac_init_backend(zac_model & m, ggml_backend_dev_t dev) {
 
 bool zac_load(zac_model & m, const char * path, bool use_gpu) {
     ggml_context * ctx_meta = nullptr;
-    gguf_init_params gp = { /*no_alloc=*/ true, /*ctx=*/ &ctx_meta };
+    gguf_init_params gp = {/*no_alloc=*/true, /*ctx=*/&ctx_meta};
     gguf_context * gguf = gguf_init_from_file(path, gp);
-    if (!gguf) { fprintf(stderr, "zac: cannot open gguf '%s'\n", path); return false; }
+    if (!gguf) {
+        fprintf(stderr, "zac: cannot open gguf '%s'\n", path);
+        return false;
+    }
     auto reject = [&](const char * why) {
         fprintf(stderr, "zac: '%s' is not a ZONOS3 Mini iSTFT decoder GGUF (reconvert with tools/convert_gguf.py codec-decoder): %s\n", path, why);
         gguf_free(gguf);
@@ -125,56 +131,66 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
         return reject("missing metadata");
     m.stages.clear();
     for (int s = 0; s < NS; ++s)
-        m.stages.push_back({ in_dim[s], out_dim[s], d_model[s], n_head[s], n_layer[s], n_ff[s], context[s], patch[s] });
+        m.stages.push_back({in_dim[s], out_dim[s], d_model[s], n_head[s], n_layer[s], n_ff[s], context[s], patch[s]});
     std::string head_variant;
     {
         const int64_t id = gguf_find_key(gguf, "mossdual_istft.head.variant");
         if (id < 0 || gguf_get_kv_type(gguf, id) != GGUF_TYPE_STRING) return reject("missing metadata");
         head_variant = gguf_get_val_str(gguf, id);
     }
-    m.n_fft = { n_fft_v[0], n_fft_v[1] };
+    m.n_fft = {n_fft_v[0], n_fft_v[1]};
     int up = m.head_hop;
     for (int s : patch) up *= s;
     bool consistent = m.sample_rate == 44100 && m.internal_rate == 44160 && m.frame_rate == 15 &&
-        m.hop == 2940 && m.internal_hop == 2944 && m.n_codebooks == 10 && m.codebook_size == 4096 &&
-        (int64_t) m.internal_hop * m.rs_new == (int64_t) m.hop * m.rs_orig &&
-        patch == std::vector<int>({2, 2, 2, 2, 1}) && out_dim[NS - 1] == 0 &&
-        up == m.internal_hop && 16 * m.head_hop == m.internal_hop && in_dim[0] == m.latent_dim &&
-        m.n_fft == std::array<int, 2>({736, 2208}) && m.n_fft[0] % m.head_hop == 0 && m.n_fft[1] % m.head_hop == 0 &&
-        m.fir_kernel % 2 == 1 && head_hidden > 0 && head_step > 0;
+                      m.hop == 2940 && m.internal_hop == 2944 && m.n_codebooks == 10 && m.codebook_size == 4096 &&
+                      (int64_t) m.internal_hop * m.rs_new == (int64_t) m.hop * m.rs_orig &&
+                      patch == std::vector<int>({2, 2, 2, 2, 1}) && out_dim[NS - 1] == 0 &&
+                      up == m.internal_hop && 16 * m.head_hop == m.internal_hop && in_dim[0] == m.latent_dim &&
+                      m.n_fft == std::array<int, 2>({736, 2208}) && m.n_fft[0] % m.head_hop == 0 && m.n_fft[1] % m.head_hop == 0 &&
+                      m.fir_kernel % 2 == 1 && head_hidden > 0 && head_step > 0;
     for (int s = 0; s < NS; ++s) {
         consistent = consistent && d_model[s] % n_head[s] == 0 && (d_model[s] / n_head[s]) % 2 == 0;
         if (s + 1 < NS) consistent = consistent && in_dim[s + 1] * patch[s] == out_dim[s];
     }
     if (!consistent) return reject("inconsistent dimensions");
-    {   // Head tensor shapes (ggml ne order: [in, out] for matrices, [taps, channels] for depthwise).
+    { // Head tensor shapes (ggml ne order: [in, out] for matrices, [taps, channels] for depthwise).
         const int d4 = d_model[NS - 1];
         std::string bad;
         auto shape = [&](const std::string & name, std::initializer_list<int64_t> ne) {
             const ggml_tensor * t = ggml_get_tensor(ctx_meta, name.c_str());
             int i = 0;
             bool ok = t != nullptr;
-            for (int64_t v : ne) { ok = ok && t->ne[i] == v; ++i; }
+            for (int64_t v : ne) {
+                ok = ok && t->ne[i] == v;
+                ++i;
+            }
             for (; ok && i < GGML_MAX_DIMS; ++i) ok = t->ne[i] == 1;
             if (!ok && bad.empty()) bad = name;
         };
         for (int b = 0; b < m.head_depth; ++b) {
             const std::string p = "head." + std::to_string(b);
             const ggml_tensor * dw = ggml_get_tensor(ctx_meta, (p + ".dw.weight").c_str());
-            if (!dw) { bad = p + ".dw.weight"; break; }
-            shape(p + ".dw.weight", { dw->ne[0], d4 });
-            shape(p + ".dw.bias", { d4 });
-            shape(p + ".norm.weight", { d4 }); shape(p + ".norm.bias", { d4 });
-            shape(p + ".pw1.weight", { d4, head_hidden }); shape(p + ".pw1.bias", { head_hidden });
-            shape(p + ".pw2.weight", { head_hidden, d4 }); shape(p + ".pw2.bias", { d4 });
+            if (!dw) {
+                bad = p + ".dw.weight";
+                break;
+            }
+            shape(p + ".dw.weight", {dw->ne[0], d4});
+            shape(p + ".dw.bias", {d4});
+            shape(p + ".norm.weight", {d4});
+            shape(p + ".norm.bias", {d4});
+            shape(p + ".pw1.weight", {d4, head_hidden});
+            shape(p + ".pw1.bias", {head_hidden});
+            shape(p + ".pw2.weight", {head_hidden, d4});
+            shape(p + ".pw2.bias", {d4});
         }
-        shape("head.norm.weight", { d4 }); shape("head.norm.bias", { d4 });
+        shape("head.norm.weight", {d4});
+        shape("head.norm.bias", {d4});
         for (int i = 0; i < 2; ++i) {
-            shape("head.out." + std::to_string(i) + ".weight", { d4, m.n_fft[i] + 2 });
-            shape("head.out." + std::to_string(i) + ".bias", { m.n_fft[i] + 2 });
-            shape("head.window." + std::to_string(i), { m.n_fft[i] });
+            shape("head.out." + std::to_string(i) + ".weight", {d4, m.n_fft[i] + 2});
+            shape("head.out." + std::to_string(i) + ".bias", {m.n_fft[i] + 2});
+            shape("head.window." + std::to_string(i), {m.n_fft[i]});
         }
-        shape("head.mixer.weight", { m.fir_kernel, 2 });
+        shape("head.mixer.weight", {m.fir_kernel, 2});
         if (!bad.empty()) return reject(("tensor '" + bad + "' missing or wrongly shaped").c_str());
     }
 
@@ -186,14 +202,16 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
     // sgemm). Q8_0 on GPU measured no faster on M3 Metal (buffered RTF 0.123 vs 0.122 F16). Quantized
     // MAT weights and RVQ tables (quantize-cli) load as stored. DW = depthwise taps, repacked [K,C] ->
     // [C,K]. HOST = resampler kernel, FIR mixer and iSTFT windows, kept on the host as F32.
-    enum Kind { PLAIN, DW, MAT, HOST };
-    auto ends_with = [](const std::string & s, const char * suf) {
-        const size_t n = strlen(suf);
-        return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
-    };
+    enum Kind { PLAIN,
+                DW,
+                MAT,
+                HOST };
     const ggml_type wtype = m.is_gpu ? GGML_TYPE_F16 : GGML_TYPE_F32;
-    ggml_context * ctx_w = ggml_init({ (size_t) (gguf_get_n_tensors(gguf) + 1) * ggml_tensor_overhead(), nullptr, true });
-    struct Load { ggml_tensor * src, * dst; Kind kind; };
+    ggml_context * ctx_w = ggml_init({(size_t) (gguf_get_n_tensors(gguf) + 1) * ggml_tensor_overhead(), nullptr, true});
+    struct Load {
+        ggml_tensor *src, *dst;
+        Kind kind;
+    };
     std::vector<Load> loads;
     for (ggml_tensor * t = ggml_get_first_tensor(ctx_meta); t; t = ggml_get_next_tensor(ctx_meta, t)) {
         const std::string name = ggml_get_name(t);
@@ -206,25 +224,32 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
                  name.find("norm") == std::string::npos) kind = MAT;
         if (kind == MAT ? (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16 && !ggml_is_quantized(t->type))
                         : (kind != PLAIN && t->type != GGML_TYPE_F32)) {
-            ggml_free(ctx_w); zac_free(m);
+            ggml_free(ctx_w);
+            zac_free(m);
             return reject("unexpected tensor type");
         }
-        if (kind == HOST) { loads.push_back({ t, nullptr, kind }); continue; }
+        if (kind == HOST) {
+            loads.push_back({t, nullptr, kind});
+            continue;
+        }
         ggml_tensor * d;
         switch (kind) {
-            case DW:    d = ggml_new_tensor_2d(ctx_w, GGML_TYPE_F32, t->ne[1], t->ne[0]); break;  // [K,C] -> [C,K]
-            case MAT:   d = ggml_new_tensor_2d(ctx_w, ggml_is_quantized(t->type) ? t->type : wtype, t->ne[0], t->ne[1]); break;
-            default:    d = ggml_dup_tensor(ctx_w, t); break;
+        case DW: d = ggml_new_tensor_2d(ctx_w, GGML_TYPE_F32, t->ne[1], t->ne[0]); break; // [K,C] -> [C,K]
+        case MAT: d = ggml_new_tensor_2d(ctx_w, ggml_is_quantized(t->type) ? t->type : wtype, t->ne[0], t->ne[1]); break;
+        default: d = ggml_dup_tensor(ctx_w, t); break;
         }
         ggml_set_name(d, name.c_str());
-        loads.push_back({ t, d, kind });
+        loads.push_back({t, d, kind});
     }
     m.ctx_w = ctx_w;
     m.buf_w = ggml_backend_alloc_ctx_tensors(ctx_w, m.backend);
     FILE * f = fopen(path, "rb");
     if (!m.buf_w || !f) {
         if (f) fclose(f);
-        gguf_free(gguf); ggml_free(ctx_meta); zac_free(m); return false;
+        gguf_free(gguf);
+        ggml_free(ctx_meta);
+        zac_free(m);
+        return false;
     }
     const size_t data_off = gguf_get_data_offset(gguf);
     std::vector<char> tmp;
@@ -238,7 +263,11 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
         tmp.resize(nb);
         if (fseeko(f, off, SEEK_SET) || fread(tmp.data(), 1, nb, f) != nb) {
             fprintf(stderr, "zac: read fail %s\n", name);
-            fclose(f); gguf_free(gguf); ggml_free(ctx_meta); zac_free(m); return false;
+            fclose(f);
+            gguf_free(gguf);
+            ggml_free(ctx_meta);
+            zac_free(m);
+            return false;
         }
         const int64_t n = ggml_nelements(l.src);
         if (l.kind == HOST) {
@@ -289,11 +318,11 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
         m.irfft[i] = std::make_shared<const pocketfft::detail::pocketfft_r<float>>((size_t) m.n_fft[i]);
     int n_moss = 0;
     for (const auto & s : m.stages) n_moss += s.n_layer;
-    {   // Probe flash attention at the real MOSS shapes (head_dim 64, F16 cache, F16 mask).
-        ggml_context * pc = ggml_init({ 8 * ggml_tensor_overhead(), nullptr, true });
-        ggml_tensor * q  = ggml_new_tensor_3d(pc, GGML_TYPE_F32, 64, 4, 12);
-        ggml_tensor * k  = ggml_new_tensor_3d(pc, GGML_TYPE_F16, 64, 32, 12);
-        ggml_tensor * v  = ggml_new_tensor_3d(pc, GGML_TYPE_F16, 64, 32, 12);
+    { // Probe flash attention at the real MOSS shapes (head_dim 64, F16 cache, F16 mask).
+        ggml_context * pc = ggml_init({8 * ggml_tensor_overhead(), nullptr, true});
+        ggml_tensor * q = ggml_new_tensor_3d(pc, GGML_TYPE_F32, 64, 4, 12);
+        ggml_tensor * k = ggml_new_tensor_3d(pc, GGML_TYPE_F16, 64, 32, 12);
+        ggml_tensor * v = ggml_new_tensor_3d(pc, GGML_TYPE_F16, 64, 32, 12);
         ggml_tensor * mk = ggml_new_tensor_2d(pc, GGML_TYPE_F16, 32, 4);
         ggml_tensor * fa = ggml_flash_attn_ext(pc, q, k, v, mk, 0.125f, 0.0f, 0.0f);
         ggml_prec_set_acc(fa, GGML_PREC_F32);
@@ -308,22 +337,28 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
 
 void zac_free(zac_model & m) {
     ggml_gallocr_free(m.galloc);
-    if (m.sched)   ggml_backend_sched_free(m.sched);
+    if (m.sched) ggml_backend_sched_free(m.sched);
     if (m.owns_weights) {
         if (m.buf_w) ggml_backend_buffer_free(m.buf_w);
         if (m.ctx_w) ggml_free(m.ctx_w);
     }
-    if (m.accel)   ggml_backend_free(m.accel);
+    if (m.accel) ggml_backend_free(m.accel);
     if (m.backend) ggml_backend_free(m.backend);
     m.galloc = nullptr;
-    m.sched = nullptr; m.accel = nullptr;
-    m.buf_w = nullptr; m.ctx_w = nullptr; m.backend = nullptr; m.t.clear();
+    m.sched = nullptr;
+    m.accel = nullptr;
+    m.buf_w = nullptr;
+    m.ctx_w = nullptr;
+    m.backend = nullptr;
+    m.t.clear();
     m.owns_weights = true;
 }
 
 bool zac_clone(zac_model & dst, const zac_model & src) {
     dst = src;
-    dst.backend = nullptr; dst.accel = nullptr; dst.sched = nullptr;
+    dst.backend = nullptr;
+    dst.accel = nullptr;
+    dst.sched = nullptr;
     dst.galloc = nullptr;
     dst.owns_weights = false;
     if (zac_init_backend(dst, ggml_backend_get_device(src.backend))) return true;
@@ -336,24 +371,24 @@ bool zac_clone(zac_model & dst, const zac_model & src) {
 namespace {
 // Per-op constants of a fused CPU conv (conv_gemm_cpu). Lives in render_ctx until compute ends.
 struct conv_gemm_params {
-    int K = 0, d = 1;                      // taps and dilation over the history-prefixed input
-    std::vector<size_t> w_off;             // per-tap offset into w, in floats
+    int K = 0, d = 1;          // taps and dilation over the history-prefixed input
+    std::vector<size_t> w_off; // per-tap offset into w, in floats
 };
 
 struct render_ctx {
     ggml_context * ctx;
     const zac_model & m;
-    int n_valid;                           // frames of real input; the rest is right padding
-    int cpf;                               // columns per frame at the current resolution
+    int n_valid; // frames of real input; the rest is right padding
+    int cpf;     // columns per frame at the current resolution
     std::vector<ggml_tensor *> hist_in, hist_out;
     std::deque<conv_gemm_params> conv_params;
-    ggml_cgraph * graph = nullptr;         // render graph, for explicit node ordering
-    zac_stream * st = nullptr;             // MOSS K/V caches (st->kc/vc), consumed in layer order
-    int layer = 0;                         // next MOSS layer index into st->kc/vc
-    bool encoder = false;                 // independent lane, no streaming history
+    ggml_cgraph * graph = nullptr; // render graph, for explicit node ordering
+    zac_stream * st = nullptr;     // MOSS K/V caches (st->kc/vc), consumed in layer order
+    int layer = 0;                 // next MOSS layer index into st->kc/vc
+    bool encoder = false;          // independent lane, no streaming history
     bool input_bf16 = false;
 };
-}
+} // namespace
 
 // Prepend the R input columns carried over from the previous render and export the last R
 // columns of this render's valid input for the next one. Returns [C, R + T].
@@ -389,8 +424,8 @@ static ggml_tensor * encoder_round(render_ctx & rc, ggml_tensor * x) {
 // reading `x`. Threads take contiguous output column ranges. Sources: x, w, bias, hist?, res?.
 static void conv_gemm_cpu(ggml_tensor * dst, int ith, int nth, void * ud) {
     const conv_gemm_params & p = *(const conv_gemm_params *) ud;
-    const ggml_tensor * x = dst->src[0], * w = dst->src[1], * bias = dst->src[2];
-    const ggml_tensor * hist = dst->src[3], * res = dst->src[4];
+    const ggml_tensor *x = dst->src[0], *w = dst->src[1], *bias = dst->src[2];
+    const ggml_tensor *hist = dst->src[3], *res = dst->src[4];
     const int IC = (int) x->ne[0], OC = (int) dst->ne[0], T = (int) dst->ne[1];
     const int R = hist ? (int) hist->ne[1] : 0;
     const int c0 = (int) ((int64_t) T * ith / nth), c1 = (int) ((int64_t) T * (ith + 1) / nth);
@@ -422,7 +457,7 @@ static void conv_gemm_cpu(ggml_tensor * dst, int ith, int nth, void * ud) {
         const int a1 = std::min(a0 + NT, c1);
         for (int k = 0; k < p.K; ++k) {
             const float * wk = wd + p.w_off[k];
-            const int sh = k * p.d, split = std::clamp(R - sh, a0, a1);   // columns < split read hist
+            const int sh = k * p.d, split = std::clamp(R - sh, a0, a1); // columns < split read hist
             if (split > a0) gemm(wk, (const float *) hist->data + (size_t) (a0 + sh) * IC, a0, split);
             gemm(wk, (const float *) x->data + (size_t) (split + sh - R) * IC, split, a1);
         }
@@ -457,8 +492,10 @@ static ggml_tensor * conv_gemm(render_ctx & rc, ggml_tensor * x, ggml_tensor * w
         rc.hist_out.push_back(out);
     }
     conv_gemm_params & p = rc.conv_params.emplace_back();
-    p.K = (int) w_off.size(); p.d = d; p.w_off = std::move(w_off);
-    ggml_tensor * args[5] = { x, w, bias, hist, res };
+    p.K = (int) w_off.size();
+    p.d = d;
+    p.w_off = std::move(w_off);
+    ggml_tensor * args[5] = {x, w, bias, hist, res};
     // One ggml task: Accelerate threads the GEMM itself. Splitting output columns across ggml's
     // threads (all convs, or only IC <= 192) measured slower on M3.
     return ggml_custom_4d(ctx, GGML_TYPE_F32, dst_oc, T, 1, 1, args, 5, conv_gemm_cpu, 1, &p);
@@ -468,7 +505,7 @@ static ggml_tensor * conv_gemm(render_ctx & rc, ggml_tensor * x, ggml_tensor * w
 // GEMM. Splitting taps into independent F32 GEMMs changes the accumulation before
 // the BF16 output boundary. Decoder rendering retains its existing tap recipe.
 static ggml_tensor * encoder_conv(render_ctx & rc, ggml_tensor * w, ggml_tensor * bias,
-                                 ggml_tensor * x, int dilation, int stride) {
+                                  ggml_tensor * x, int dilation, int stride) {
     ggml_context * ctx = rc.ctx;
     const int64_t IC = w->ne[0], OC = w->ne[1], K = w->ne[2];
     x = encoder_round(rc, x);
@@ -493,7 +530,7 @@ static ggml_tensor * encoder_conv(render_ctx & rc, ggml_tensor * w, ggml_tensor 
         // F32 im2col preserves the already-rounded BF16 inputs exactly; F16
         // im2col would alter their exponent range. GEMM casts columns to BF16.
         auto * windows = ggml_im2col(ctx, kernel, input, stride, 0, 0, 0,
-                                    dilation, 0, false, GGML_TYPE_F32);
+                                     dilation, 0, false, GGML_TYPE_F32);
         columns = ggml_reshape_2d(ctx, windows, K * IC, windows->ne[1]);
     }
     auto * y = ggml_mul_mat(ctx, weights, columns);
@@ -502,7 +539,6 @@ static ggml_tensor * encoder_conv(render_ctx & rc, ggml_tensor * w, ggml_tensor 
     // in-place in BF16. Conv1d does not share Linear's fused bias boundary.
     return encoder_round(rc, add_bias(ctx, encoder_round(rc, y), bias));
 }
-
 
 // Causal dilated conv as a sum of per-tap matmuls; w [IC, OC, K]. `res`, if given, is added.
 static ggml_tensor * conv_causal(render_ctx & rc, ggml_tensor * w, ggml_tensor * bias,
@@ -527,7 +563,7 @@ static ggml_tensor * conv_causal(render_ctx & rc, ggml_tensor * w, ggml_tensor *
     std::vector<ggml_tensor *> taps(K);
     for (int64_t k = 0; k < K; ++k) {
         taps[k] = ggml_mul_mat(ctx, ggml_view_2d(ctx, w, IC, OC, w->nb[1], (size_t) k * w->nb[2]),
-                                    ggml_view_2d(ctx, xf, IC, T, xf->nb[1], (size_t) k * d * xf->nb[1]));
+                               ggml_view_2d(ctx, xf, IC, T, xf->nb[1], (size_t) k * d * xf->nb[1]));
         ggml_build_forward_expand(rc.graph, taps[k]);
     }
     ggml_tensor * y = taps[0];
@@ -557,7 +593,7 @@ static inline void sin2_f32(int n, float * y, const float * v) {
 static void snake_cpu(ggml_tensor * dst, const ggml_tensor * x, const ggml_tensor * alpha,
                       const ggml_tensor * inv_alpha, int ith, int nth, void *) {
     const int64_t C = x->ne[0], T = ggml_nrows(x);
-    const float * a = (const float *) alpha->data, * ia = (const float *) inv_alpha->data;
+    const float *a = (const float *) alpha->data, *ia = (const float *) inv_alpha->data;
     float buf[256];
     for (int64_t t = T * ith / nth, t1 = T * (ith + 1) / nth; t < t1; ++t) {
         const float * xs = (const float *) x->data + t * C;
@@ -575,7 +611,7 @@ static void snake_cpu(ggml_tensor * dst, const ggml_tensor * x, const ggml_tenso
 static ggml_tensor * snake(render_ctx & rc, ggml_tensor * x, const std::string & p) {
     ggml_context * ctx = rc.ctx;
     const int64_t C = x->ne[0];
-    ggml_tensor * alpha = rc.m.get(p + ".alpha"), * inv_alpha = rc.m.get(p + ".inv_alpha");
+    ggml_tensor *alpha = rc.m.get(p + ".alpha"), *inv_alpha = rc.m.get(p + ".inv_alpha");
     if (!rc.m.is_gpu) {
         GGML_ASSERT(ggml_is_contiguous(x) && x->type == GGML_TYPE_F32);
         return ggml_map_custom3(ctx, x, alpha, inv_alpha, snake_cpu, GGML_N_TASKS_MAX, nullptr);
@@ -596,12 +632,14 @@ static void gelu_erf_cpu(ggml_tensor * dst, const ggml_tensor * x, int ith, int 
         float * ys = (float *) dst->data + t * C;
         for (int64_t c0 = 0; c0 < C; c0 += 256) {
             const int n = (int) std::min<int64_t>(256, C - c0);
-            for (int i = 0; i < n; ++i) { z[i] = xs[c0 + i] * 0.70710678118654752f; e[i] = -z[i] * z[i]; }
+            for (int i = 0; i < n; ++i) {
+                z[i] = xs[c0 + i] * 0.70710678118654752f;
+                e[i] = -z[i] * z[i];
+            }
             vvexpf(e, e, &n);
             for (int i = 0; i < n; ++i) {
                 const float a = fabsf(z[i]), u = 1.0f / (1.0f + 0.3275911f * a);
-                const float poly = ((((1.061405429f * u - 1.453152027f) * u + 1.421413741f) * u - 0.284496736f) * u
-                                    + 0.254829592f) * u;
+                const float poly = ((((1.061405429f * u - 1.453152027f) * u + 1.421413741f) * u - 0.284496736f) * u + 0.254829592f) * u;
                 const float erf_a = 1.0f - poly * e[i];
                 ys[c0 + i] = 0.5f * xs[c0 + i] * (1.0f + copysignf(erf_a, z[i]));
             }
@@ -629,7 +667,9 @@ static ggml_tensor * res_unit(render_ctx & rc, ggml_tensor * x, const std::strin
     return conv_causal(rc, m.get(p + ".conv2.weight"), m.get(p + ".conv2.bias"), y, 1, x);
 }
 
-int zac_samples_per_frame(const zac_model & m) { return m.hop; }
+int zac_samples_per_frame(const zac_model & m) {
+    return m.hop;
+}
 
 static ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, ggml_tensor * w, ggml_tensor * b, float eps) {
     return ggml_add(ctx, ggml_mul(ctx, ggml_norm(ctx, x, eps), w), b);
@@ -641,7 +681,7 @@ static ggml_tensor * convnext_block(render_ctx & rc, ggml_tensor * x, const std:
     ggml_context * ctx = rc.ctx;
     const zac_model & m = rc.m;
     const int64_t C = x->ne[0], T = x->ne[1];
-    ggml_tensor * dw = m.get(p + ".dw.weight");    // [C, K]
+    ggml_tensor * dw = m.get(p + ".dw.weight"); // [C, K]
     const int K = (int) dw->ne[1];
     ggml_tensor * xf = with_history(rc, rc.encoder ? encoder_round(rc, x) : x, K - 1);
     // h[:, t] = sum_k x[:, t+k-(K-1)] * w[:, k].
@@ -694,16 +734,16 @@ static ggml_tensor * moss_layer(render_ctx & rc, ggml_tensor * x, const std::str
     };
     auto rope = [&](ggml_tensor * z) {
         return encoder_round(rc, ggml_rope_ext(ctx, z, pos, nullptr, hd, GGML_ROPE_TYPE_NORMAL, 0, 10000.0f, 1.0f,
-                             0.0f, 1.0f, 0.0f, 0.0f));
+                                               0.0f, 1.0f, 0.0f, 0.0f));
     };
-    ggml_tensor * q = rope(section(0));                                              // [hd, nh, T]
+    ggml_tensor * q = rope(section(0));                                                 // [hd, nh, T]
     ggml_tensor * kb = ggml_cont(ctx, ggml_permute(ctx, rope(section(1)), 0, 2, 1, 3)); // [hd, T, nh]
     ggml_tensor * vb = ggml_cont(ctx, ggml_permute(ctx, section(2), 0, 2, 1, 3));
     // The returned views stand for the caches after the write, so attention depends on it.
     ggml_tensor * kw = rc.st ? ggml_set_rows(ctx, kc, kb, slots) : kb; // [hd,cap,nh]
     ggml_tensor * vw = rc.st ? ggml_set_rows(ctx, vc, vb, slots) : vb;
 
-    ggml_tensor * qp = ggml_cont(ctx, ggml_permute(ctx, q, 0, 2, 1, 3));            // [hd, T, nh]
+    ggml_tensor * qp = ggml_cont(ctx, ggml_permute(ctx, q, 0, 2, 1, 3)); // [hd, T, nh]
     ggml_tensor * o;
     if (rc.encoder) {
         // The frozen reference uses 512-query blocks and only the intersecting left window.
@@ -716,7 +756,7 @@ static ggml_tensor * moss_layer(render_ctx & rc, ggml_tensor * x, const std::str
             auto * kk = ggml_view_3d(ctx, kw, hd, nk, nh, kw->nb[1], kw->nb[2], left * kw->nb[1]);
             auto * vv = ggml_view_3d(ctx, vw, hd, nk, nh, vw->nb[1], vw->nb[2], left * vw->nb[1]);
             auto * mb = ggml_cont(ctx, ggml_view_2d(ctx, mask, nk, nq, mask->nb[1],
-                                                   left * mask->nb[0] + a * mask->nb[1]));
+                                                    left * mask->nb[0] + a * mask->nb[1]));
             auto * score = ggml_soft_max_ext(ctx, ggml_mul_mat(ctx, kk, qb), mb, 1.0f / sqrtf((float) hd), 0.0f);
             auto * vt = ggml_cont(ctx, ggml_permute(ctx, vv, 1, 0, 2, 3));
             auto * ob = ggml_mul_mat(ctx, vt, score);
@@ -726,11 +766,11 @@ static ggml_tensor * moss_layer(render_ctx & rc, ggml_tensor * x, const std::str
     } else if (m.use_fattn) {
         o = ggml_flash_attn_ext(ctx, qp, kw, vw, mask, 1.0f / sqrtf((float) hd), 0.0f, 0.0f);
         ggml_prec_set_acc(o, GGML_PREC_F32);
-        o = ggml_reshape_2d(ctx, o, d, T);                                           // [hd, nh, T]
+        o = ggml_reshape_2d(ctx, o, d, T); // [hd, nh, T]
     } else {
         ggml_tensor * kq = ggml_soft_max_ext(ctx, ggml_mul_mat(ctx, kw, qp), mask, 1.0f / sqrtf((float) hd), 0.0f);
-        ggml_tensor * vp = ggml_cont(ctx, ggml_permute(ctx, vw, 1, 0, 2, 3));       // [cap, hd, nh]
-        o = ggml_mul_mat(ctx, vp, kq);                                               // [hd, T, nh]
+        ggml_tensor * vp = ggml_cont(ctx, ggml_permute(ctx, vw, 1, 0, 2, 3)); // [cap, hd, nh]
+        o = ggml_mul_mat(ctx, vp, kq);                                        // [hd, T, nh]
         o = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, o, 0, 2, 1, 3)), d, T);
     }
     o = encoder_round(rc, o);
@@ -739,7 +779,7 @@ static ggml_tensor * moss_layer(render_ctx & rc, ggml_tensor * x, const std::str
     x = ggml_add(ctx, x, o);
     h = layer_norm(ctx, x, m.get(p + ".norm2.weight"), m.get(p + ".norm2.bias"), m.ln_eps);
     h = encoder_round(rc, ggml_mul_mat(ctx, m.get(p + ".ffn2.weight"),
-                         gelu(rc, encoder_round(rc, ggml_mul_mat(ctx, m.get(p + ".ffn1.weight"), encoder_round(rc, h))))));
+                                       gelu(rc, encoder_round(rc, ggml_mul_mat(ctx, m.get(p + ".ffn1.weight"), encoder_round(rc, h))))));
     return ggml_add(ctx, x, ggml_mul(ctx, h, m.get(p + ".ffn_scale")));
 }
 
@@ -780,17 +820,18 @@ ggml_tensor * moss(ggml_context * ctx, ggml_cgraph * graph, const zac_model & m,
     rc.input_bf16 = first;
     return moss_layer(rc, x, p, hp, pos, nullptr, mask);
 }
-}
+} // namespace zac_encoder_detail
 
 // GPU graphs take their width from a small ladder (right padding cannot affect earlier causal
 // samples) so the reused allocator sees only a few shapes. Streamed GPU output matches buffered
 // output to sub-millisample level, not bit-for-bit (reductions depend on the graph width).
 constexpr int GPU_MAX_CHUNK = 32;
-constexpr int GPU_WIDTHS[] = { 4, 8, 16, 32 };
-constexpr int CPU_CHUNK = 64;    // measured best of {32, 64, 128} on M3 (buffered RTF 0.267/0.241/0.306)
+constexpr int GPU_WIDTHS[] = {4, 8, 16, 32};
+constexpr int CPU_CHUNK = 64; // measured best of {32, 64, 128} on M3 (buffered RTF 0.267/0.241/0.306)
 
 static int gpu_width(int n) {
-    for (int w : GPU_WIDTHS) if (w >= n) return w;
+    for (int w : GPU_WIDTHS)
+        if (w >= n) return w;
     return GPU_MAX_CHUNK;
 }
 
@@ -799,21 +840,41 @@ zac_stream::~zac_stream() {
     if (ctx_kv) ggml_free(ctx_kv);
 }
 
-zac_stream::zac_stream(zac_stream && o) noexcept { *this = std::move(o); }
+zac_stream::zac_stream(zac_stream && o) noexcept {
+    *this = std::move(o);
+}
 
 zac_stream & zac_stream::operator=(zac_stream && o) noexcept {
     if (this == &o) return *this;
     if (buf_kv) ggml_backend_buffer_free(buf_kv);
     if (ctx_kv) ggml_free(ctx_kv);
-    n_done = o.n_done; conv = std::move(o.conv);
-    ola = std::move(o.ola); env = std::move(o.env); ola_base = o.ola_base;
-    head_frames = o.head_frames; head_done = o.head_done;
-    mix_in = std::move(o.mix_in); mix_avail = o.mix_avail; mix_base = o.mix_base; mix_next = o.mix_next;
-    rs_buf = std::move(o.rs_buf); rs_base = o.rs_base; rs_in = o.rs_in; rs_next_block = o.rs_next_block;
-    owner = o.owner; ctx_kv = o.ctx_kv; buf_kv = o.buf_kv;
-    kc = std::move(o.kc); vc = std::move(o.vc); cap = std::move(o.cap);
-    o.owner = nullptr; o.ctx_kv = nullptr; o.buf_kv = nullptr;
-    o.kc.clear(); o.vc.clear(); o.cap.clear();
+    n_done = o.n_done;
+    conv = std::move(o.conv);
+    ola = std::move(o.ola);
+    env = std::move(o.env);
+    ola_base = o.ola_base;
+    head_frames = o.head_frames;
+    head_done = o.head_done;
+    mix_in = std::move(o.mix_in);
+    mix_avail = o.mix_avail;
+    mix_base = o.mix_base;
+    mix_next = o.mix_next;
+    rs_buf = std::move(o.rs_buf);
+    rs_base = o.rs_base;
+    rs_in = o.rs_in;
+    rs_next_block = o.rs_next_block;
+    owner = o.owner;
+    ctx_kv = o.ctx_kv;
+    buf_kv = o.buf_kv;
+    kc = std::move(o.kc);
+    vc = std::move(o.vc);
+    cap = std::move(o.cap);
+    o.owner = nullptr;
+    o.ctx_kv = nullptr;
+    o.buf_kv = nullptr;
+    o.kc.clear();
+    o.vc.clear();
+    o.cap.clear();
     return *this;
 }
 
@@ -823,7 +884,7 @@ static bool zac_stream_alloc(const zac_model & m, zac_stream & st) {
     const int max_chunk = m.is_gpu ? GPU_MAX_CHUNK : CPU_CHUNK;
     size_t n_tensors = 0;
     for (const zac_stage_hp & hp : m.stages) n_tensors += 2 * (size_t) hp.n_layer;
-    st.ctx_kv = ggml_init({ n_tensors * ggml_tensor_overhead(), nullptr, true });
+    st.ctx_kv = ggml_init({n_tensors * ggml_tensor_overhead(), nullptr, true});
     // F32 on CPU: ggml's CPU flash attention accumulates V*softmax in F16 for an F16 cache, which
     // made streamed (block 3) and buffered output differ by 2.4e-3. Metal accumulates in F32.
     const ggml_type kv_type = m.is_gpu ? GGML_TYPE_F16 : GGML_TYPE_F32;
@@ -840,11 +901,14 @@ static bool zac_stream_alloc(const zac_model & m, zac_stream & st) {
     st.buf_kv = ggml_backend_alloc_ctx_tensors(st.ctx_kv, m.backend);
     if (!st.buf_kv) {
         fprintf(stderr, "zac: stream KV cache allocation failed\n");
-        ggml_free(st.ctx_kv); st.ctx_kv = nullptr;
-        st.kc.clear(); st.vc.clear(); st.cap.clear();
+        ggml_free(st.ctx_kv);
+        st.ctx_kv = nullptr;
+        st.kc.clear();
+        st.vc.clear();
+        st.cap.clear();
         return false;
     }
-    ggml_backend_buffer_clear(st.buf_kv, 0);   // masked slots are read too: no NaN garbage
+    ggml_backend_buffer_clear(st.buf_kv, 0); // masked slots are read too: no NaN garbage
     st.owner = &m;
     return true;
 }
@@ -859,7 +923,7 @@ static void mix_emit(const zac_model & m, zac_stream & st, std::vector<float> & 
     const int K = m.fir_kernel;
     // mix_in index j holds s[j - h]; y[m] = sum_c sum_k w[c][k] * mix_in_c[m + k].
     const int64_t avail = std::min(st.mix_avail[0], st.mix_avail[1]);
-    const int64_t m1 = avail - K + 1;                                  // exclusive bound on m
+    const int64_t m1 = avail - K + 1; // exclusive bound on m
     if (m1 <= st.mix_next) return;
     const size_t n = (size_t) (m1 - st.mix_next), o0 = out.size();
     out.resize(o0 + n, 0.0f);
@@ -904,7 +968,8 @@ static void head_init(const zac_model & m, zac_stream & st) {
         st.mix_in[i].assign((size_t) h, 0.0f);
         st.mix_avail[i] = h;
     }
-    st.mix_base = 0; st.mix_next = 0;
+    st.mix_base = 0;
+    st.mix_next = 0;
 }
 
 // Add `n_cols` head frames: y0 [n_fft0 + 2, n_cols], y1 [n_fft1 + 2, n_cols] (column-major as read
@@ -912,7 +977,7 @@ static void head_init(const zac_model & m, zac_stream & st) {
 static void head_push(const zac_model & m, zac_stream & st, const float * y0, const float * y1,
                       int64_t n_cols, std::vector<float> & out) {
     if (st.head_frames == 0) head_init(m, st);
-    const float * y[2] = { y0, y1 };
+    const float * y[2] = {y0, y1};
     const int hop = m.head_hop;
     std::vector<float> buf;
     for (int i = 0; i < 2; ++i) {
@@ -922,7 +987,7 @@ static void head_push(const zac_model & m, zac_stream & st, const float * y0, co
         for (int64_t c = 0; c < n_cols; ++c) {
             const int64_t t = st.head_frames + c;
             const float * f = y[i] + (size_t) c * (n + 2);
-            const float * logmag = f, * phase = f + bins;
+            const float *logmag = f, *phase = f + bins;
             auto mag = [&](int k) { return expf(std::min(logmag[k], m.max_log_mag)); };
             buf[0] = mag(0) * cosf(phase[0]);
             for (int k = 1; k < n / 2; ++k) {
@@ -933,10 +998,16 @@ static void head_push(const zac_model & m, zac_stream & st, const float * y0, co
             buf[n - 1] = mag(n / 2) * cosf(phase[n / 2]);
             m.irfft[i]->exec(buf.data(), 1.0f / (float) n, false);
             const size_t need = (size_t) (t * hop + n - st.ola_base[i]);
-            if (st.ola[i].size() < need) { st.ola[i].resize(need, 0.0f); st.env[i].resize(need, 0.0f); }
+            if (st.ola[i].size() < need) {
+                st.ola[i].resize(need, 0.0f);
+                st.env[i].resize(need, 0.0f);
+            }
             float * ola = st.ola[i].data() + (t * hop - st.ola_base[i]);
             float * env = st.env[i].data() + (t * hop - st.ola_base[i]);
-            for (int j = 0; j < n; ++j) { ola[j] += win[j] * buf[j]; env[j] += win[j] * win[j]; }
+            for (int j = 0; j < n; ++j) {
+                ola[j] += win[j] * buf[j];
+                env[j] += win[j] * win[j];
+            }
         }
     }
     st.head_frames += n_cols;
@@ -967,9 +1038,9 @@ static void head_flush(const zac_model & m, zac_stream & st, std::vector<float> 
 static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * codes, int H,
                          int f0, int n_valid, std::vector<float> & internal) {
     const int ncb = m.n_codebooks, gf = m.is_gpu ? gpu_width(n_valid) : n_valid;
-    ggml_context * ctx = ggml_init({ (size_t) 64 * 1024 * 1024, nullptr, true });
+    ggml_context * ctx = ggml_init({(size_t) 64 * 1024 * 1024, nullptr, true});
     ggml_cgraph * graph = ggml_new_graph_custom(ctx, 16384, false);
-    render_ctx rc{ ctx, m, n_valid, 1, {}, {}, {}, graph, &st, 0 };
+    render_ctx rc{ctx, m, n_valid, 1, {}, {}, {}, graph, &st, 0};
 
     std::vector<ggml_tensor *> ids(ncb);
     for (int c = 0; c < ncb; ++c) {
@@ -981,18 +1052,23 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     x = ggml_add(ctx, ggml_mul_mat(ctx, m.get("sem_head.out.weight"), x), m.get("sem_head.out.bias"));
     for (int c = 1; c < ncb; ++c)
         x = ggml_add(ctx, x, ggml_get_rows(ctx, m.get("res." + std::to_string(c - 1) + ".table"), ids[c]));
-    x = ggml_add(ctx, x, m.get("res.bias"));                                       // [latent, gf]
+    x = ggml_add(ctx, x, m.get("res.bias")); // [latent, gf]
 
-    struct stage_in { ggml_tensor * pos, * slots, * mask; int cpf, T, context, cap; };
+    struct stage_in {
+        ggml_tensor *pos, *slots, *mask;
+        int cpf, T, context, cap;
+    };
     std::vector<stage_in> sin;
     for (size_t s = 0; s < m.stages.size(); ++s) {
         const zac_stage_hp & hp = m.stages[s];
         const std::string p = "stage." + std::to_string(s);
         x = ggml_mul_mat(ctx, m.get(p + ".in.weight"), x);
         const int T = (int) x->ne[1], cap = st.cap[s];
-        stage_in si{ ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T), ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T),
-                     ggml_new_tensor_2d(ctx, GGML_TYPE_F16, cap, T), rc.cpf, T, hp.context, cap };
-        ggml_set_input(si.pos); ggml_set_input(si.slots); ggml_set_input(si.mask);
+        stage_in si{ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T), ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T),
+                    ggml_new_tensor_2d(ctx, GGML_TYPE_F16, cap, T), rc.cpf, T, hp.context, cap};
+        ggml_set_input(si.pos);
+        ggml_set_input(si.slots);
+        ggml_set_input(si.mask);
         sin.push_back(si);
         for (int l = 0; l < hp.n_layer; ++l)
             x = moss_layer(rc, x, p + ".l" + std::to_string(l), hp, si.pos, si.slots, si.mask);
@@ -1001,7 +1077,7 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     }
     for (int b = 0; b < m.head_depth; ++b) x = convnext_block(rc, x, "head." + std::to_string(b));
     x = layer_norm(ctx, x, m.get("head.norm.weight"), m.get("head.norm.bias"), m.convnext_eps);
-    ggml_tensor * spec[2];                                                         // [n_fft + 2, 16*gf]
+    ggml_tensor * spec[2]; // [n_fft + 2, 16*gf]
     for (int i = 0; i < 2; ++i) {
         const std::string p = "head.out." + std::to_string(i);
         spec[i] = ggml_add(ctx, ggml_mul_mat(ctx, m.get(p + ".weight"), x), m.get(p + ".bias"));
@@ -1017,7 +1093,8 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     }
     if (!st.conv.empty() && st.conv.size() != rc.hist_in.size()) {
         fprintf(stderr, "zac: stream state mismatch\n");
-        ggml_free(ctx); return false;
+        ggml_free(ctx);
+        return false;
     }
 
     ggml_gallocr_t alloc = nullptr;
@@ -1034,7 +1111,9 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     }
     if (!ok) {
         fprintf(stderr, "zac: graph allocation failed\n");
-        ggml_gallocr_free(alloc); ggml_free(ctx); return false;
+        ggml_gallocr_free(alloc);
+        ggml_free(ctx);
+        return false;
     }
 
     // Un-shear: codebook c of frame t is row t + c; rows past H are padding (clamped to a valid id).
@@ -1051,8 +1130,12 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     const ggml_fp16_t M0 = ggml_fp32_to_fp16(0.0f), MINF = ggml_fp32_to_fp16(-INFINITY);
     for (const stage_in & si : sin) {
         const int64_t p0 = (int64_t) f0 * si.cpf, p_last = p0 + si.T - 1, cap = si.cap;
-        pos.resize(si.T); slots.resize(si.T);
-        for (int i = 0; i < si.T; ++i) { pos[i] = (int32_t) (p0 + i); slots[i] = (int32_t) ((p0 + i) % cap); }
+        pos.resize(si.T);
+        slots.resize(si.T);
+        for (int i = 0; i < si.T; ++i) {
+            pos[i] = (int32_t) (p0 + i);
+            slots[i] = (int32_t) ((p0 + i) % cap);
+        }
         ggml_backend_tensor_set(si.pos, pos.data(), 0, pos.size() * sizeof(int32_t));
         ggml_backend_tensor_set(si.slots, slots.data(), 0, slots.size() * sizeof(int32_t));
         // Slot j holds the latest position written there: cap >= context - 1 + T, so this chunk's
@@ -1070,7 +1153,10 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     }
     std::vector<float> zeros;
     auto set_hist = [&](ggml_tensor * h, const std::vector<float> * src) {
-        if (src) { ggml_backend_tensor_set(h, src->data(), 0, ggml_nbytes(h)); return; }
+        if (src) {
+            ggml_backend_tensor_set(h, src->data(), 0, ggml_nbytes(h));
+            return;
+        }
         zeros.assign((size_t) ggml_nelements(h), 0.0f);
         ggml_backend_tensor_set(h, zeros.data(), 0, ggml_nbytes(h));
     };
@@ -1080,9 +1166,11 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
                                        : ggml_backend_graph_compute(m.backend, graph);
     if (status != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "zac: compute failed\n");
-        ggml_gallocr_free(alloc); ggml_free(ctx); return false;
+        ggml_gallocr_free(alloc);
+        ggml_free(ctx);
+        return false;
     }
-    const int64_t n_cols = (int64_t) n_valid * (m.internal_hop / m.head_hop);       // head frames in this chunk
+    const int64_t n_cols = (int64_t) n_valid * (m.internal_hop / m.head_hop); // head frames in this chunk
     std::array<std::vector<float>, 2> spec_h;
     for (int i = 0; i < 2; ++i) {
         spec_h[i].resize((size_t) (m.n_fft[i] + 2) * n_cols);
@@ -1094,7 +1182,8 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     };
     st.conv.resize(rc.hist_out.size());
     for (size_t i = 0; i < rc.hist_out.size(); ++i) get_hist(rc.hist_out[i], st.conv[i]);
-    ggml_gallocr_free(alloc); ggml_free(ctx);
+    ggml_gallocr_free(alloc);
+    ggml_free(ctx);
     head_push(m, st, spec_h[0].data(), spec_h[1].data(), n_cols, internal);
     return true;
 }
@@ -1139,7 +1228,10 @@ bool zac_stream_decode(const zac_model & m, zac_stream & st, const int32_t * cod
                        std::vector<float> & audio) {
     if (f_hi < 0 || H < 0 || (f_hi > st.n_done && !codes)) return false;
     if (st.kc.empty() && !zac_stream_alloc(m, st)) return false;
-    if (st.owner != &m) { fprintf(stderr, "zac: stream used with a different codec model\n"); return false; }
+    if (st.owner != &m) {
+        fprintf(stderr, "zac: stream used with a different codec model\n");
+        return false;
+    }
     const int chunk = m.is_gpu ? GPU_MAX_CHUNK : CPU_CHUNK;
     std::vector<float> internal;
     while (st.n_done < f_hi) {
@@ -1171,10 +1263,14 @@ float zac_output_gain(const zac_model & m, double headroom_db) {
 bool zac_decode(const zac_model & m, const int32_t * codes, int H, int W, int eos,
                 std::vector<float> & audio) {
     if (W != m.n_codebooks) {
-        fprintf(stderr, "zac: codes have %d codebooks, expected %d\n", W, m.n_codebooks); return false;
+        fprintf(stderr, "zac: codes have %d codebooks, expected %d\n", W, m.n_codebooks);
+        return false;
     }
     const int E = std::min(eos >= 0 ? eos : H, H - (m.n_codebooks - 1));
-    if (E <= 0) { fprintf(stderr, "zac: no frames to decode (eos=%d, H=%d)\n", eos, H); return false; }
+    if (E <= 0) {
+        fprintf(stderr, "zac: no frames to decode (eos=%d, H=%d)\n", eos, H);
+        return false;
+    }
     zac_stream st;
     audio.clear();
     const auto t0 = std::chrono::steady_clock::now();
@@ -1182,38 +1278,11 @@ bool zac_decode(const zac_model & m, const int32_t * codes, int H, int W, int eo
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const double audio_s = (double) audio.size() / m.sample_rate;
     double rms = 0, peak = 0;
-    for (float v : audio) { rms += (double) v * v; peak = std::max(peak, (double) fabsf(v)); }
+    for (float v : audio) {
+        rms += (double) v * v;
+        peak = std::max(peak, (double) fabsf(v));
+    }
     fprintf(stderr, "zac: H=%d eos=%d -> %d frames, %zu samples = %.2fs, rms=%.4f peak=%.4f, decode %.2fs (RTF %.3f)\n",
             H, eos, E, audio.size(), audio_s, sqrt(rms / audio.size()), peak, secs, secs / audio_s);
-    return true;
-}
-
-std::vector<uint8_t> zac_wav_bytes(const std::vector<float> & audio, int sample_rate) {
-    const int64_t ns = (int64_t) audio.size();
-    const uint32_t sr = (uint32_t) sample_rate, byte_rate = sr * 2, data_bytes = (uint32_t) (ns * 2);
-    const uint32_t riff = 36 + data_bytes;
-    std::vector<uint8_t> out;
-    out.reserve(44 + (size_t) ns * 2);
-    auto bytes = [&](const void * p, size_t n) { const uint8_t * b = (const uint8_t *) p; out.insert(out.end(), b, b + n); };
-    auto w32 = [&](uint32_t v) { bytes(&v, 4); };
-    auto w16 = [&](uint16_t v) { bytes(&v, 2); };
-    bytes("RIFF", 4); w32(riff); bytes("WAVE", 4);
-    bytes("fmt ", 4); w32(16); w16(1); w16(1); w32(sr); w32(byte_rate); w16(2); w16(16);
-    bytes("data", 4); w32(data_bytes);
-    for (int64_t i = 0; i < ns; ++i) {
-        float v = audio[i]; if (v > 1.0f) v = 1.0f; if (v < -1.0f) v = -1.0f;
-        int16_t s = (int16_t) lrintf(v * 32767.0f);
-        w16((uint16_t) s);
-    }
-    return out;
-}
-
-bool zac_write_wav(const char * path, const std::vector<float> & audio, int sample_rate) {
-    FILE * wf = fopen(path, "wb");
-    if (!wf) { fprintf(stderr, "zac: cannot write %s\n", path); return false; }
-    const std::vector<uint8_t> buf = zac_wav_bytes(audio, sample_rate);
-    fwrite(buf.data(), 1, buf.size(), wf);
-    fclose(wf);
-    fprintf(stderr, "zac: wrote %s\n", path);
     return true;
 }

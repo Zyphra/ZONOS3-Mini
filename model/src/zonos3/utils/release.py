@@ -1,12 +1,13 @@
-"""hf:// locations for the ZONOS3 Mini release checkpoints (RELEASE_HF_20261021).
+"""hf:// locations for the ZONOS3 Mini release checkpoints.
 
 Registries, configs and the server's default --model-path may name files and folders in a Hugging Face repo as
 ``hf://<owner>/<repo>/<path inside the repo>``. ``resolve_file`` / ``resolve_dir_or_local`` fetch them into the local HF cache
 (``HF_HOME``; ``HF_TOKEN`` or a stored login is needed while the repo is private) and return local paths; plain local paths pass
 through unchanged, so the cluster servers keep running from their local registries. Default repo: ``ZONOS3_RELEASE_REPO``
-(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (R2GRPO_SWITCH_20261103: was ``lm/mect_60k``,
-which was ``lm/fullenc_120k`` before MECT60K_SWITCH_20261022).
+(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (was ``lm/mect_60k``,
+which was ``lm/fullenc_120k`` before).
 """
+
 from __future__ import annotations
 
 import os
@@ -17,7 +18,6 @@ from pathlib import Path
 PREFIX = "hf://"
 RELEASE_REPO = os.environ.get("ZONOS3_RELEASE_REPO", "Zyphra/ZONOS3_Mini_release_ckpts")
 RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/rate30_20k_r2grpo")
-RELEASE_CODEC_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/codec_registry_keep2_plain.json"   # KEEP2_DEFAULT_20261103
 RELEASE_SPEAKER_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/speaker_encoder_registry.json"
 
 
@@ -29,7 +29,7 @@ def split(uri: str) -> tuple[str, str]:
     """hf://owner/repo/a/b -> ('owner/repo', 'a/b'); hf://owner/repo -> ('owner/repo', '')."""
     if not is_hf(uri):
         raise ValueError(f"not an hf:// location: {uri!r}")
-    parts = uri[len(PREFIX):].strip("/").split("/", 2)
+    parts = uri[len(PREFIX) :].strip("/").split("/", 2)
     if len(parts) < 2 or not parts[0] or not parts[1]:
         raise ValueError(f"hf:// location needs owner/repo: {uri!r}")
     return f"{parts[0]}/{parts[1]}", (parts[2] if len(parts) > 2 else "")
@@ -75,8 +75,12 @@ def resolve_dir_or_local(path) -> str:
     from huggingface_hub import snapshot_download
 
     print(f"[release] fetching folder {path}", file=sys.stderr, flush=True)
-    root = snapshot_download(repo_id=repo_id, repo_type="model", token=_token(),
-                             allow_patterns=[f"{inside}/*", f"{inside}/**"] if inside else None)
+    root = snapshot_download(
+        repo_id=repo_id,
+        repo_type="model",
+        token=_token(),
+        allow_patterns=[f"{inside}/*", f"{inside}/**"] if inside else None,
+    )
     return str(Path(root) / inside) if inside else root
 
 

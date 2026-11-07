@@ -1,14 +1,19 @@
 from __future__ import annotations
-import hashlib
-import collections
 
+import collections
+import hashlib
 import multiprocessing as mp
 import os
-import threading
 from types import SimpleNamespace
 from typing import List, Sequence
 
 import torch
+from zonos3.condition_buckets import check_ids
+from zonos3.generation import SAMPLE_RATE
+from zonos3.tts import plan
+from zonos3.tts.markup import strip_nonverbal_markup
+from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
+
 from zonos3_sgl.message import (
     BaseBackendMsg,
     BaseFrontendMsg,
@@ -25,13 +30,8 @@ from zonos3_sgl.message import (
     TTSTokenizeMsg,
     TTSUserMsg,
 )
-from zonos3.generation import SAMPLE_RATE
-from zonos3.condition_buckets import check_ids
-from zonos3.tts import plan
-from zonos3.tts.markup import strip_nonverbal_markup
-from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
-from zonos3_sgl.utils.mp import ZmqPullQueue, ZmqPushQueue
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.mp import ZmqPullQueue, ZmqPushQueue
 
 
 def _unwrap_msg(
@@ -120,23 +120,13 @@ def tokenize_worker(
     assert local_bs > 0
     logger = init_logger(__name__, f"tokenizer_{tokenizer_id}")
 
-    from zonos3.tokenizer.textnorm import (
-        TTSTextNormalizer,
-        collapse_line_breaks,
-        normalization_enabled,
-    )
+    from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
+
     from .vocoder import TTSVocoderManager
 
     if text_vocab is None:
         raise ValueError("TTS mode requires text_vocab from the model config.")
-    textnorm_enabled = normalization_enabled()
-    text_normalizer = TTSTextNormalizer() if textnorm_enabled else None
-    if text_normalizer is not None:
-        # Compile/load the English grammars up front so the first request does
-        # not pay the one-time WFST construction cost.
-        threading.Thread(
-            target=text_normalizer.warmup, args=(["en"],), daemon=True
-        ).start()
+    text_normalizer = load_normalizer(warmup=True)
     tts_prompt_builder = TTSPromptBuilder(
         TTSPromptConfig(
             n_codebooks=n_codebooks,
@@ -156,7 +146,9 @@ def tokenize_worker(
         audio_codec=audio_codec,
     )
     # inline reference codes keep their first frames: the checkpoint's speaker_reference_max_seconds at the codec hop
-    reference_limit = plan.reference_frame_limit(speaker_reference_max_seconds, tts_vocoder_manager.hop_length, SAMPLE_RATE)
+    reference_limit = plan.reference_frame_limit(
+        speaker_reference_max_seconds, tts_vocoder_manager.hop_length, SAMPLE_RATE
+    )
 
     if ack_queue is not None:
         ack_queue.put(f"Tokenize server {tokenizer_id} is ready")
@@ -172,24 +164,18 @@ def tokenize_worker(
             logger.debug(f"Received {len(pending_msg)} messages")
 
             tts_tokenize_msg = [m for m in pending_msg if isinstance(m, TTSTokenizeMsg)]
-            tts_detokenize_msg = [
-                m for m in pending_msg if isinstance(m, TTSDetokenizeMsg)
-            ]
+            tts_detokenize_msg = [m for m in pending_msg if isinstance(m, TTSDetokenizeMsg)]
             encode_msgs = [m for m in pending_msg if isinstance(m, TTSEncodeAudioMsg)]
             decode_msgs = [m for m in pending_msg if isinstance(m, TTSDecodeCodesMsg)]
             frontend_replies = []
             for msg in encode_msgs:
                 try:
-                    codes = tts_vocoder_manager.encode_reference_audio_bytes(
-                        msg.audio, max_seconds=msg.max_seconds
-                    )
+                    codes = tts_vocoder_manager.encode_reference_audio_bytes(msg.audio, max_seconds=msg.max_seconds)
                     frontend_replies.append(TTSCodesReply(uid=msg.uid, codes=codes))
                 except (ValueError, RuntimeError) as exc:
                     frontend_replies.append(TTSCodesReply(uid=msg.uid, codes=None, error=str(exc)))
             for msg in decode_msgs:
-                audio = tts_vocoder_manager.decode_all(
-                    msg.codes.to(torch.int64)[None], apply_shear_up=False
-                )[0]
+                audio = tts_vocoder_manager.decode_all(msg.codes.to(torch.int64)[None], apply_shear_up=False)[0]
                 frontend_replies.append(
                     TTSAudioReply(
                         uid=msg.uid,
@@ -200,12 +186,10 @@ def tokenize_worker(
 
             # Process TTS tokenize messages
             if len(tts_tokenize_msg) > 0:
-                normalized_texts = []
-                for msg in tts_tokenize_msg:
-                    text = collapse_line_breaks(msg.text)  # LINE_BREAKS_20261019: also when normalization is off
-                    if text_normalizer is not None and msg.text_normalization:
-                        text = text_normalizer.normalize(text, msg.language)
-                    normalized_texts.append(text)
+                normalized_texts = [
+                    normalize_request_text(msg.text, msg.language, text_normalizer if msg.text_normalization else None)
+                    for msg in tts_tokenize_msg
+                ]
                 user_msgs = []
                 for msg, text in zip(tts_tokenize_msg, normalized_texts, strict=True):
                     # The byte / SuperBPE text rows and what follows them (zonos3.tts.plan.text_rows): the edit layout
@@ -213,16 +197,33 @@ def tokenize_worker(
                     # legacy quality-conditioned checkpoint (zonos3.tts.conditioning.default_quality_buckets).
                     silence_rows = _silence_rows(msg, builder=tts_prompt_builder, vocoder_manager=tts_vocoder_manager)
                     edit = _edit_layout(msg)
-                    text_rows = plan.text_rows(tts_prompt_builder, text, silence=silence_rows, edit=edit,
-                                               span_end_id=span_end_id, quality_buckets=quality_buckets)
+                    text_rows = plan.text_rows(
+                        tts_prompt_builder,
+                        text,
+                        silence=silence_rows,
+                        edit=edit,
+                        span_end_id=span_end_id,
+                        quality_buckets=quality_buckets,
+                    )
                     plain_rows = None
                     plain_text = _tag_cfg_plain_text(msg, text)
                     if plain_text is not None:
-                        plain_rows = plan.text_rows(tts_prompt_builder, plain_text, silence=silence_rows, edit=edit,
-                                                    span_end_id=span_end_id, quality_buckets=quality_buckets)
+                        plain_rows = plan.text_rows(
+                            tts_prompt_builder,
+                            plain_text,
+                            silence=silence_rows,
+                            edit=edit,
+                            span_end_id=span_end_id,
+                            quality_buckets=quality_buckets,
+                        )
                         logger.info(
                             "tag CFG uid=%s scale=%s: tagged text %r (%d rows), plain twin text %r (%d rows)",
-                            msg.uid, msg.sampling_params.tag_cfg_scale, text, len(text_rows), plain_text, len(plain_rows),
+                            msg.uid,
+                            msg.sampling_params.tag_cfg_scale,
+                            text,
+                            len(text_rows),
+                            plain_text,
+                            len(plain_rows),
                         )
                     # Span steering by reading position: each span's characters -> the text tokens spelling them
                     # (zonos3.tts.span_follow).
@@ -230,21 +231,24 @@ def tokenize_worker(
                     if getattr(msg, "steer_follow_chars", None) is not None and msg.edit_codes is None:
                         from zonos3.tts.span_follow import span_token_ranges
 
-                        follow_tokens = [list(r) for r in span_token_ranges(
-                            msg.text, text, [tuple(c) for c in msg.steer_follow_chars],
-                            tts_prompt_builder.config.text_tokenizer_spec)]
-                    if (
-                        msg.speaker_embedding is not None
-                        and msg.speaker_reference_audio is not None
-                    ):
-                        raise ValueError(
-                            "Speaker embeddings and raw reference audio are mutually exclusive."
-                        )
+                        follow_tokens = [
+                            list(r)
+                            for r in span_token_ranges(
+                                msg.text,
+                                text,
+                                [tuple(c) for c in msg.steer_follow_chars],
+                                tts_prompt_builder.config.text_tokenizer_spec,
+                            )
+                        ]
+                    if msg.speaker_embedding is not None and msg.speaker_reference_audio is not None:
+                        raise ValueError("Speaker embeddings and raw reference audio are mutually exclusive.")
                     # Condition rows (cond3 finetunes): one bucket id per row, every row unknown by default.
                     condition_values = None
                     requested_buckets = getattr(msg, "condition_buckets", None)
                     if condition_count > 0:
-                        buckets = list(requested_buckets) if requested_buckets is not None else list(condition_bucket_counts)
+                        buckets = (
+                            list(requested_buckets) if requested_buckets is not None else list(condition_bucket_counts)
+                        )
                         condition_values = check_ids(buckets, condition_bucket_counts)
                     elif requested_buckets is not None:
                         raise ValueError("This checkpoint has no condition rows (loudness / fmax / speaking rate)")
@@ -262,8 +266,11 @@ def tokenize_worker(
                         )
                     # [reference prefix | speaker slot (position 0, as in training)][condition rows] text rows
                     rows = plan.prompt_rows(
-                        tts_prompt_builder, text_rows, condition_count=len(condition_values or ()),
-                        reference_codes=reference_codes, speaker_row=msg.speaker_embedding is not None,
+                        tts_prompt_builder,
+                        text_rows,
+                        condition_count=len(condition_values or ()),
+                        reference_codes=reference_codes,
+                        speaker_row=msg.speaker_embedding is not None,
                     )
                     t = rows.input_ids
                     reference_prefix_length = rows.reference_prefix_length
@@ -276,9 +283,14 @@ def tokenize_worker(
                     )
                     # (the detokenizer is another process: the context rides on TTSUserMsg -> TTSReq -> the first detokenize row)
                     if silence_rows is not None or context_codes is not None or bool(msg.decode_context):
-                        logger.info("decode context uid=%s: prefill rows %s, context frames %s (decode_context=%s, reference frames %s)", msg.uid,
-                                    0 if silence_rows is None else int(silence_rows.shape[0]), 0 if context_codes is None else int(context_codes.shape[0]),
-                                    bool(msg.decode_context), None if reference_codes is None else int(reference_codes.shape[0]))
+                        logger.info(
+                            "decode context uid=%s: prefill rows %s, context frames %s (decode_context=%s, reference frames %s)",
+                            msg.uid,
+                            0 if silence_rows is None else int(silence_rows.shape[0]),
+                            0 if context_codes is None else int(context_codes.shape[0]),
+                            bool(msg.decode_context),
+                            None if reference_codes is None else int(reference_codes.shape[0]),
+                        )
                     if os.environ.get("LONG_TTS_EVAL") == "1":
                         mode = os.environ["LONG_TTS_REFERENCE_MODE"]
                         if mode == "none":
@@ -288,8 +300,18 @@ def tokenize_worker(
                         else:
                             assert reference_prefix_length > 0 and msg.speaker_embedding is None
                             assert float(msg.sampling_params.speaker_cfg_scale) == 2.0
-                        assert len(t) + int(msg.sampling_params.max_tokens) + 1 <= 32768, "Long evaluation would truncate output for context capacity"
-                        logger.info("LONG_INPUT_OK uid=%s mode=%s input_frames=%s reference_frames=%s max_tokens=%s cfg=%s", msg.uid, mode, len(t), reference_prefix_length, msg.sampling_params.max_tokens, msg.sampling_params.speaker_cfg_scale)
+                        assert len(t) + int(msg.sampling_params.max_tokens) + 1 <= 32768, (
+                            "Long evaluation would truncate output for context capacity"
+                        )
+                        logger.info(
+                            "LONG_INPUT_OK uid=%s mode=%s input_frames=%s reference_frames=%s max_tokens=%s cfg=%s",
+                            msg.uid,
+                            mode,
+                            len(t),
+                            reference_prefix_length,
+                            msg.sampling_params.max_tokens,
+                            msg.sampling_params.speaker_cfg_scale,
+                        )
                     logger.debug("Tokenize uid=%d text='%s...' frames=%d", msg.uid, msg.text[:50], len(t))
                     user_msgs.append(
                         TTSUserMsg(
@@ -307,7 +329,9 @@ def tokenize_worker(
                             steer_follow_gate=msg.steer_follow_gate if follow_tokens is not None else None,
                             condition_values=condition_values,
                             condition_token_start=rows.condition_token_start,
-                            decode_context_codes=None if context_codes is None else context_codes.to(torch.int32).contiguous(),
+                            decode_context_codes=None
+                            if context_codes is None
+                            else context_codes.to(torch.int32).contiguous(),
                             prefill_rows=None if silence_rows is None else silence_rows.to(torch.int32).contiguous(),
                             accent=msg.accent,
                             accent_strength=msg.accent_strength,
@@ -320,9 +344,7 @@ def tokenize_worker(
                             laci_rate_deltas=msg.laci_rate_deltas,
                         )
                     )
-                batch_output = BatchTTSBackendMsg(
-                    data=user_msgs
-                )
+                batch_output = BatchTTSBackendMsg(data=user_msgs)
                 if len(batch_output.data) == 1:
                     batch_output = batch_output.data[0]
                 send_backend.put(batch_output)
@@ -348,8 +370,14 @@ def tokenize_worker(
                 for receipt in tts_vocoder_manager.pop_prefix_receipts():
                     logger.info(
                         "prefix stream uid=%s: %s live chunks (%s/%s frames), live-vs-whole %s dB, max |d| %.4f, prefill %s, context %s",
-                        receipt["uid"], receipt["chunks"], receipt["emitted_frames"], receipt["frames"],
-                        receipt["live_vs_whole_rms_db"], receipt["live_vs_whole_max_abs"], receipt.get("prefill_frames", 0), receipt.get("context_frames", 0),
+                        receipt["uid"],
+                        receipt["chunks"],
+                        receipt["emitted_frames"],
+                        receipt["frames"],
+                        receipt["live_vs_whole_rms_db"],
+                        receipt["live_vs_whole_max_abs"],
+                        receipt.get("prefill_frames", 0),
+                        receipt.get("context_frames", 0),
                     )
                 frontend_replies.extend(
                     TTSAudioReply(uid=msg.uid, audio_data=audio, finished=msg.finished, laci=msg.laci)
@@ -363,11 +391,3 @@ def tokenize_worker(
 
     except KeyboardInterrupt:
         pass
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# DECODE_CONTEXT_RUNTIME_20261017
-
-# DECODE_CONTEXT_RUNTIME2_20261017
-
-# SILENCE_DEFAULT_RUNTIME_20261017

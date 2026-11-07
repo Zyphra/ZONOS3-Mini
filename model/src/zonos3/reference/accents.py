@@ -37,8 +37,10 @@ class AccentState:
         linear = {}
         for module, (down, up) in adapter.linear.items():
             if adapter.shapes[module] != tuple(weight(module).shape):
-                raise ValueError(f"{adapter.name}: {module}.weight shape {adapter.shapes[module]} != model "
-                                 f"{tuple(weight(module).shape)}")
+                raise ValueError(
+                    f"{adapter.name}: {module}.weight shape {adapter.shapes[module]} != model "
+                    f"{tuple(weight(module).shape)}"
+                )
             linear[module] = (down.to(device, dtype), up.to(device, dtype))
         experts = {}
         for module, weights in adapter.experts.items():
@@ -47,9 +49,13 @@ class AccentState:
                 raise ValueError(f"accent {adapter.name!r} has expert factors on {module!r}, which is not MoE experts")
             for name, (up, down) in weights.items():
                 if (up.shape[0], up.shape[1], down.shape[2]) != tuple(served[name].shape):
-                    raise ValueError(f"{adapter.name}: {module}.{name} factors do not shift the model's "
-                                     f"[E, out, in] {tuple(served[name].shape)}")
-            experts[module] = {name: (up.to(device, dtype), down.to(device, dtype)) for name, (up, down) in weights.items()}
+                    raise ValueError(
+                        f"{adapter.name}: {module}.{name} factors do not shift the model's "
+                        f"[E, out, in] {tuple(served[name].shape)}"
+                    )
+            experts[module] = {
+                name: (up.to(device, dtype), down.to(device, dtype)) for name, (up, down) in weights.items()
+            }
         router_bias = {}
         for module, shift in adapter.router_bias.items():
             biases = params.get(module + ".balancing_biases")

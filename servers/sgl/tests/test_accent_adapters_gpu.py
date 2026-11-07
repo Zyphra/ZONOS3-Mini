@@ -33,8 +33,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-ENV = ("ZONOS3_TEST_MODEL", "ZONOS3_TEST_ACCENT_DIR", "ZONOS3_TEST_MERGED_MODEL",
-       "ZONOS3_TEST_MERGED_ACCENT")
+ENV = ("ZONOS3_TEST_MODEL", "ZONOS3_TEST_ACCENT_DIR", "ZONOS3_TEST_MERGED_MODEL", "ZONOS3_TEST_MERGED_ACCENT")
 pytestmark = [
     pytest.mark.gpu,
     pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA GPU"),
@@ -91,12 +90,18 @@ def test_expert_adapters_ride_inside_the_sonic_kernels():
 
     def plain(rows):
         out, _ = moe_general_routing_inputs(
-            x=x[rows].contiguous(), router_scores=scores[rows].reshape(-1).contiguous(),
+            x=x[rows].contiguous(),
+            router_scores=scores[rows].reshape(-1).contiguous(),
             token_indices=torch.arange(len(rows), dtype=torch.int32, device=dev).repeat_interleave(K),
             expert_indices=ids[rows].reshape(-1).to(torch.int32).contiguous(),
-            w1=w13.permute(1, 2, 0), b1=None, w2=w2.permute(1, 2, 0), b2=None, E=E,
+            w1=w13.permute(1, 2, 0),
+            b1=None,
+            w2=w2.permute(1, 2, 0),
+            b2=None,
+            E=E,
             stream_id=torch.cuda.current_stream().cuda_stream,
-            activation_type=ActivationType.SWIGLU, is_inference_mode_enabled=True,
+            activation_type=ActivationType.SWIGLU,
+            is_inference_mode_enabled=True,
         )
         return out
 
@@ -143,17 +148,29 @@ def report(tmp_path_factory):
     out = Path(os.environ.get("ZONOS3_TEST_PARITY_OUT") or tmp_path_factory.mktemp("accent_parity"))
     mixed = os.environ.get("ZONOS3_TEST_MIXED_ACCENTS")
     prompts = []
-    for flag, key in (("--reference-audio", "ZONOS3_TEST_REFERENCE_AUDIO"),
-                      ("--speaker-embedding", "ZONOS3_TEST_SPEAKER_EMBEDDING")):
+    for flag, key in (
+        ("--reference-audio", "ZONOS3_TEST_REFERENCE_AUDIO"),
+        ("--speaker-embedding", "ZONOS3_TEST_SPEAKER_EMBEDDING"),
+    ):
         if os.environ.get(key):
             prompts += [flag, os.environ[key]]
     subprocess.run(
-        [sys.executable, str(SCRIPT),
-         "--base-model", os.environ["ZONOS3_TEST_MODEL"],
-         "--accent-dir", os.environ["ZONOS3_TEST_ACCENT_DIR"],
-         "--merged-model", os.environ["ZONOS3_TEST_MERGED_MODEL"],
-         "--merged-accent", os.environ["ZONOS3_TEST_MERGED_ACCENT"],
-         "--out-dir", str(out)] + (["--mixed-accents", mixed] if mixed else []) + prompts,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--base-model",
+            os.environ["ZONOS3_TEST_MODEL"],
+            "--accent-dir",
+            os.environ["ZONOS3_TEST_ACCENT_DIR"],
+            "--merged-model",
+            os.environ["ZONOS3_TEST_MERGED_MODEL"],
+            "--merged-accent",
+            os.environ["ZONOS3_TEST_MERGED_ACCENT"],
+            "--out-dir",
+            str(out),
+        ]
+        + (["--mixed-accents", mixed] if mixed else [])
+        + prompts,
         check=True,
     )
     return json.loads((out / "report.json").read_text())

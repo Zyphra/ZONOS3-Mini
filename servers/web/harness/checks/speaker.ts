@@ -1,4 +1,4 @@
-// Speaker-encoder parity: SpeakerEncoder vs spk-encoder-cli (goldens spk.npy, spk/*.npy) on default_voices/AmericanFemale.
+// Speaker-encoder parity: SpeakerEncoder vs spk-encoder-cli (goldens spk.npy, spk/*.npy) on assets/default_voices/AmericanFemale.
 // speaker_embed decodes the mp3 in the browser (OfflineAudioContext, 44.1 kHz, channels averaged) as the client does;
 // speaker_embed_pcm feeds the exact 44.1 kHz PCM ffmpeg produced for the CLI (goldens/spk/pcm44k.npy).
 import { SpeakerEncoder } from '../../src/speaker';

@@ -13,7 +13,9 @@
 
 namespace zs {
 
-void fail(int status, const std::string & detail) { throw HttpError(status, json{{"detail", detail}}); }
+void fail(int status, const std::string & detail) {
+    throw HttpError(status, json{{"detail", detail}});
+}
 
 void fail(int status, const std::string & detail, const json & extra) {
     json body = {{"detail", detail}};
@@ -53,7 +55,9 @@ struct KeepaliveRun {
     bool done = false;
     httplib::Response res;
     std::thread th;
-    void join() { if (th.joinable()) th.join(); }
+    void join() {
+        if (th.joinable()) th.join();
+    }
 };
 
 // The body the keepalive response ends with: the endpoint's JSON, or {"detail", "status_code"} for an error.
@@ -68,7 +72,7 @@ std::string keepalive_payload(const httplib::Response & r) {
     return json{{"detail", detail}, {"status_code", status}}.dump(-1, ' ', false, json::error_handler_t::replace);
 }
 
-}  // namespace
+} // namespace
 
 Handler keepalive(Handler h) {
     Handler inner = guarded(std::move(h));
@@ -118,7 +122,7 @@ std::optional<std::string> session_id(const httplib::Request & req) {
 
 namespace {
 
-bool digest_equal(const std::string & a, const std::string & b) {   // secrets.compare_digest
+bool digest_equal(const std::string & a, const std::string & b) { // secrets.compare_digest
     unsigned char diff = a.size() == b.size() ? 0 : 1;
     const std::string & ref = diff ? a : b;
     for (size_t i = 0; i < a.size(); ++i) diff |= (unsigned char) (a[i] ^ ref[i]);
@@ -147,18 +151,18 @@ const char * EXPOSED = "X-Audio-Sample-Rate, X-Audio-Channels, X-Audio-Format, X
 
 const char * reason(int status) {
     switch (status) {
-        case 400: return "Bad Request";
-        case 404: return "Not Found";
-        case 405: return "Method Not Allowed";
-        case 413: return "Request Entity Too Large";
-        case 414: return "URI Too Long";
-        case 416: return "Range Not Satisfiable";
-        case 431: return "Request Header Fields Too Large";
-        default: return status >= 500 ? "Internal Server Error" : "Error";
+    case 400: return "Bad Request";
+    case 404: return "Not Found";
+    case 405: return "Method Not Allowed";
+    case 413: return "Request Entity Too Large";
+    case 414: return "URI Too Long";
+    case 416: return "Range Not Satisfiable";
+    case 431: return "Request Header Fields Too Large";
+    default: return status >= 500 ? "Internal Server Error" : "Error";
     }
 }
 
-}  // namespace
+} // namespace
 
 void install_middleware(httplib::Server & svr) {
     // ZONOS3_ACCESS_TOKEN (api_server.py optional_private_access), outermost: checked before routing and before the
@@ -246,21 +250,25 @@ void install_studio(httplib::Server & svr, const std::string & studio_dir) {
             std::string body;
             if (ec || rel.empty() || *rel.begin() == ".." || !fs::is_regular_file(target, ec) || !read_file(target, body))
                 continue;
-            // Pages are no-store (a rebuild's new hashed assets are picked up at once); every other file is immutable.
-            const std::string name = target.filename().string();
-            const bool page = name.size() >= 5 && name.compare(name.size() - 5, 5, ".html") == 0;
-            res.set_header("Cache-Control", page ? "no-store, max-age=0" : "public, max-age=31536000, immutable");
+            // zonos3.server.studio.studio_cache_control: hashed assets/ are immutable; pages, the service worker and
+            // the manifest are no-store; every other (unhashed) file is revalidated.
+            const std::string rel_path = rel.generic_string();
+            const char * cache = rel_path.rfind("assets/", 0) == 0 ? "public, max-age=31536000, immutable"
+                                 : ends_with(rel_path, ".html") || rel_path == "sw.js" || rel_path == "manifest.webmanifest"
+                                     ? "no-store, max-age=0"
+                                     : "no-cache";
+            res.set_header("Cache-Control", cache);
             res.set_content(body, httplib::detail::find_content_type(target.string(), {}, "application/octet-stream"));
             return;
         }
         send_error(res, 404, "Not Found");
     };
     auto not_found = [](const httplib::Request &, httplib::Response & res) { send_error(res, 404, "Not Found"); };
-    svr.Get(R"(/(.*))", serve);   // GET handlers serve HEAD too
+    svr.Get(R"(/(.*))", serve); // GET handlers serve HEAD too
     svr.Post(R"(/(.*))", not_found);
     svr.Put(R"(/(.*))", not_found);
     svr.Delete(R"(/(.*))", not_found);
     svr.Patch(R"(/(.*))", not_found);
 }
 
-}  // namespace zs
+} // namespace zs

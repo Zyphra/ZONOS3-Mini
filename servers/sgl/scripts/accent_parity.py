@@ -45,14 +45,14 @@ TEXTS = [
     "The weather turned cold overnight, so we lit the fire early.",
     "Please send the quarterly report to everyone on the finance team before Friday.",
     "She said she would come back tomorrow.",
-    "Learning a new language takes patience, practice, and a good sense of humour about "
-    "your own mistakes.",
+    "Learning a new language takes patience, practice, and a good sense of humour about your own mistakes.",
 ]
 MAX_TOKENS = 300
 
 
-def _requests(accents: list[str], merged_accent: str, mixed: list[str] | None = None,
-              prompts: tuple[str, ...] = ("none",)) -> list[dict]:
+def _requests(
+    accents: list[str], merged_accent: str, mixed: list[str] | None = None, prompts: tuple[str, ...] = ("none",)
+) -> list[dict]:
     """Mixed-batch requests: base rows, the merged adapter at 1.0, others at assorted strengths."""
     others = mixed or [name for name in accents if name != merged_accent][:3] or [merged_accent]
     plan = [
@@ -65,9 +65,7 @@ def _requests(accents: list[str], merged_accent: str, mixed: list[str] | None = 
         (2, others[2 % len(others)], 1.0),
     ]
     strengths = (0.7, 1.3, 1.0, 0.6, 1.5)
-    plan += [
-        (i % len(TEXTS), name, strengths[i % len(strengths)]) for i, name in enumerate(others[3:])
-    ]
+    plan += [(i % len(TEXTS), name, strengths[i % len(strengths)]) for i, name in enumerate(others[3:])]
     # One base row and one merged-adapter row per speaker prompt kind beyond the first two.
     extra = max(0, len(prompts) - 2)
     plan += [(3, None, 1.0)] * extra + [(1, merged_accent, 1.0)] * extra
@@ -81,8 +79,7 @@ def _requests(accents: list[str], merged_accent: str, mixed: list[str] | None = 
         group = "base" if accent is None else "merged" if accent == merged_accent else "other"
         kind = prompts[counters.get(group, 0) % len(prompts)]
         counters[group] = counters.get(group, 0) + 1
-        reqs.append({"text": TEXTS[text], "accent": accent, "strength": strength,
-                     "seed": 1000 + index, "prompt": kind})
+        reqs.append({"text": TEXTS[text], "accent": accent, "strength": strength, "seed": 1000 + index, "prompt": kind})
     return reqs
 
 
@@ -93,15 +90,15 @@ def _worker(spec_path: str) -> None:
     from zonos3_sgl.tts.llm import TTSLLM
 
     spec = json.loads(Path(spec_path).read_text())
-    kwargs = dict(
-        attention_backend="fa",
-        cache_type="naive",
-        max_running_req=16,
-        cuda_graph_max_bs=16,
-        max_extend_tokens=256,
-        memory_ratio=0.5,
-        decode_audio=False,
-    )
+    kwargs = {
+        "attention_backend": "fa",
+        "cache_type": "naive",
+        "max_running_req": 16,
+        "cuda_graph_max_bs": 16,
+        "max_extend_tokens": 256,
+        "memory_ratio": 0.5,
+        "decode_audio": False,
+    }
     if spec.get("accent_adapters"):
         kwargs["accent_adapters"] = spec["accent_adapters"]
     tts = TTSLLM(model_path=spec["model_path"], **kwargs)
@@ -140,16 +137,14 @@ def _worker(spec_path: str) -> None:
         forced = None
         if job.get("force"):
             source = torch.load(job["force"], weights_only=True)
-            forced = {
-                uid: source[name][index]["sampled"]
-                for uid, (name, index) in enumerate(job["force_from"])
-            }
+            forced = {uid: source[name][index]["sampled"] for uid, (name, index) in enumerate(job["force_from"])}
         reqs = job["requests"]
         prompt_kinds = [r.get("prompt", "none") for r in reqs]
         extra = {}
         if "reference" in prompt_kinds:
             extra["speaker_reference_audio"] = [
-                spec["reference_audio"] if kind == "reference" else None for kind in prompt_kinds]
+                spec["reference_audio"] if kind == "reference" else None for kind in prompt_kinds
+            ]
         if "embedding" in prompt_kinds:
             import numpy as np
 
@@ -170,17 +165,21 @@ def _worker(spec_path: str) -> None:
             }
             for _, rec in sorted(records.items())
         ]
-        print(f"{spec['name']}/{job['name']}: steps {[len(r['sampled']) for r in results[job['name']]]}",
-              flush=True)
+        print(f"{spec['name']}/{job['name']}: steps {[len(r['sampled']) for r in results[job['name']]]}", flush=True)
     torch.save(results, spec["out"])
 
 
 # ----------------------------------------------------------------------------- driver
-def _run(name: str, model_path: str, adapters: str | None, jobs: list[dict], out_dir: Path,
-         prompts: dict) -> Path:
+def _run(name: str, model_path: str, adapters: str | None, jobs: list[dict], out_dir: Path, prompts: dict) -> Path:
     out = out_dir / f"{name}.pt"
-    spec = {"name": name, "model_path": model_path, "accent_adapters": adapters, "jobs": jobs,
-            "out": str(out), **prompts}
+    spec = {
+        "name": name,
+        "model_path": model_path,
+        "accent_adapters": adapters,
+        "jobs": jobs,
+        "out": str(out),
+        **prompts,
+    }
     spec_path = out_dir / f"{name}.json"
     spec_path.write_text(json.dumps(spec, indent=1))
     # A private rendezvous port: shared nodes may run other engines on the default one.
@@ -215,13 +214,15 @@ def main() -> None:
     parser.add_argument("--base-model")
     parser.add_argument("--accent-dir")
     parser.add_argument("--merged-model", help="base + adapter checkpoint; omit to skip (c)")
-    parser.add_argument("--merged-accent",
-                        help="the adapter the merged checkpoint merges (the mixed batch's main accent)")
+    parser.add_argument(
+        "--merged-accent", help="the adapter the merged checkpoint merges (the mixed batch's main accent)"
+    )
     parser.add_argument("--out-dir")
     parser.add_argument("--mixed-accents", help="comma-separated accents of the mixed batch")
     parser.add_argument("--reference-audio", help="wav: some requests clone it as the raw reference prefix")
-    parser.add_argument("--speaker-embedding",
-                        help=".npy speaker vector: some requests take it as the speaker-embedding row")
+    parser.add_argument(
+        "--speaker-embedding", help=".npy speaker vector: some requests take it as the speaker-embedding row"
+    )
     args = parser.parse_args()
     if args.worker:
         _worker(args.worker)
@@ -240,8 +241,11 @@ def main() -> None:
     for name in [args.merged_accent] + (mixed or []):
         if name not in accents:
             parser.error(f"accent {name} is not in {args.accent_dir}")
-    kinds = ("none",) + (("reference",) if args.reference_audio else ()) + (
-        ("embedding",) if args.speaker_embedding else ())
+    kinds = (
+        ("none",)
+        + (("reference",) if args.reference_audio else ())
+        + (("embedding",) if args.speaker_embedding else ())
+    )
     prompts = {"reference_audio": args.reference_audio, "speaker_embedding": args.speaker_embedding}
     reqs = _requests(accents, args.merged_accent, mixed, kinds)
     base_rows = [i for i, r in enumerate(reqs) if r["accent"] is None]
@@ -276,13 +280,11 @@ def main() -> None:
     if merged is not None:
         merged = torch.load(merged, weights_only=True)
         report["c_adapter_strength1_vs_merged_checkpoint"] = {
-            str(i): _compare(adapted[f"solo{i}"][0], merged["forced"][k])
-            for k, i in enumerate(merged_rows)
+            str(i): _compare(adapted[f"solo{i}"][0], merged["forced"][k]) for k, i in enumerate(merged_rows)
         }
         # Scale for (c): the base model against the merged checkpoint on the same streams.
         report["c_reference_base_vs_merged_checkpoint"] = {
-            str(i): _compare(base["forced"][k], merged["forced"][k])
-            for k, i in enumerate(merged_rows)
+            str(i): _compare(base["forced"][k], merged["forced"][k]) for k, i in enumerate(merged_rows)
         }
     (out_dir / "report.json").write_text(json.dumps(report, indent=1))
     print(json.dumps({k: v for k, v in report.items() if k != "requests"}, indent=1))

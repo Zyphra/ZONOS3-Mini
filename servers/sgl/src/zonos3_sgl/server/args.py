@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
+from zonos3.generation import SAMPLE_RATE
+from zonos3.tts.laci import parse_laci_heads
+from zonos3.utils.hf import cached_load_checkpoint_config
+
 from zonos3_sgl.distributed import DistributedInfo
 from zonos3_sgl.scheduler import SchedulerConfig
-from zonos3.generation import SAMPLE_RATE
-from zonos3.utils.hf import cached_load_checkpoint_config
 from zonos3_sgl.utils.logger import init_logger
 
 
@@ -45,7 +47,7 @@ class ServerArgs(SchedulerConfig):
     studio_projects_dir: str | None = None
     studio_max_project_bytes: int = 20 * 1024**2
     studio_max_media_bytes: int = 2 * 1024**3
-    # Production build of Zonos Voice Studio (studio/dist): / chooser, /studio, /lite (the studio serving rule of api/openapi.yaml).
+    # Production build of Zonos Voice Studio (studio/dist): / chooser, /studio, /lite (the studio serving rule of servers/api/openapi.yaml).
     studio_dir: str = str(Path(__file__).resolve().parents[5] / "studio" / "dist")
     # --plugins: server plugins (zonos3.server.plugins), each imported as zonos3_<name>.
     plugins: tuple[str, ...] = ()
@@ -108,14 +110,14 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
 
     parser = argparse.ArgumentParser(description="Zonos3 Server Arguments")
 
-    from zonos3.utils.release import RELEASE_LM  # RELEASE_HF_20261021
+    from zonos3.utils.release import RELEASE_LM
 
     parser.add_argument(
         "--model-path",
         type=str,
         default=RELEASE_LM,
         help="Zonos3 TTS checkpoint: an hf://owner/repo/folder location (default: the ZONOS3 Mini release LM "
-             f"{RELEASE_LM}; HF_TOKEN or a stored login while that repo is private), a Hugging Face repo id, or a local path.",
+        f"{RELEASE_LM}; HF_TOKEN or a stored login while that repo is private), a Hugging Face repo id, or a local path.",
     )
 
     parser.add_argument(
@@ -438,14 +440,14 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         kwargs["steer_bundle"] = os.path.abspath(os.path.expanduser(kwargs["steer_bundle"]))
         from zonos3.tts.steering import load_bundle
 
-        load_bundle(kwargs["steer_bundle"])   # fail at startup, not on the first request
+        load_bundle(kwargs["steer_bundle"])  # fail at startup, not on the first request
     if kwargs.get("tts_phoneme_lexicon"):
         kwargs["tts_phoneme_lexicon"] = os.path.expanduser(kwargs["tts_phoneme_lexicon"])
         if not os.path.isfile(os.path.join(kwargs["tts_phoneme_lexicon"], "data.mdb")):
             parser.error(f"--tts-phoneme-lexicon {kwargs['tts_phoneme_lexicon']} has no data.mdb")
     if kwargs.get("studio_projects_dir"):
         kwargs["studio_projects_dir"] = os.path.abspath(os.path.expanduser(kwargs["studio_projects_dir"]))
-        os.makedirs(kwargs["studio_projects_dir"], exist_ok=True)   # fail at startup, not on the first save
+        os.makedirs(kwargs["studio_projects_dir"], exist_ok=True)  # fail at startup, not on the first save
 
     DTYPE_MAP = {
         "float16": torch.float16,
@@ -475,15 +477,10 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
 
     # LACI: alignment-head specs per language; the probe needs the FA backend, every head on one rank, and a text
     # capacity for the decode graphs (zonos3.tts.laci).
-    laci_heads = {}
-    for entry in kwargs.pop("laci_heads") or ():
-        lang, sep, path = entry.partition("=")
-        if not sep or not lang or not path:
-            parser.error(f"--laci-heads takes LANG=PATH entries, got {entry!r}")
-        path = os.path.expanduser(path)
-        if not os.path.isfile(path):
-            parser.error(f"--laci-heads {lang}: no file {path}")
-        laci_heads[lang.strip().lower().replace("-", "_")] = path
+    try:
+        laci_heads = parse_laci_heads(kwargs.pop("laci_heads"))
+    except ValueError as exc:
+        parser.error(str(exc))
     kwargs["laci_heads"] = laci_heads
     if laci_heads:
         if kwargs["attention_backend"] == "auto":
@@ -518,9 +515,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     speaking_rate_num_buckets = int(getattr(checkpoint_config, "speaking_rate_num_buckets", 0) or 0)
     if speaking_rate_num_buckets > 0:
         kwargs["tts_speaking_rate_num_buckets"] = speaking_rate_num_buckets
-        kwargs["tts_speaking_rate_buckets"] = tuple(
-            getattr(checkpoint_config, "speaking_rate_buckets", None) or ()
-        )
+        kwargs["tts_speaking_rate_buckets"] = tuple(getattr(checkpoint_config, "speaking_rate_buckets", None) or ())
 
     if bool(getattr(checkpoint_config, "speaker_background_token_enabled", False)):
         kwargs["tts_speaker_background_token_enabled"] = True
@@ -530,16 +525,12 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     quality_num_buckets = int(getattr(checkpoint_config, "quality_num_buckets", 0) or 0)
     if quality_num_buckets > 0:
         raw_quality_buckets = getattr(checkpoint_config, "quality_buckets", None) or {}
-        raw_quality_features = (
-            getattr(checkpoint_config, "quality_features", None) or raw_quality_buckets.keys()
-        )
+        raw_quality_features = getattr(checkpoint_config, "quality_features", None) or raw_quality_buckets.keys()
         quality_features = tuple(str(item) for item in (raw_quality_features or ()))
         kwargs["tts_quality_num_buckets"] = quality_num_buckets
         kwargs["tts_quality_features"] = quality_features
         kwargs["tts_quality_buckets"] = {
-            str(feature): tuple(
-                str(item) for item in (raw_quality_buckets.get(feature, ()) or ())
-            )
+            str(feature): tuple(str(item) for item in (raw_quality_buckets.get(feature, ()) or ()))
             for feature in quality_features
         }
         kwargs["tts_quality_dropout"] = getattr(checkpoint_config, "quality_dropout", None)

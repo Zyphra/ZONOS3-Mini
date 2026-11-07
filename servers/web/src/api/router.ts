@@ -1,5 +1,6 @@
 // The engine API's request dispatch: the v2 routes this server serves, 404 {"detail":"Not Found"} for every other path,
 // and HttpError / error rendering (servers/ggml/src/server/http.cpp guarded + the 404 filler).
+import { NO_STEERING } from '../request/steer';
 import { capabilities } from './capabilities';
 import { alignRoute, editRoute, transcribeRoute } from './edit';
 import type { Engine } from './engine';
@@ -84,7 +85,7 @@ export class Api {
       return sendJson(sink, { object: 'list', data: [{ id: 'zonos3', object: 'model', created: 0, owned_by: 'zyphra', root: e.modelFile }] });
     if (get && path === '/v2/capabilities') return sendJson(sink, capabilities(e, spk.checkpointModes()));
     if (get && path === '/v2/controls') {
-      if (!e.steer) fail(404, 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer).');
+      if (!e.steer) fail(404, `${NO_STEERING}.`);
       return sendJson(sink, e.controlsDoc);
     }
     if (path === '/v2/speakers') {

@@ -1,4 +1,5 @@
 /** Voice tools: design (Cast persona + preview), clone from audio, save a designed voice as an embedding voice. */
+import { isWav } from '../../../src/lib/wav';
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { readFile } from 'node:fs/promises';
@@ -16,7 +17,7 @@ import { requestContext, sendable } from '../backend';
 import { designView, findSpeaker, modeFor, resolveAccents, resolveValues, upsertPersona } from '../design';
 import { designSummary, generationParams, takeText, wavSeconds } from '../params';
 import type { TakeInfo } from '../payload';
-import { b64, isRiff, openProject, projectLine, saveProject } from '../project';
+import { b64, openProject, projectLine, saveProject } from '../project';
 import { state } from '../state';
 import * as zonos from '../zonos';
 import { guard, PLAYER_URI, project, seed, text, values, warningsText, widget } from './common';
@@ -145,9 +146,9 @@ export function registerVoiceTools(server: McpServer) {
       const speaker = await zonos.createSpeaker({ label: a.label, speaker_audio_base64: `data:${mime};base64,${b64(bytes)}`, speaker_audio_name: name });
       // The project keeps a clip to register the voice again after a server restart: WAV when available.
       let clip = { bytes, type: mime };
-      if (!isRiff(bytes)) {
+      if (!isWav(bytes)) {
         const preview = await zonos.speakerPreview(speaker.id).catch(() => null);
-        if (preview && isRiff(preview)) clip = { bytes: preview, type: 'audio/wav' };
+        if (preview && isWav(preview)) clip = { bytes: preview, type: 'audio/wav' };
       }
       const sess = await openProject(a.project);
       const { result: persona, project: ref } = await saveProject(sess, 'cast', (d, media) => {

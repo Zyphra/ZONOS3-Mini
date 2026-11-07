@@ -1,15 +1,27 @@
 from types import SimpleNamespace
+
 import pytest
 import torch
 from zonos3_sgl.core import TTSReq
 
 
 def _req(stop_id):
-    return TTSReq(input_ids=torch.full((4, 4), 9, dtype=torch.int32), table_idx=0, cached_len=0, output_len=32, uid=0, sampling_params=SimpleNamespace(ignore_eos=False), cache_handle=None, n_codebooks=3, audio_pad_id=9, stop_id=stop_id)
+    return TTSReq(
+        input_ids=torch.full((4, 4), 9, dtype=torch.int32),
+        table_idx=0,
+        cached_len=0,
+        output_len=32,
+        uid=0,
+        sampling_params=SimpleNamespace(ignore_eos=False),
+        cache_handle=None,
+        n_codebooks=3,
+        audio_pad_id=9,
+        stop_id=stop_id,
+    )
 
 
-@pytest.mark.parametrize('ahead', [0, 1])
-@pytest.mark.parametrize('codebook', [0, 1, 2])
+@pytest.mark.parametrize("ahead", [0, 1])
+@pytest.mark.parametrize("codebook", [0, 1, 2])
 def test_eoa_boundary_tracks_processed_frames_not_submitted_work(ahead, codebook):
     req = _req(8)
     stop_at = 5 + codebook
@@ -29,7 +41,18 @@ def test_audio_prefix_uses_audio_pad_id():
     assert not _req(8).has_audio_prefix
     rows = torch.full((4, 4), 9, dtype=torch.int32)
     rows[-1, 1] = 8
-    req = TTSReq(input_ids=rows, table_idx=0, cached_len=0, output_len=32, uid=0, sampling_params=SimpleNamespace(ignore_eos=False), cache_handle=None, n_codebooks=3, audio_pad_id=9, stop_id=8)
+    req = TTSReq(
+        input_ids=rows,
+        table_idx=0,
+        cached_len=0,
+        output_len=32,
+        uid=0,
+        sampling_params=SimpleNamespace(ignore_eos=False),
+        cache_handle=None,
+        n_codebooks=3,
+        audio_pad_id=9,
+        stop_id=8,
+    )
     assert req.has_audio_prefix
 
 

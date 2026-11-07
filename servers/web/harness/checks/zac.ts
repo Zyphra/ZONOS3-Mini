@@ -1,6 +1,7 @@
 // Codec parity: ZacStream on goldens/tts.npy with the server's streaming block schedule vs zac-cli (zac_audio.npy);
 // the same schedule with the host half in the codec worker (RemoteSpecSink) must match the local sink bit for bit.
-import { ZacStream, HOP } from '../../src/zac';
+import { HOP } from '../../src/generation';
+import { ZacStream } from '../../src/zac';
 import type { GemmPlan } from '../../src/gpu/h8';
 import { loadModel } from '../../src/gpu/weights';
 import { buildIdx, finalBlocks, readyBlocks, type Range } from '../../src/schedule';

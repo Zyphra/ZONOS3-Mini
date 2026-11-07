@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 import torch
-from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
-from zonos3_sgl.tts.llm import PendingRequest, TTSLLM
 from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
+from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
+from zonos3_sgl.tts.llm import TTSLLM, PendingRequest
 
 
 class _StubNormalizer:
@@ -132,9 +132,7 @@ def test_offline_receive_threads_speaker_fields():
 def test_offline_receive_no_voice_defaults():
     llm = _bare_llm()
     ids = llm._prompt_builder.build("hello")
-    llm.pending_requests = [
-        PendingRequest(input_ids=ids, sampling_params=TTSSamplingParams())
-    ]
+    llm.pending_requests = [PendingRequest(input_ids=ids, sampling_params=TTSSamplingParams())]
 
     msg = _drain(llm)[0]
 

@@ -5,14 +5,17 @@ decoder.8's 768->5888 output projection, the x23 patch, both S1 conv blocks and 
 replaced by a small causal ConvNeXt stack, a LayerNorm, a Linear to n_fft+2 channels and an inverse STFT with
 hop 184 = 44160/240 and n_fft 736 = 4*hop (periodic Hann, centered frames). Everything except `head.*` is frozen.
 """
+
 import math
+
 import torch
 from torch import nn
-from zonos3.codec.hybrid10_dual_encoding.model import MossCodec, SemanticConvNeXt
 from torch.utils.checkpoint import checkpoint
-from zonos3.codec.hybrid10_dual_encoding.base_model import MossStage, MossLayer, Patch
 
-KEPT_STAGES = 9          # decoder.0 .. decoder.8
+from zonos3.codec.hybrid10_dual_encoding.base_model import MossLayer, MossStage, Patch
+from zonos3.codec.hybrid10_dual_encoding.model import MossCodec, SemanticConvNeXt
+
+KEPT_STAGES = 9  # decoder.0 .. decoder.8
 HEAD_FRAME_RATE = 240
 
 
@@ -20,13 +23,13 @@ class ISTFTHead(nn.Module):
     def __init__(self, dim, depth, hidden, n_fft, hop):
         super().__init__()
         if n_fft % hop or n_fft // hop < 2:
-            raise ValueError('n_fft must be an integer multiple (>= 2) of the hop')
+            raise ValueError("n_fft must be an integer multiple (>= 2) of the hop")
         self.n_fft, self.hop = int(n_fft), int(hop)
         self.blocks = nn.Sequential(*[SemanticConvNeXt(dim, hidden) for _ in range(depth)])
         self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.out = nn.Linear(dim, self.n_fft + 2)
-        self.register_buffer('window', torch.hann_window(self.n_fft, periodic=True), persistent=False)
-        self.max_log_magnitude = math.log(100.0)   # Vocos clips the magnitude at 1e2
+        self.register_buffer("window", torch.hann_window(self.n_fft, periodic=True), persistent=False)
+        self.max_log_magnitude = math.log(100.0)  # Vocos clips the magnitude at 1e2
 
     def spectrum(self, x):
         """x [batch, dim, frames] -> magnitude, phase [batch, n_fft//2+1, frames] (fp32)."""
@@ -40,8 +43,15 @@ class ISTFTHead(nn.Module):
         magnitude, phase = self.spectrum(x)
         with torch.autocast(x.device.type, enabled=False):
             spec = torch.complex(magnitude * torch.cos(phase), magnitude * torch.sin(phase))
-            audio = torch.istft(spec, self.n_fft, hop_length=self.hop, win_length=self.n_fft,
-                                window=self.window, center=True, length=magnitude.shape[-1] * self.hop)
+            audio = torch.istft(
+                spec,
+                self.n_fft,
+                hop_length=self.hop,
+                win_length=self.n_fft,
+                window=self.window,
+                center=True,
+                length=magnitude.shape[-1] * self.hop,
+            )
         return audio.unsqueeze(1)
 
 
@@ -63,21 +73,22 @@ class MultiResISTFTHead(nn.Module):
         self.n_ffts = [int(n) for n in n_ffts]
         for n in self.n_ffts:
             if n % self.hop or n // self.hop < 2:
-                raise ValueError('every n_fft must be an integer multiple (>= 2) of the hop')
+                raise ValueError("every n_fft must be an integer multiple (>= 2) of the hop")
         self.blocks = nn.Sequential(*[SemanticConvNeXt(dim, hidden) for _ in range(depth)])
         self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.outs = nn.ModuleList([nn.Linear(dim, n + 2) for n in self.n_ffts])
         for i, n in enumerate(self.n_ffts):
-            self.register_buffer(f'window_{i}', torch.hann_window(n, periodic=True), persistent=False)
+            self.register_buffer(f"window_{i}", torch.hann_window(n, periodic=True), persistent=False)
         if fir_kernel % 2 == 0:
-            raise ValueError('fir_kernel must be odd (zero-phase at init)')
+            raise ValueError("fir_kernel must be odd (zero-phase at init)")
         self.mixer = nn.Conv1d(len(self.n_ffts), 1, fir_kernel, padding=(fir_kernel - 1) // 2, bias=False)
         with torch.no_grad():
             self.mixer.weight.zero_()
-            self.mixer.weight[0, 0, (fir_kernel - 1) // 2] = 1.0        # branch 0 passes through, other branches gated off
+            self.mixer.weight[0, 0, (fir_kernel - 1) // 2] = 1.0  # branch 0 passes through, other branches gated off
         if warm_blocks is not None:
-            for block in list(self.blocks)[int(warm_blocks):]:
-                nn.init.zeros_(block.pwconv2.weight); nn.init.zeros_(block.pwconv2.bias)
+            for block in list(self.blocks)[int(warm_blocks) :]:
+                nn.init.zeros_(block.pwconv2.weight)
+                nn.init.zeros_(block.pwconv2.bias)
         self.max_log_magnitude = math.log(100.0)
 
     def spectra(self, x):
@@ -98,10 +109,19 @@ class MultiResISTFTHead(nn.Module):
             for i, (magnitude, phase) in enumerate(self.spectra(x)):
                 spec = torch.complex(magnitude * torch.cos(phase), magnitude * torch.sin(phase))
                 n = self.n_ffts[i]
-                branches.append(torch.istft(spec, n, hop_length=self.hop, win_length=n, window=getattr(self, f'window_{i}'),
-                                            center=True, length=frames * self.hop))
-            stacked = torch.stack(branches, dim=1)                      # [batch, branches, samples]
-            return self.mixer(stacked.float())                         # [batch, 1, samples], linear, fp32
+                branches.append(
+                    torch.istft(
+                        spec,
+                        n,
+                        hop_length=self.hop,
+                        win_length=n,
+                        window=getattr(self, f"window_{i}"),
+                        center=True,
+                        length=frames * self.hop,
+                    )
+                )
+            stacked = torch.stack(branches, dim=1)  # [batch, branches, samples]
+            return self.mixer(stacked.float())  # [batch, 1, samples], linear, fp32
 
 
 class MossTailStage(MossStage):
@@ -135,17 +155,19 @@ class MossTailHead(nn.Module):
         super().__init__()
         spec = dict(spec)
         self.patch_in = int(patch_in)
-        self.samples_per_frame = int(spec['output_dimension'])
-        if spec['input_dimension'] * self.patch_in != dim:
+        self.samples_per_frame = int(spec["output_dimension"])
+        if spec["input_dimension"] * self.patch_in != dim:
             raise ValueError(f"stage input_dimension x patch_in must equal the 240 Hz width {dim}")
         if self.samples_per_frame * self.patch_in != hop:
             raise ValueError(f"stage output_dimension x patch_in must equal the 240 Hz hop {hop}")
-        if spec.get('frame_rate') != HEAD_FRAME_RATE * self.patch_in:
+        if spec.get("frame_rate") != HEAD_FRAME_RATE * self.patch_in:
             raise ValueError(f"stage frame_rate must be {HEAD_FRAME_RATE * self.patch_in}")
-        self.proj = nn.Linear(dim, dim, bias=False)             # decoder.8.output_proj as in the MOSS decoder (768 -> 768)
-        self.up = Patch(self.patch_in, up=True)                   # [b, 768, t] -> [b, 384, 2t]
-        self.stage = MossTailStage(spec, checkpoint_layers=False)  # input_proj 384 -> 768, 12 layers, output_proj 768 -> 92
-        self.unpatch = Patch(self.samples_per_frame, up=True)     # [b, 92, 2t] -> [b, 1, 184t]
+        self.proj = nn.Linear(dim, dim, bias=False)  # decoder.8.output_proj as in the MOSS decoder (768 -> 768)
+        self.up = Patch(self.patch_in, up=True)  # [b, 768, t] -> [b, 384, 2t]
+        self.stage = MossTailStage(
+            spec, checkpoint_layers=False
+        )  # input_proj 384 -> 768, 12 layers, output_proj 768 -> 92
+        self.unpatch = Patch(self.samples_per_frame, up=True)  # [b, 92, 2t] -> [b, 1, 184t]
 
     def forward(self, x):
         """x [batch, 768, frames @ 240 Hz] -> audio [batch, 1, frames * 184] at 44160 Hz (fp32)."""
@@ -159,24 +181,26 @@ class ISTFTCodec(nn.Module):
 
     def __init__(self, cfg, head_cfg):
         super().__init__()
-        stages = cfg['decoder_stages']
-        assert stages[KEPT_STAGES - 1]['type'] == 'MossProjectedTransformer'
-        assert stages[KEPT_STAGES - 1]['frame_rate'] == HEAD_FRAME_RATE
-        assert stages[KEPT_STAGES]['type'] == 'PatchedPretransform' and stages[KEPT_STAGES]['patch_size'] == 23
-        hop = cfg['internal_sample_rate'] // HEAD_FRAME_RATE
-        assert hop * HEAD_FRAME_RATE == cfg['internal_sample_rate'] and cfg['internal_hop_length'] == hop * (HEAD_FRAME_RATE // cfg['frame_rate'])
+        stages = cfg["decoder_stages"]
+        assert stages[KEPT_STAGES - 1]["type"] == "MossProjectedTransformer"
+        assert stages[KEPT_STAGES - 1]["frame_rate"] == HEAD_FRAME_RATE
+        assert stages[KEPT_STAGES]["type"] == "PatchedPretransform" and stages[KEPT_STAGES]["patch_size"] == 23
+        hop = cfg["internal_sample_rate"] // HEAD_FRAME_RATE
+        assert hop * HEAD_FRAME_RATE == cfg["internal_sample_rate"] and cfg["internal_hop_length"] == hop * (
+            HEAD_FRAME_RATE // cfg["frame_rate"]
+        )
         base = MossCodec(cfg)
         kept = list(base.decoder)[:KEPT_STAGES]
-        kept[-1].output_proj = nn.Identity()   # the 768->5888 projection only fed the removed patch/conv tail
+        kept[-1].output_proj = nn.Identity()  # the 768->5888 projection only fed the removed patch/conv tail
         for stage in kept:
             if isinstance(stage, MossStage):
                 stage.checkpoint_layers = False
         # Optional layer pruning of kept transformer stages, e.g. {"0": [0..7, 24..31]} keeps 16 of decoder.0's 32 layers
         # (the middle 16 removed). load_pretrained maps each kept layer's step-600000 weights onto its new index.
-        self.stage_layers = {int(k): [int(i) for i in v] for k, v in head_cfg.get('stage_layers', {}).items()}
+        self.stage_layers = {int(k): [int(i) for i in v] for k, v in head_cfg.get("stage_layers", {}).items()}
         for si, keep in self.stage_layers.items():
             stage = kept[si]
-            assert isinstance(stage, MossStage), f'stage {si} is not a transformer stage'
+            assert isinstance(stage, MossStage), f"stage {si} is not a transformer stage"
             assert keep == sorted(set(keep)) and keep and all(0 <= i < len(stage.layers) for i in keep), (si, keep)
             stage.layers = nn.ModuleList(stage.layers[i] for i in keep)
         self.stages = nn.Sequential(*kept)
@@ -186,36 +210,52 @@ class ISTFTCodec(nn.Module):
         del base
         self.cfg = cfg
         self.hop = hop
-        self.upsample = HEAD_FRAME_RATE // cfg['frame_rate']    # 16 head frames per code frame
-        self.external_hop = cfg['external_samples_per_frame']
-        if head_cfg.get('type', 'istft') == 'moss_tail':
-            self.head = MossTailHead(dim=stages[KEPT_STAGES - 1]['d_model'], hop=hop, spec=head_cfg['stage'],
-                                     patch_in=head_cfg.get('patch_in', 2))
-        elif head_cfg.get('type', 'istft') == 'mr_istft':
-            self.head = MultiResISTFTHead(dim=stages[KEPT_STAGES - 1]['d_model'], depth=head_cfg['depth'], hidden=head_cfg['hidden'],
-                                          n_ffts=head_cfg['n_ffts'], hop=hop, fir_kernel=head_cfg.get('fir_kernel', 127),
-                                          warm_blocks=head_cfg.get('warm_blocks'))
+        self.upsample = HEAD_FRAME_RATE // cfg["frame_rate"]  # 16 head frames per code frame
+        self.external_hop = cfg["external_samples_per_frame"]
+        if head_cfg.get("type", "istft") == "moss_tail":
+            self.head = MossTailHead(
+                dim=stages[KEPT_STAGES - 1]["d_model"],
+                hop=hop,
+                spec=head_cfg["stage"],
+                patch_in=head_cfg.get("patch_in", 2),
+            )
+        elif head_cfg.get("type", "istft") == "mr_istft":
+            self.head = MultiResISTFTHead(
+                dim=stages[KEPT_STAGES - 1]["d_model"],
+                depth=head_cfg["depth"],
+                hidden=head_cfg["hidden"],
+                n_ffts=head_cfg["n_ffts"],
+                hop=hop,
+                fir_kernel=head_cfg.get("fir_kernel", 127),
+                warm_blocks=head_cfg.get("warm_blocks"),
+            )
         else:
-            self.head = ISTFTHead(dim=stages[KEPT_STAGES - 1]['d_model'], depth=head_cfg['depth'],
-                                  hidden=head_cfg['hidden'], n_fft=head_cfg['n_fft'], hop=hop)
+            self.head = ISTFTHead(
+                dim=stages[KEPT_STAGES - 1]["d_model"],
+                depth=head_cfg["depth"],
+                hidden=head_cfg["hidden"],
+                n_fft=head_cfg["n_fft"],
+                hop=hop,
+            )
         # Optionally unfreeze a suffix of the kept transformer stages (e.g. [8] = the 240 Hz stage) with the head.
-        self.trainable_stages = sorted(set(int(i) for i in head_cfg.get('trainable_stages', [])))
-        assert self.trainable_stages == list(range(KEPT_STAGES - len(self.trainable_stages), KEPT_STAGES)), \
-            'trainable_stages must be a contiguous suffix of decoder.0..8'
-        self.trainable_prefixes = ('head.',) + tuple(f'stages.{i}.' for i in self.trainable_stages)
+        self.trainable_stages = sorted({int(i) for i in head_cfg.get("trainable_stages", [])})
+        assert self.trainable_stages == list(range(KEPT_STAGES - len(self.trainable_stages), KEPT_STAGES)), (
+            "trainable_stages must be a contiguous suffix of decoder.0..8"
+        )
+        self.trainable_prefixes = ("head.",) + tuple(f"stages.{i}." for i in self.trainable_stages)
         self.requires_grad_(False)
         self.head.requires_grad_(True)
         for i in self.trainable_stages:
             self.stages[i].requires_grad_(True)
         # Optional activation recompute (per-layer checkpointing) inside the trainable transformer stages only.
-        self.recompute_trainable_stages = bool(head_cfg.get('recompute_trainable_stages', False))
+        self.recompute_trainable_stages = bool(head_cfg.get("recompute_trainable_stages", False))
         if self.recompute_trainable_stages:
             for i in self.trainable_stages:
                 if isinstance(self.stages[i], MossStage):
                     self.stages[i].checkpoint_layers = True
             if isinstance(self.head, MossTailHead):
                 self.head.stage.checkpoint_layers = True
-        self.compile_trainable_stages = bool(head_cfg.get('compile_trainable_stages', True))
+        self.compile_trainable_stages = bool(head_cfg.get("compile_trainable_stages", True))
         self.train(True)
 
     def is_trainable_name(self, name):
@@ -245,12 +285,14 @@ class ISTFTCodec(nn.Module):
     def load_trainable_state_dict(self, state):
         expected = set(self.trainable_state_dict())
         if set(state) != expected:
-            raise RuntimeError(f'trainable state keys differ: missing {sorted(expected - set(state))[:5]} unexpected {sorted(set(state) - expected)[:5]}')
+            raise RuntimeError(
+                f"trainable state keys differ: missing {sorted(expected - set(state))[:5]} unexpected {sorted(set(state) - expected)[:5]}"
+            )
         result = self.load_state_dict(state, strict=False)
         assert not result.unexpected_keys
 
     def assert_frozen(self):
-        roots = tuple(p.rstrip('.') for p in self.trainable_prefixes)
+        roots = tuple(p.rstrip(".") for p in self.trainable_prefixes)
         for name, p in self.named_parameters():
             assert p.requires_grad == self.is_trainable_name(name), name
             if not self.is_trainable_name(name):
@@ -265,32 +307,34 @@ class ISTFTCodec(nn.Module):
         loaded = {}
         pruned = 0
         for key, value in generator_state.items():
-            if key.startswith('decoder.'):
-                index = int(key.split('.')[1])
-                if index >= KEPT_STAGES or key.startswith(f'decoder.{KEPT_STAGES - 1}.output_proj.'):
+            if key.startswith("decoder."):
+                index = int(key.split(".")[1])
+                if index >= KEPT_STAGES or key.startswith(f"decoder.{KEPT_STAGES - 1}.output_proj."):
                     continue
-                rest = key[len('decoder.'):]
+                rest = key[len("decoder.") :]
                 if index in self.stage_layers:
-                    parts = rest.split('.')
-                    if len(parts) > 2 and parts[1] == 'layers':
+                    parts = rest.split(".")
+                    if len(parts) > 2 and parts[1] == "layers":
                         old = int(parts[2])
                         if old not in self.stage_layers[index]:
                             pruned += 1
-                            continue   # a removed layer: its weights are dropped on purpose
+                            continue  # a removed layer: its weights are dropped on purpose
                         parts[2] = str(self.stage_layers[index].index(old))
-                        rest = '.'.join(parts)
-                loaded['stages.' + rest] = value
-            elif key.startswith(('quantizer.', 'semantic_head.', 'to_external.')):
+                        rest = ".".join(parts)
+                loaded["stages." + rest] = value
+            elif key.startswith(("quantizer.", "semantic_head.", "to_external.")):
                 loaded[key] = value
-        missing = [k for k in own if k not in loaded and not k.startswith('head.')]
+        missing = [k for k in own if k not in loaded and not k.startswith("head.")]
         unexpected = [k for k in loaded if k not in own]
         if missing or unexpected:
-            raise RuntimeError(f'pretrained mapping mismatch: missing {missing[:5]} unexpected {unexpected[:5]}')
+            raise RuntimeError(f"pretrained mapping mismatch: missing {missing[:5]} unexpected {unexpected[:5]}")
         result = self.load_state_dict(loaded, strict=False)
-        assert not result.unexpected_keys and all(k.startswith('head.') for k in result.missing_keys)
-        out = dict(loaded_tensors=len(loaded),
-                   frozen_parameters=sum(p.numel() for _, p in self.frozen_parameters()),
-                   head_parameters=sum(p.numel() for p in self.head.parameters()))
+        assert not result.unexpected_keys and all(k.startswith("head.") for k in result.missing_keys)
+        out = {
+            "loaded_tensors": len(loaded),
+            "frozen_parameters": sum(p.numel() for _, p in self.frozen_parameters()),
+            "head_parameters": sum(p.numel() for p in self.head.parameters()),
+        }
         if self.stage_layers:
             out.update(pruned_tensors=pruned, stage_layers={str(k): v for k, v in self.stage_layers.items()})
         return out
@@ -298,11 +342,12 @@ class ISTFTCodec(nn.Module):
     def compile_stages(self):
         """Compile each frozen transformer layer's forward (MossStage calls layer.forward in eval mode)."""
         import torch._dynamo.config as dynamo_config
+
         dynamo_config.recompile_limit = max(dynamo_config.recompile_limit, 32)
         count = 0
         targets = list(self.stages)
         if isinstance(self.head, MossTailHead) and self.compile_trainable_stages:
-            targets.append(self.head.stage)   # the trainable MOSS tail layers compile like the unfrozen stages
+            targets.append(self.head.stage)  # the trainable MOSS tail layers compile like the unfrozen stages
         for i, stage in enumerate(targets):
             if i in self.trainable_stages and not self.compile_trainable_stages:
                 continue
@@ -319,8 +364,8 @@ class ISTFTCodec(nn.Module):
         Mirrors MossCodec.decode_tokens / the viewer's decode path: fp32 RVQ lookups, fp32 semantic head.
         Residual codebooks beyond `counts` are dropped per sample, reproducing the training-time codebook
         dropout augmentation on cached codes."""
-        if codes.ndim != 3 or codes.shape[1] != 1 + self.cfg['residual_codebooks']:
-            raise ValueError('Expected codes [batch, 10, frames]')
+        if codes.ndim != 3 or codes.shape[1] != 1 + self.cfg["residual_codebooks"]:
+            raise ValueError("Expected codes [batch, 10, frames]")
         q = self.quantizer
         with torch.autocast(codes.device.type, enabled=False):
             q1 = q.semantic_quantizer.from_codes(codes[:, :1])[0]
@@ -335,7 +380,7 @@ class ISTFTCodec(nn.Module):
     def features(self, codes, counts=None):
         """240 Hz features [batch, 768, 16*frames] in bf16 autocast; frozen stages run without a graph."""
         x = self.latent(codes, counts)
-        with torch.autocast(codes.device.type, dtype=torch.bfloat16, enabled=codes.device.type == 'cuda'):
+        with torch.autocast(codes.device.type, dtype=torch.bfloat16, enabled=codes.device.type == "cuda"):
             for i, stage in enumerate(self.stages):
                 if i in self.trainable_stages:
                     x = stage(x)
@@ -346,7 +391,7 @@ class ISTFTCodec(nn.Module):
 
     def forward(self, codes, counts=None, length=None):
         feats = self.features(codes, counts)
-        with torch.autocast(codes.device.type, dtype=torch.bfloat16, enabled=codes.device.type == 'cuda'):
+        with torch.autocast(codes.device.type, dtype=torch.bfloat16, enabled=codes.device.type == "cuda"):
             internal = self.head(feats)
         with torch.autocast(codes.device.type, enabled=False):
             audio = self.to_external(internal.float())

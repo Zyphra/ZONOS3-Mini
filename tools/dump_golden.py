@@ -10,6 +10,7 @@
 Every subcommand writes float32 .npy captures plus (where the comparison needs one) a manifest.json whose
 expected_tensors set is authoritative for tools/compare_golden.py. `tools/dump_golden.py SUB -h` documents each.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -79,15 +80,19 @@ def parse_buckets(text, counts):
         values = []
     counts = [int(n) for n in counts]
     if len(values) != len(counts) or any(not 0 <= v <= n for v, n in zip(values, counts)):
-        raise ValueError(f"--condition-buckets needs {len(counts)} comma-separated integers, each in 0..count for the "
-                         f"bucket counts {counts} (count = unknown)")
+        raise ValueError(
+            f"--condition-buckets needs {len(counts)} comma-separated integers, each in 0..count for the "
+            f"bucket counts {counts} (count = unknown)"
+        )
     return values
 
 
-def build_prompt(params, meta, tokenizer_json, text, reference_codes=None, speaker=None, buckets=None,
-                 silence_prefill=3):
+def build_prompt(
+    params, meta, tokenizer_json, text, reference_codes=None, speaker=None, buckets=None, silence_prefill=3
+):
     """Mirror of zonos3_build_prompt: returns (ids [rows,11] int64, cond dict)."""
     from tokenizers import Tokenizer
+
     if speaker is not None and reference_codes:
         raise ValueError("a speaker embedding and a reference prefix are mutually exclusive")
     if not 0 <= silence_prefill <= 30:
@@ -110,7 +115,7 @@ def build_prompt(params, meta, tokenizer_json, text, reference_codes=None, speak
         reference = np.full((len(codes) + 9, 11), pad, dtype=np.int64)
         reference[:, 10] = text_vocab
         for cb in range(10):
-            reference[cb:cb + len(codes), cb] = codes[:, cb]
+            reference[cb : cb + len(codes), cb] = codes[:, cb]
         leading, speaker_rows = [reference], len(reference)
     silence = np.full((silence_prefill, 11), pad, dtype=np.int64)
     silence[:, 10] = text_vocab
@@ -119,8 +124,14 @@ def build_prompt(params, meta, tokenizer_json, text, reference_codes=None, speak
             if k - cb >= 0:
                 silence[k, cb] = meta["silence_frame"][cb]
     rows = np.concatenate(leading + [np.repeat(allpad, len(meta["bucket_counts"]), 0), text_rows, silence])
-    cond = {"speaker_row": speaker_row, "speaker_embedding": speaker, "condition_row": speaker_rows,
-            "condition_buckets": buckets, "speaker_rows": speaker_rows, "prefill_frames": silence_prefill}
+    cond = {
+        "speaker_row": speaker_row,
+        "speaker_embedding": speaker,
+        "condition_row": speaker_rows,
+        "condition_buckets": buckets,
+        "speaker_rows": speaker_rows,
+        "prefill_frames": silence_prefill,
+    }
     return rows, cond
 
 
@@ -133,8 +144,12 @@ def save_cond(path, cond):
     doc = {"speaker_row": cond["speaker_row"]}
     if cond["speaker_row"] >= 0:
         doc["speaker_embedding"] = [float(v) for v in cond["speaker_embedding"]]
-    doc.update(condition_row=cond["condition_row"], condition_buckets=[int(b) for b in cond["condition_buckets"]],
-               speaker_rows=cond["speaker_rows"], prefill_frames=cond["prefill_frames"])
+    doc.update(
+        condition_row=cond["condition_row"],
+        condition_buckets=[int(b) for b in cond["condition_buckets"]],
+        speaker_rows=cond["speaker_rows"],
+        prefill_frames=cond["prefill_frames"],
+    )
     Path(path).write_text(json.dumps(doc) + "\n")
 
 
@@ -143,15 +158,24 @@ def load_cond(path, params, meta):
     if not path.is_file():
         return None
     doc = json.loads(path.read_text())
-    cond = {"speaker_row": int(doc["speaker_row"]), "speaker_embedding": None,
-            "condition_row": int(doc["condition_row"]), "condition_buckets": [int(b) for b in doc["condition_buckets"]],
-            "speaker_rows": int(doc["speaker_rows"]), "prefill_frames": int(doc["prefill_frames"])}
+    cond = {
+        "speaker_row": int(doc["speaker_row"]),
+        "speaker_embedding": None,
+        "condition_row": int(doc["condition_row"]),
+        "condition_buckets": [int(b) for b in doc["condition_buckets"]],
+        "speaker_rows": int(doc["speaker_rows"]),
+        "prefill_frames": int(doc["prefill_frames"]),
+    }
     if cond["speaker_row"] >= 0:
         cond["speaker_embedding"] = np.asarray(doc["speaker_embedding"], dtype=np.float32)
-        if cond["speaker_embedding"].shape != (meta["speaker_dim"],) or not np.isfinite(cond["speaker_embedding"]).all():
+        if (
+            cond["speaker_embedding"].shape != (meta["speaker_dim"],)
+            or not np.isfinite(cond["speaker_embedding"]).all()
+        ):
             raise ValueError(f"{path}: invalid speaker embedding")
-    if len(cond["condition_buckets"]) != len(meta["bucket_counts"]) \
-            or any(not 0 <= b <= n for b, n in zip(cond["condition_buckets"], meta["bucket_counts"])):
+    if len(cond["condition_buckets"]) != len(meta["bucket_counts"]) or any(
+        not 0 <= b <= n for b, n in zip(cond["condition_buckets"], meta["bucket_counts"])
+    ):
         raise ValueError(f"{path}: invalid condition buckets")
     return cond
 
@@ -193,6 +217,7 @@ def round_weights_f16(model):
 
 def load_lm_state(path, cache, config, layers, dtype, kv_dtype):
     from zonos3.reference.lm import GDN_HEAD_DIM, GDN_HEADS, GDN_KERNEL
+
     with np.load(path, allow_pickle=False) as state:
         position = np.asarray(state["position"])
         if position.shape != () or int(position) < 0 or int(position) != position:
@@ -209,8 +234,12 @@ def load_lm_state(path, cache, config, layers, dtype, kv_dtype):
 
         for layer in range(layers):
             if config.uses_gdn(layer):
-                cache.gdn_state[layer] = entry(f"gdn_state_{layer}", (GDN_HEADS, GDN_HEAD_DIM, GDN_HEAD_DIM), torch.float32)
-                cache.conv_state[layer] = entry(f"gdn_conv_state_{layer}", (3 * config.gdn_inner, GDN_KERNEL - 1), dtype)
+                cache.gdn_state[layer] = entry(
+                    f"gdn_state_{layer}", (GDN_HEADS, GDN_HEAD_DIM, GDN_HEAD_DIM), torch.float32
+                )
+                cache.conv_state[layer] = entry(
+                    f"gdn_conv_state_{layer}", (3 * config.gdn_inner, GDN_KERNEL - 1), dtype
+                )
             else:
                 shape = (cache.position, config.n_kv_heads, config.head_dim)
                 cache.kv[layer] = (entry(f"kv_k_{layer}", shape, kv_dtype), entry(f"kv_v_{layer}", shape, kv_dtype))
@@ -239,8 +268,17 @@ def save_captures(out, captures, ids, cond=None):
     for name, array in captures.items():
         np.save(out / (name + ".npy"), array)
     # Comparison uses this authoritative set, including every critical state capture.
-    (out / "manifest.json").write_text(json.dumps({"architecture": "zonos3", "expected_tensors": sorted(captures),
-                                                  "shapes": {k: list(v.shape) for k, v in captures.items()}}, indent=2) + "\n")
+    (out / "manifest.json").write_text(
+        json.dumps(
+            {
+                "architecture": "zonos3",
+                "expected_tensors": sorted(captures),
+                "shapes": {k: list(v.shape) for k, v in captures.items()},
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def add_lm_arguments(parser):
@@ -250,12 +288,15 @@ def add_lm_arguments(parser):
     parser.add_argument("--input-ids", help="NPY [tokens,11] for exact prompt/continuation replay (reads X.cond.json)")
     parser.add_argument("--reference-codes", help="ordinary NPY [frames,10] codes prepended with delays")
     parser.add_argument("--speaker-embedding", help="float32 NPY [192] speaker embedding (speaker row)")
-    parser.add_argument("--condition-buckets",
-                        help="a,b,c bucket ids per table (0..count-1, count = unknown); default all unknown")
+    parser.add_argument(
+        "--condition-buckets", help="a,b,c bucket ids per table (0..count-1, count = unknown); default all unknown"
+    )
     parser.add_argument("--silence-prefill", type=int, help="codec-silence rows after EOS (default 3, 0..30)")
     parser.add_argument("-o", "--out", required=True)
     parser.add_argument("--dtype", choices=("f32", "bf16"), default="f32")
-    parser.add_argument("--weight-type", choices=("f32", "f16"), default="f32", help="round matrices exactly as the GGUF exporter")
+    parser.add_argument(
+        "--weight-type", choices=("f32", "f16"), default="f32", help="round matrices exactly as the GGUF exporter"
+    )
     parser.add_argument("--kv-dtype", choices=("f32", "f16"), default="f32")
     parser.add_argument("--mode", choices=("full", "chunked", "decode"), default="full")
     parser.add_argument("--chunk-size", type=int, default=8)
@@ -269,11 +310,14 @@ def add_lm_arguments(parser):
 def run_lm(args, parser):
     from convert_gguf import load_lm
     from zonos3.reference.lm import LMCache
+
     if args.chunk_size < 1 or args.prefill_tokens < 0 or args.threads < 1:
         parser.error("chunk-size/threads must be positive and prefill-tokens nonnegative")
     shaping = (args.reference_codes, args.speaker_embedding, args.condition_buckets, args.silence_prefill)
     if args.input_ids and any(v is not None for v in shaping):
-        parser.error("--reference-codes/--speaker-embedding/--condition-buckets/--silence-prefill are only valid with a text prompt")
+        parser.error(
+            "--reference-codes/--speaker-embedding/--condition-buckets/--silence-prefill are only valid with a text prompt"
+        )
     if args.speaker_embedding and args.reference_codes:
         parser.error("a speaker embedding and a reference prefix are mutually exclusive")
     torch.set_num_threads(args.threads)
@@ -298,12 +342,20 @@ def run_lm(args, parser):
         if cond is None:
             print(f"warning: {cond_path(args.input_ids)} missing; no speaker/condition rows are replaced")
     else:
-        speaker = load_speaker_embedding(args.speaker_embedding, meta["speaker_dim"]) if args.speaker_embedding else None
+        speaker = (
+            load_speaker_embedding(args.speaker_embedding, meta["speaker_dim"]) if args.speaker_embedding else None
+        )
         buckets = parse_buckets(args.condition_buckets, meta["bucket_counts"]) if args.condition_buckets else None
         silence = 3 if args.silence_prefill is None else args.silence_prefill
-        ids, cond = build_prompt(params, meta, src.tokenizer, args.text, args.reference_codes, speaker, buckets, silence)
-    if np.any(ids[:, :10] < 0) or np.any(ids[:, :10] >= config.audio_vocab) or np.any(ids[:, 10] < 0) \
-            or np.any(ids[:, 10] >= config.text_rows):
+        ids, cond = build_prompt(
+            params, meta, src.tokenizer, args.text, args.reference_codes, speaker, buckets, silence
+        )
+    if (
+        np.any(ids[:, :10] < 0)
+        or np.any(ids[:, :10] >= config.audio_vocab)
+        or np.any(ids[:, 10] < 0)
+        or np.any(ids[:, 10] >= config.text_rows)
+    ):
         raise ValueError("input IDs outside embedding vocabulary")
     cache = LMCache()
     if args.state_in:
@@ -320,11 +372,16 @@ def run_lm(args, parser):
     speaker_rows, condition_rows = cond_inputs(cond)
     out, start, combined = Path(args.out), 0, {}
     for index, length in enumerate(lengths):
-        part = ids[start:start + length]
+        part = ids[start : start + length]
         captures = {}
         with kv_rounding(kv_dtype):
-            model(torch.from_numpy(part), cache, speaker_rows=speaker_rows, condition_rows=condition_rows,
-                  capture=captures)
+            model(
+                torch.from_numpy(part),
+                cache,
+                speaker_rows=speaker_rows,
+                condition_rows=condition_rows,
+                capture=captures,
+            )
         if args.mode != "full":
             save_captures(out / f"chunk_{index:03d}", captures, part)
         for name, array in captures.items():
@@ -333,11 +390,15 @@ def run_lm(args, parser):
             else:
                 combined.setdefault(name, []).append(array)
         start += length
-    combined = {name: value if isinstance(value, np.ndarray) else np.concatenate(value, 0) for name, value in combined.items()}
+    combined = {
+        name: value if isinstance(value, np.ndarray) else np.concatenate(value, 0) for name, value in combined.items()
+    }
     save_captures(out, combined, ids, cond)
     save_lm_state(args.state_out or out / "state.npz", cache, config, layers, kv_dtype)
-    print(f"Saved {len(combined)} tensors from {len(model.state_dict())} weights for {len(ids)} rows, "
-          f"{len(lengths)} invocation(s), position={cache.position} -> {out}")
+    print(
+        f"Saved {len(combined)} tensors from {len(model.state_dict())} weights for {len(ids)} rows, "
+        f"{len(lengths)} invocation(s), position={cache.position} -> {out}"
+    )
 
 
 # ---------------------------------------------------------------------------------------------------- codec-decoder
@@ -373,6 +434,7 @@ def load_wav_or_npy(path: Path) -> np.ndarray:
 
 def load_codec_decoder(generator: Path, head_dir: Path):
     from zonos3.codec.istft_head_a_20261002.model import ISTFTCodec
+
     configs = sorted(head_dir.glob("config_*.json"))
     if len(configs) != 1:
         raise SystemExit(f"{head_dir} must contain exactly one config_*.json")
@@ -413,7 +475,7 @@ def run_codec_decoder(args, parser):
     end = min(eos if eos >= 0 else H, H - 9)
     if end <= 0:
         raise SystemExit("no code frames to decode")
-    idx = np.stack([raw[c:c + end, c] for c in range(10)], axis=1)  # un-shear [end, 10]
+    idx = np.stack([raw[c : c + end, c] for c in range(10)], axis=1)  # un-shear [end, 10]
     if ((idx < 0) | (idx >= 4096)).any():
         raise SystemExit("un-sheared codes contain pad/eos ids; decode fewer frames")
     args.out.mkdir(parents=True, exist_ok=True)
@@ -426,7 +488,9 @@ def run_codec_decoder(args, parser):
     for i, lin in enumerate(model.head.outs):
         lin.register_forward_hook(lambda m, inp, o, i=i: taps.__setitem__(f"y{i}", o[0].float().T.numpy()))
     model.head.mixer.register_forward_pre_hook(
-        lambda m, inp: [taps.__setitem__(f"s{i}", inp[0][0, i].float().numpy()) for i in range(inp[0].shape[1])] and None)
+        lambda m, inp: [taps.__setitem__(f"s{i}", inp[0][0, i].float().numpy()) for i in range(inp[0].shape[1])]
+        and None
+    )
     model.head.mixer.register_forward_hook(lambda m, inp, o: taps.__setitem__("mixer", o[0, 0].float().numpy()))
 
     # minisgl matched_codec.decode_model: [B, frames, codebooks] -> packed [B, 10, frames], fp32, TF32 off.
@@ -448,8 +512,10 @@ def run_codec_decoder(args, parser):
     np.save(args.out / "audio.npy", audio)
     for name, a in taps.items():
         np.save(args.out / f"{name}.npy", np.ascontiguousarray(a, dtype=np.float32))
-    print(f"audio {audio.shape} ({end} frames) rms {float(np.sqrt(np.mean(audio ** 2))):.4f} "
-          f"peak {float(np.abs(audio).max()):.4f}")
+    print(
+        f"audio {audio.shape} ({end} frames) rms {float(np.sqrt(np.mean(audio**2))):.4f} "
+        f"peak {float(np.abs(audio).max()):.4f}"
+    )
     if args.compare:
         cpp = load_wav_or_npy(args.compare)
         if cpp.shape != audio.shape:
@@ -480,20 +546,29 @@ output directories to cover short, exact-hop and independent-lane boundaries.
 
 
 def add_codec_encoder_arguments(ap):
-    ap.add_argument('--generator', type=Path, required=True, help='release autoencoder/generator.pt (step 600000)')
-    ap.add_argument('--teacher', type=Path, help='SSL teacher directory (default: <generator dir>/teacher)')
-    ap.add_argument('--audio', type=Path, required=True, help='44100-Hz F32 mono NPY or an ffmpeg-readable file')
-    ap.add_argument('--samples', type=int, help='trim or repeat the real source to this length for short/chunk-boundary qualification')
-    ap.add_argument('-o', '--out', type=Path, required=True)
-    ap.add_argument('--batch-size', type=int, default=4, help='frozen production default is four independent lanes; use one for constrained CUDA devices')
-    ap.add_argument('--compare', type=Path, help='native ordinary [frames,10] codes NPY; require exact equality')
+    ap.add_argument("--generator", type=Path, required=True, help="release autoencoder/generator.pt (step 600000)")
+    ap.add_argument("--teacher", type=Path, help="SSL teacher directory (default: <generator dir>/teacher)")
+    ap.add_argument("--audio", type=Path, required=True, help="44100-Hz F32 mono NPY or an ffmpeg-readable file")
+    ap.add_argument(
+        "--samples",
+        type=int,
+        help="trim or repeat the real source to this length for short/chunk-boundary qualification",
+    )
+    ap.add_argument("-o", "--out", type=Path, required=True)
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help="frozen production default is four independent lanes; use one for constrained CUDA devices",
+    )
+    ap.add_argument("--compare", type=Path, help="native ordinary [frames,10] codes NPY; require exact equality")
 
 
 def run_codec_encoder(args, parser):
     if not torch.cuda.is_available():
-        raise SystemExit('production golden encoding requires an allocated CUDA GPU')
+        raise SystemExit("production golden encoding requires an allocated CUDA GPU")
     if args.batch_size < 1:
-        raise SystemExit('--batch-size must be positive')
+        raise SystemExit("--batch-size must be positive")
     torch.set_num_threads(1)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -504,63 +579,102 @@ def run_codec_encoder(args, parser):
     from zonos3.codec.data_processing.independent_batcher import IndependentBatcher
     from zonos3.codec.hybrid10_dual_encoding.model import MossCodec
     from zonos3.codec.s1dac.losses import SemanticTeacher
+
     generator = args.generator
-    teacher_path = args.teacher or generator.parent / 'teacher'
-    state = torch.load(generator, map_location='cpu', mmap=True, weights_only=True)
-    if state['step'] != 600000 or state['config']['teacher']['layer'] != 16:
-        raise SystemExit('golden requires matched step600000/layer16 recipe')
-    cfg = state['config']['model']
+    teacher_path = args.teacher or generator.parent / "teacher"
+    state = torch.load(generator, map_location="cpu", mmap=True, weights_only=True)
+    if state["step"] != 600000 or state["config"]["teacher"]["layer"] != 16:
+        raise SystemExit("golden requires matched step600000/layer16 recipe")
+    cfg = state["config"]["model"]
     # Torchaudio builds real resampling kernels during construction; meta
     # initialization cannot materialize their arithmetic or copy their values.
     model = MossCodec(cfg)
-    model.load_state_dict(state['generator'], strict=True, assign=True)
+    model.load_state_dict(state["generator"], strict=True, assign=True)
     model.eval().requires_grad_(False)
     # Construct the adapter without constructor-only CUDA graph warmups.
     # _prepare, _external and _codes/_dual are the actual frozen reference methods.
     adapter = MossAutoencoder.__new__(MossAutoencoder)
-    adapter.device = torch.device('cuda')
+    adapter.device = torch.device("cuda")
     adapter.resample = model.to_internal.cpu()
     del model.decoder, model.to_external, model.to_internal
     adapter.model = model.to(adapter.device)
-    adapter.teacher = SemanticTeacher(str(teacher_path), layer=16, dtype=torch.bfloat16).to(adapter.device).eval().requires_grad_(False)
+    adapter.teacher = (
+        SemanticTeacher(str(teacher_path), layer=16, dtype=torch.bfloat16)
+        .to(adapter.device)
+        .eval()
+        .requires_grad_(False)
+    )
     adapter.optimized = None
     del state
-    if args.audio.suffix == '.npy':
+    if args.audio.suffix == ".npy":
         audio = np.load(args.audio, allow_pickle=False)
         if audio.ndim == 2 and audio.shape[0] == 1:
             audio = audio[0]
         if audio.ndim != 1:
-            raise SystemExit('audio NPY must be mono [samples] or [1,samples]')
+            raise SystemExit("audio NPY must be mono [samples] or [1,samples]")
         audio = np.asarray(audio, dtype=np.float32)
     else:
-        raw = subprocess.check_output(['ffmpeg', '-nostdin', '-v', 'error', '-i', str(args.audio), '-t', '60', '-ac', '1', '-ar', '44100', '-f', 'f32le', '-'])
-        audio = np.frombuffer(raw, dtype='<f4').copy()
+        raw = subprocess.check_output(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                str(args.audio),
+                "-t",
+                "60",
+                "-ac",
+                "1",
+                "-ar",
+                "44100",
+                "-f",
+                "f32le",
+                "-",
+            ]
+        )
+        audio = np.frombuffer(raw, dtype="<f4").copy()
     if args.samples is not None:
         if args.samples < 1 or args.samples > 60 * 44100:
-            raise SystemExit('--samples must lie in 1..2646000')
+            raise SystemExit("--samples must lie in 1..2646000")
         if not audio.size:
-            raise SystemExit('empty source audio')
-        audio = np.tile(audio, (args.samples + audio.size - 1) // audio.size)[:args.samples].copy()
+            raise SystemExit("empty source audio")
+        audio = np.tile(audio, (args.samples + audio.size - 1) // audio.size)[: args.samples].copy()
     if not 0 < audio.size <= 60 * 44100 or not np.isfinite(audio).all():
-        raise SystemExit('expected finite nonempty mono audio of at most 60 seconds')
+        raise SystemExit("expected finite nonempty mono audio of at most 60 seconds")
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
-    np.save(out / 'audio.npy', np.ascontiguousarray(audio), allow_pickle=False)
+    np.save(out / "audio.npy", np.ascontiguousarray(audio), allow_pickle=False)
     expected_tensors = []
     teacher_capture_tensors, teacher_precision = [], {}
     first_attention_backends = {}
+
     def save(name, value, channels_first=True, expected=True):
         value = value.detach().float().cpu()
         if value.ndim == 3:
             value = value[0].T if channels_first else value[0]
         elif value.ndim == 2 and channels_first:
             value = value.T
-        np.save(out / (name + '.npy'), np.ascontiguousarray(value.numpy()), allow_pickle=False)
+        np.save(out / (name + ".npy"), np.ascontiguousarray(value.numpy()), allow_pickle=False)
         (expected_tensors if expected else teacher_capture_tensors).append(name)
-    packer = IndependentBatcher(torch=torch, device=adapter.device, sample_rate=44160, hop_length=2944,
-                               feature_dim=10, prepare=adapter._prepare, run=adapter._codes, batch_size=args.batch_size,
-                               chunk_seconds=20., continuation_context_seconds=10., window=32,
-                               output_dtype=np.int16, label='frozen_dual_golden', input_dtype=torch.float32, input_channels=2)
+
+    packer = IndependentBatcher(
+        torch=torch,
+        device=adapter.device,
+        sample_rate=44160,
+        hop_length=2944,
+        feature_dim=10,
+        prepare=adapter._prepare,
+        run=adapter._codes,
+        batch_size=args.batch_size,
+        chunk_seconds=20.0,
+        continuation_context_seconds=10.0,
+        window=32,
+        output_dtype=np.int16,
+        label="frozen_dual_golden",
+        input_dtype=torch.float32,
+        input_channels=2,
+    )
     # Use the frozen scheduler's exact full-file prepare and piece placement.
     sample = SimpleNamespace(audio=audio[None], sample_rate=44100, error=None)
     with torch.inference_mode():
@@ -568,108 +682,170 @@ def run_codec_encoder(args, parser):
         if record.sample.error is not None:
             raise RuntimeError(record.sample.error)
         prepared = adapter._prepare(audio[None], 44100)
-        save('internal_audio', prepared[0, 0].reshape(-1, 1), channels_first=False)
+        save("internal_audio", prepared[0, 0].reshape(-1, 1), channels_first=False)
         chunks = []
         lane = [0]
         handles = []
+
         def p():
-            return f'lane.{lane[0]}'
+            return f"lane.{lane[0]}"
+
         def teacher_input_hook(mod, inp):
-            save(p() + '.ssl.features', inp[0], False, expected=False)
-            save(p() + '.ssl.attention_mask', inp[1][0], False, expected=False)
+            save(p() + ".ssl.features", inp[0], False, expected=False)
+            save(p() + ".ssl.attention_mask", inp[1][0], False, expected=False)
+
         def teacher_norm_hook(mod, inp, output):
-            save(p() + '.ssl.feature_input', inp[0], False, expected=False)
-            save(p() + '.ssl.feature_norm', output, False, expected=False)
-            teacher_precision[p()] = dict(feature_input=str(inp[0].dtype), feature_norm=str(output.dtype))
+            save(p() + ".ssl.feature_input", inp[0], False, expected=False)
+            save(p() + ".ssl.feature_norm", output, False, expected=False)
+            teacher_precision[p()] = {"feature_input": str(inp[0].dtype), "feature_norm": str(output.dtype)}
+
         def teacher_projection_hook(mod, inp, output):
-            save(p() + '.ssl.feature_projection', output, False, expected=False)
-            teacher_precision[p()]['feature_projection'] = str(output.dtype)
+            save(p() + ".ssl.feature_projection", output, False, expected=False)
+            teacher_precision[p()]["feature_projection"] = str(output.dtype)
+
         def teacher_output_hook(mod, inp, output):
-            save(p() + '.ssl', output, False)
-            teacher_precision[p()]['output'] = str(output.dtype)
+            save(p() + ".ssl", output, False)
+            teacher_precision[p()]["output"] = str(output.dtype)
+
         handles.append(adapter.teacher.register_forward_pre_hook(teacher_input_hook))
         handles.append(adapter.teacher.model.feature_projection.layer_norm.register_forward_hook(teacher_norm_hook))
-        handles.append(adapter.teacher.model.feature_projection.projection.register_forward_hook(teacher_projection_hook))
+        handles.append(
+            adapter.teacher.model.feature_projection.projection.register_forward_hook(teacher_projection_hook)
+        )
         handles.append(adapter.teacher.register_forward_hook(teacher_output_hook))
-        handles.append(adapter.model.encoder.register_forward_hook(lambda mod, inp, output: save(p() + '.acoustic', output)))
-        handles.append(adapter.model.encoder[0].register_forward_hook(lambda mod, inp, output: save(p() + '.enc.in', output)))
+        handles.append(
+            adapter.model.encoder.register_forward_hook(lambda mod, inp, output: save(p() + ".acoustic", output))
+        )
+        handles.append(
+            adapter.model.encoder[0].register_forward_hook(lambda mod, inp, output: save(p() + ".enc.in", output))
+        )
         for b in range(2):
-            block = adapter.model.encoder[1+b]
-            block = getattr(block, 'module', block)
+            block = adapter.model.encoder[1 + b]
+            block = getattr(block, "module", block)
             for r in range(3):
-                handles.append(block.block[r].register_forward_hook(
-                    lambda mod, inp, output, b=b, r=r: save(p() + f'.enc.b{b}.res{r}', output)))
-            handles.append(block.block[4].register_forward_hook(
-                lambda mod, inp, output, b=b: save(p() + f'.enc.b{b}.conv', output)))
+                handles.append(
+                    block.block[r].register_forward_hook(
+                        lambda mod, inp, output, b=b, r=r: save(p() + f".enc.b{b}.res{r}", output)
+                    )
+                )
+            handles.append(
+                block.block[4].register_forward_hook(
+                    lambda mod, inp, output, b=b: save(p() + f".enc.b{b}.conv", output)
+                )
+            )
         for s in range(5):
-            stage = adapter.model.encoder[4 + 2*s]
-            handles.append(stage.register_forward_hook(lambda mod, inp, output, s=s: save(p() + f'.stage.{s}', output)))
-            handles.append(stage.input_proj.register_forward_hook(
-                lambda mod, inp, output, s=s: save(p() + f'.stage.{s}.in', output, False)))
+            stage = adapter.model.encoder[4 + 2 * s]
+            handles.append(stage.register_forward_hook(lambda mod, inp, output, s=s: save(p() + f".stage.{s}", output)))
+            handles.append(
+                stage.input_proj.register_forward_hook(
+                    lambda mod, inp, output, s=s: save(p() + f".stage.{s}.in", output, False)
+                )
+            )
             # Eval calls layer.forward directly, bypassing Module forward hooks.
             # The next norm1 input is the unchanged previous layer's output.
             for l in range(1, len(stage.layers)):
-                handles.append(stage.layers[l].norm1.register_forward_pre_hook(
-                    lambda mod, inp, s=s, l=l: save(p() + f'.stage.{s}.l{l-1}', inp[0], False)))
-            handles.append(stage.output_proj.register_forward_pre_hook(
-                lambda mod, inp, s=s, l=len(stage.layers)-1: save(p() + f'.stage.{s}.l{l}', inp[0], False)))
+                handles.append(
+                    stage.layers[l].norm1.register_forward_pre_hook(
+                        lambda mod, inp, s=s, l=l: save(p() + f".stage.{s}.l{l - 1}", inp[0], False)
+                    )
+                )
+            handles.append(
+                stage.output_proj.register_forward_pre_hook(
+                    lambda mod, inp, s=s, l=len(stage.layers) - 1: save(p() + f".stage.{s}.l{l}", inp[0], False)
+                )
+            )
         first_layer = adapter.model.encoder[4].layers[0]
         sdpa_active = [False]
+
         def begin_sdpa(mod, inp):
             sdpa_active[0] = True
+
         def sdpa_input(mod, inp):
-            save(p() + '.stage.0.l0.sdpa', inp[0], False)
+            save(p() + ".stage.0.l0.sdpa", inp[0], False)
             sdpa_active[0] = False
+
         handles.append(first_layer.norm1.register_forward_pre_hook(begin_sdpa))
-        handles.append(first_layer.norm1.register_forward_hook(
-            lambda mod, inp, output: save(p() + '.stage.0.l0.norm1', output, False)))
-        handles.append(first_layer.qkv.register_forward_hook(
-            lambda mod, inp, output: save(p() + '.stage.0.l0.qkv', output, False)))
+        handles.append(
+            first_layer.norm1.register_forward_hook(
+                lambda mod, inp, output: save(p() + ".stage.0.l0.norm1", output, False)
+            )
+        )
+        handles.append(
+            first_layer.qkv.register_forward_hook(lambda mod, inp, output: save(p() + ".stage.0.l0.qkv", output, False))
+        )
         handles.append(first_layer.attention_out.register_forward_pre_hook(sdpa_input))
         original_sdpa = torch.nn.functional.scaled_dot_product_attention
+
         def trace_sdpa(query, key, value, *inputs, **kwargs):
             if sdpa_active[0]:
-                mask = kwargs.get('attn_mask')
+                mask = kwargs.get("attn_mask")
                 # CUDA autocast registers SDPA as lower_precision_fp. Query its
                 # real runtime selector on those same eligible operand casts,
                 # but pass the original operands unchanged to the actual SDPA.
                 q, k, v, bias = query, key, value, mask
-                if torch.is_autocast_enabled('cuda'):
-                    compute_dtype = torch.get_autocast_dtype('cuda')
+                if torch.is_autocast_enabled("cuda"):
+                    compute_dtype = torch.get_autocast_dtype("cuda")
                     q, k, v = (tensor.to(compute_dtype) for tensor in (q, k, v))
                     if bias is not None:
                         bias = bias.to(compute_dtype)
-                with torch.autocast('cuda', enabled=False):
+                with torch.autocast("cuda", enabled=False):
                     backend = torch.ops.aten._fused_sdp_choice.default(
-                        q, k, v, bias, kwargs.get('dropout_p', 0.), kwargs.get('is_causal', False),
-                        scale=kwargs.get('scale'), enable_gqa=kwargs.get('enable_gqa', False))
-                first_attention_backends.setdefault(p() + '.stage.0.l0', []).append(dict(
-                    backend=int(backend), query_shape=list(q.shape), key_shape=list(k.shape),
-                    query_dtype=str(q.dtype), mask_dtype=str(bias.dtype) if bias is not None else None))
+                        q,
+                        k,
+                        v,
+                        bias,
+                        kwargs.get("dropout_p", 0.0),
+                        kwargs.get("is_causal", False),
+                        scale=kwargs.get("scale"),
+                        enable_gqa=kwargs.get("enable_gqa", False),
+                    )
+                first_attention_backends.setdefault(p() + ".stage.0.l0", []).append(
+                    {
+                        "backend": int(backend),
+                        "query_shape": list(q.shape),
+                        "key_shape": list(k.shape),
+                        "query_dtype": str(q.dtype),
+                        "mask_dtype": str(bias.dtype) if bias is not None else None,
+                    }
+                )
             return original_sdpa(query, key, value, *inputs, **kwargs)
+
         def sem_hook(mod, inp, output):
-            save(p() + '.pooled', inp[0])
-            save(p() + '.semantic', output)
+            save(p() + ".pooled", inp[0])
+            save(p() + ".semantic", output)
+
         handles.append(adapter.model.semantic_encoder.register_forward_hook(sem_hook))
-        handles.append(adapter.model.semantic_head.register_forward_hook(lambda mod, inp, output: save(p() + '.semantic_prediction', output)))
-        quantizers = [adapter.model.quantizer.semantic_quantizer.quantizers[0], *adapter.model.quantizer.quantizer.quantizers]
+        handles.append(
+            adapter.model.semantic_head.register_forward_hook(
+                lambda mod, inp, output: save(p() + ".semantic_prediction", output)
+            )
+        )
+        quantizers = [
+            adapter.model.quantizer.semantic_quantizer.quantizers[0],
+            *adapter.model.quantizer.quantizer.quantizers,
+        ]
         for c, q in enumerate(quantizers):
+
             def qhook(mod, inp, output, c=c):
-                name = p() + f'.rvq.{c}'
+                name = p() + f".rvq.{c}"
                 # Actual dac.nn.quantize.VectorQuantize.forward returns
                 # (z_q, commitment_loss, codebook_loss, indices, z_e).
                 quantized, _, _, indices, projected = output
-                if (projected.dtype != torch.float32 or quantized.dtype != torch.float32
-                        or projected.shape != (args.batch_size, 8, 300)
-                        or indices.shape != (args.batch_size, 300)):
-                    raise RuntimeError(f'{name}: unexpected frozen DAC quantizer outputs')
-                save(name + '.projected', projected)
-                save(name + '.quantized', quantized)
-                save(name + '.codes', indices[0].reshape(1, 1, -1))
+                if (
+                    projected.dtype != torch.float32
+                    or quantized.dtype != torch.float32
+                    or projected.shape != (args.batch_size, 8, 300)
+                    or indices.shape != (args.batch_size, 300)
+                ):
+                    raise RuntimeError(f"{name}: unexpected frozen DAC quantizer outputs")
+                save(name + ".projected", projected)
+                save(name + ".quantized", quantized)
+                save(name + ".codes", indices[0].reshape(1, 1, -1))
                 if c == 0:
-                    save(p() + '.q1', output[0])
+                    save(p() + ".q1", output[0])
                 elif c == 1:
-                    save(p() + '.residual', inp[0])
+                    save(p() + ".residual", inp[0])
+
             handles.append(q.register_forward_hook(qhook))
         pieces = []
         torch.nn.functional.scaled_dot_product_attention = trace_sdpa
@@ -677,13 +853,20 @@ def run_codec_encoder(args, parser):
             for i, piece in enumerate(record.pieces):
                 lane[0] = i
                 packed = packer._prepare_batch([record], [piece]).waveform.to(adapter.device)
-                save(p() + '.audio', packed[:, 0:1])
-                save(p() + '.teacher_audio', adapter._external(packed))
+                save(p() + ".audio", packed[:, 0:1])
+                save(p() + ".teacher_audio", adapter._external(packed))
                 codes = adapter._codes(packed)  # actual frozen encoder + teacher + Q1 + nine RVQs
                 start = piece.output_start_frame
-                chunk = codes[0, start:start+piece.output_frames].cpu().numpy().astype(np.int32)
+                chunk = codes[0, start : start + piece.output_frames].cpu().numpy().astype(np.int32)
                 chunks.append(chunk)
-                pieces.append(dict(lane=i, context_frames=piece.context_frames, output_start_frame=start, output_frames=piece.output_frames))
+                pieces.append(
+                    {
+                        "lane": i,
+                        "context_frames": piece.context_frames,
+                        "output_start_frame": start,
+                        "output_frames": piece.output_frames,
+                    }
+                )
         finally:
             torch.nn.functional.scaled_dot_product_attention = original_sdpa
             for handle in handles:
@@ -691,34 +874,58 @@ def run_codec_encoder(args, parser):
         codes = np.concatenate(chunks, axis=0)
     expected = ((audio.size + 2939) // 2940, 10)
     if codes.shape != expected or codes.min() < 0 or codes.max() >= 4096:
-        raise RuntimeError(f'actual frozen reference produced invalid shape/codes: {codes.shape}, expected {expected}')
-    np.save(out / 'codes.npy', np.ascontiguousarray(codes), allow_pickle=False)
-    expected_tensors.append('codes')
-    (out / 'manifest.json').write_text(json.dumps(dict(generator=str(generator), step=600000,
-        teacher=str(teacher_path), teacher_layer=16, precision='fp32_weights_bf16_encoder_teacher_semantic_modules_fp32_rvq',
-        recipe='zonos3.codec.codec_adapter.MossAutoencoder._prepare/_dual;IndependentBatcher._record/_prepare_batch',
-        audio_samples=int(audio.size), audio_sha256=hashlib.sha256(audio.tobytes()).hexdigest(),
-        expected_tensors=expected_tensors,
-        teacher_capture_tensors=teacher_capture_tensors, teacher_precision=teacher_precision,
-        first_attention_backends=first_attention_backends,
-        runtime=dict(python=sys.executable, torch=torch.__version__, torch_file=torch.__file__,
-                     transformers=transformers.__version__, transformers_file=transformers.__file__,
-                     teacher_implementation=sys.modules[Wav2Vec2BertModel.__module__].__file__,
-                     torchaudio=torchaudio.__version__, torchaudio_file=torchaudio.__file__,
-                     quantizer_implementation=sys.modules[type(quantizers[0]).__module__].__file__),
-        sample_rate=44100, batch_size=args.batch_size, codes_shape=list(codes.shape), pieces=pieces), indent=2) + '\n')
-    print(f'wrote frozen dual encoder goldens: {codes.shape[0]} frames, {len(pieces)} padded lanes to {out}')
+        raise RuntimeError(f"actual frozen reference produced invalid shape/codes: {codes.shape}, expected {expected}")
+    np.save(out / "codes.npy", np.ascontiguousarray(codes), allow_pickle=False)
+    expected_tensors.append("codes")
+    (out / "manifest.json").write_text(
+        json.dumps(
+            {
+                "generator": str(generator),
+                "step": 600000,
+                "teacher": str(teacher_path),
+                "teacher_layer": 16,
+                "precision": "fp32_weights_bf16_encoder_teacher_semantic_modules_fp32_rvq",
+                "recipe": "zonos3.codec.codec_adapter.MossAutoencoder._prepare/_dual;IndependentBatcher._record/_prepare_batch",
+                "audio_samples": int(audio.size),
+                "audio_sha256": hashlib.sha256(audio.tobytes()).hexdigest(),
+                "expected_tensors": expected_tensors,
+                "teacher_capture_tensors": teacher_capture_tensors,
+                "teacher_precision": teacher_precision,
+                "first_attention_backends": first_attention_backends,
+                "runtime": {
+                    "python": sys.executable,
+                    "torch": torch.__version__,
+                    "torch_file": torch.__file__,
+                    "transformers": transformers.__version__,
+                    "transformers_file": transformers.__file__,
+                    "teacher_implementation": sys.modules[Wav2Vec2BertModel.__module__].__file__,
+                    "torchaudio": torchaudio.__version__,
+                    "torchaudio_file": torchaudio.__file__,
+                    "quantizer_implementation": sys.modules[type(quantizers[0]).__module__].__file__,
+                },
+                "sample_rate": 44100,
+                "batch_size": args.batch_size,
+                "codes_shape": list(codes.shape),
+                "pieces": pieces,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"wrote frozen dual encoder goldens: {codes.shape[0]} frames, {len(pieces)} padded lanes to {out}")
     if args.compare:
         native = np.load(args.compare, allow_pickle=False)
         if native.shape != codes.shape or not np.issubdtype(native.dtype, np.integer):
-            raise SystemExit(f'native codes must be integer {codes.shape}, got {native.dtype} {native.shape}')
+            raise SystemExit(f"native codes must be integer {codes.shape}, got {native.dtype} {native.shape}")
         mismatches = native != codes
         if mismatches.any():
             frame, codebook = np.argwhere(mismatches)[0]
             counts = mismatches.sum(axis=0).tolist()
-            raise SystemExit(f'code mismatch: per-codebook={counts}; first frame={frame}, codebook={codebook}, '
-                             f'reference={codes[frame, codebook]}, native={native[frame, codebook]}')
-        print(f'exact native code agreement: {codes.size} codes across {len(pieces)} independent lanes')
+            raise SystemExit(
+                f"code mismatch: per-codebook={counts}; first frame={frame}, codebook={codebook}, "
+                f"reference={codes[frame, codebook]}, native={native[frame, codebook]}"
+            )
+        print(f"exact native code agreement: {codes.size} codes across {len(pieces)} independent lanes")
 
 
 # ------------------------------------------------------------------------------------------------------ ssl-teacher
@@ -748,32 +955,51 @@ consumer-code identity alone does not establish whole-lane floating parity.
 def add_ssl_teacher_arguments(ap):
     source = ap.add_mutually_exclusive_group(required=True)
     source.add_argument("--audio", type=Path)
-    source.add_argument("--pcm44100", type=Path, help="C-order float32 mono waveform NPY, including external lane padding")
+    source.add_argument(
+        "--pcm44100", type=Path, help="C-order float32 mono waveform NPY, including external lane padding"
+    )
     source.add_argument("--features", type=Path, help="C-order float32 [T,160] NPY")
     ap.add_argument("--mask", type=Path, help="[T] 0/1 NPY for --features")
     ap.add_argument("--teacher", type=Path, required=True)
     ap.add_argument("-o", "--out", type=Path, required=True)
-    ap.add_argument("--pad-seconds", type=float, default=0, help="zero-pad external PCM lane to this exact duration; never truncate")
+    ap.add_argument(
+        "--pad-seconds", type=float, default=0, help="zero-pad external PCM lane to this exact duration; never truncate"
+    )
     ap.add_argument("--dtype", choices=("f32", "bf16"), default="f32")
     ap.add_argument("--device", default="cpu")
-    ap.add_argument("--diagnose-projection", action="store_true",
-                    help="also capture F32-GEMM and prematurely-rounded BF16-GEMM counterfactuals; not oracle expectations")
-    ap.add_argument("--trace-first-layer", action="store_true",
-                    help="capture actual first-layer module and attention operation boundaries")
-    ap.add_argument("--diagnose-convolutions", action="store_true",
-                    help="compare genuine first-layer pointwise Conv1d outputs with BF16 Linear and F32-output GEMMs on identical operands")
+    ap.add_argument(
+        "--diagnose-projection",
+        action="store_true",
+        help="also capture F32-GEMM and prematurely-rounded BF16-GEMM counterfactuals; not oracle expectations",
+    )
+    ap.add_argument(
+        "--trace-first-layer",
+        action="store_true",
+        help="capture actual first-layer module and attention operation boundaries",
+    )
+    ap.add_argument(
+        "--diagnose-convolutions",
+        action="store_true",
+        help="compare genuine first-layer pointwise Conv1d outputs with BF16 Linear and F32-output GEMMs on identical operands",
+    )
 
 
 def run_ssl_teacher(args, parser):
     import torchaudio
     import transformers
     from transformers import SeamlessM4TFeatureExtractor, Wav2Vec2BertModel
+
     if args.dtype == "bf16" and (not args.device.startswith("cuda") or not torch.cuda.is_available()):
         raise ValueError("production BF16 oracle requires an allocated CUDA GPU and --device cuda")
     if args.diagnose_convolutions and args.dtype != "bf16":
         raise ValueError("--diagnose-convolutions requires the CUDA BF16 production oracle")
     config = json.loads((args.teacher / "config.json").read_text())
-    if config["num_hidden_layers"] != 16 or config["hidden_size"] != 1024 or config["add_adapter"] or config["apply_spec_augment"]:
+    if (
+        config["num_hidden_layers"] != 16
+        or config["hidden_size"] != 1024
+        or config["add_adapter"]
+        or config["apply_spec_augment"]
+    ):
         raise ValueError("expected the matched frozen sixteen-layer SemanticTeacher")
     args.out.mkdir(parents=True, exist_ok=True)
     fe = SeamlessM4TFeatureExtractor(feature_size=80, sampling_rate=16000, num_mel_bins=80, padding_value=1, stride=2)
@@ -792,9 +1018,27 @@ def run_ssl_teacher(args, parser):
             if wav.ndim != 1 or wav.dtype != np.float32:
                 raise ValueError("PCM must be float32 mono [samples]")
         else:
-            raw = subprocess.run([os.environ.get("ZONOS3_FFMPEG", "ffmpeg"), "-nostdin", "-v", "error", "-i", str(args.audio),
-                                  "-ac", "1", "-ar", "44100", "-t", "60", "-f", "f32le", "-"],
-                                 check=True, capture_output=True).stdout
+            raw = subprocess.run(
+                [
+                    os.environ.get("ZONOS3_FFMPEG", "ffmpeg"),
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(args.audio),
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "44100",
+                    "-t",
+                    "60",
+                    "-f",
+                    "f32le",
+                    "-",
+                ],
+                check=True,
+                capture_output=True,
+            ).stdout
             wav = np.frombuffer(raw, dtype="<f4").copy()
         if not len(wav) or len(wav) > 60 * 44100 or not np.isfinite(wav).all():
             raise ValueError("PCM must be finite, nonempty and at most 60 seconds")
@@ -802,13 +1046,13 @@ def run_ssl_teacher(args, parser):
             samples = int(round(args.pad_seconds * 44100))
             if samples < len(wav) or samples > 60 * 44100:
                 raise ValueError("padding duration must include all PCM and remain within 60 seconds")
-            wav = np.pad(wav, (0, samples-len(wav)))
+            wav = np.pad(wav, (0, samples - len(wav)))
         np.save(args.out / "wav44100.npy", wav)
         wav16 = torchaudio.transforms.Resample(44100, 16000)(torch.from_numpy(wav)).numpy()
         np.save(args.out / "wav16k.npy", wav16)
         fbank = fe._extract_fbank_features(wav16)
         np.save(args.out / "fbank.npy", fbank)
-        normalized = (fbank-fbank.mean(0)[None]) / np.sqrt(fbank.var(0, ddof=1)[None]+1e-7)
+        normalized = (fbank - fbank.mean(0)[None]) / np.sqrt(fbank.var(0, ddof=1)[None] + 1e-7)
         np.save(args.out / "normalized_fbank.npy", normalized)
         encoded = fe(wav16, sampling_rate=16000, return_tensors="pt", return_attention_mask=True)
         features = encoded.input_features[0].numpy()
@@ -827,13 +1071,16 @@ def run_ssl_teacher(args, parser):
     model.eval().requires_grad_(False)
     expected_tensors = ["features", "attention_mask", "feature_input", "feature_norm", "feature_projection"]
     projection_diagnostics = {}
+
     def save(name, value):
         np.save(args.out / f"{name}.npy", np.ascontiguousarray(value[0].detach().float().cpu().numpy()))
+
     def norm_hook(module, inputs, output):
         save("feature_input", inputs[0])
         save("feature_norm", output)
         projection_diagnostics["feature_input_dtype"] = str(inputs[0].dtype)
         projection_diagnostics["feature_norm_dtype"] = str(output.dtype)
+
     def projection_hook(module, inputs, output):
         save("feature_projection", output)
         projection_diagnostics["feature_projection_dtype"] = str(output.dtype)
@@ -848,16 +1095,19 @@ def run_ssl_teacher(args, parser):
             save("diagnostic_projection_premature_rounding", prebiased)
             for name, values in (("f32_gemm", f32_gemm), ("premature_rounding", prebiased)):
                 difference = values.float() - output.float()
-                projection_diagnostics[name] = dict(
-                    mismatched=int(torch.count_nonzero(difference)),
-                    maxabs=float(difference.abs().max()),
-                    rmse=float(difference.square().mean().sqrt()))
+                projection_diagnostics[name] = {
+                    "mismatched": int(torch.count_nonzero(difference)),
+                    "maxabs": float(difference.abs().max()),
+                    "rmse": float(difference.square().mean().sqrt()),
+                }
+
     handles = [
         model.feature_projection.layer_norm.register_forward_hook(norm_hook),
         model.feature_projection.projection.register_forward_hook(projection_hook),
     ]
     convolution_diagnostics = {}
     if args.diagnose_convolutions:
+
         def convolution_probe(module, inputs, output, name):
             # These are the actual masked/activated Conv1d operands, narrowed by
             # the same CUDA-autocast policy. Never substitute a counterfactual
@@ -871,35 +1121,53 @@ def run_ssl_teacher(args, parser):
                 f32_mm = torch.mm(flat.float(), weight.T.float()).to(module.weight.dtype)
             reference = output.transpose(1, 2)
             save(f"diagnostic_{name}.input", operands)
-            stats = dict(input_dtype=str(inputs[0].dtype), operand_dtype=str(operands.dtype),
-                         weight_dtype=str(weight.dtype), output_dtype=str(output.dtype))
-            for label, values in (("bf16_linear", bf16_linear), ("bf16_mm_f32_output", bf16_mm_f32), ("f32_mm", f32_mm)):
+            stats = {
+                "input_dtype": str(inputs[0].dtype),
+                "operand_dtype": str(operands.dtype),
+                "weight_dtype": str(weight.dtype),
+                "output_dtype": str(output.dtype),
+            }
+            for label, values in (
+                ("bf16_linear", bf16_linear),
+                ("bf16_mm_f32_output", bf16_mm_f32),
+                ("f32_mm", f32_mm),
+            ):
                 values = values.reshape(reference.shape)
                 save(f"diagnostic_{name}.{label}", values)
                 difference = values.float() - reference.float()
-                stats[label] = dict(mismatched=int(torch.count_nonzero(difference)),
-                                    maxabs=float(difference.abs().max()),
-                                    rmse=float(difference.square().mean().sqrt()))
+                stats[label] = {
+                    "mismatched": int(torch.count_nonzero(difference)),
+                    "maxabs": float(difference.abs().max()),
+                    "rmse": float(difference.square().mean().sqrt()),
+                }
             convolution_diagnostics[name] = stats
+
         conv = model.encoder.layers[0].conv_module
         for name, module in (("enc.0.conv.pw1", conv.pointwise_conv1), ("enc.0.conv.pw2", conv.pointwise_conv2)):
-            handles.append(module.register_forward_hook(
-                lambda mod, inp, output, name=name: convolution_probe(mod, inp, output, name)))
+            handles.append(
+                module.register_forward_hook(
+                    lambda mod, inp, output, name=name: convolution_probe(mod, inp, output, name)
+                )
+            )
     operation_dtypes = {}
     attention_active, attention_matmuls = [False], [0]
     originals = (torch.matmul, torch.einsum, torch.softmax)
     if args.trace_first_layer:
+
         def save_operation(name, value):
             save(name, value)
             expected_tensors.append(name)
             operation_dtypes[name] = str(value.dtype)
+
         def module_capture(module, name, channels_first=False, before=False):
             def record(value):
                 save_operation(name, value.transpose(1, 2) if channels_first else value)
+
             if before:
                 handles.append(module.register_forward_pre_hook(lambda mod, inp: record(inp[0])))
             else:
                 handles.append(module.register_forward_hook(lambda mod, inp, output: record(output)))
+
         layer = model.encoder.layers[0]
         for index in (1, 2):
             ffn = getattr(layer, f"ffn{index}")
@@ -909,8 +1177,12 @@ def run_ssl_teacher(args, parser):
             module_capture(ffn.output_dense, f"enc.0.ffn{index}.down")
         module_capture(layer.self_attn_layer_norm, "enc.0.residual.ffn1", before=True)
         module_capture(layer.self_attn_layer_norm, "enc.0.attn.norm")
-        for name, module in (("q", layer.self_attn.linear_q), ("k", layer.self_attn.linear_k),
-                             ("v", layer.self_attn.linear_v), ("o", layer.self_attn.linear_out)):
+        for name, module in (
+            ("q", layer.self_attn.linear_q),
+            ("k", layer.self_attn.linear_k),
+            ("v", layer.self_attn.linear_v),
+            ("o", layer.self_attn.linear_out),
+        ):
             module_capture(module, f"enc.0.attn.{name}")
         conv = layer.conv_module
         module_capture(conv.layer_norm, "enc.0.residual.attn", before=True)
@@ -923,14 +1195,19 @@ def run_ssl_teacher(args, parser):
         module_capture(conv.pointwise_conv2, "enc.0.conv.pw2", channels_first=True)
         module_capture(layer.ffn2_layer_norm, "enc.0.residual.conv", before=True)
         module_capture(layer.final_layer_norm, "enc.0.residual.ffn2", before=True)
+
         def matrix_capture(name, value):
             save_operation(name, value.transpose(1, 2).reshape(1, len(features), -1))
+
         def begin_attention(mod, inp):
             attention_active[0], attention_matmuls[0] = True, 0
+
         def end_attention(mod, inp, output):
             attention_active[0] = False
+
         handles.append(layer.self_attn.register_forward_pre_hook(begin_attention))
         handles.append(layer.self_attn.register_forward_hook(end_attention))
+
         # Temporary identity wrappers observe genuine source calls; neither their
         # operands nor return values are replaced. Restore them even on failure.
         def trace_matmul(*inputs, **kwargs):
@@ -942,24 +1219,30 @@ def run_ssl_teacher(args, parser):
                     save_operation("enc.0.attn.value", output.transpose(1, 2).reshape(1, len(features), -1))
                 attention_matmuls[0] += 1
             return output
+
         def trace_einsum(*inputs, **kwargs):
             output = originals[1](*inputs, **kwargs)
             if attention_active[0]:
                 matrix_capture("enc.0.attn.relative", output)
             return output
+
         def trace_softmax(*inputs, **kwargs):
             output = originals[2](*inputs, **kwargs)
             if attention_active[0]:
                 matrix_capture("enc.0.attn.masked_scores", inputs[0])
                 matrix_capture("enc.0.attn.probs", output)
             return output
+
         torch.matmul, torch.einsum, torch.softmax = trace_matmul, trace_einsum, trace_softmax
     autocast = torch.autocast("cuda", dtype=torch.bfloat16) if args.dtype == "bf16" else nullcontext()
     try:
         with torch.inference_mode(), autocast:
-            result = model(input_features=torch.from_numpy(features)[None].to(args.device, dtype=dtype),
-                           attention_mask=torch.from_numpy(mask)[None].to(args.device, dtype=torch.bool),
-                           output_hidden_states=True, return_dict=True)
+            result = model(
+                input_features=torch.from_numpy(features)[None].to(args.device, dtype=dtype),
+                attention_mask=torch.from_numpy(mask)[None].to(args.device, dtype=torch.bool),
+                output_hidden_states=True,
+                return_dict=True,
+            )
     finally:
         torch.matmul, torch.einsum, torch.softmax = originals
         for handle in handles:
@@ -973,25 +1256,44 @@ def run_ssl_teacher(args, parser):
         expected_tensors.append(f"hidden_{layer}")
     np.save(args.out / "output.npy", result.last_hidden_state[0].float().cpu().numpy())
     expected_tensors.append("output")
-    (args.out / "manifest.json").write_text(json.dumps(dict(
-        teacher=str(args.teacher.resolve()), precision=args.dtype, device=args.device,
-        recipe="zonos3.codec.codec_adapter.MossAutoencoder._dual CUDA autocast BF16" if args.dtype == "bf16" else "F32 diagnostic without autocast",
-        expected_tensors=expected_tensors, projection_diagnostics=projection_diagnostics,
-        operation_dtypes=operation_dtypes,
-        convolution_diagnostics=convolution_diagnostics,
-        hidden_dtypes=[str(state.dtype) for state in result.hidden_states],
-        runtime=dict(python=sys.executable, torch=torch.__version__, torch_file=torch.__file__,
-                     transformers=transformers.__version__, transformers_file=transformers.__file__,
-                     teacher_implementation=sys.modules[Wav2Vec2BertModel.__module__].__file__,
-                     torchaudio=torchaudio.__version__, torchaudio_file=torchaudio.__file__,
-                     allow_tf32=torch.backends.cuda.matmul.allow_tf32,
-                     allow_bf16_reduced_precision_reduction=torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction),
-        convolution_runtime=dict(cudnn_version=torch.backends.cudnn.version(),
-                                 cudnn_enabled=torch.backends.cudnn.enabled,
-                                 cudnn_allow_tf32=torch.backends.cudnn.allow_tf32,
-                                 cudnn_benchmark=torch.backends.cudnn.benchmark,
-                                 cudnn_deterministic=torch.backends.cudnn.deterministic),
-    ), indent=2) + "\n")
+    (args.out / "manifest.json").write_text(
+        json.dumps(
+            {
+                "teacher": str(args.teacher.resolve()),
+                "precision": args.dtype,
+                "device": args.device,
+                "recipe": "zonos3.codec.codec_adapter.MossAutoencoder._dual CUDA autocast BF16"
+                if args.dtype == "bf16"
+                else "F32 diagnostic without autocast",
+                "expected_tensors": expected_tensors,
+                "projection_diagnostics": projection_diagnostics,
+                "operation_dtypes": operation_dtypes,
+                "convolution_diagnostics": convolution_diagnostics,
+                "hidden_dtypes": [str(state.dtype) for state in result.hidden_states],
+                "runtime": {
+                    "python": sys.executable,
+                    "torch": torch.__version__,
+                    "torch_file": torch.__file__,
+                    "transformers": transformers.__version__,
+                    "transformers_file": transformers.__file__,
+                    "teacher_implementation": sys.modules[Wav2Vec2BertModel.__module__].__file__,
+                    "torchaudio": torchaudio.__version__,
+                    "torchaudio_file": torchaudio.__file__,
+                    "allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+                    "allow_bf16_reduced_precision_reduction": torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction,
+                },
+                "convolution_runtime": {
+                    "cudnn_version": torch.backends.cudnn.version(),
+                    "cudnn_enabled": torch.backends.cudnn.enabled,
+                    "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+                    "cudnn_benchmark": torch.backends.cudnn.benchmark,
+                    "cudnn_deterministic": torch.backends.cudnn.deterministic,
+                },
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     print(f"features: {features.shape}, valid={mask.sum()}/{len(mask)}, dtype={args.dtype}", flush=True)
 
 
@@ -1029,10 +1331,9 @@ def add_speaker_encoder_arguments(ap):
 def run_speaker_encoder(args, parser):
     import soundfile as sf
     import torchaudio
-    from zonos3.models.mect_speaker import MECTFbankSpeakerEmbedding
+    from zonos3.models.mect_speaker import MECTFbankSpeakerEmbedding, registry_path
 
-    registry_path = args.registry or args.checkpoint.resolve().parent.parent.parent / "registries" / "speaker_encoder_registry.json"
-    entry = json.loads(registry_path.read_text())["ownmect_s2"]
+    entry = json.loads((args.registry or registry_path()).read_text())["ownmect_s2"]
     model = MECTFbankSpeakerEmbedding(dict(entry, codec="ownmect_s2", checkpoint=str(args.checkpoint)), device="cpu")
 
     sample_rate = model.sample_rate
@@ -1053,9 +1354,9 @@ def run_speaker_encoder(args, parser):
 
     for s in range(1, 5):
         getattr(vpr.feature_extractor, f"mect_block{s}").register_forward_hook(
-            lambda mod, inp, out, s=s: captured.__setitem__(f"feat_{s}", flat(out)[0].t().contiguous()))
-    vpr.encoding_layers.register_forward_hook(
-        lambda mod, inp, out: captured.__setitem__("pooled", out.detach()))
+            lambda mod, inp, out, s=s: captured.__setitem__(f"feat_{s}", flat(out)[0].t().contiguous())
+        )
+    vpr.encoding_layers.register_forward_hook(lambda mod, inp, out: captured.__setitem__("pooled", out.detach()))
 
     with torch.inference_mode():
         fbank = model.fbank(wav)  # [T, 80], wav * 32768 inside
@@ -1081,11 +1382,24 @@ def run_speaker_encoder(args, parser):
         np.save(args.out / "wav16k_module.npy", mod16.numpy().astype(np.float32))
         print(f"resample module vs functional max|diff| {float((mod16 - wav).abs().max()):.3g}")
     e = captured["embedding"].reshape(-1)
-    print(f"embedding norm {float(e.norm()):.4f}; wav16k {wav.numel()} samples @ {sample_rate}; "
-          f"input {sig.size} samples @ {sr}")
-    (args.out / "manifest.json").write_text(json.dumps({
-        "expected_tensors": SPEAKER_NAMES, "sample_rate_in": int(sr), "n_in": int(sig.size), "n_16k": int(wav.numel()),
-        "frames": int(fbank.shape[0]), "checkpoint": str(args.checkpoint), "audio": str(args.audio)}, indent=1))
+    print(
+        f"embedding norm {float(e.norm()):.4f}; wav16k {wav.numel()} samples @ {sample_rate}; "
+        f"input {sig.size} samples @ {sr}"
+    )
+    (args.out / "manifest.json").write_text(
+        json.dumps(
+            {
+                "expected_tensors": SPEAKER_NAMES,
+                "sample_rate_in": int(sr),
+                "n_in": int(sig.size),
+                "n_16k": int(wav.numel()),
+                "frames": int(fbank.shape[0]),
+                "checkpoint": str(args.checkpoint),
+                "audio": str(args.audio),
+            },
+            indent=1,
+        )
+    )
 
 
 # ------------------------------------------------------------------------------------------------------------- main
@@ -1104,8 +1418,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
     parsers = {}
     for name, (doc, add_arguments, _) in SUBCOMMANDS.items():
-        parsers[name] = commands.add_parser(name, help=doc.splitlines()[0], description=doc,
-                                            formatter_class=argparse.RawDescriptionHelpFormatter)
+        parsers[name] = commands.add_parser(
+            name, help=doc.splitlines()[0], description=doc, formatter_class=argparse.RawDescriptionHelpFormatter
+        )
         add_arguments(parsers[name])
     args = parser.parse_args()
     SUBCOMMANDS[args.command][2](args, parsers[args.command])

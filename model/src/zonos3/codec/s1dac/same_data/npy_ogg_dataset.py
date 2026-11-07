@@ -29,7 +29,8 @@ class Wav2Vec2BertFeaturePreprocessor:
         )
         self.resampler = (
             _cached_resampler(self.source_sample_rate, self.target_sample_rate)
-            if self.source_sample_rate != self.target_sample_rate else None
+            if self.source_sample_rate != self.target_sample_rate
+            else None
         )
 
     def __call__(self, audio: torch.Tensor, info: dict) -> None:

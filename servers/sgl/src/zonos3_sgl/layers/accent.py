@@ -12,6 +12,7 @@ accent_adapters.ExpertAccents) and run sonic_experts_with_accents.
 from __future__ import annotations
 
 import torch
+
 from zonos3_sgl.core import get_global_ctx
 
 
@@ -44,9 +45,7 @@ def accent_shift(op, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return out[:rows]
 
 
-def apply_accent(
-    op, x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor | None = None
-) -> torch.Tensor:
+def apply_accent(op, x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
     """``y`` plus the op's per-row adapter shift, if it has one.
 
     ``mask`` defaults to the batch's per-token mask; ops whose rows are not the
@@ -75,8 +74,15 @@ def accent_router_bias(router, bias: torch.Tensor) -> torch.Tensor:
 
 
 def expert_pair_shift(
-    accents, weight: str, rows: torch.Tensor, tokens: torch.Tensor, experts: torch.Tensor,
-    slots: torch.Tensor, scales: torch.Tensor, *, gather_rows: bool = False,
+    accents,
+    weight: str,
+    rows: torch.Tensor,
+    tokens: torch.Tensor,
+    experts: torch.Tensor,
+    slots: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    gather_rows: bool = False,
 ) -> torch.Tensor:
     """``alpha * up[a, e] @ (down[a, e] @ row)`` per routed pair, for expert weight ``weight``.
 
@@ -94,8 +100,17 @@ def expert_pair_shift(
     for index, group in enumerate(accents.groups):
         down, up = group.factors[weight]
         expert_lora_shift(
-            rows, tokens, experts, slots, scales, group.first, down, up, out,
-            gather_rows=gather_rows, zero_others=index == 0,
+            rows,
+            tokens,
+            experts,
+            slots,
+            scales,
+            group.first,
+            down,
+            up,
+            out,
+            gather_rows=gather_rows,
+            zero_others=index == 0,
         )
     return out
 
@@ -109,8 +124,12 @@ def expert_accent_inputs() -> tuple[torch.Tensor, torch.Tensor] | None:
 
 
 def sonic_experts_with_accents(
-    op, x: torch.Tensor, scores: torch.Tensor, topk_ids: torch.Tensor,
-    slots: torch.Tensor, scales: torch.Tensor,
+    op,
+    x: torch.Tensor,
+    scores: torch.Tensor,
+    topk_ids: torch.Tensor,
+    slots: torch.Tensor,
+    scales: torch.Tensor,
 ) -> torch.Tensor:
     """SonicMoE ``moe_general_routing_inputs`` (inference) with per-pair expert adapter terms.
 
@@ -146,8 +165,16 @@ def sonic_experts_with_accents(
     x_gather_idx = torch.empty(pairs, dtype=torch.int32, device=device)
     token_offset = torch.empty(tokens + 1, dtype=torch.int32, device=device)
     general_routing_router_metadata_triton(
-        token_indices, expert_indices, tokens, num_experts, expert_frequency,
-        expert_frequency_offset, x_gather_idx, s_scatter_idx, s_reverse_scatter_idx, token_offset,
+        token_indices,
+        expert_indices,
+        tokens,
+        num_experts,
+        expert_frequency,
+        expert_frequency_offset,
+        x_gather_idx,
+        s_scatter_idx,
+        s_reverse_scatter_idx,
+        token_offset,
     )
 
     # Kernel rows are pairs sorted by expert: row p is token x_gather_idx[p] and
@@ -155,22 +182,30 @@ def sonic_experts_with_accents(
     accents = op._accent_experts
     pair_experts = expert_indices.index_select(0, s_scatter_idx.long())
     slots, scales = slots.contiguous(), scales.float().contiguous()
-    up_shift = expert_pair_shift(
-        accents, "w13", x, x_gather_idx, pair_experts, slots, scales, gather_rows=True
-    )
+    up_shift = expert_pair_shift(accents, "w13", x, x_gather_idx, pair_experts, slots, scales, gather_rows=True)
     hidden = x.new_empty(pairs, w13.shape[1] // 2)
     gemm_gated(
-        x, w13.mT, C=up_shift, activation="swiglu", postact_out=hidden,
-        cu_seqlens_m=expert_frequency_offset, A_idx=x_gather_idx, store_preact=False,
+        x,
+        w13.mT,
+        C=up_shift,
+        activation="swiglu",
+        postact_out=hidden,
+        cu_seqlens_m=expert_frequency_offset,
+        A_idx=x_gather_idx,
+        store_preact=False,
     )
     down_shift = expert_pair_shift(accents, "w2", hidden, x_gather_idx, pair_experts, slots, scales)
     y = gemm_add(hidden, w2.mT, down_shift, cu_seqlens_m=expert_frequency_offset)
 
     out = x.new_empty(tokens, w2.shape[1])
     _router_forward(
-        y=y, o=out, topk_scores=scores.reshape(-1).float().contiguous(),
+        y=y,
+        o=out,
+        topk_scores=scores.reshape(-1).float().contiguous(),
         s_reverse_scatter_idx=s_reverse_scatter_idx,
         num_activated_expert_per_token_offset=token_offset,
-        varlen_K_max=num_experts, H=w2.shape[1], is_varlen_K=True,
+        varlen_K_max=num_experts,
+        H=w2.shape[1],
+        is_varlen_K=True,
     )
     return out

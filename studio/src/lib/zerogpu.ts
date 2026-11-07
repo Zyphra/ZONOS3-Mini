@@ -9,7 +9,7 @@
 const HANDSHAKE = 'supports-zerogpu-headers';
 const REQUEST = 'zerogpu-headers';
 
-/** The routes that take a GPU on the Space (`space/app.py`). */
+/** The routes that take a GPU on the Space (`servers/space/app.py`). */
 const GPU_ROUTE = /^\/v2\/generate$/;
 
 const parentOrigin = typeof window !== 'undefined' && window.parent !== window && location.hostname.endsWith('.hf.space')

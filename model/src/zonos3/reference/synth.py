@@ -27,19 +27,20 @@ from zonos3.models.accent_format import AccentAdapter, list_accent_adapters, loa
 from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM
 from zonos3.speaker_cfg import guided_logits
+from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
 from zonos3.tts import plan as P
-from zonos3.tts.delay import shear_up
+from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import LaciConfig, LaciHeads, LaciSession, RateBuckets
 from zonos3.tts.probe import locate_text_span
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
-from zonos3.tts.sampler import sample_tts
+from zonos3.tts.sampler import active_repetition_window, clamp_sampling, sample_tts
 from zonos3.tts.span_follow import FollowConfig, SpanFollower
 from zonos3.tts.steering import SteeringBundle, load_bundle, schedule_delta
-
-_DECODE_OVERLAP_FRAMES = 4  # TTSVocoderManager overlap_frames: already-counted rows re-decoded at EOS
-
+from zonos3.tts.stream import StreamDecoder, StreamSettings
 
 # ----------------------------------------------------------------------------------------------------- assets
+
+_UNLOADED = object()
 
 
 @dataclass
@@ -52,7 +53,7 @@ class ReferenceAssets:
     laci_heads: dict[str, LaciHeads] = field(default_factory=dict)
     _decoders: dict = field(default_factory=dict, repr=False)
     _speaker_encoders: dict = field(default_factory=dict, repr=False)
-    _normalizer: object | None = field(default=None, repr=False)
+    _normalizer: object = field(default=_UNLOADED, repr=False)
 
     @classmethod
     def load(cls, *, steer_bundle=None, accent_adapters=None, laci_heads: dict | None = None) -> "ReferenceAssets":
@@ -81,10 +82,9 @@ class ReferenceAssets:
         return list(self.accent_adapters)
 
     def normalizer(self):
-        if self._normalizer is None:
-            from zonos3.tokenizer.textnorm import TTSTextNormalizer
-
-            self._normalizer = TTSTextNormalizer()
+        """The text normalizer (None with ZONOS3_TTS_NORM=0), loaded on first use."""
+        if self._normalizer is _UNLOADED:
+            self._normalizer = load_normalizer(warmup=False)
         return self._normalizer
 
     def decoder(self, codec: str, device: torch.device):
@@ -92,10 +92,11 @@ class ReferenceAssets:
         key = (codec, str(device))
         if key not in self._decoders:
             from zonos3.tokenizer import matched_codec
+            from zonos3.utils.hashing import sha256_file
             from zonos3.utils.release import resolve_file
 
             entry = matched_codec.entry(codec)
-            actual = matched_codec._sha256(resolve_file(entry["checkpoint"]))
+            actual = sha256_file(resolve_file(entry["checkpoint"]))
             if actual != entry["checkpoint_sha256"]:
                 raise ValueError(f"codec generator checkpoint sha256 {actual} != {entry['checkpoint_sha256']}")
             self._decoders[key] = matched_codec.load_model(codec, device)
@@ -129,7 +130,9 @@ def load_embedding_vector(embedding_bytes: bytes, *, expected_dim: int, file_nam
     try:
         loaded = np.load(io.BytesIO(embedding_bytes), allow_pickle=False)
     except Exception as exc:
-        raise ValueError(f"{file_name or 'Speaker embedding file'} must be a valid .npy or .npz file saved without pickle.") from exc
+        raise ValueError(
+            f"{file_name or 'Speaker embedding file'} must be a valid .npy or .npz file saved without pickle."
+        ) from exc
     if isinstance(loaded, np.lib.npyio.NpzFile):
         try:
             if "emb" in loaded.files:
@@ -160,9 +163,32 @@ def load_embedding_vector(embedding_bytes: bytes, *, expected_dim: int, file_nam
         raise ValueError(f"Unsupported embedding array shape {tuple(arr.shape)}. Expected (D,) or (N, D).")
     vector = np.ascontiguousarray(vector, dtype=np.float32)
     if vector.shape[-1] != expected_dim:
-        raise ValueError(f"Reference embedding dimension mismatch. Model expects {expected_dim}, "
-                         f"but loaded file has {vector.shape[-1]}.")
+        raise ValueError(
+            f"Reference embedding dimension mismatch. Model expects {expected_dim}, "
+            f"but loaded file has {vector.shape[-1]}."
+        )
     return torch.from_numpy(vector).to(dtype=torch.float32, device="cpu")
+
+
+def slerp(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+    """Spherical interpolation of two speaker embeddings (``speaker_blend_t``), on the CPU in float32."""
+    v0 = v0.detach().to(dtype=torch.float32, device="cpu").contiguous().view(-1)
+    v1 = v1.detach().to(dtype=torch.float32, device="cpu").contiguous().view(-1)
+    if v0.shape != v1.shape:
+        raise ValueError(
+            f"Cannot blend speaker embeddings with different shapes {tuple(v0.shape)} and {tuple(v1.shape)}."
+        )
+    blend = float(t)
+    if blend < 0.0 or blend > 1.0:
+        raise ValueError("speaker_blend_t must be between 0.0 and 1.0.")
+    v0_n = v0 / (torch.linalg.vector_norm(v0) + 1e-8)
+    v1_n = v1 / (torch.linalg.vector_norm(v1) + 1e-8)
+    omega = torch.acos(torch.clamp(torch.dot(v0_n, v1_n), -1.0, 1.0))
+    if float(omega) < 1e-6:
+        return ((1.0 - blend) * v0 + blend * v1).contiguous()
+    sin_omega = torch.sin(omega)
+    mixed = (torch.sin((1.0 - blend) * omega) / sin_omega) * v0 + (torch.sin(blend * omega) / sin_omega) * v1
+    return mixed.to(dtype=torch.float32, device="cpu").contiguous()
 
 
 def silence_frame(codec: str, device) -> torch.Tensor:
@@ -189,9 +215,15 @@ def prompt_builder(lm: Zonos3LM) -> TTSPromptBuilder:
     phonemes = (c.text_tokenizer_spec or {}).get("phonemes")
     if spec is not None and phonemes is not None:
         spec = {**spec, "phonemes": phonemes}
-    return TTSPromptBuilder(TTSPromptConfig(n_codebooks=c.n_codebooks, codebook_sizes=c.codebook_sizes,
-                                            audio_pad_id=c.audio_pad_id, text_vocab=c.text_vocab,
-                                            text_tokenizer_spec=spec))
+    return TTSPromptBuilder(
+        TTSPromptConfig(
+            n_codebooks=c.n_codebooks,
+            codebook_sizes=c.codebook_sizes,
+            audio_pad_id=c.audio_pad_id,
+            text_vocab=c.text_vocab,
+            text_tokenizer_spec=spec,
+        )
+    )
 
 
 class ReferenceContext:
@@ -227,12 +259,7 @@ class ReferenceContext:
         return self._builder
 
     def normalize_text(self, text: str, language: str, enabled: bool) -> str:
-        from zonos3.tokenizer.textnorm import collapse_line_breaks, normalization_enabled
-
-        text = collapse_line_breaks(text)
-        if enabled and normalization_enabled():
-            text = self.assets.normalizer().normalize(text, language)
-        return text
+        return normalize_request_text(text, language, self.assets.normalizer() if enabled else None)
 
     def silence_frame(self) -> torch.Tensor:
         return silence_frame(self.config.audio_codec, self.device)
@@ -244,8 +271,11 @@ def _speaker_embedding(lm: Zonos3LM, req: P.Request, assets: ReferenceAssets, de
     if req.speaker_audio_base64 and req.speaker_embedding_base64:
         raise ValueError("Provide either a reference audio file or a saved embedding file, not both.")
     if req.speaker_embedding_base64:
-        return load_embedding_vector(decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
-                                      expected_dim=c.speaker_embedding_dim, file_name=req.speaker_embedding_name)
+        return load_embedding_vector(
+            decode_base64_blob(req.speaker_embedding_base64, "speaker_embedding_base64"),
+            expected_dim=c.speaker_embedding_dim,
+            file_name=req.speaker_embedding_name,
+        )
     if not req.speaker_audio_base64:
         return None
     from zonos3.tts.audio import _decode_audio_bytes
@@ -276,8 +306,9 @@ def _reference_codes(ctx: ReferenceContext, req: P.Request, mode: str | None) ->
 
     wav, sample_rate = _decode_audio_bytes(decode_base64_blob(req.speaker_audio_base64, "speaker_audio_base64"))
     index = device.index if device.index is not None else torch.cuda.current_device()
-    return encode_dual_reference(wav, sample_rate, max_seconds=ctx.config.speaker_reference_max_seconds,
-                                 device=f"cuda:{index}")
+    return encode_dual_reference(
+        wav, sample_rate, max_seconds=ctx.config.speaker_reference_max_seconds, device=f"cuda:{index}"
+    )
 
 
 def _resolve_speaker(lm: Zonos3LM, ctx: ReferenceContext, req: P.Request, mode: str | None) -> P.Speaker:
@@ -286,8 +317,10 @@ def _resolve_speaker(lm: Zonos3LM, ctx: ReferenceContext, req: P.Request, mode: 
         raise ValueError("speaker ids need a server")
     if mode == "reference":
         if req.speaker_embedding_base64:
-            raise ValueError("This checkpoint conditions on raw reference audio and does not accept "
-                             "speaker embedding files or embedding blends.")
+            raise ValueError(
+                "This checkpoint conditions on raw reference audio and does not accept "
+                "speaker embedding files or embedding blends."
+            )
         embedding = None
     else:
         embedding = _speaker_embedding(lm, req, ctx.assets, ctx.device)
@@ -312,9 +345,18 @@ class EditLayout:
 
 
 @torch.inference_mode()
-def edit_region(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, layout: EditLayout, min_frames: int,
-                speaker_embedding: torch.Tensor | None = None, hidden_delta=None, accents: AccentState | None = None,
-                device=None) -> tuple[list[torch.Tensor], int | None]:
+def edit_region(
+    lm: Zonos3LM,
+    request: dict,
+    *,
+    assets: ReferenceAssets,
+    layout: EditLayout,
+    min_frames: int,
+    speaker_embedding: torch.Tensor | None = None,
+    hidden_delta=None,
+    accents: AccentState | None = None,
+    device=None,
+) -> tuple[list[torch.Tensor], int | None]:
     """One speech-edit region (``zonos3.tts.edit_runtime.FillJob``): ``request`` (text, language, normalization,
     sampling, seed, max_tokens, condition buckets) planned over the edit layout behind the speaker row
     (``speaker_embedding``, already steered) and generated until the span-end token, masked for ``min_frames`` rows;
@@ -325,12 +367,22 @@ def edit_region(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, layout:
         raise ValueError("Speech editing needs a checkpoint with a span-end audio token (span_end_id)")
     device = torch.device(device if device is not None else lm.device)
     ctx = ReferenceContext(lm, assets, device)
-    plan = P.plan_prompt(ctx, request, lambda req, mode: P.Speaker(mode, speaker_embedding, None),
-                         hidden_delta=hidden_delta, edit=layout)
+    plan = P.plan_prompt(
+        ctx, request, lambda req, mode: P.Speaker(mode, speaker_embedding, None), hidden_delta=hidden_delta, edit=layout
+    )
     sampling = replace(Sampling.from_request(plan.request), min_frames=int(min_frames))
-    attempt = generate_rows(lm, plan.cond, sampling=sampling, seed=plan.seed, max_tokens=plan.max_tokens,
-                            stop_id=c.span_end_id, twin=plan.twin, cfg_scale=plan.cfg_scale, accents=accents,
-                            steer=steer_fn(plan, None))
+    attempt = generate_rows(
+        lm,
+        plan.cond,
+        sampling=sampling,
+        seed=plan.seed,
+        max_tokens=plan.max_tokens,
+        stop_id=c.span_end_id,
+        twin=plan.twin,
+        cfg_scale=plan.cfg_scale,
+        accents=accents,
+        steer=steer_fn(plan, None),
+    )
     return attempt.rows, attempt.eos_frame
 
 
@@ -352,8 +404,15 @@ class Sampling:
 
     @classmethod
     def from_request(cls, req: P.Request) -> "Sampling":
-        return cls(float(req.temperature), int(req.topk), float(req.top_p), float(req.min_p),
-                   int(req.repetition_window), float(req.repetition_penalty), int(req.repetition_codebooks))
+        return cls(
+            float(req.temperature),
+            int(req.topk),
+            float(req.top_p),
+            float(req.min_p),
+            int(req.repetition_window),
+            float(req.repetition_penalty),
+            int(req.repetition_codebooks),
+        )
 
 
 class ProbeState:
@@ -373,36 +432,47 @@ class Attempt:
     eos_frame: int | None  # aligned EOS frame in generated rows
 
 
-def sample_row(config, logits, sampling: Sampling, history: torch.Tensor, total_generated: int, history_rows: int,
-               stop_id: int, generator: torch.Generator) -> torch.Tensor:
+def sample_row(
+    config,
+    logits,
+    sampling: Sampling,
+    history: torch.Tensor,
+    total_generated: int,
+    history_rows: int,
+    stop_id: int,
+    generator: torch.Generator,
+) -> torch.Tensor:
     """One sampled row; ``config`` supplies n_codebooks, codebook_size, codebook_sizes, audio_pad_id and text_vocab."""
     c = config
     n_cb = c.n_codebooks
     device = logits.device
-    window = max(int(sampling.repetition_window), 0)
-    penalty = max(float(sampling.repetition_penalty), 1.0)
-    codebooks = n_cb if sampling.repetition_codebooks < 0 else min(max(sampling.repetition_codebooks, 0), n_cb)
-    active = min(window, total_generated + history_rows, len(history)) if window > 0 and penalty > 1.0 and codebooks > 0 else 0
+    s = clamp_sampling(sampling, n_codebooks=n_cb, codebook_size=c.codebook_size)
+    active = active_repetition_window(s, min(total_generated + history_rows, len(history)))
     repetition_ids = repetition_penalties = None
     if active > 0:
-        recent = history[len(history) - active:, :n_cb].to(device=device, dtype=torch.int64).transpose(0, 1)
+        recent = history[len(history) - active :, :n_cb].to(device=device, dtype=torch.int64).transpose(0, 1)
         valid = (recent >= 0) & (recent < c.codebook_size)
-        valid[codebooks:] = False
+        valid[s.repetition_codebooks :] = False
         repetition_ids = torch.where(valid, recent, torch.full_like(recent, -1)).unsqueeze(0)
-        repetition_penalties = torch.tensor([penalty], dtype=torch.float32, device=device)
+        repetition_penalties = torch.tensor([s.repetition_penalty], dtype=torch.float32, device=device)
     stop_blocked = None
     if sampling.min_frames > 0:
         stop_blocked = torch.tensor([[total_generated < sampling.min_frames + cb for cb in range(n_cb)]], device=device)
     row = sample_tts(
         logits.float().unsqueeze(0),
-        torch.tensor([max(sampling.temperature, 1e-6)], dtype=torch.float32, device=device),
-        torch.tensor([sampling.topk if sampling.topk >= 1 else c.codebook_size], dtype=torch.int32, device=device),
-        torch.tensor([min(max(sampling.top_p, 0.0), 1.0)], dtype=torch.float32, device=device),
-        torch.tensor([max(sampling.min_p, 0.0)], dtype=torch.float32, device=device),
-        codebook_size=c.codebook_size, audio_pad_id=c.audio_pad_id,
+        torch.tensor([s.temperature], dtype=torch.float32, device=device),
+        torch.tensor([s.topk], dtype=torch.int32, device=device),
+        torch.tensor([s.top_p], dtype=torch.float32, device=device),
+        torch.tensor([s.min_p], dtype=torch.float32, device=device),
+        codebook_size=c.codebook_size,
+        audio_pad_id=c.audio_pad_id,
         stop_token_ids=torch.tensor([stop_id], dtype=torch.int64, device=device),
-        repetition_token_ids=repetition_ids, repetition_penalties=repetition_penalties,
-        codebook_sizes=c.codebook_sizes, text_vocab=c.text_vocab, generators=[generator], stop_blocked=stop_blocked,
+        repetition_token_ids=repetition_ids,
+        repetition_penalties=repetition_penalties,
+        codebook_sizes=c.codebook_sizes,
+        text_vocab=c.text_vocab,
+        generators=[generator],
+        stop_blocked=stop_blocked,
     )[0]
     return torch.tensor(row, dtype=torch.int32)
 
@@ -441,9 +511,15 @@ def generate_rows(
             delta = steer(frame)
             if delta is not None:
                 hidden = delta
-        return lm(ids, cache, speaker_rows=branch.speaker_rows(),
-                  condition_rows=branch.condition_rows(), hidden_deltas=hidden, accents=accents,
-                  probe=probe.spec() if with_probe and probe is not None else None)
+        return lm(
+            ids,
+            cache,
+            speaker_rows=branch.speaker_rows(),
+            condition_rows=branch.condition_rows(),
+            hidden_deltas=hidden,
+            accents=accents,
+            probe=probe.spec() if with_probe and probe is not None else None,
+        )
 
     outs = [forward(b, cache, b.input_ids, None, False) for b, cache in branches]
     rows: list[torch.Tensor] = []
@@ -457,8 +533,7 @@ def generate_rows(
             logits = guided_logits(logits, outs[1].logits[-1].float(), cfg_scale)
         total_generated = len(rows)
         token = sample_row(lm.config, logits, sampling, history, total_generated, history_rows, stop_id, generator)
-        if not has_audio_prefix and total_generated < n_cb - 1:  # cold-start delay triangle -> padding
-            token[total_generated + 1 : n_cb] = pad
+        apply_cold_start_delay(token, total_generated, n_codebooks=n_cb, pad_id=pad, has_audio_prefix=has_audio_prefix)
         if step > 0 and probe is not None and observer is not None:
             probe.steps += 1
             if not probe.stop:
@@ -493,121 +568,57 @@ def generate_rows(
 # ----------------------------------------------------------------------------------------------------- decoding
 
 
-def decode_rows(lm: Zonos3LM, assets: ReferenceAssets, rows: list, *, prefill_rows: torch.Tensor | None,
-                eos_frame: int | None, context_codes: torch.Tensor | None, device) -> np.ndarray:
-    """End-of-stream decode of TTSVocoderManager.decode_frames / _decode_final: the prefill rows open the stream, the
-    EOS boundary is the earliest of the aligned EOS frame and every row's EOA column, the last overlap rows of the
-    prefill are re-decoded with the rest, and the reference tail is decoded as left context at the stream start."""
+def _codec_decode(lm: Zonos3LM, assets: ReferenceAssets, device):
+    """The checkpoint's matched codec on undelayed codes [frames, n_codebooks] -> float32 PCM (ValueError for codes
+    outside the codebook)."""
     from zonos3.tokenizer.matched_codec import decode_model, entry
 
     c = lm.config
-    n_cb = c.n_codebooks
-    eoa = c.audio_pad_id - 1
-    buffer = [] if prefill_rows is None else [[int(v) for v in r[:n_cb]] for r in prefill_rows.tolist()]
-    prefill = len(buffer)
-    candidates = [] if eos_frame is None else [max(0, int(eos_frame)) + prefill]
-    for row in rows:
-        codes = [int(v) for v in row[:n_cb].tolist()]
-        buffer.append(codes)
-        cols = [i for i, tok in enumerate(codes) if tok == eoa]
-        if cols:
-            candidates.append(max(0, len(buffer) - 1 - max(cols)))
-    total = len(buffer)
-    target = total - (n_cb - 1)
-    if candidates:
-        target = min(target, min(candidates))
-    if target <= prefill:
-        return np.zeros(0, dtype=np.float32)
-    start = prefill - min(_DECODE_OVERLAP_FRAMES, prefill)
-    raw_end = min(target + n_cb - 1, total)
-    codes = shear_up(torch.tensor(buffer[start:raw_end], dtype=torch.int64), c.audio_pad_id)[: target - start]
-    hop = int(entry(c.audio_codec)["hop"])
-    context = 0
-    if start == 0 and context_codes is not None and len(context_codes):
-        context = len(context_codes)
-        codes = torch.cat((torch.as_tensor(context_codes, dtype=torch.int64).reshape(-1, n_cb), codes), dim=0)
-    if bool(((codes < 0) | (codes >= c.codebook_size)).any()):
-        raise ValueError("decode rows hold non-codec tokens")
+    codec = entry(c.audio_codec)
     model = assets.decoder(c.audio_codec, torch.device(device))
-    audio = decode_model(model, codes.unsqueeze(0), entry(c.audio_codec))[0].numpy().astype(np.float32)
-    return audio[context * hop:]
 
-
-@dataclass(frozen=True)
-class StreamSettings:
-    """Prefix streaming (TTSVocoderManager, ZONOS3_PREFIX_STREAM_*): a chunk once ``chunk`` new frames are decodable
-    behind ``hold_back`` frames (``first_chunk`` for the stream's first), each decoding the prefix with at most
-    ``context`` frames of left context."""
-
-    chunk: int = 15
-    hold_back: int = 3
-    context: int = 450
-    first_chunk: int = 15
-
-
-class PrefixStream:
-    """One take's rows as they come -> float32 PCM chunks (TTSVocoderManager._decode_prefix_chunk / _decode_final in
-    prefix mode): the buffer opens with the silence-prefill rows (decoded, never emitted), the reference tail is left
-    context at the stream start, the causal decoder re-decodes the growing prefix for each chunk, and at EOS the exact
-    whole decode supplies the tail."""
-
-    def __init__(self, lm: Zonos3LM, assets: ReferenceAssets, device, *, prefill_rows: torch.Tensor | None,
-                 context_codes: torch.Tensor | None, settings: StreamSettings):
-        from zonos3.tokenizer.matched_codec import decode_model, entry
-
-        c = lm.config
-        codec = entry(c.audio_codec)
-        model = assets.decoder(c.audio_codec, torch.device(device))
-        self.decode = lambda codes: decode_model(model, codes.unsqueeze(0), codec)[0].numpy().astype(np.float32)
-        self.n_cb, self.pad, self.codebook_size, self.hop = c.n_codebooks, c.audio_pad_id, c.codebook_size, int(codec["hop"])
-        self.settings = settings
-        self.buffer = [] if prefill_rows is None else [[int(v) for v in r[: self.n_cb]] for r in prefill_rows.tolist()]
-        self.prefill = self.emitted = len(self.buffer)
-        self.context = None
-        if context_codes is not None and len(context_codes):
-            self.context = torch.as_tensor(context_codes, dtype=torch.int64).reshape(-1, self.n_cb)
-        self.eos: int | None = None
-
-    def _decode(self, start: int, end: int) -> np.ndarray:
-        """Output frames [start, end) from the delayed rows (the reference tail as left context at the stream start)."""
-        raw_end = min(end + self.n_cb - 1, len(self.buffer))
-        codes = shear_up(torch.tensor(self.buffer[start:raw_end], dtype=torch.int64), self.pad)[: end - start]
-        context = 0
-        if start == 0 and self.context is not None:
-            context = len(self.context)
-            codes = torch.cat((self.context, codes), dim=0)
-        if bool(((codes < 0) | (codes >= self.codebook_size)).any()):
+    def decode(codes: np.ndarray) -> np.ndarray:
+        codes = torch.as_tensor(codes, dtype=torch.int64)
+        if bool(((codes < 0) | (codes >= c.codebook_size)).any()):
             raise ValueError("decode rows hold non-codec tokens")
-        return self.decode(codes)[context * self.hop:]
+        return decode_model(model, codes.unsqueeze(0), codec)[0].numpy().astype(np.float32)
 
-    def _target(self) -> int:
-        target = len(self.buffer) - (self.n_cb - 1)
-        return target if self.eos is None else min(target, self.eos)
+    return decode
 
-    def push(self, row: torch.Tensor, eos_frame: int | None, finished: bool) -> np.ndarray:
-        """One generated row (``eos_frame``: the aligned EOS frame in generated rows): the PCM it completes (maybe none);
-        ``finished``: the take's last row, after which the rest is returned."""
-        codes = [int(v) for v in row[: self.n_cb].tolist()]
-        self.buffer.append(codes)
-        candidates = [] if eos_frame is None else [max(0, int(eos_frame)) + self.prefill]
-        cols = [i for i, tok in enumerate(codes) if tok == self.pad - 1]  # EOA
-        if cols:
-            candidates.append(max(0, len(self.buffer) - 1 - max(cols)))
-        if candidates:
-            self.eos = min(candidates) if self.eos is None else min(self.eos, *candidates)
-        complete = self._target()
-        if finished:
-            if complete <= self.emitted:
-                return np.zeros(0, dtype=np.float32)
-            return self._decode(0, complete)[self.emitted * self.hop:]
-        s = self.settings
-        decodable = complete - s.hold_back
-        if decodable - self.emitted < (s.first_chunk if self.emitted == self.prefill else s.chunk):
-            return np.zeros(0, dtype=np.float32)
-        start = max(0, self.emitted - s.context) if decodable > s.context + s.chunk else 0
-        chunk = self._decode(start, complete)[(self.emitted - start) * self.hop:(decodable - start) * self.hop]
-        self.emitted = decodable
-        return chunk
+
+def _codec_hop(lm: Zonos3LM) -> int:
+    from zonos3.tokenizer.matched_codec import entry
+
+    return int(entry(lm.config.audio_codec)["hop"])
+
+
+def decode_rows(
+    lm: Zonos3LM,
+    assets: ReferenceAssets,
+    rows: list,
+    *,
+    prefill_rows: torch.Tensor | None,
+    eos_frame: int | None,
+    context_codes: torch.Tensor | None,
+    device,
+) -> np.ndarray:
+    """End-of-stream decode of TTSVocoderManager.decode_frames / _decode_final (a whole-mode StreamDecoder): the
+    prefill rows open the stream, the EOS boundary is the earliest of the aligned EOS frame and every row's EOA column,
+    the last overlap rows of the prefill are re-decoded with the rest, and the reference tail is decoded as left
+    context at the stream start."""
+    c = lm.config
+    decoder = StreamDecoder(
+        _codec_decode(lm, assets, device),
+        n_codebooks=c.n_codebooks,
+        audio_pad_id=c.audio_pad_id,
+        hop=_codec_hop(lm),
+        prefill_rows=prefill_rows,
+        context_codes=context_codes,
+        mode="whole",
+    )
+    for row in rows:
+        decoder.push(row, eos_frame)
+    return decoder.finish()
 
 
 class _Emit:
@@ -624,7 +635,7 @@ class _Emit:
         if last:
             data, self.held = fade_out(data, self.fade_out_ms), data[:0]
         elif self.hold:
-            data, self.held = data[:-self.hold], data[-self.hold:]
+            data, self.held = data[: -self.hold], data[-self.hold :]
         else:
             self.held = data[:0]
         if len(data):
@@ -691,9 +702,17 @@ def steer_fn(plan: P.PromptPlan, follower: SpanFollower | None, base_delta=None)
 
 
 @torch.inference_mode()
-def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=None,
-               dtype: torch.dtype | None = None, on_plan=None, on_audio=None,
-               stream: StreamSettings = StreamSettings()) -> SynthResult:
+def synthesize(
+    lm: Zonos3LM,
+    request: dict,
+    *,
+    assets: ReferenceAssets,
+    device=None,
+    dtype: torch.dtype | None = None,
+    on_plan=None,
+    on_audio=None,
+    stream: StreamSettings = StreamSettings(),
+) -> SynthResult:
     """Generate and decode one v2 GenerateRequest. ``on_plan(plan)`` sees the prompt plan before generation starts;
     ``on_audio(pcm)`` gets the output (gained, faded) as it is decoded: prefix-streamed chunks (``stream``), or the
     whole take at the end for ``stream_decode: whole`` and LACI (whose rollbacks rewrite rows)."""
@@ -714,32 +733,62 @@ def synthesize(lm: Zonos3LM, request: dict, *, assets: ReferenceAssets, device=N
     follower = None
     if plan.follow_tokens is not None and plan.schedule is not None:
         lead, lag = plan.follow_gate
-        follower = SpanFollower(plan.follow_tokens, plan.schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag)))
+        follower = SpanFollower(
+            plan.follow_tokens, plan.schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag))
+        )
     text_start, text_len = locate_text_span(plan.cond.input_ids, c.n_codebooks)
     gain = output_gain(c.audio_codec, req.headroom_db)
     prefix = emit = on_row = None
     if on_audio is not None and plan.laci is None and req.stream_decode != "whole":
-        prefix = PrefixStream(lm, assets, device, prefill_rows=plan.prefill_rows, context_codes=plan.context_codes,
-                              settings=stream)
+        prefix = StreamDecoder(
+            _codec_decode(lm, assets, device),
+            n_codebooks=c.n_codebooks,
+            audio_pad_id=c.audio_pad_id,
+            hop=_codec_hop(lm),
+            prefill_rows=plan.prefill_rows,
+            context_codes=plan.context_codes,
+            mode="prefix",
+            settings=stream,
+        )
         emit = _Emit(on_audio, gain, float(req.fade_out_ms))
 
         def on_row(row, eos_frame, finished):
             emit(prefix.push(row, eos_frame, finished), finished)
+
     record = None
     if plan.laci is None:
         probe = None
         if follower is not None:
             probe = ProbeState(assets.laci_heads[plan.language].heads, text_start, text_len)
-        attempt = generate_rows(lm, plan.cond, sampling=sampling, seed=plan.seed, max_tokens=plan.max_tokens,
-                                stop_id=c.eoa_id, twin=plan.twin, cfg_scale=plan.cfg_scale, accents=accents,
-                                steer=steer_fn(plan, follower), probe=probe, observer=follower, on_row=on_row)
+        attempt = generate_rows(
+            lm,
+            plan.cond,
+            sampling=sampling,
+            seed=plan.seed,
+            max_tokens=plan.max_tokens,
+            stop_id=c.eoa_id,
+            twin=plan.twin,
+            cfg_scale=plan.cfg_scale,
+            accents=accents,
+            steer=steer_fn(plan, follower),
+            probe=probe,
+            observer=follower,
+            on_row=on_row,
+        )
         rows, eos_frame = attempt.rows, attempt.eos_frame
     else:
         rows, eos_frame, record = _laci(lm, plan, assets, sampling, accents, follower, text_start, text_len)
     if emit is not None:
         return SynthResult(emit.pcm(), plan.seed, record, rows, eos_frame, plan)
-    pcm = decode_rows(lm, assets, rows, prefill_rows=plan.prefill_rows, eos_frame=eos_frame,
-                      context_codes=plan.context_codes, device=device)
+    pcm = decode_rows(
+        lm,
+        assets,
+        rows,
+        prefill_rows=plan.prefill_rows,
+        eos_frame=eos_frame,
+        context_codes=plan.context_codes,
+        device=device,
+    )
     pcm = fade_out(pcm * np.float32(gain), float(req.fade_out_ms)).astype(np.float32)
     if on_audio is not None:
         on_audio(pcm)
@@ -752,14 +801,24 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
     c = lm.config
     names = list(c.condition_names)
     edges = c.condition_edges.get("speaking_rate")
-    rates = (RateBuckets(names.index("speaking_rate"), tuple(edges), c.condition_bucket_counts[names.index("speaking_rate")])
-             if c.condition_count and "speaking_rate" in names and edges else None)
+    rates = (
+        RateBuckets(names.index("speaking_rate"), tuple(edges), c.condition_bucket_counts[names.index("speaking_rate")])
+        if c.condition_count and "speaking_rate" in names and edges
+        else None
+    )
     width = c.n_codebooks + 1
     prefill = plan.prefill_rows if plan.prefill_rows is not None else torch.zeros((0, width), dtype=torch.int32)
-    session = LaciSession(heads=assets.laci_heads[plan.laci], cfg=LaciConfig(), prefill_rows=prefill, seed=plan.seed,
-                          max_tokens=plan.max_tokens, n_codebooks=c.n_codebooks, rates=rates,
-                          condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
-                          follower=follower)
+    session = LaciSession(
+        heads=assets.laci_heads[plan.laci],
+        cfg=LaciConfig(),
+        prefill_rows=prefill,
+        seed=plan.seed,
+        max_tokens=plan.max_tokens,
+        n_codebooks=c.n_codebooks,
+        rates=rates,
+        condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
+        follower=follower,
+    )
     template = plan.cond.input_ids
     prompt = template[: len(template) - session.n_prefill]
     branch, seed, max_tokens, history_rows, delta = plan.cond, plan.seed, plan.max_tokens, 0, plan.hidden_delta
@@ -775,17 +834,30 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
             else:
                 session.drain()
 
-        generate_rows(lm, branch, sampling=sampling, seed=seed, max_tokens=max_tokens, stop_id=c.eoa_id,
-                      history_rows=history_rows, accents=accents, steer=steer_fn(plan, follower, delta),
-                      probe=probe, observer=session, on_row=on_row)
+        generate_rows(
+            lm,
+            branch,
+            sampling=sampling,
+            seed=seed,
+            max_tokens=max_tokens,
+            stop_id=c.eoa_id,
+            history_rows=history_rows,
+            accents=accents,
+            steer=steer_fn(plan, follower, delta),
+            probe=probe,
+            observer=session,
+            on_row=on_row,
+        )
         cont = state["continuation"]
         if cont is None:
             break
-        branch = replace(branch, input_ids=torch.cat((prompt, cont.rows.to(prompt.dtype)), dim=0),
-                         condition_values=cont.condition_values if cont.condition_values is not None
-                         else branch.condition_values)
+        branch = replace(
+            branch,
+            input_ids=torch.cat((prompt, cont.rows.to(prompt.dtype)), dim=0),
+            condition_values=cont.condition_values if cont.condition_values is not None else branch.condition_values,
+        )
         seed, max_tokens, history_rows = cont.seed, cont.max_tokens, cont.history_rows
         if cont.swap_delta:
             delta = cont.steering_delta
-    rows = session.stream[session.n_prefill:]
+    rows = session.stream[session.n_prefill :]
     return rows, session.eos_frame(), session.record()

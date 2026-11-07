@@ -4,14 +4,12 @@ accent adapter (the tiny model of servers/ggml/tests/parity/test_ggml_graph.py).
 
 from __future__ import annotations
 
-import json
-
 import convert_gguf
 import numpy as np
 import pytest
 import torch
 from conftest import FIXTURES
-from gguf import GGUFReader
+from tiny_lm import fixture_tokenizer, write_lm_dir
 from zonos3.models.accent_format import FORMAT_EXPERTS, grow_adapter, load_adapter
 from zonos3.reference.accents import AccentState as RefAccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM, Zonos3LMConfig
@@ -26,36 +24,64 @@ WINDOWS = {(3, 1): (2, 5), (7, 2): (6, 9)}
 
 def tiny_params() -> dict:
     return {
-        "attention_pattern": "gdn3_global1", "residual_type": "full_attnres", "use_xsa": False,
-        "speaker_enabled": True, "condition_tokens_enabled": True, "moe_router_type": "linear",
-        "moe_router_use_eda": False, "moe_balancing_strategy": "quantile", "moe_router_topk": 2,
-        "moe_start_from_layer": 1, "moe_end_from_layer": 0,
-        "n_layers": 8, "dim": 64, "head_dim": 16, "n_heads": 4, "n_kv_heads": 2,
-        "n_codebooks": 10, "codebook_size": 4096, "eoa_id": 4096, "audio_pad_id": 4097,
-        "text_vocab": 8196, "text_extra_tokens": 0,
-        "text_tokenizer_spec": {"kind": "superbpe", "path": "tokenizer.json", "vocab_size": 8192,
-                                "offset": 4, "bos": 2, "eos": 3},
-        "moe_alpha": 0.5, "moe_n_experts": 4, "multiple_of": 32, "ffn_dim_multiplier": 1.0,
-        "condition_count": 3, "condition_n_buckets": 4, "condition_bucket_counts": [4, 4, 6],
+        "attention_pattern": "gdn3_global1",
+        "residual_type": "full_attnres",
+        "use_xsa": False,
+        "speaker_enabled": True,
+        "condition_tokens_enabled": True,
+        "moe_router_type": "linear",
+        "moe_router_use_eda": False,
+        "moe_balancing_strategy": "quantile",
+        "moe_router_topk": 2,
+        "moe_start_from_layer": 1,
+        "moe_end_from_layer": 0,
+        "n_layers": 8,
+        "dim": 64,
+        "head_dim": 16,
+        "n_heads": 4,
+        "n_kv_heads": 2,
+        "n_codebooks": 10,
+        "codebook_size": 4096,
+        "eoa_id": 4096,
+        "audio_pad_id": 4097,
+        "text_vocab": 8196,
+        "text_extra_tokens": 0,
+        "text_tokenizer_spec": {
+            "kind": "superbpe",
+            "path": "tokenizer.json",
+            "vocab_size": 8192,
+            "offset": 4,
+            "bos": 2,
+            "eos": 3,
+        },
+        "moe_alpha": 0.5,
+        "moe_n_experts": 4,
+        "multiple_of": 32,
+        "ffn_dim_multiplier": 1.0,
+        "condition_count": 3,
+        "condition_n_buckets": 4,
+        "condition_bucket_counts": [4, 4, 6],
         "condition_names": ["loudness", "fmax", "speaking_rate"],
-        "condition_edges": {"loudness": [-30.0, -20.0, -10.0], "fmax": [4000.0, 8000.0, 12000.0],
-                            "speaking_rate": [10.0, 12.0, 14.0, 16.0, 18.0]},
+        "condition_edges": {
+            "loudness": [-30.0, -20.0, -10.0],
+            "fmax": [4000.0, 8000.0, 12000.0],
+            "speaking_rate": [10.0, 12.0, 14.0, 16.0, 18.0],
+        },
         "condition_units": {"loudness": "LUFS", "fmax": "Hz", "speaking_rate": "utf-8 bytes per second"},
-        "norm_eps": 1e-5, "rope_theta": 10000.0, "max_seqlen": 512, "loss_softcap": 15.0,
-        "speaker_embedding_dim": 8, "speaker_reference_max_seconds": 60.0, "audio_codec": CODEC,
+        "norm_eps": 1e-5,
+        "rope_theta": 10000.0,
+        "max_seqlen": 512,
+        "loss_softcap": 15.0,
+        "speaker_embedding_dim": 8,
+        "speaker_reference_max_seconds": 60.0,
+        "audio_codec": CODEC,
     }
-
-
-def fixture_tokenizer() -> str:
-    field = GGUFReader(FIXTURES / "dummy-zonos3.gguf").fields["zonos3.tokenizer.json"]
-    return bytes(field.parts[field.data[0]]).decode()
 
 
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory):
     root = tmp_path_factory.mktemp("lm")
     lm_dir = root / "lm"
-    lm_dir.mkdir()
     params = tiny_params()
     model = Zonos3LM(Zonos3LMConfig.from_params(params))
     generator = torch.Generator().manual_seed(0)
@@ -65,13 +91,17 @@ def tiny(tmp_path_factory):
         if name.endswith("attention.temp"):
             value = 3.0 + value
         state[name] = value if name.endswith("balancing_biases") else value.to(torch.bfloat16)
-    torch.save(state, lm_dir / "model.pth")
-    (lm_dir / "params.json").write_text(json.dumps({"model": params}))
-    (lm_dir / "tokenizer.json").write_text(fixture_tokenizer())
-    silence = root / "silence.json"
-    silence.write_text(json.dumps({"codec": CODEC, "frame": [11 * i for i in range(10)]}))
+    write_lm_dir(
+        lm_dir,
+        params,
+        state,
+        tokenizer=fixture_tokenizer(FIXTURES / "dummy-zonos3.gguf"),
+        silence=[11 * i for i in range(10)],
+    )
     gguf = root / "tiny.gguf"
-    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(silence), "-o", str(gguf)])
+    convert_gguf.main(
+        ["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(lm_dir / "silence.json"), "-o", str(gguf)]
+    )
     return root, Zonos3LM.load(lm_dir), Zonos3MLX.load(gguf)
 
 
@@ -80,7 +110,7 @@ def prompt_rows(seed: int = 3) -> np.ndarray:
     rows = np.full((TEXT_LEN + 3, 11), 4097, dtype=np.int64)
     rows[:, 10] = 8196
     rows[0, 10] = 2
-    rows[1:TEXT_LEN - 1, 10] = rng.integers(4, 8196, TEXT_LEN - 2)
+    rows[1 : TEXT_LEN - 1, 10] = rng.integers(4, 8196, TEXT_LEN - 2)
     rows[TEXT_LEN - 1, 10] = 3
     rows[TEXT_LEN:, :10] = rng.integers(0, 4096, (3, 10))
     return rows
@@ -168,10 +198,20 @@ def write_adapter(lm: Zonos3LM, path, seed: int = 5, rank: int = 4) -> None:
         return torch.randn(*shape, generator=g) * scale
 
     factors, exact = {}, {}
-    for module in ("layers.0.attention.in_proj", "layers.0.attention.wo", "layers.0.feed_forward.w_in",
-                   "layers.0.feed_forward.w_out", "layers.3.attention.wq", "layers.3.attention.wkv",
-                   "layers.3.attention.wo", "layers.3.attention.gater", "layers.5.feed_forward.latent_down",
-                   "layers.5.feed_forward.latent_up", "layers.6.feed_forward.router.router_linear", "multi_output"):
+    for module in (
+        "layers.0.attention.in_proj",
+        "layers.0.attention.wo",
+        "layers.0.feed_forward.w_in",
+        "layers.0.feed_forward.w_out",
+        "layers.3.attention.wq",
+        "layers.3.attention.wkv",
+        "layers.3.attention.wo",
+        "layers.3.attention.gater",
+        "layers.5.feed_forward.latent_down",
+        "layers.5.feed_forward.latent_up",
+        "layers.6.feed_forward.router.router_linear",
+        "multi_output",
+    ):
         shape = tuple(params[module + ".weight"].shape)
         flat_out, flat_in = int(np.prod(shape[:-1])), shape[-1]
         factors[module + ".weight"] = {"down": rnd(rank, flat_in), "up": rnd(flat_out, rank), "shape": shape}
@@ -179,8 +219,12 @@ def write_adapter(lm: Zonos3LM, path, seed: int = 5, rank: int = 4) -> None:
         experts = f"layers.{layer}.feed_forward.experts"
         for weight, param in (("w13", "gate_up_proj"), ("w2", "down_proj")):
             e, out, inp = params[f"{experts}.{param}"].shape
-            factors[f"{experts}.{weight}"] = {"up": rnd(e, out, rank), "down": rnd(e, rank, inp),
-                                              "shape": (e, out, inp), "experts": e}
+            factors[f"{experts}.{weight}"] = {
+                "up": rnd(e, out, rank),
+                "down": rnd(e, rank, inp),
+                "shape": (e, out, inp),
+                "experts": e,
+            }
     for layer in (1, 6):
         exact[f"layers.{layer}.feed_forward.router.balancing_biases"] = rnd(lm.config.n_experts, scale=0.6)
     torch.save({"format": FORMAT_EXPERTS, "factors": factors, "exact": exact}, path)
@@ -218,20 +262,39 @@ def test_edit_adapter_backbone_keeps_plain_logits_and_fits_old_head_factors(tiny
     g = torch.Generator().manual_seed(4)
     dim = ref.config.dim
     rows = {f"multi_embedder.embedders.{i}.weight": torch.randn(1, dim, generator=g) * 0.05 for i in range(10)}
-    rows |= {"multi_embedder.embedders.10.weight": torch.randn(3, dim, generator=g) * 0.05,
-             "multi_output.weight": torch.randn(10, dim, generator=g) * 0.05}
+    rows |= {
+        "multi_embedder.embedders.10.weight": torch.randn(3, dim, generator=g) * 0.05,
+        "multi_output.weight": torch.randn(10, dim, generator=g) * 0.05,
+    }
     rows_before = dict.fromkeys(rows, 4098) | {"multi_embedder.embedders.10.weight": 8197}
-    torch.save(grow_adapter(torch.load(root / "export.pt"), rows_before,
-                            {"span_end_id": 4098, "text_extra_tokens": 3, "rows": rows}), adapters / "edit.pt")
+    torch.save(
+        grow_adapter(
+            torch.load(root / "export.pt"), rows_before, {"span_end_id": 4098, "text_extra_tokens": 3, "rows": rows}
+        ),
+        adapters / "edit.pt",
+    )
     accents = root / "edit-accents.gguf"
     convert_gguf.main(["accents", str(adapters), "-o", str(accents)])
     grown_gguf = root / "grown.gguf"
-    convert_gguf.main(["lm", str(root / "lm"), "--outtype", "f32", "--silence-frame", str(root / "silence.json"),
-                       "--edit-adapter", str(adapters / "edit.pt"), "-o", str(grown_gguf)])
+    lm_dir = root / "lm"
+    convert_gguf.main(
+        [
+            "lm",
+            str(lm_dir),
+            "--outtype",
+            "f32",
+            "--silence-frame",
+            str(lm_dir / "silence.json"),
+            "--edit-adapter",
+            str(adapters / "edit.pt"),
+            "-o",
+            str(grown_gguf),
+        ]
+    )
     grown = Zonos3MLX.load(grown_gguf)
     assert grown.config.span_end_id == 4098 and grown.config.text_extra_tokens == 3
     c = grown.config
-    bank = AccentBank.load(accents, head_rows=c.n_codebooks * c.audio_vocab, n_codebooks=c.n_codebooks)
+    bank = AccentBank.load(accents, head_rows=c.n_codebooks * c.audio_vocab)
     assert bank.edit == "edit" and bank.accent_names == ["plain"]
 
     plain, _ = run_both(ref, mlx)
@@ -239,7 +302,7 @@ def test_edit_adapter_backbone_keeps_plain_logits_and_fits_old_head_factors(tiny
     for (_, want), (_, got) in zip(plain, on_grown):
         np.testing.assert_array_equal(got[..., :4098], want)
 
-    ref_grown = Zonos3LM.load(root / "lm").grow(load_adapter(adapters / "edit.pt").grown)
+    ref_grown = Zonos3LM.load(lm_dir).grow(load_adapter(adapters / "edit.pt").grown)
     ref_state = RefAccentState.for_model(ref_grown, load_adapter(adapters / "plain.pt"), 0.8)
     pairs, _ = run_both(ref_grown, grown, ref_accents=ref_state, mlx_accents=bank.state("plain", 0.8))
     for i, (want, got) in enumerate(pairs):

@@ -5,6 +5,7 @@
 // bias (SiLU and GLU outputs rounded too); attention rounds its content/relative scores, their scaled sum, the
 // probabilities and the output (ssl_attention_bf16.wgsl); the depthwise conv output is rounded. LayerNorm, softmax and
 // the depthwise LayerNorm + SiLU stay f32, and only layer 0 rounds its residual stream (later layers add in f32).
+import { bf16RoundInPlace } from './bf16';
 import type { Gpu } from './gpu/device';
 import { ACT, dwconv, elementwise, EW, gemm, layernorm, RND } from './gpu/ops';
 import { Builder, type Program } from './gpu/program';
@@ -99,14 +100,6 @@ export function sslFeatures(wav: Float32Array, window: Float32Array, melFilters:
   return { feats, T };
 }
 
-/** Values rounded to the nearest bf16 (ties to even), as ggml_fp32_to_bf16 then back to f32. */
-export function bf16Round(x: Float32Array): Float32Array {
-  const u = new Uint32Array(x.length);
-  u.set(new Uint32Array(x.buffer, x.byteOffset, x.length));
-  for (let i = 0; i < u.length; i++) u[i] = (u[i] + 0x7fff + ((u[i] >>> 16) & 1)) & 0xffff0000;
-  return new Float32Array(u.buffer);
-}
-
 export class SslTeacher {
   private prog: Program | null = null;
   private input!: GPUBuffer;
@@ -140,7 +133,9 @@ export class SslTeacher {
   /** Final layer output [999][1024]. */
   async encode(feats: Float32Array): Promise<Float32Array> {
     if (!this.prog) this.record();
-    this.gpu.write(this.input, 0, bf16Round(feats));
+    const x = feats.slice();
+    bf16RoundInPlace(x);
+    this.gpu.write(this.input, 0, x);
     const [out] = await this.prog!.run(this.gpu, [{ buf: this.output, offset: 0, bytes: SSL_FRAMES * D * 4 }]);
     return out;
   }

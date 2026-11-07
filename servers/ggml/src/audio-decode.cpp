@@ -6,6 +6,8 @@
 #include "compat.h"
 #include "audio-decode.h"
 #include "exe-path.h"
+#include "npy.h"
+#include "zonos3-text.h"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -37,9 +39,9 @@ std::filesystem::path audio_ffmpeg_path() {
 #endif
     std::error_code ec;
     const fs::path dir = zonos3_exe_dir();
-    for (const fs::path c : { dir / name, dir / "bin" / name, dir / ".." / "Resources" / name })
+    for (const fs::path c : {dir / name, dir / "bin" / name, dir / ".." / "Resources" / name})
         if (fs::exists(c, ec)) return c.lexically_normal();
-    return name;   // rely on PATH
+    return name; // rely on PATH
 }
 
 #ifdef _WIN32
@@ -47,7 +49,7 @@ namespace {
 
 // A small owning wrapper keeps every process/pipe handle on one cleanup path.
 class win_handle {
-public:
+  public:
     win_handle() = default;
     explicit win_handle(HANDLE handle) : handle_(handle) {}
     ~win_handle() { reset(); }
@@ -63,7 +65,7 @@ public:
         handle_ = handle;
     }
 
-private:
+  private:
     HANDLE handle_ = INVALID_HANDLE_VALUE;
 };
 
@@ -97,9 +99,9 @@ static std::filesystem::path resolve_windows_executable(const std::filesystem::p
 // runtime. This is argument quoting only; no command shell is involved.
 static std::wstring quote_windows_argument(const std::wstring & argument) {
     const bool needs_quotes = argument.empty() || std::any_of(
-        argument.begin(),
-        argument.end(),
-        [](wchar_t c) { return std::iswspace(c) || c == L'"'; });
+                                                      argument.begin(),
+                                                      argument.end(),
+                                                      [](wchar_t c) { return std::iswspace(c) || c == L'"'; });
     if (!needs_quotes) return argument;
 
     std::wstring quoted(1, L'"');
@@ -217,13 +219,13 @@ static std::vector<float> decode_audio_windows(const char * path, int sample_rat
     }
 
     const bool handles_updated = UpdateProcThreadAttribute(
-        attributes,
-        0,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        inherited_handles.data(),
-        sizeof(inherited_handles),
-        nullptr,
-        nullptr) != FALSE;
+                                     attributes,
+                                     0,
+                                     PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                     inherited_handles.data(),
+                                     sizeof(inherited_handles),
+                                     nullptr,
+                                     nullptr) != FALSE;
     if (!handles_updated) {
         const DWORD error = GetLastError();
         DeleteProcThreadAttributeList(attributes);
@@ -332,9 +334,13 @@ std::vector<float> audio_decode_file(const char * path, int sample_rate, int max
                       shell_quote_path(path) + " -ac 1 -ar " + std::to_string(sample_rate) +
                       " -t " + std::to_string(max_seconds) + " -f f32le -";
     FILE * pp = popen(cmd.c_str(), "r");
-    if (!pp) { fprintf(stderr, "audio: cannot run ffmpeg\n"); return {}; }
+    if (!pp) {
+        fprintf(stderr, "audio: cannot run ffmpeg\n");
+        return {};
+    }
     std::vector<float> wav;
-    float buf[8192]; size_t n;
+    float buf[8192];
+    size_t n;
     while ((n = fread(buf, sizeof(float), 8192, pp)) > 0) wav.insert(wav.end(), buf, buf + n);
     int rc = pclose(pp);
     if (rc != 0 || wav.empty()) {
@@ -343,4 +349,28 @@ std::vector<float> audio_decode_file(const char * path, int sample_rate, int max
     }
     return wav;
 #endif
+}
+
+bool audio_load_reference(const std::string & path, int max_seconds, std::vector<float> & out, std::string & err) {
+    out.clear();
+    if (ends_with(path, ".npy")) {
+        std::vector<int64_t> shape;
+        if (!npy::load_f32(path, out, shape) || !(shape.size() == 1 || (shape.size() == 2 && shape[0] == 1))) {
+            out.clear();
+            err = "PCM NPY must be F32 [samples] or [1,samples] at 44100 Hz";
+            return false;
+        }
+    } else {
+        out = audio_decode_file(path.c_str(), 44100, max_seconds);
+        if (out.empty()) {
+            err = "cannot decode reference audio";
+            return false;
+        }
+    }
+    if (out.empty() || out.size() > (size_t) max_seconds * 44100) {
+        out.clear();
+        err = "reference must contain 1.." + std::to_string((int64_t) max_seconds * 44100) + " mono samples";
+        return false;
+    }
+    return true;
 }

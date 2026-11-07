@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from zonos3.tts.conditioning import default_quality_buckets
+
 from zonos3_sgl.distributed import DistributedInfo
 from zonos3_sgl.utils.logger import init_logger
 
@@ -80,8 +81,7 @@ def launch_server(run_shell: bool = False) -> None:
 
         # Legacy quality-conditioned checkpoints: every request gets the former default quality buckets.
         quality_bucket_counts = [
-            len(server_args.tts_quality_buckets.get(feature, ()))
-            for feature in server_args.tts_quality_features
+            len(server_args.tts_quality_buckets.get(feature, ())) for feature in server_args.tts_quality_features
         ]
 
         # Common tokenizer kwargs
@@ -98,18 +98,13 @@ def launch_server(run_shell: bool = False) -> None:
             "speaking_rate_num_buckets": server_args.tts_speaking_rate_num_buckets,
             "quality_bucket_counts": quality_bucket_counts,
             "quality_buckets": default_quality_buckets(server_args.tts_quality_features, quality_bucket_counts),
-            "speaker_background_num_buckets": (
-                2 if server_args.tts_speaker_background_token_enabled else 0
-            ),
+            "speaker_background_num_buckets": (2 if server_args.tts_speaker_background_token_enabled else 0),
             "accurate_mode_num_buckets": (
                 1
-                if server_args.tts_speaker_background_token_enabled
-                and server_args.tts_accurate_mode_token_enabled
+                if server_args.tts_speaker_background_token_enabled and server_args.tts_accurate_mode_token_enabled
                 else 0
             ),
-            "speaker_reference_max_seconds": (
-                server_args.tts_speaker_reference_max_seconds
-            ),
+            "speaker_reference_max_seconds": (server_args.tts_speaker_reference_max_seconds),
             "span_end_id": server_args.model_config.span_end_id,
             "condition_count": (
                 int(getattr(server_args.model_config, "condition_count", 0) or 0)
@@ -158,5 +153,3 @@ def launch_server(run_shell: bool = False) -> None:
 
 if __name__ == "__main__":
     launch_server()
-
-# CONDITION_ROWS_RUNTIME_20261016

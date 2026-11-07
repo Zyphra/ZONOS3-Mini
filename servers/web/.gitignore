@@ -6,3 +6,4 @@ public/models/
 public/goldens/
 .wrangler/
 harness/.chrome/
+src/api/schema.ts

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Dict, List
 
 import torch
 from tqdm import tqdm
+
 from zonos3_sgl.core import TTSBatch, TTSReq, get_global_ctx
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.utils.logger import init_logger
@@ -113,9 +114,7 @@ class GraphRunner:
         self.accent_slots = self.accent_scales = None
         if model.__dict__.get("_accents") is not None:
             self.accent_slots = torch.zeros(self.max_graph_bs, dtype=torch.int32, device=self.device)
-            self.accent_scales = torch.zeros(
-                self.max_graph_bs, dtype=torch.float32, device=self.device
-            )
+            self.accent_scales = torch.zeros(self.max_graph_bs, dtype=torch.float32, device=self.device)
         frame_width = self.dummy_req.frame_width
         self.attn_backend.init_capture_graph(
             max_seq_len=max_seq_len, bs_list=self.graph_bs_list, frame_width=frame_width
@@ -191,9 +190,7 @@ class GraphRunner:
 
     def pad_batch(self, batch: TTSBatch) -> int:
         padded_size = (  # choose the first available batch size
-            next(bs for bs in self.graph_bs_list if bs >= batch.size)
-            if self.can_use_cuda_graph(batch)
-            else batch.size
+            next(bs for bs in self.graph_bs_list if bs >= batch.size) if self.can_use_cuda_graph(batch) else batch.size
         )
         batch.padded_reqs = batch.reqs + [self.dummy_req] * (padded_size - batch.size)
         return batch.padded_size - batch.size

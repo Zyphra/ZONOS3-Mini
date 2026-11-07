@@ -2,10 +2,10 @@
 
 Both servers — the CUDA server (`servers/sgl/scripts/serve.sh`, `python -m zonos3_sgl`) and the ggml server
 (`servers/ggml`, `zonos3-server`) — implement one HTTP API. The schema of every request and response is
-[api/openapi.yaml](../api/openapi.yaml) (bundled into `api/openapi.json`); this page is the overview. Feature-specific
+[servers/api/openapi.yaml](../servers/api/openapi.yaml) (bundled into `servers/api/openapi.json`); this page is the overview. Feature-specific
 behavior (speech editing, steering, studio projects, plugins) is described in [guide.md](guide.md).
-`api/tests/conformance` checks a running server against the spec:
-`uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919`.
+`servers/api/tests/conformance` checks a running server against the spec:
+`uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919`.
 
 ## Routes
 
@@ -29,7 +29,9 @@ Voice Studio.
 | `GET\|HEAD\|PUT /v2/media/{sha256}` | Content-addressed studio media |
 
 **Studio.** `GET /` returns the studio's `index.html` (`Cache-Control: no-store`); `GET /<path>` returns a file of the
-studio build (`studio/dist`, `--studio-dir`) with an immutable cache header, else 404 `{"detail": "Not Found"}`.
+studio build (`studio/dist`, `--studio-dir`), else 404 `{"detail": "Not Found"}`. Hashed `assets/` are immutable;
+pages, `sw.js` and `manifest.webmanifest` are `no-store`; every other file (icons, `web-engine/`, `theme-boot.js`) is
+`no-cache` (revalidated).
 There is no SPA fallback (the studio routes with the URL hash), and `/v1/…`, `/v2/…` are never served from the studio
 dir. Without a build, `GET /` is a 404 that names `pnpm --dir studio build`.
 
@@ -66,7 +68,7 @@ CORS allows every origin and exposes the response headers above.
 | `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `de`, `es`, `it`, `pt_br`, `ja`, `cmn`, `ko` (the `server` rows of `model/src/zonos3/registries/languages.json`) |
 | `text_normalization` | `true` | Verbalize numbers, dates and currency first |
 | `stream` | `true` | Chunked PCM; `stream_decode` (`prefix` / `whole`, null = server default) picks the decode |
-| `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV, needs `stream: false` |
+| `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV (samples NaN → 0, clipped to [-1, 1], × 32767, rounded half to even; the same encoder in every server), needs `stream: false` |
 | `seed` | `null` | 0..4294967295; echoed in `X-Seed` |
 | `temperature`, `topk`, `top_p`, `min_p` | `0.75`, `80`, `0.69`, `0` | Sampling (the defaults of `model/src/zonos3/registries/generation.json`) |
 | `repetition_window`, `repetition_penalty`, `repetition_codebooks` | `96`, `2.4`, `6` | Per-codebook repetition penalty |

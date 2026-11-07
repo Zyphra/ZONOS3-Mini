@@ -28,6 +28,7 @@ import numpy as np
 import torch
 from zonos3.reference.synth import ProbeState, Sampling, fade_out, sample_row, steer_fn
 from zonos3.speaker_cfg import guided_logits
+from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciSession, RateBuckets
 from zonos3.tts.plan import Branch
 from zonos3.tts.probe import locate_text_span
@@ -199,9 +200,14 @@ class Scheduler:
             if steer is not None:
                 hidden = steer(frame)
         return self.engine.lm.forward_lazy(
-            ids, state, speaker_rows=branch.speaker_rows(),
-            condition_rows=branch.condition_rows(), hidden_deltas=hidden, accents=a.accents,
-            probe=a.probe.spec() if with_probe and a.probe is not None else None)
+            ids,
+            state,
+            speaker_rows=branch.speaker_rows(),
+            condition_rows=branch.condition_rows(),
+            hidden_deltas=hidden,
+            accents=a.accents,
+            probe=a.probe.spec() if with_probe and a.probe is not None else None,
+        )
 
     def _run(self, pending: list) -> list:
         """Evaluate a job's branch forwards (the CFG pair) in one MLX evaluation."""
@@ -215,7 +221,9 @@ class Scheduler:
         follower = None
         if plan.follow_tokens is not None and plan.schedule is not None:
             lead, lag = plan.follow_gate
-            follower = SpanFollower(plan.follow_tokens, plan.schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag)))
+            follower = SpanFollower(
+                plan.follow_tokens, plan.schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag))
+            )
         text_span = (0, 0)
         if plan.laci is not None or follower is not None:
             text_span = locate_text_span(plan.cond.input_ids, c.n_codebooks)
@@ -223,11 +231,20 @@ class Scheduler:
         if plan.laci is not None:
             session = self._laci_session(plan, follower)
         branches = [(plan.cond, LMState())] + ([] if plan.twin is None else [(plan.twin, LMState())])
-        a = _Active(job=job, branches=branches, outs=[], generator=torch.Generator().manual_seed(int(plan.seed)),
-                    history=plan.cond.input_ids[:, : c.n_codebooks].clone(),
-                    has_audio_prefix=bool((plan.cond.input_ids[-1, : c.n_codebooks] != c.audio_pad_id).any()),
-                    remain=int(plan.max_tokens), follower=follower, session=session, delta=plan.hidden_delta,
-                    accents=accents, text_span=text_span)
+        a = _Active(
+            job=job,
+            branches=branches,
+            outs=[],
+            generator=torch.Generator().manual_seed(int(plan.seed)),
+            history=plan.cond.input_ids[:, : c.n_codebooks].clone(),
+            has_audio_prefix=bool((plan.cond.input_ids[-1, : c.n_codebooks] != c.audio_pad_id).any()),
+            remain=int(plan.max_tokens),
+            follower=follower,
+            session=session,
+            delta=plan.hidden_delta,
+            accents=accents,
+            text_span=text_span,
+        )
         if session is not None:
             template = plan.cond.input_ids
             a.prompt = template[: len(template) - session.n_prefill]
@@ -243,28 +260,44 @@ class Scheduler:
         c = self.config
         names = list(c.condition_names)
         edges = c.condition_edges.get("speaking_rate")
-        rates = (RateBuckets(names.index("speaking_rate"), tuple(edges),
-                             c.condition_bucket_counts[names.index("speaking_rate")])
-                 if c.condition_count and "speaking_rate" in names and edges else None)
+        rates = (
+            RateBuckets(
+                names.index("speaking_rate"), tuple(edges), c.condition_bucket_counts[names.index("speaking_rate")]
+            )
+            if c.condition_count and "speaking_rate" in names and edges
+            else None
+        )
         take, duration, bucket, rate_deltas = plan.laci_take, None, None, None
         if take is not None:
             duration = DurationTarget(float(take.target_frames), adjust_rate=bool(take.adjust_rate))
             if take.rate_edges is not None:
                 if rates is None:
                     raise ValueError("an extended speaking-rate scale needs the checkpoint's speaking-rate condition")
-                rates = RateBuckets(rates.index, tuple(float(e) for e in take.rate_edges), rates.n_buckets,
-                                    int(take.rate_first))
+                rates = RateBuckets(
+                    rates.index, tuple(float(e) for e in take.rate_edges), rates.n_buckets, int(take.rate_first)
+                )
                 bucket = int(take.rate_bucket)
                 if not rates.first <= bucket <= rates.last:
-                    raise ValueError(f"speaking-rate bucket {bucket} is outside the scale [{rates.first}, {rates.last}]")
+                    raise ValueError(
+                        f"speaking-rate bucket {bucket} is outside the scale [{rates.first}, {rates.last}]"
+                    )
                 rate_deltas = list(take.rate_deltas)
         width = c.n_codebooks + 1
         prefill = plan.prefill_rows if plan.prefill_rows is not None else torch.zeros((0, width), dtype=torch.int32)
         return LaciSession(
-            heads=self.engine.laci_heads[plan.laci], cfg=self.laci_config, prefill_rows=prefill, seed=plan.seed,
-            max_tokens=plan.max_tokens, n_codebooks=c.n_codebooks, duration=duration, rates=rates,
+            heads=self.engine.laci_heads[plan.laci],
+            cfg=self.laci_config,
+            prefill_rows=prefill,
+            seed=plan.seed,
+            max_tokens=plan.max_tokens,
+            n_codebooks=c.n_codebooks,
+            duration=duration,
+            rates=rates,
             condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
-            bucket=bucket, rate_deltas=rate_deltas, follower=follower)
+            bucket=bucket,
+            rate_deltas=rate_deltas,
+            follower=follower,
+        )
 
     def _tick(self, a: _Active) -> None:
         job, plan, c = a.job, a.job.plan, self.config
@@ -274,10 +307,12 @@ class Scheduler:
             uncond = torch.from_numpy(np.array(a.outs[1].logits[-1], dtype=np.float32))
             logits = guided_logits(logits, uncond, plan.cfg_scale)
         total_generated = len(a.rows)
-        token = sample_row(c, logits, job.sampling, a.history, total_generated, a.history_rows, job.stop_id,
-                           a.generator)
-        if not a.has_audio_prefix and total_generated < n_cb - 1:  # cold-start delay triangle -> padding
-            token[total_generated + 1 : n_cb] = pad
+        token = sample_row(
+            c, logits, job.sampling, a.history, total_generated, a.history_rows, job.stop_id, a.generator
+        )
+        apply_cold_start_delay(
+            token, total_generated, n_codebooks=n_cb, pad_id=pad, has_audio_prefix=a.has_audio_prefix
+        )
         if a.step > 0 and a.probe is not None and a.observer is not None:
             a.probe.steps += 1
             if not a.probe.stop:
@@ -332,9 +367,11 @@ class Scheduler:
     def _resume(self, a: _Active, cont) -> None:
         """A LACI rollback: re-prefill the prompt plus the kept rows (synth._laci, ggml laci_resume)."""
         branch, _ = a.branches[0]
-        branch = replace(branch, input_ids=torch.cat((a.prompt, cont.rows.to(a.prompt.dtype)), dim=0),
-                         condition_values=cont.condition_values if cont.condition_values is not None
-                         else branch.condition_values)
+        branch = replace(
+            branch,
+            input_ids=torch.cat((a.prompt, cont.rows.to(a.prompt.dtype)), dim=0),
+            condition_values=cont.condition_values if cont.condition_values is not None else branch.condition_values,
+        )
         if cont.swap_delta:
             a.delta = cont.steering_delta
         c = self.config
@@ -380,10 +417,17 @@ class Scheduler:
             else:
                 raise RuntimeError(rest[0])
         dec = self.engine.decoder
-        pcm = self.submit(dec.decode_rows, rows, prefill=None if plan.prefill_rows is None else plan.prefill_rows.numpy(),
-                          eos_frame=eos, context_codes=None if plan.context_codes is None else plan.context_codes.numpy(),
-                          audio_pad_id=self.config.audio_pad_id).result()
-        pcm = fade_out(pcm * np.float32(self.engine.output_gain(plan.request.headroom_db)), float(plan.request.fade_out_ms))
+        pcm = self.submit(
+            dec.decode_rows,
+            rows,
+            prefill=None if plan.prefill_rows is None else plan.prefill_rows.numpy(),
+            eos_frame=eos,
+            context_codes=None if plan.context_codes is None else plan.context_codes.numpy(),
+            audio_pad_id=self.config.audio_pad_id,
+        ).result()
+        pcm = fade_out(
+            pcm * np.float32(self.engine.output_gain(plan.request.headroom_db)), float(plan.request.fade_out_ms)
+        )
         return _Result(pcm.astype(np.float32), plan.seed, record, rows, eos, plan, job)
 
 

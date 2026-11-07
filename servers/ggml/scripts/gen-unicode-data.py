@@ -12,6 +12,7 @@
 Python 3.12's unicodedata is Unicode 15.0, the version of the Oniguruma bundled with tokenizers 0.22
 and of the Python that runs the reference.
 """
+
 import sys
 import unicodedata
 
@@ -70,7 +71,7 @@ def canonical_decomposition(cp):
 def emit(w, comment, decl, rows, per_line=4):
     w(f"\n// {comment}\n{decl} = {{\n")
     for i in range(0, len(rows), per_line):
-        w("    " + " ".join("{" + ", ".join(f"0x{v:X}" for v in row) + "}," for row in rows[i:i + per_line]) + "\n")
+        w("    " + " ".join("{" + ", ".join(f"0x{v:X}" for v in row) + "}," for row in rows[i : i + per_line]) + "\n")
     w("};\n")
 
 
@@ -80,19 +81,38 @@ def main():
     w(f"// Unicode {unicodedata.unidata_version}: inclusive code-point ranges, sorted.\n")
     w("#pragma once\n\n#include <cstdint>\n")
     for name, cats in CATS.items():
-        emit(w, f"General_Category in {{{', '.join(sorted(cats))}}}",
-             f"static const uint32_t ZONOS3_UNI_{name}[][2]", ranges(cats))
+        emit(
+            w,
+            f"General_Category in {{{', '.join(sorted(cats))}}}",
+            f"static const uint32_t ZONOS3_UNI_{name}[][2]",
+            ranges(cats),
+        )
 
-    emit(w, "General_Category in {Mc, Me, Mn}", "static const uint32_t ZONOS3_UNI_M[][2]",
-         ranges({"Mn", "Mc", "Me"}))
-    emit(w, "Python str.isspace()", "static const uint32_t ZONOS3_UNI_SPACE[][2]",
-         [(a, b) for a, b, _ in runs(lambda cp: chr(cp).isspace())])
-    w(f"\nenum {{ ZONOS3_UNI_HIRA = {HIRA}, ZONOS3_UNI_KATA = {KATA}, ZONOS3_UNI_HANGUL = {HANGUL}, "
-      f"ZONOS3_UNI_HAN = {HAN} }};\n")
-    emit(w, "{first, last, class}: letters whose name marks them HIRAGANA / KATAKANA / HANGUL SYLLABLE / CJK ideograph",
-         "static const uint32_t ZONOS3_UNI_CJK_CLASS[][3]", runs(char_class), per_line=3)
-    emit(w, "{first, last, canonical combining class} for every non-zero class",
-         "static const uint32_t ZONOS3_UNI_CCC[][3]", runs(lambda cp: unicodedata.combining(chr(cp))), per_line=3)
+    emit(w, "General_Category in {Mc, Me, Mn}", "static const uint32_t ZONOS3_UNI_M[][2]", ranges({"Mn", "Mc", "Me"}))
+    emit(
+        w,
+        "Python str.isspace()",
+        "static const uint32_t ZONOS3_UNI_SPACE[][2]",
+        [(a, b) for a, b, _ in runs(lambda cp: chr(cp).isspace())],
+    )
+    w(
+        f"\nenum {{ ZONOS3_UNI_HIRA = {HIRA}, ZONOS3_UNI_KATA = {KATA}, ZONOS3_UNI_HANGUL = {HANGUL}, "
+        f"ZONOS3_UNI_HAN = {HAN} }};\n"
+    )
+    emit(
+        w,
+        "{first, last, class}: letters whose name marks them HIRAGANA / KATAKANA / HANGUL SYLLABLE / CJK ideograph",
+        "static const uint32_t ZONOS3_UNI_CJK_CLASS[][3]",
+        runs(char_class),
+        per_line=3,
+    )
+    emit(
+        w,
+        "{first, last, canonical combining class} for every non-zero class",
+        "static const uint32_t ZONOS3_UNI_CCC[][3]",
+        runs(lambda cp: unicodedata.combining(chr(cp))),
+        per_line=3,
+    )
 
     decomp, compose = [], []
     for cp in range(0x110000):
@@ -102,12 +122,22 @@ def main():
         decomp.append((cp, parts[0], parts[1] if len(parts) == 2 else 0))
         if len(parts) == 2 and unicodedata.normalize("NFC", chr(cp)) == chr(cp):
             compose.append((parts[0], parts[1], cp))
-    assert unicodedata.decomposition("\uAC00") == ""  # Hangul syllables are algorithmic
+    assert unicodedata.decomposition("\uac00") == ""  # Hangul syllables are algorithmic
     compose.sort()
-    emit(w, "{code point, first, second (0 = singleton)}: canonical decomposition mappings (one level; Hangul is algorithmic)",
-         "static const uint32_t ZONOS3_UNI_DECOMP[][3]", decomp, per_line=3)
-    emit(w, "{first, second, composite} sorted by (first, second): primary composites (composition exclusions removed)",
-         "static const uint32_t ZONOS3_UNI_COMPOSE[][3]", compose, per_line=3)
+    emit(
+        w,
+        "{code point, first, second (0 = singleton)}: canonical decomposition mappings (one level; Hangul is algorithmic)",
+        "static const uint32_t ZONOS3_UNI_DECOMP[][3]",
+        decomp,
+        per_line=3,
+    )
+    emit(
+        w,
+        "{first, second, composite} sorted by (first, second): primary composites (composition exclusions removed)",
+        "static const uint32_t ZONOS3_UNI_COMPOSE[][3]",
+        compose,
+        per_line=3,
+    )
 
     fold = []
     for cp in range(0x110000):
@@ -116,8 +146,13 @@ def main():
         if f != c:
             assert len(f) <= 3, hex(cp)
             fold.append((cp, len(f), *(ord(x) for x in f), *([0] * (3 - len(f)))))
-    emit(w, "{code point, length, folded[3]}: Python str.casefold() (full case folding)",
-         "static const uint32_t ZONOS3_UNI_CASEFOLD[][5]", fold, per_line=2)
+    emit(
+        w,
+        "{code point, length, folded[3]}: Python str.casefold() (full case folding)",
+        "static const uint32_t ZONOS3_UNI_CASEFOLD[][5]",
+        fold,
+        per_line=2,
+    )
 
 
 if __name__ == "__main__":

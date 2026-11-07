@@ -1,0 +1,4 @@
+packages:
+  - studio
+  - studio/mcp
+  - servers/web

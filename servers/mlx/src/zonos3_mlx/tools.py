@@ -123,34 +123,56 @@ def cmd_generate(args) -> int:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="python -m zonos3_mlx.tools", description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        prog="python -m zonos3_mlx.tools", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = p.add_subparsers(dest="command", required=True)
     d = sub.add_parser("decode", help="sheared codes -> pre-gain 44.1 kHz PCM (npy)")
-    d.add_argument("gguf"); d.add_argument("codes"); d.add_argument("out"); d.add_argument("--eos", type=int)
+    d.add_argument("gguf")
+    d.add_argument("codes")
+    d.add_argument("out")
+    d.add_argument("--eos", type=int)
     d.set_defaults(fn=cmd_decode)
     e = sub.add_parser("embed", help="audio -> speaker embedding")
-    e.add_argument("gguf"); e.add_argument("audio"); e.add_argument("out"); e.add_argument("--dump-dir")
+    e.add_argument("gguf")
+    e.add_argument("audio")
+    e.add_argument("out")
+    e.add_argument("--dump-dir")
     e.set_defaults(fn=cmd_embed)
     s = sub.add_parser("ssl", help="SSL teacher features and hidden states")
     s.add_argument("gguf")
     src = s.add_mutually_exclusive_group(required=True)
-    src.add_argument("--audio"); src.add_argument("--features")
-    s.add_argument("--mask"); s.add_argument("--out", required=True)
-    s.add_argument("--dtype", choices=("f32", "bf16"), default="f32",
-                   help="f32: the dump_golden.py --dtype f32 oracle; bf16: the reference encoder's recipe")
+    src.add_argument("--audio")
+    src.add_argument("--features")
+    s.add_argument("--mask")
+    s.add_argument("--out", required=True)
+    s.add_argument(
+        "--dtype",
+        choices=("f32", "bf16"),
+        default="f32",
+        help="f32: the dump_golden.py --dtype f32 oracle; bf16: the reference encoder's recipe",
+    )
     s.set_defaults(fn=cmd_ssl)
     c = sub.add_parser("encode", help="audio -> ordinary [frames, 10] reference codes")
-    c.add_argument("encoder"); c.add_argument("ssl"); c.add_argument("audio"); c.add_argument("out")
+    c.add_argument("encoder")
+    c.add_argument("ssl")
+    c.add_argument("audio")
+    c.add_argument("out")
     c.set_defaults(fn=cmd_encode)
     g = sub.add_parser("generate", help="one in-process synthesis (Engine + Scheduler, no HTTP)")
-    g.add_argument("model"); g.add_argument("text"); g.add_argument("out")
+    g.add_argument("model")
+    g.add_argument("text")
+    g.add_argument("out")
     g.add_argument("--zac", help="decoder GGUF (default: zac-keep2.gguf next to the model)")
-    g.add_argument("--seed", type=int); g.add_argument("--dump-codes")
+    g.add_argument("--seed", type=int)
+    g.add_argument("--dump-codes")
     g.add_argument("--request", help="extra GenerateRequest fields as JSON")
     g.set_defaults(fn=cmd_generate)
-    p.add_argument("--cpu", action="store_true",
-                   help="run MLX on the CPU device (the F32 oracles compare at CPU-accumulation precision)")
+    p.add_argument(
+        "--cpu",
+        action="store_true",
+        help="run MLX on the CPU device (the F32 oracles compare at CPU-accumulation precision)",
+    )
     args = p.parse_args(argv)
     if args.cpu:
         import mlx.core as mx

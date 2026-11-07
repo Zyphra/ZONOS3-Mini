@@ -16,6 +16,7 @@ import numpy as np
 
 from zonos3_mlx.audio_io import polyphase_resample
 from zonos3_mlx.gguf_io import GGUFFile
+from zonos3_mlx.numeric import bf16_round
 
 ARCH = "w2vbert_ssl"
 
@@ -26,10 +27,6 @@ def _silu(x):
 
 def _identity(x):
     return x
-
-
-def _bf16(x):
-    return x.astype(mx.bfloat16).astype(mx.float32)
 
 
 _BF16_MAX = 3.3895313892515355e38  # bfloat16 0x7f7f: the masked-score fill of the BF16 recipe
@@ -47,7 +44,11 @@ class SSLTeacher:
         self.n_layer, self.n_embd, self.n_head = int(k("n_layer")), int(k("n_embd")), int(k("n_head"))
         self.rel_left, self.rel_right = int(k("rel_left")), int(k("rel_right"))
         self.conv_kernel, self.n_mels = int(k("conv_kernel")), int(k("n_mels"))
-        self.frame_length, self.hop_length, self.fft_length = int(k("frame_length")), int(k("hop_length")), int(k("fft_length"))
+        self.frame_length, self.hop_length, self.fft_length = (
+            int(k("frame_length")),
+            int(k("hop_length")),
+            int(k("fft_length")),
+        )
         self.stride = int(k("stride"))
         self.eps = float(k("eps"))
         self.preemph = float(k("preemphasis"))
@@ -58,7 +59,7 @@ class SSLTeacher:
         self.mel_filters = f.array("frontend.mel_filters").astype(np.float64)  # [257, 80]
         self.resample_kernel = f.array("frontend.resample_44100").astype(np.float32)  # [160, 475]
         self.dtype = dtype
-        self._r = _bf16 if dtype == "bf16" else _identity
+        self._r = bf16_round if dtype == "bf16" else _identity
         self._mask_max = _BF16_MAX if dtype == "bf16" else float(np.finfo(np.float32).max)
         self.t = {}
         for name in f.names():
@@ -66,8 +67,12 @@ class SSLTeacher:
                 continue
             value = mx.array(f.array(name).astype(np.float32))
             # GEMM weights are BF16 operands in the bf16 recipe; norms, biases and the depthwise taps stay F32.
-            gemm = name.endswith(".weight") and "_ln" not in name and not name.startswith("fp.ln") \
+            gemm = (
+                name.endswith(".weight")
+                and "_ln" not in name
+                and not name.startswith("fp.ln")
                 and not name.endswith("conv.dw.weight")
+            )
             self.t[name] = self._r(value) if (gemm or name.endswith("attn.dist")) else value
         mx.eval(list(self.t.values()))
 
@@ -113,6 +118,7 @@ class SSLTeacher:
         if nf % self.stride:
             mask[-1] = 0
         return feats.reshape(T, self.stride * nm), mask
+
     # -------------------------------------------------------------------------------------------- network
     def _ln(self, x, p):
         return mx.fast.layer_norm(x, self.t[p + ".weight"], self.t[p + ".bias"], self.eps)

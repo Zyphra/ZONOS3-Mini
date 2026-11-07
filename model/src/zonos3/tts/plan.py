@@ -1,6 +1,6 @@
 """The v2 GenerateRequest rules and prompt plan of every Python server (the reference, the MLX and the sgl server).
 
-One request goes through three steps, in the order the sgl frontend has always checked them (api/openapi.yaml; the
+One request goes through three steps, in the order the sgl frontend has always checked them (servers/api/openapi.yaml; the
 rules R1-R16 the ggml and in-browser servers port natively and ``model/tests/fixtures/request_errors.json`` pins):
 
 1. ``request_head``: tag CFG (R1), the speaker mode (R2) and the condition rows (R3) -- everything the server needs
@@ -41,20 +41,47 @@ from zonos3.speaker_cfg import speaker_cfg_twin
 from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip_nonverbal_markup
 from zonos3.tts.prompt import TTSPromptBuilder, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
-from zonos3.tts.steering import SteeringBundle, resolve_controls
+from zonos3.tts.steering import SteeringBundle, no_steering_message, resolve_controls
 
-# v2 GenerateRequest (api/openapi.yaml): every field and its default.
+# v2 GenerateRequest (servers/api/openapi.yaml): every field and its default.
 GENERATE_DEFAULTS: dict = {
-    "text": None, "language": "en_us", "text_normalization": True, "silence_prefill_frames": None,
-    "decode_context": False, "decode_context_frames": DECODE_CONTEXT_FRAMES, **SAMPLING, "max_tokens": None,
-    "fade_out_ms": 0.0, "seed": None, "stream": True, "stream_decode": None, "format": "pcm",
-    "speaker_mode": None, "condition_buckets": None, "condition_values": None, "headroom_db": None,
-    "speaker_audio_base64": None, "speaker_audio_name": None, "speaker_reference_codes": None,
-    "speaker_embedding_base64": None, "speaker_embedding_name": None, "speaker_embedding_id": None,
-    "speaker_blend_embedding_id_a": None, "speaker_blend_embedding_id_b": None, "speaker_blend_t": None,
-    "controls_cfg_scale": 1.0, "speaker_cfg_scale": 1.0,
-    "tag_cfg_scale": 1.0, "accent": None, "accent_strength": 1.0, "controls": None, "control_spans": None,
-    "control_span_rate": None, "control_span_follow": "rate", "control_span_lead": None, "control_span_lag": None,
+    "text": None,
+    "language": "en_us",
+    "text_normalization": True,
+    "silence_prefill_frames": None,
+    "decode_context": False,
+    "decode_context_frames": DECODE_CONTEXT_FRAMES,
+    **SAMPLING,
+    "max_tokens": None,
+    "fade_out_ms": 0.0,
+    "seed": None,
+    "stream": True,
+    "stream_decode": None,
+    "format": "pcm",
+    "speaker_mode": None,
+    "condition_buckets": None,
+    "condition_values": None,
+    "headroom_db": None,
+    "speaker_audio_base64": None,
+    "speaker_audio_name": None,
+    "speaker_reference_codes": None,
+    "speaker_embedding_base64": None,
+    "speaker_embedding_name": None,
+    "speaker_embedding_id": None,
+    "speaker_blend_embedding_id_a": None,
+    "speaker_blend_embedding_id_b": None,
+    "speaker_blend_t": None,
+    "controls_cfg_scale": 1.0,
+    "speaker_cfg_scale": 1.0,
+    "tag_cfg_scale": 1.0,
+    "accent": None,
+    "accent_strength": 1.0,
+    "controls": None,
+    "control_spans": None,
+    "control_span_rate": None,
+    "control_span_follow": "rate",
+    "control_span_lead": None,
+    "control_span_lag": None,
     "laci": False,
 }
 NO_CONDITION_ROWS = "This checkpoint has no condition rows (loudness / fmax / speaking rate)"
@@ -154,9 +181,13 @@ def validate_tag_cfg(text: str, scale: float, *, speaker_cfg_scale: float, contr
             + " or the same names as span tags (<shouting>...</shouting>)."
         )
     if float(speaker_cfg_scale) != 1.0:
-        raise ValueError("tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.")
+        raise ValueError(
+            "tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0."
+        )
     if float(controls_cfg_scale) != 1.0:
-        raise ValueError("tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.")
+        raise ValueError(
+            "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0."
+        )
 
 
 def resolve_speaker_mode(modes: Sequence[str], value: str | None) -> str | None:
@@ -209,9 +240,13 @@ def resolve_condition_buckets(ctx: RulesContext, buckets, values) -> list[int] |
             if flag is not None and bucket != n_buckets:
                 allowed = list(flag.get("values") or [0, 1])
                 if bucket not in [int(v) for v in allowed]:
-                    raise ValueError(f"condition_buckets[{name}] is a flag: one of {allowed} or {n_buckets} (= unknown)")
+                    raise ValueError(
+                        f"condition_buckets[{name}] is a flag: one of {allowed} or {n_buckets} (= unknown)"
+                    )
             if not 0 <= bucket <= n_buckets:
-                raise ValueError(f"condition_buckets[{name}] must be in [0, {n_buckets - 1}] or {n_buckets} (= unknown)")
+                raise ValueError(
+                    f"condition_buckets[{name}] must be in [0, {n_buckets - 1}] or {n_buckets} (= unknown)"
+                )
         elif values_by_name.get(name) is not None:
             try:
                 value = float(values_by_name[name])
@@ -224,7 +259,9 @@ def resolve_condition_buckets(ctx: RulesContext, buckets, values) -> list[int] |
             else:
                 edges = ctx.condition_edges.get(name)
                 if not edges:
-                    raise ValueError(f"the checkpoint carries no edges for {name}; send condition_buckets[{name}] instead")
+                    raise ValueError(
+                        f"the checkpoint carries no edges for {name}; send condition_buckets[{name}] instead"
+                    )
                 bucket = int(bisect.bisect_right(list(edges), value))
         else:
             bucket = n_buckets
@@ -323,7 +360,7 @@ def decode_context_codes(codes: torch.Tensor | None, decode_context: bool, frame
     if not decode_context or codes is None:
         return None
     k = max(0, min(int(frames or DECODE_CONTEXT_FRAMES), int(codes.shape[0])))
-    return codes[int(codes.shape[0]) - k:] if k > 0 else None
+    return codes[int(codes.shape[0]) - k :] if k > 0 else None
 
 
 def resolve_accent(names: Sequence[str], accent, strength) -> tuple[str, float] | None:
@@ -344,7 +381,9 @@ def validate_phoneme_groups(spec: dict | None, text: str) -> None:
     from zonos3.tts.superbpe import PHONEME_CLOSE, PHONEME_OPEN, payload_ids
 
     phonemes = None if spec is None else spec.get("phonemes")
-    open_, close = (PHONEME_OPEN, PHONEME_CLOSE) if phonemes is None else (phonemes["open_marker"], phonemes["close_marker"])
+    open_, close = (
+        (PHONEME_OPEN, PHONEME_CLOSE) if phonemes is None else (phonemes["open_marker"], phonemes["close_marker"])
+    )
     if open_ not in text and close not in text:
         return
     if phonemes is None:
@@ -383,8 +422,9 @@ class RequestHead:
 
 def request_head(ctx: RulesContext, req: Request) -> RequestHead:
     """R1 tag CFG, R2 the speaker mode, R3 the condition rows."""
-    validate_tag_cfg(req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale,
-                     controls_cfg_scale=req.controls_cfg_scale)
+    validate_tag_cfg(
+        req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale, controls_cfg_scale=req.controls_cfg_scale
+    )
     mode = resolve_speaker_mode(ctx.speaker_modes, req.speaker_mode)
     return RequestHead(mode, resolve_condition_buckets(ctx, req.condition_buckets, req.condition_values))
 
@@ -411,8 +451,16 @@ class Rules:
     seed: int
 
 
-def request_rules(ctx: RulesContext, req: Request, head: RequestHead, speaker: Speaker, *, hidden_delta=None,
-                  edit: bool = False, duration_target: bool = False) -> Rules:
+def request_rules(
+    ctx: RulesContext,
+    req: Request,
+    head: RequestHead,
+    speaker: Speaker,
+    *,
+    hidden_delta=None,
+    edit: bool = False,
+    duration_target: bool = False,
+) -> Rules:
     """R4-R16 for the speaker inputs the server resolved for ``head.mode``. ``hidden_delta``: a server-side steering
     delta added to the request's (a speech-edit region's); ``edit``: a speech-edit region (no silence prefill, no span
     follow); ``duration_target``: the request carries a LACI duration target (a duration-target take)."""
@@ -425,30 +473,46 @@ def request_rules(ctx: RulesContext, req: Request, head: RequestHead, speaker: S
     delta = schedule = span_chars = None
     if req.controls or req.control_spans:
         if ctx.steer_bundle is None:
-            raise ValueError(f"This server has no steering bundle ({ctx.steer_hint}); `controls` are unavailable.")
-        resolved = resolve_controls(ctx.steer_bundle, req.controls, list(req.control_spans or []), text=req.text,
-                                    speaker_embedding=embedding, sources=sources, hidden_size=int(ctx.hidden_size),
-                                    frames_per_char=req.control_span_rate)
-        embedding, delta, schedule, span_chars = (resolved.speaker_embedding, resolved.hidden_delta, resolved.schedule,
-                                                  resolved.span_chars)
+            raise ValueError(no_steering_message(ctx.steer_hint, field="controls"))
+        resolved = resolve_controls(
+            ctx.steer_bundle,
+            req.controls,
+            list(req.control_spans or []),
+            text=req.text,
+            speaker_embedding=embedding,
+            sources=sources,
+            hidden_size=int(ctx.hidden_size),
+            frames_per_char=req.control_span_rate,
+        )
+        embedding, delta, schedule, span_chars = (
+            resolved.speaker_embedding,
+            resolved.hidden_delta,
+            resolved.schedule,
+            resolved.span_chars,
+        )
     if hidden_delta is not None:
         delta = hidden_delta if delta is None else delta + hidden_delta
     # R11: spans that follow the reading position need the language's alignment heads (else the character rate)
     follow_chars = follow_gate = None
     if req.control_span_follow == "reading" and span_chars and language in ctx.laci_languages and not edit:
         default = FollowConfig()
-        follow_gate = [default.lead if req.control_span_lead is None else float(req.control_span_lead),
-                       default.lag if req.control_span_lag is None else float(req.control_span_lag)]
+        follow_gate = [
+            default.lead if req.control_span_lead is None else float(req.control_span_lead),
+            default.lag if req.control_span_lag is None else float(req.control_span_lag),
+        ]
         follow_chars = [[int(a), int(b)] for a, b in span_chars]
     # R12: one CFG twin per request (tag CFG's exclusivity is R1's); controls CFG needs a hidden delta and a speaker row
     cfg_kind, cfg_scale = None, 1.0
     if float(req.speaker_cfg_scale) != 1.0:
         has_reference = speaker.mode == "reference" and (
-            speaker.reference_codes is not None or speaker.reference_audio is not None)
+            speaker.reference_codes is not None or speaker.reference_audio is not None
+        )
         has_embedding = speaker.mode == "embedding" and embedding is not None
         if not (has_reference or has_embedding):
-            raise ValueError("Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, "
-                             "or speaker_mode=embedding with a clip or an embedding")
+            raise ValueError(
+                "Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, "
+                "or speaker_mode=embedding with a clip or an embedding"
+            )
         if float(req.controls_cfg_scale) != 1.0:
             raise ValueError("Speaker and controls CFG cannot be combined")
         cfg_kind, cfg_scale = "speaker", float(req.speaker_cfg_scale)
@@ -459,10 +523,24 @@ def request_rules(ctx: RulesContext, req: Request, head: RequestHead, speaker: S
     validate_phoneme_groups(ctx.text_tokenizer_spec, req.text)
     check_laci(ctx, req, language, duration_target=duration_target)
     seed = int(req.seed) if req.seed is not None else secrets.randbelow(2**31)
-    return Rules(request=req, speaker=speaker, language=language, condition_ids=head.condition_ids,
-                 max_tokens=max_tokens, silence_frames=silence, accent=accent, embedding=embedding, sources=sources,
-                 hidden_delta=delta, schedule=schedule, follow_chars=follow_chars, follow_gate=follow_gate,
-                 cfg_kind=cfg_kind, cfg_scale=cfg_scale, seed=seed)
+    return Rules(
+        request=req,
+        speaker=speaker,
+        language=language,
+        condition_ids=head.condition_ids,
+        max_tokens=max_tokens,
+        silence_frames=silence,
+        accent=accent,
+        embedding=embedding,
+        sources=sources,
+        hidden_delta=delta,
+        schedule=schedule,
+        follow_chars=follow_chars,
+        follow_gate=follow_gate,
+        cfg_kind=cfg_kind,
+        cfg_scale=cfg_scale,
+        seed=seed,
+    )
 
 
 # ----------------------------------------------------------------------------------------------------- the rows
@@ -541,8 +619,15 @@ class PromptPlan:
         return doc
 
 
-def text_rows(builder: TTSPromptBuilder, text: str, *, silence: torch.Tensor | None = None, edit=None,
-              span_end_id: int | None = None, quality_buckets=None) -> torch.Tensor:
+def text_rows(
+    builder: TTSPromptBuilder,
+    text: str,
+    *,
+    silence: torch.Tensor | None = None,
+    edit=None,
+    span_end_id: int | None = None,
+    quality_buckets=None,
+) -> torch.Tensor:
     """The text rows of a prompt and what follows them: a speech-edit region's layout (``edit``: its window
     ``codes``, ``spans`` and the ``fills`` so far; needs ``span_end_id``), else the silence prefill rows."""
     prompt = builder.build(text, quality_buckets=quality_buckets)
@@ -572,8 +657,14 @@ class PromptRows:
         return torch.cat((self.input_ids[:lead], plain_rows.to(self.input_ids.dtype)), dim=0)
 
 
-def prompt_rows(builder: TTSPromptBuilder, text_rows: torch.Tensor, *, condition_count: int,
-                reference_codes: torch.Tensor | None, speaker_row: bool) -> PromptRows:
+def prompt_rows(
+    builder: TTSPromptBuilder,
+    text_rows: torch.Tensor,
+    *,
+    condition_count: int,
+    reference_codes: torch.Tensor | None,
+    speaker_row: bool,
+) -> PromptRows:
     """The rows in front of ``text_rows``: ``condition_count`` condition rows, the reference prefix of
     ``reference_codes`` and the speaker row (``speaker_row``), in that order towards the start."""
     t = text_rows
@@ -608,21 +699,37 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
     if rules.follow_chars is not None:
         from zonos3.tts.span_follow import span_token_ranges
 
-        follow_tokens = [list(r) for r in span_token_ranges(req.text, text, [tuple(x) for x in rules.follow_chars],
-                                                            builder.config.text_tokenizer_spec)]
+        follow_tokens = [
+            list(r)
+            for r in span_token_ranges(
+                req.text, text, [tuple(x) for x in rules.follow_chars], builder.config.text_tokenizer_spec
+            )
+        ]
     codes = speaker.reference_codes
     embedding = rules.embedding
-    rows = prompt_rows(builder, tagged, condition_count=len(rules.condition_ids or ()), reference_codes=codes,
-                       speaker_row=embedding is not None)
+    rows = prompt_rows(
+        builder,
+        tagged,
+        condition_count=len(rules.condition_ids or ()),
+        reference_codes=codes,
+        speaker_row=embedding is not None,
+    )
     t = rows.input_ids
     cond = Branch(t.to(torch.int32), embedding, rows.speaker_row, rules.condition_ids, rows.condition_token_start)
     twin = None
     if rules.cfg_kind == "speaker":
         msg = TwinMsg(t, rows.reference_prefix_length, embedding, max(rows.speaker_row, 0))
-        spec = speaker_cfg_twin(msg, t, n_codebooks=ctx.n_codebooks, audio_pad_id=ctx.audio_pad_id,
-                                text_vocab=ctx.text_vocab, speaker_token_position=max(rows.speaker_row, 0),
-                                condition_values=rules.condition_ids, condition_token_start=rows.condition_token_start,
-                                condition_unknowns=tuple(ctx.condition_bucket_counts))
+        spec = speaker_cfg_twin(
+            msg,
+            t,
+            n_codebooks=ctx.n_codebooks,
+            audio_pad_id=ctx.audio_pad_id,
+            text_vocab=ctx.text_vocab,
+            speaker_token_position=max(rows.speaker_row, 0),
+            condition_values=rules.condition_ids,
+            condition_token_start=rows.condition_token_start,
+            condition_unknowns=tuple(ctx.condition_bucket_counts),
+        )
         twin = Branch(spec.input_ids.to(torch.int32), None, -1, spec.condition_values, spec.condition_token_start)
     elif rules.cfg_kind == "tag":
         twin = replace(cond, input_ids=rows.with_text(tagged, rows_of(strip_nonverbal_markup(text))).to(torch.int32))
@@ -630,22 +737,42 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
         twin = replace(cond, steered=False)
     prompt_len = max(len(cond.input_ids), 0 if twin is None else len(twin.input_ids))
     return PromptPlan(
-        request=req, text=text, language=rules.language, cond=cond, twin=twin, cfg_kind=rules.cfg_kind,
-        cfg_scale=rules.cfg_scale, reference_prefix_length=rows.reference_prefix_length, prefill_rows=silence,
+        request=req,
+        text=text,
+        language=rules.language,
+        cond=cond,
+        twin=twin,
+        cfg_kind=rules.cfg_kind,
+        cfg_scale=rules.cfg_scale,
+        reference_prefix_length=rows.reference_prefix_length,
+        prefill_rows=silence,
         context_codes=decode_context_codes(codes, bool(req.decode_context), req.decode_context_frames),
-        sources=rules.sources, hidden_delta=rules.hidden_delta, schedule=rules.schedule, follow_tokens=follow_tokens,
-        follow_gate=rules.follow_gate, accent=rules.accent,
-        max_tokens=fit_max_tokens(rules.max_tokens, prompt_len, ctx.max_seqlen), seed=rules.seed,
+        sources=rules.sources,
+        hidden_delta=rules.hidden_delta,
+        schedule=rules.schedule,
+        follow_tokens=follow_tokens,
+        follow_gate=rules.follow_gate,
+        accent=rules.accent,
+        max_tokens=fit_max_tokens(rules.max_tokens, prompt_len, ctx.max_seqlen),
+        seed=rules.seed,
         laci=rules.language if req.laci else None,
     )
 
 
-def plan_prompt(ctx: PromptContext, request: Mapping, resolve_speaker: Callable[[Request, str | None], Speaker], *,
-                hidden_delta=None, edit=None, duration_target: bool = False) -> PromptPlan:
+def plan_prompt(
+    ctx: PromptContext,
+    request: Mapping,
+    resolve_speaker: Callable[[Request, str | None], Speaker],
+    *,
+    hidden_delta=None,
+    edit=None,
+    duration_target: bool = False,
+) -> PromptPlan:
     """``request_head``, the server's ``resolve_speaker(request, mode)``, ``request_rules`` and ``build_prompt``."""
     req = parse_request(request)
     head = request_head(ctx, req)
     speaker = resolve_speaker(req, head.mode)
-    rules = request_rules(ctx, req, head, speaker, hidden_delta=hidden_delta, edit=edit is not None,
-                          duration_target=duration_target)
+    rules = request_rules(
+        ctx, req, head, speaker, hidden_delta=hidden_delta, edit=edit is not None, duration_target=duration_target
+    )
     return build_prompt(ctx, rules, edit=edit)

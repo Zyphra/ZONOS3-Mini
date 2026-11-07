@@ -16,12 +16,11 @@ from pathlib import Path
 
 import pytest
 import torch
-
 from zonos3.tts import edit as E
 from zonos3.tts.prompt import TTSPromptConfig
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "edit-replay" / "cases.json"
-K, PAD, TEXT_VOCAB, SPAN_END = 4, 13, 500, 14   # a small layout: codebook 12, EOA 12, pad 13, span-end 14
+K, PAD, TEXT_VOCAB, SPAN_END = 4, 13, 500, 14  # a small layout: codebook 12, EOA 12, pad 13, span-end 14
 
 
 def _cases() -> list[dict]:
@@ -38,14 +37,52 @@ def _cases() -> list[dict]:
     text_rows = [[PAD] * K + [t] for t in (2, 70, 71, 3)]
     c20 = codes(20)
     add("prompt-one-span", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[5, 4]], fills=[], **layout)
-    add("prompt-span-at-0", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[0, 3], [10, 2]], fills=[], **layout)
-    add("prompt-second-fill", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[2, 3], [9, 4], [15, 5]],
-        fills=[codes(6), codes(2)], **layout)
+    add(
+        "prompt-span-at-0",
+        "edit_prompt_tokens",
+        text_rows=text_rows,
+        codes=c20,
+        spans=[[0, 3], [10, 2]],
+        fills=[],
+        **layout,
+    )
+    add(
+        "prompt-second-fill",
+        "edit_prompt_tokens",
+        text_rows=text_rows,
+        codes=c20,
+        spans=[[2, 3], [9, 4], [15, 5]],
+        fills=[codes(6), codes(2)],
+        **layout,
+    )
     add("prompt-span-to-end", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[14, 6]], fills=[], **layout)
-    add("prompt-no-ungenerated", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[2, 3]], fills=[codes(1)], **layout)
-    add("prompt-bad-span-end", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[2, 3]], fills=[],
-        **{**layout, "span_end_id": 15})
-    add("prompt-overlap", "edit_prompt_tokens", text_rows=text_rows, codes=c20, spans=[[2, 3], [5, 2]], fills=[], **layout)
+    add(
+        "prompt-no-ungenerated",
+        "edit_prompt_tokens",
+        text_rows=text_rows,
+        codes=c20,
+        spans=[[2, 3]],
+        fills=[codes(1)],
+        **layout,
+    )
+    add(
+        "prompt-bad-span-end",
+        "edit_prompt_tokens",
+        text_rows=text_rows,
+        codes=c20,
+        spans=[[2, 3]],
+        fills=[],
+        **{**layout, "span_end_id": 15},
+    )
+    add(
+        "prompt-overlap",
+        "edit_prompt_tokens",
+        text_rows=text_rows,
+        codes=c20,
+        spans=[[2, 3], [5, 2]],
+        fills=[],
+        **layout,
+    )
     add("validate-ok", "validate_edit_spans", spans=[[0, 1], [2, 3]], total_frames=5, max_spans=3)
     add("validate-adjacent", "validate_edit_spans", spans=[[0, 2], [2, 3]], total_frames=5, max_spans=3)
     add("validate-too-many", "validate_edit_spans", spans=[[0, 1], [3, 1]], total_frames=5, max_spans=1)
@@ -57,10 +94,17 @@ def _cases() -> list[dict]:
 
 def py_call(fn: str, a: dict):
     if fn == "edit_prompt_tokens":
-        config = TTSPromptConfig(n_codebooks=a["n_codebooks"], audio_pad_id=a["audio_pad_id"], text_vocab=a["text_vocab"])
-        rows = E.edit_prompt_tokens(torch.tensor(a["text_rows"], dtype=torch.int32), torch.tensor(a["codes"]),
-                                    a["spans"], [torch.tensor(f).reshape(-1, a["n_codebooks"]) for f in a["fills"]],
-                                    config, span_end_id=a["span_end_id"])
+        config = TTSPromptConfig(
+            n_codebooks=a["n_codebooks"], audio_pad_id=a["audio_pad_id"], text_vocab=a["text_vocab"]
+        )
+        rows = E.edit_prompt_tokens(
+            torch.tensor(a["text_rows"], dtype=torch.int32),
+            torch.tensor(a["codes"]),
+            a["spans"],
+            [torch.tensor(f).reshape(-1, a["n_codebooks"]) for f in a["fills"]],
+            config,
+            span_end_id=a["span_end_id"],
+        )
         return rows.tolist()
     if fn == "validate_edit_spans":
         return E.validate_edit_spans(a["spans"], a["total_frames"], a["max_spans"])

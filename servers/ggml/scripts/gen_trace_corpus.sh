@@ -58,7 +58,7 @@ rm -rf "$OUT"; mkdir -p "$OUT"; : > "$MAN"
 trap 'echo "gen_trace_corpus: FAILED, see $OUT/log.txt" >&2' ERR
 run() { printf '%q ' "$@" >> "$OUT/log.txt"; printf '\n' >> "$OUT/log.txt"; "$@" >> "$OUT/log.txt" 2>&1; }
 references=()
-for v in default_voices/*.mp3; do
+for v in ../../assets/default_voices/*.mp3; do
   [ -f "$v" ] || continue
   reference="$OUT/reference_$(basename "$v" .mp3).npy"
   args=("$BUILD/zac-encoder-cli" "$ZAC_ENCODER" "$SSL_TEACHER" --audio "$v" "$reference")

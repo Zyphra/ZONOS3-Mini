@@ -6,8 +6,8 @@ import torch
 import torch.nn.functional as F
 from zonos3_sgl.benchmark.perf import compare_memory_kernel_perf
 from zonos3_sgl.kernel import indexing
-from zonos3_sgl.utils.misc import call_if_main
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import call_if_main
 
 logger = init_logger(__name__)
 

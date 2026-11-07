@@ -1,5 +1,5 @@
 // The generation registry (model/src/zonos3/registries/generation.json, Python zonos3.generation): the request defaults
-// and limits every server shares. The ggml server embeds the same file at build time; api/openapi.yaml repeats the
+// and limits every server shares. The ggml server embeds the same file at build time; servers/api/openapi.yaml repeats the
 // sampling defaults.
 import registry from '../../../model/src/zonos3/registries/generation.json';
 
@@ -19,6 +19,12 @@ export const DECODE_CONTEXT_FRAMES = registry.decode_context_frames;
 export const REFERENCE_MAX_FRAMES = registry.reference_max_frames;
 /** The frame budget of a request (its max_tokens is capped here). */
 export const MAX_FRAMES = registry.max_frames;
+/** Samples per codec frame (44.1 kHz). */
+export const HOP = 2940;
+/** Rows per slot: native context_capacity = min(context_length, max_frames + 4096). */
+export const CONTEXT_CAPACITY = MAX_FRAMES + 4096;
+/** Text rows the alignment probe reads: probe_max_text = min(2048, context_capacity) (sgl --align-probe-max-text). */
+export const ALIGN_PROBE_MAX_TEXT = 2048;
 /** The longest reference clip (seconds) the reference and speaker encoders take. */
 export const REFERENCE_AUDIO_MAX_SECONDS = registry.audio_max_seconds.reference;
 /** The longest speech-edit source (seconds) the capabilities advertise. */

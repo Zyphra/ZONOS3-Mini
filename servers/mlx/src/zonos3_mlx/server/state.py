@@ -3,37 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zonos3.generation import MAX_FRAMES
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
+from zonos3.tts.stream import StreamSettings
 
 from zonos3_mlx.engine import Engine
 from zonos3_mlx.scheduler import Scheduler
-
-
-def asr_device() -> str | None:
-    """The device of the Qwen3-ASR worker and of the plugins' helper workers: ``ZONOS3_ASR_DEVICE``, else ``mps`` on
-    macOS (else the workers' default)."""
-    return os.environ.get("ZONOS3_ASR_DEVICE") or ("mps" if sys.platform == "darwin" else None)
 
 
 @dataclass
 class ServerOptions:
     model_path: str
     batch: int = 4
-    max_frames: int = MAX_FRAMES
-    stream_decode_default: str = "prefix"  # "prefix" | "whole"
     default_voices_dir: Path | None = None
     studio_dir: Path | None = None
     phoneme_lexicon: str | None = None
-    text_normalization: bool = False
-    prefix: tuple[int, int, int, int] = (15, 4, 3, 450)  # chunk, first-chunk, hold-back, context frames
+    prefix: StreamSettings = field(default_factory=StreamSettings)  # ZONOS3_PREFIX_STREAM_*
     # whether the FuseAlign worker's interpreter has fusealign_hub (speech editing and plugins need it)
     fusealign: bool = field(default_factory=fusealign_installed)
     plugins: tuple[str, ...] = ()  # --plugins: zonos3_<name> packages to mount
@@ -56,10 +45,10 @@ class ServerState:
     # speech editing and plugins: the server's ASR worker (zonos3/workers/asr.py, Qwen3-ASR in .venv-asr; every speech
     # recognition; optional: editing without it needs the clip's transcript) and FuseAlign worker
     # (zonos3/workers/fusealign.py; every forced alignment); each starts on its first call
-    asr: AsrWorker = field(default_factory=lambda: AsrWorker(device=asr_device()))
+    asr: AsrWorker = field(default_factory=AsrWorker)
     aligner: FuseAlignWorker = field(default_factory=FuseAlignWorker)
     edit_runtime: object | None = None  # zonos3.tts.edit_runtime.EditRuntime (zonos3_mlx.server.edit.runtime)
-    laci_slots: asyncio.Semaphore | None = None  # LACI takes in flight (zonos3_mlx.server.host)
+    laci_slots: asyncio.Semaphore | None = None  # LACI takes in flight (zonos3.server.host.laci_slots, on first use)
     plugins: list = field(default_factory=list)  # loaded zonos3.server.plugins.Plugin
 
     @property

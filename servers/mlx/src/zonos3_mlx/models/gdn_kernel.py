@@ -1,5 +1,5 @@
 # Copyright © 2025 Apple Inc.
-# SPDX-License-Identifier: MIT (licenses/mlx-lm-MIT.txt)
+# SPDX-License-Identifier: MIT (third_party/licenses/mlx-lm-MIT.txt)
 #
 # The scalar-gate, unmasked gated-delta Metal kernel of mlx-lm (mlx_lm/models/gated_delta.py,
 # _make_gated_delta_kernel(has_mask=False, vectorized=False)) and its ops-loop step, adapted for the ZONOS3 GDN layers:

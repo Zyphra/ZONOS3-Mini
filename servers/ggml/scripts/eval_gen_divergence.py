@@ -6,7 +6,14 @@ cannot see — the metric that mattered for the q2 audio-quality regression.
 
 Usage: eval_gen_divergence.py <ref.gguf> <test.gguf> [--max N] [--gpu G]
 """
-import argparse, subprocess, sys, tempfile, os, glob
+
+import argparse
+import glob
+import os
+import subprocess
+import sys
+import tempfile
+
 import numpy as np
 
 CLI = os.environ.get("ZONOS3_CLI", "./build-cuda/zonos3-cli")
@@ -20,19 +27,26 @@ PROMPTS = [
     "Frankly, I did not expect the committee to approve the proposal on its very first reading.",
 ]
 
+
 def gen(model, text, max_frames, gpu, tmp, reference_args):
     out = os.path.join(tmp, "c.npy")
     for f in glob.glob(os.path.join(tmp, "c.npy*")):
         os.remove(f)
     env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu))
-    r = subprocess.run([CLI, model, "--tts", text, out, "--greedy", "--max", str(max_frames), "--gpu", *reference_args],
-                       env=env, capture_output=True, text=True)
+    r = subprocess.run(
+        [CLI, model, "--tts", text, out, "--greedy", "--max", str(max_frames), "--gpu", *reference_args],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
     if r.returncode or not os.path.exists(out):
-        sys.stderr.write(r.stderr[-2000:]); raise RuntimeError(f"gen failed for {model}")
+        sys.stderr.write(r.stderr[-2000:])
+        raise RuntimeError(f"gen failed for {model}")
     codes = np.load(out).astype(np.int64)
     if codes.ndim != 2 or codes.shape[1] != 10:
         raise RuntimeError(f"invalid code sequence from {model}: {codes.shape}")
     return codes
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -67,12 +81,18 @@ def main():
             first_div = int(np.argmin(frame_eq)) if not frame_eq.all() else n
             fm = 100.0 * frame_eq.sum() / denominator if denominator else 100.0
             cm = 100.0 * code_eq.sum() / (denominator * 10) if denominator else 100.0
-            fm_all.append(fm); cm_all.append(cm); div_all.append(first_div)
+            fm_all.append(fm)
+            cm_all.append(cm)
+            div_all.append(first_div)
             print(f"  p{i:<3d} {nr:5d}/{nt:<5d} {first_div:8d} {fm:12.2f} {cm:11.2f}")
-    print(f"\nmean: 1st-div={np.mean(div_all):.0f} frame-match={np.mean(fm_all):.2f}% "
-          f"code-match={np.mean(cm_all):.2f}%")
-    print("(frame-match% = fraction of frames where ALL codebooks match the f16 reference; "
-          "higher = closer to f16. A good quant stays high and diverges late.)")
+    print(
+        f"\nmean: 1st-div={np.mean(div_all):.0f} frame-match={np.mean(fm_all):.2f}% code-match={np.mean(cm_all):.2f}%"
+    )
+    print(
+        "(frame-match% = fraction of frames where ALL codebooks match the f16 reference; "
+        "higher = closer to f16. A good quant stays high and diverges late.)"
+    )
+
 
 if __name__ == "__main__":
     main()

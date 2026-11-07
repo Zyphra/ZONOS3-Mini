@@ -7,10 +7,11 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Dict, List, Literal
 
 import torch
+
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.env import ENV
-from zonos3_sgl.utils.misc import divide_even
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import divide_even
 
 from .base import BaseAttnBackend, BaseAttnMetadata
 from .utils import BaseCaptureData, make_positions
@@ -21,9 +22,10 @@ if TYPE_CHECKING:
         BatchPrefillWithPagedKVCacheWrapper,
         CUDAGraphBatchDecodeWithPagedKVCacheWrapper,
     )
+    from zonos3.models.config import ModelConfig
+
     from zonos3_sgl.core import TTSBatch
     from zonos3_sgl.kvcache import BaseKVCache
-    from zonos3.models.config import ModelConfig
 
 
 def _next_power_of_2(n: int) -> int:
@@ -102,9 +104,7 @@ class FlashInferBackend(BaseAttnBackend):
         self.config = config
         self.kvcache = kvcache
         self.device = kvcache.device
-        self.float_workspace_buffer = torch.empty(
-            128 * 1024 * 1024, dtype=torch.uint8, device=self.device
-        )
+        self.float_workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=self.device)
         self.prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
             self.float_workspace_buffer,
             kv_layout="NHD",
@@ -212,9 +212,13 @@ class FlashInferBackend(BaseAttnBackend):
         # Debug: check attention inputs/outputs for first few steps at layer 0
         global _fi_debug_counter
         is_capturing = torch.cuda.is_current_stream_capturing()
-        if (logger.isEnabledFor(logging.DEBUG)
-                and layer_id == 0 and batch.is_decode and not is_capturing
-                and _fi_debug_counter < 10):
+        if (
+            logger.isEnabledFor(logging.DEBUG)
+            and layer_id == 0
+            and batch.is_decode
+            and not is_capturing
+            and _fi_debug_counter < 10
+        ):
             _fi_debug_counter += 1
             step = _fi_debug_counter
             logger.debug("ATTN Step %d Layer 0", step)
@@ -228,14 +232,22 @@ class FlashInferBackend(BaseAttnBackend):
             k_cache, v_cache = kv_cache
             if batch.out_loc.numel() > 0:
                 slot = batch.out_loc[0].item()
-                logger.debug("  KV cache slot %d: k_norm=%.4f", slot, k_cache.view(-1, k_cache.shape[-1])[slot].norm().item())
+                logger.debug(
+                    "  KV cache slot %d: k_norm=%.4f", slot, k_cache.view(-1, k_cache.shape[-1])[slot].norm().item()
+                )
 
         output = metadata.wrapper.run(q=q, paged_kv_cache=kv_cache)
 
-        if (logger.isEnabledFor(logging.DEBUG)
-                and layer_id == 0 and batch.is_decode and not is_capturing
-                and _fi_debug_counter <= 10):
-            logger.debug("  Output shape: %s, norm: %.4f, mean: %.6f", output.shape, output.norm().item(), output.mean().item())
+        if (
+            logger.isEnabledFor(logging.DEBUG)
+            and layer_id == 0
+            and batch.is_decode
+            and not is_capturing
+            and _fi_debug_counter <= 10
+        ):
+            logger.debug(
+                "  Output shape: %s, norm: %.4f, mean: %.6f", output.shape, output.norm().item(), output.mean().item()
+            )
 
         return output
 
@@ -276,9 +288,7 @@ class FlashInferBackend(BaseAttnBackend):
             sm_scale=1.0 / math.sqrt(self.config.head_dim),
         )
 
-    def init_capture_graph(
-        self, max_seq_len: int, bs_list: List[int], frame_width: int = 1
-    ) -> None:
+    def init_capture_graph(self, max_seq_len: int, bs_list: List[int], frame_width: int = 1) -> None:
         assert self.capture is None, "Capture already initialized."
         max_bs = max(bs_list)
         capture = FICaptureData.create(max_bs, max_seq_len, self.kvcache.device, frame_width)

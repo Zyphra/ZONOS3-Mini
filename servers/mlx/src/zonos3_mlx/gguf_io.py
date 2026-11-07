@@ -140,7 +140,7 @@ def _repack(raw: np.ndarray, shape: tuple[int, ...], kind) -> Weight:
         bits, offset = 8, 128.0
     per_word = 32 // bits
     u = u.reshape(*lead, rows, cols // per_word, per_word)
-    shifts = (np.arange(per_word, dtype=np.uint32) * bits)
+    shifts = np.arange(per_word, dtype=np.uint32) * bits
     packed = np.bitwise_or.reduce(u << shifts, axis=-1).astype(np.uint32)
     return Weight(mx.array(packed), mx.array(d), mx.array(-offset * d), bits)
 

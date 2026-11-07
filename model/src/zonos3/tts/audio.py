@@ -1,4 +1,4 @@
-"""Reference-audio decoding (ffmpeg -> PCM WAV -> mono float tensor).
+"""Reference-audio decoding (ffmpeg -> PCM WAV -> mono float tensor) and the one PCM16 WAV encoder.
 
 Shared by the HTTP server and the offline :class:`~zonos3_sgl.tts.llm.TTSLLM`; has no
 FastAPI / server dependency.
@@ -7,14 +7,39 @@ FastAPI / server dependency.
 from __future__ import annotations
 
 import io
+import logging
+import os
 import subprocess
 import wave
 
+import numpy as np
 import torch
 
-import logging
-
 logger = logging.getLogger(__name__)
+
+
+def pcm16_samples(pcm: np.ndarray) -> np.ndarray:
+    """Float PCM -> little-endian int16: NaN -> 0, clip to [-1, 1], x 32767, round half to even (libsndfile's
+    ``lrintf(x * 32767)``)."""
+    x = np.nan_to_num(np.asarray(pcm, dtype=np.float32), nan=0.0)
+    return np.rint(np.clip(x, -1.0, 1.0) * np.float32(32767)).astype("<i2")
+
+
+def pcm16_wav_bytes(pcm: np.ndarray, sample_rate: int) -> bytes:
+    """Mono 16-bit WAV of float PCM (:func:`pcm16_samples`)."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sample_rate)
+        f.writeframes(pcm16_samples(pcm).tobytes())
+    return buf.getvalue()
+
+
+def write_pcm16_wav(path: str | os.PathLike, pcm: np.ndarray, sample_rate: int) -> None:
+    with open(path, "wb") as f:
+        f.write(pcm16_wav_bytes(pcm, sample_rate))
+
 
 def _decode_wav_bytes(wav_bytes: bytes) -> tuple[torch.Tensor, int]:
     try:
@@ -83,17 +108,12 @@ def _transcode_audio_bytes_to_wav(audio_bytes: bytes) -> bytes:
             check=False,
         )
     except FileNotFoundError as exc:
-        raise ValueError(
-            "Reference file must contain an audio stream supported by ffmpeg."
-        ) from exc
+        raise ValueError("Reference file must contain an audio stream supported by ffmpeg.") from exc
 
     if proc.returncode != 0 or not proc.stdout:
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
         suffix = f" ffmpeg said: {stderr}" if stderr else ""
-        raise ValueError(
-            "Reference file must contain an audio stream supported by ffmpeg."
-            + suffix
-        )
+        raise ValueError("Reference file must contain an audio stream supported by ffmpeg." + suffix)
 
     logger.debug("Converted reference media to PCM WAV via ffmpeg for speaker embedding.")
     return proc.stdout

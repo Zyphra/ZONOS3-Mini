@@ -1,4 +1,5 @@
 """GDN-family attention runs flash-attention unsplit, so cached decode equals the packed (training) arithmetic."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -6,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 import torch.nn.functional as F
-
 from zonos3_sgl.attention.fa import fa_num_splits
 
 
@@ -38,17 +38,35 @@ def test_unsplit_decode_matches_unsplit_prefill_on_long_caches():
         k_cache = torch.zeros(B * n + 1, 1, Hk, Dh, device=device, dtype=torch.bfloat16)
         v_cache = torch.zeros_like(k_cache)
         for s in range(B):
-            k_cache[s * n:(s + 1) * n, 0] = k_all
-            v_cache[s * n:(s + 1) * n, 0] = v_all
+            k_cache[s * n : (s + 1) * n, 0] = k_all
+            v_cache[s * n : (s + 1) * n, 0] = v_all
         page_table = torch.arange(B * n, device=device, dtype=torch.int32).view(B, n)
         cu = torch.tensor([0, n], device=device, dtype=torch.int32)
-        prefill = _fa_sgl_impl(q=q_all, k_cache=k_cache, v_cache=v_cache, page_table=page_table[:1],
-                               cache_seqlens=torch.tensor([n], device=device, dtype=torch.int32), cu_seqlens_q=cu,
-                               cu_seqlens_k_new=cu, max_seqlen_q=n, softmax_scale=Dh ** -0.5, num_splits=1)
+        prefill = _fa_sgl_impl(
+            q=q_all,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            page_table=page_table[:1],
+            cache_seqlens=torch.tensor([n], device=device, dtype=torch.int32),
+            cu_seqlens_q=cu,
+            cu_seqlens_k_new=cu,
+            max_seqlen_q=n,
+            softmax_scale=Dh**-0.5,
+            num_splits=1,
+        )
         for b in (1, 4):
             q = q_all[-1:].expand(b, Hq, Dh).contiguous()
             cu_q = torch.arange(0, b + 1, device=device, dtype=torch.int32)
-            decode = _fa_sgl_impl(q=q, k_cache=k_cache, v_cache=v_cache, page_table=page_table[:b],
-                                  cache_seqlens=torch.full((b,), n, device=device, dtype=torch.int32), cu_seqlens_q=cu_q,
-                                  cu_seqlens_k_new=cu_q * n, max_seqlen_q=1, softmax_scale=Dh ** -0.5, num_splits=1)
+            decode = _fa_sgl_impl(
+                q=q,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                page_table=page_table[:b],
+                cache_seqlens=torch.full((b,), n, device=device, dtype=torch.int32),
+                cu_seqlens_q=cu_q,
+                cu_seqlens_k_new=cu_q * n,
+                max_seqlen_q=1,
+                softmax_scale=Dh**-0.5,
+                num_splits=1,
+            )
             assert torch.equal(decode[0], prefill[-1]), (n, b)

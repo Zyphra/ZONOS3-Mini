@@ -1,5 +1,6 @@
 """Steering doses of /v2/edit regions on the sgl server: `controls` + `region_controls[k]` (zonos3.tts.edit_runtime),
 checked against the --steer-bundle by the sgl edit engine before any work."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +20,11 @@ def _set(root, name, space, vectors, source=None):
     d.mkdir()
     for k, v in vectors.items():
         np.save(d / f"{k}.npy", np.array(v, dtype=np.float32))
-    manifest = {"dim": len(next(iter(vectors.values()))), "space": space,
-                "directions": {k: {"file": f"{k}.npy", "kind": "named"} for k in vectors}}
+    manifest = {
+        "dim": len(next(iter(vectors.values()))),
+        "space": space,
+        "directions": {k: {"file": f"{k}.npy", "kind": "named"} for k in vectors},
+    }
     if source is not None:
         manifest["source_index"] = source
     (d / "manifest.json").write_text(json.dumps(manifest))
@@ -38,8 +42,14 @@ class _Engine(api_server._SglEditEngine):
 
     @property
     def model(self):
-        return EditModel(frame_rate=25.0, n_codebooks=9, audio_pad_id=4097, codebook_sizes=(1024,) * 9, max_spans=4,
-                         speaker_row=self.speaker_row)
+        return EditModel(
+            frame_rate=25.0,
+            n_codebooks=9,
+            audio_pad_id=4097,
+            codebook_sizes=(1024,) * 9,
+            max_spans=4,
+            speaker_row=self.speaker_row,
+        )
 
     async def decode_audio(self, audio):
         raise _Reached
@@ -63,8 +73,9 @@ def serve(monkeypatch):
     """The server's EditRuntime over the sgl engine for a --steer-bundle (None: none)."""
 
     def serve(bundle, speaker_row=True):
-        config = SimpleNamespace(steer_bundle=bundle, model_path="",
-                                 model_config=SimpleNamespace(condition_tokens_enabled=False))
+        config = SimpleNamespace(
+            steer_bundle=bundle, model_path="", model_config=SimpleNamespace(condition_tokens_enabled=False)
+        )
         monkeypatch.setattr(api_server, "get_global_state", lambda: SimpleNamespace(config=config))
         monkeypatch.setattr(api_server, "_text_tokenizer_spec", lambda config: None)  # byte text, no groups
         return EditRuntime(_Engine(speaker_row), _Asr(), None)
@@ -94,10 +105,17 @@ SPANS = [[0.1, 0.4], [1.0, 1.5], [2.0, 2.5]]
 
 def test_region_doses_add_to_the_shared_controls_per_id(serve, bundle):
     runtime = serve(bundle)
-    doses, raw = _doses(runtime, spans=SPANS, controls={"style.whisper": 1, "who.gender": 1},
-                        region_controls=[{"style.whisper": 1}, None, {"who.gender": -1, "style.angry": 4}])
-    assert doses == [{"style.whisper": 2.0, "who.gender": 1.0}, {"style.whisper": 1.0, "who.gender": 1.0},
-                     {"style.whisper": 1.0, "style.angry": 4.0}]
+    doses, raw = _doses(
+        runtime,
+        spans=SPANS,
+        controls={"style.whisper": 1, "who.gender": 1},
+        region_controls=[{"style.whisper": 1}, None, {"who.gender": -1, "style.angry": 4}],
+    )
+    assert doses == [
+        {"style.whisper": 2.0, "who.gender": 1.0},
+        {"style.whisper": 1.0, "who.gender": 1.0},
+        {"style.whisper": 1.0, "style.angry": 4.0},
+    ]
     assert raw == {"who.gender"}
     assert _doses(runtime, spans=SPANS) == (None, set())
     assert _doses(runtime, spans=SPANS, region_controls=[None, {"style.angry": 0}, None]) == (None, set())
@@ -105,13 +123,16 @@ def test_region_doses_add_to_the_shared_controls_per_id(serve, bundle):
     assert _doses(runtime, controls={"style.angry": 2}) == ([{"style.angry": 2.0}], set())
 
 
-@pytest.mark.parametrize("fields, message", [
-    (dict(region_controls=[{"style.whisper": 1}]), "needs explicit spans"),
-    (dict(spans=SPANS, region_controls=[None, {"style.whisper": 1}]), "2 entries for 3 spans"),
-    (dict(spans=SPANS, region_controls=[None, None, {"style.shout": 1}]), "Unknown control"),
-    (dict(controls={"who.gender": 1}, speaker_embedding=False), "need the speaker row"),
-    (dict(spans=SPANS, region_controls=[None, None, {"style.whisper": float("inf")}]), "finite"),
-])
+@pytest.mark.parametrize(
+    "fields, message",
+    [
+        ({"region_controls": [{"style.whisper": 1}]}, "needs explicit spans"),
+        ({"spans": SPANS, "region_controls": [None, {"style.whisper": 1}]}, "2 entries for 3 spans"),
+        ({"spans": SPANS, "region_controls": [None, None, {"style.shout": 1}]}, "Unknown control"),
+        ({"controls": {"who.gender": 1}, "speaker_embedding": False}, "need the speaker row"),
+        ({"spans": SPANS, "region_controls": [None, None, {"style.whisper": float("inf")}]}, "finite"),
+    ],
+)
 def test_bad_region_controls_are_refused(serve, bundle, fields, message):
     assert message in _edit(serve(bundle), **fields)
 

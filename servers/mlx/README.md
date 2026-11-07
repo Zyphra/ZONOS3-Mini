@@ -1,6 +1,6 @@
 # zonos3-mlx
 
-The ZONOS3 Mini HTTP server on Apple Silicon: the v2 API of [api/openapi.yaml](../../api/openapi.yaml) and the Zonos
+The ZONOS3 Mini HTTP server on Apple Silicon: the v2 API of [servers/api/openapi.yaml](../api/openapi.yaml) and the Zonos
 Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) from the ggml server's GGUF files.
 
 | Network | GGUF | Notes |
@@ -13,7 +13,9 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 
 Every file is auto-detected next to the backbone. Generation runs on one worker thread that owns the LM; up to
 `--batch` requests (default 4; a CFG request takes two slots) advance one row per tick, a CFG request's two forwards in
-one MLX evaluation. Streamed audio decodes on a second (codec) thread while the backbone steps on.
+one MLX evaluation. Streamed audio decodes on a second (codec) thread while the backbone steps on: progressive prefix
+chunks by default, the one exact decode at EOS with `ZONOS3_STREAM_DECODE_DEFAULT=whole` (as on the sgl server; a
+request's `stream_decode` wins).
 
 ## Install and run
 
@@ -61,7 +63,7 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
 
 ```bash
 uv run --package zonos3-mlx pytest servers/mlx/tests                       # tiny-model parity, decoder, server
-uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919
+uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919
 ```
 
 Against the release goldens of `tools/dump_golden.py`: the F16 backbone (`zonos3-f16.gguf`) matches the reference

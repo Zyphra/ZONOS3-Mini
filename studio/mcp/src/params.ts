@@ -1,7 +1,7 @@
 /** Widget payload pieces and the concise text descriptions the model reads. */
-import openapi from '../../../api/openapi.json';
+import openapi from '../../../servers/api/openapi.json';
 import type { ControlsSpec, GenerateRequest, Speaker } from '../../src/api';
-import { parseWav } from '../../src/lib/files';
+import { parseWav } from '../../src/lib/wav';
 import { langLabel } from '../../src/lib/languages';
 import type { Design } from '../../src/state/design';
 import type { AccentMix, Values } from '../../src/state/engine';

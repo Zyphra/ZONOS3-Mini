@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Tuple, overload
 from openai import AsyncOpenAI as OpenAI
 from pydantic import BaseModel
 from tqdm.asyncio import tqdm
-from zonos3_sgl.utils.misc import UNSET, Unset
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.misc import UNSET, Unset
 
 logger = init_logger(__name__)
 
@@ -124,9 +124,7 @@ class BenchmarkResult:
 
 def make_console(num_requests: int, sum_output_length: int, use_pbar: bool = True) -> Console:
     BAR_FORMAT_0 = (
-        "{desc:<10} {percentage:3.0f}%|{bar}|"
-        " {n_fmt:>5}/{total_fmt} "
-        "[{rate_fmt:>12} {elapsed:>8}/{remaining:<8}]"
+        "{desc:<10} {percentage:3.0f}%|{bar}| {n_fmt:>5}/{total_fmt} [{rate_fmt:>12} {elapsed:>8}/{remaining:<8}]"
     )
     BAR_FORMAT_1 = BAR_FORMAT_0
     n_fmt_align = 5
@@ -277,9 +275,7 @@ async def benchmark_one_batch(
             extra_body=extra_body,
             input_length=input_length,
         )
-        for prompt, output_length, input_length in zip(
-            prompts, output_lengths, input_lengths, strict=True
-        )
+        for prompt, output_length, input_length in zip(prompts, output_lengths, input_lengths, strict=True)
     ]
     with pbar.log_stats():
         return await asyncio.gather(*tasks)
@@ -378,8 +374,8 @@ def process_benchmark_results(
         f" p99: {_fmt(p99_tpot)} ms, max: {_fmt(max_tpot)} ms)"
     )
     logger.info(
-        f"E2E:  {_fmt(avg_e2e) }  s (p50: {_fmt(p50_e2e) }  s, p90: {_fmt(p90_e2e) }  s,"
-        f" p99: {_fmt(p99_e2e) }  s, max: {_fmt(max_e2e) }  s)"
+        f"E2E:  {_fmt(avg_e2e)}  s (p50: {_fmt(p50_e2e)}  s, p90: {_fmt(p90_e2e)}  s,"
+        f" p99: {_fmt(p99_e2e)}  s, max: {_fmt(max_e2e)}  s)"
     )
     logger.info(f"Duration: {_fmt(dur)} s")
     logger.info(f"Throughput: {_fmt(num_tokens / dur)} token/s, {_fmt(num_requests / dur)} req/s")

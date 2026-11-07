@@ -11,13 +11,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import wave
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from zonos3.generation import SAMPLE_RATE
+from zonos3.tts.audio import write_pcm16_wav
+from zonos3.tts.laci import parse_laci_heads
 
 
 def _cond_path(ids_path: Path) -> Path:
@@ -29,18 +30,10 @@ def _dump(path: Path, rows: torch.Tensor, cond: dict) -> None:
     _cond_path(path).write_text(json.dumps(cond) + "\n")
 
 
-def write_wav(path: str | Path, pcm: np.ndarray, sample_rate: int = SAMPLE_RATE) -> None:
-    samples = (np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2")
-    with wave.open(str(path), "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        f.writeframes(samples.tobytes())
-
-
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m zonos3.reference", description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        prog="python -m zonos3.reference", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--model", required=True, help="LM checkpoint directory or hf:// folder")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--text")
@@ -50,19 +43,20 @@ def main(argv=None) -> int:
     parser.add_argument("--dtype", choices=("f32", "bf16"), default="f32")
     parser.add_argument("--steer-bundle")
     parser.add_argument("--accent-adapters")
-    parser.add_argument("--phoneme-rows", help="zonos-text-extra/1 rows (phoneme tokens) appended at load, after the "
-                                               "vocabulary a speech-edit adapter grows")
+    parser.add_argument(
+        "--phoneme-rows",
+        help="zonos-text-extra/1 rows (phoneme tokens) appended at load, after the "
+        "vocabulary a speech-edit adapter grows",
+    )
     parser.add_argument("--laci-heads", action="append", default=[], metavar="LANG=PATH")
     parser.add_argument("--dump-prompt", metavar="IDS_NPY")
     args = parser.parse_args(argv)
     if not args.out and not args.dump_prompt:
         parser.error("-o/--out is required unless --dump-prompt is given")
-    heads = {}
-    for item in args.laci_heads:
-        lang, sep, path = item.partition("=")
-        if not sep or not lang or not path:
-            parser.error(f"--laci-heads needs LANG=PATH, got {item!r}")
-        heads[lang] = path
+    try:
+        heads = parse_laci_heads(args.laci_heads)
+    except ValueError as exc:
+        parser.error(str(exc))
     request = {"text": args.text} if args.text is not None else json.loads(Path(args.request).read_text())
 
     from zonos3.reference.lm import Zonos3LM
@@ -71,8 +65,9 @@ def main(argv=None) -> int:
     device = torch.device(args.device)
     dtype = torch.float32 if args.dtype == "f32" else torch.bfloat16
     lm = Zonos3LM.load(args.model, device=device, dtype=dtype)
-    assets = ReferenceAssets.load(steer_bundle=args.steer_bundle, accent_adapters=args.accent_adapters,
-                                  laci_heads=heads)
+    assets = ReferenceAssets.load(
+        steer_bundle=args.steer_bundle, accent_adapters=args.accent_adapters, laci_heads=heads
+    )
     assets.grow(lm)
     if args.phoneme_rows:
         from zonos3.models.text_extra import TextExtraRows
@@ -85,12 +80,17 @@ def main(argv=None) -> int:
         if plan.twin is not None:
             twin = path.with_name(path.stem + ".twin" + (path.suffix or ".npy"))
             _dump(twin, plan.twin.input_ids, plan.cond_json(plan.twin))
-        print(f"prompt: {len(plan.cond.input_ids)} rows -> {path}" + (f" (+ {plan.cfg_kind} twin)" if plan.twin is not None else ""))
+        print(
+            f"prompt: {len(plan.cond.input_ids)} rows -> {path}"
+            + (f" (+ {plan.cfg_kind} twin)" if plan.twin is not None else "")
+        )
     if args.out:
         result = synthesize(lm, request, assets=assets, device=device, dtype=dtype)
-        write_wav(args.out, result.pcm)
+        write_pcm16_wav(args.out, result.pcm, SAMPLE_RATE)
         seconds = len(result.pcm) / SAMPLE_RATE
-        print(f"{seconds:.2f} s, seed {result.seed}, {len(result.rows)} rows, eos frame {result.eos_frame} -> {args.out}")
+        print(
+            f"{seconds:.2f} s, seed {result.seed}, {len(result.rows)} rows, eos frame {result.eos_frame} -> {args.out}"
+        )
         if result.laci is not None:
             print(json.dumps(result.laci))
     return 0

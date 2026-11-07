@@ -1,4 +1,4 @@
-"""Request bodies of the v2 HTTP API, transcribed from api/openapi.yaml (the contract: field names, types, defaults,
+"""Request bodies of the v2 HTTP API, transcribed from servers/api/openapi.yaml (the contract: field names, types, defaults,
 enums and ranges). Every model forbids unknown fields, so anything the schema can express fails with FastAPI's 422
 ``{"detail": [{loc, msg, type}]}``; state- or semantics-dependent checks stay in the handlers (400)."""
 
@@ -40,25 +40,25 @@ class GenerationOptions(_Strict):
     silence_prefill_frames: int | None = None
     # Decode the generated frames behind the last decode_context_frames of the reference prompt.
     decode_context: bool = False
-    decode_context_frames: int = DECODE_CONTEXT_FRAMES     # 0 = the registry's
+    decode_context_frames: int = DECODE_CONTEXT_FRAMES  # 0 = the registry's
     # Sampling: the generation registry's defaults (zonos3.generation.SAMPLING).
     temperature: float = SAMPLING["temperature"]
     topk: int = SAMPLING["topk"]
     top_p: float = SAMPLING["top_p"]
     min_p: float = SAMPLING["min_p"]
-    max_tokens: int | None = None            # None = the server's frame budget
+    max_tokens: int | None = None  # None = the server's frame budget
     fade_out_ms: float = 0.0
     repetition_window: int = SAMPLING["repetition_window"]
     repetition_penalty: float = SAMPLING["repetition_penalty"]
     repetition_codebooks: int = SAMPLING["repetition_codebooks"]
-    seed: Seed | None = None                 # None = drawn by the server (echoed in X-Seed)
+    seed: Seed | None = None  # None = drawn by the server (echoed in X-Seed)
     # "prefix" streams prefix re-decodes (matched long-context codecs), "whole" one exact chunk at EOS.
     stream_decode: Literal["prefix", "whole"] | None = None
     speaker_mode: Literal["embedding", "reference"] | None = None
     # Condition rows of the cond3 finetunes: bucket ids per name or raw values mapped through the checkpoint's edges.
     condition_buckets: ConditionBuckets = None
     condition_values: ConditionValues = None
-    headroom_db: Annotated[float, Field(ge=0.0, le=24.0)] | None = None   # None = the decoder's registry value
+    headroom_db: Annotated[float, Field(ge=0.0, le=24.0)] | None = None  # None = the decoder's registry value
     speaker_audio_base64: str | None = None
     speaker_audio_name: str | None = None
     # Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.
@@ -82,7 +82,7 @@ class GenerationOptions(_Strict):
     # Steering-bundle controls "<set>.<direction>" -> dose (GET /v2/controls).
     controls: Controls = None
     control_spans: List[ControlSpan] | None = None
-    control_span_rate: Annotated[float, Field(gt=0.0)] | None = None     # frames per character (None = 1.0)
+    control_span_rate: Annotated[float, Field(gt=0.0)] | None = None  # frames per character (None = 1.0)
     # "reading": the spans follow the LACI alignment heads' reading position (X-Control-Span-Follow says which ran).
     control_span_follow: Literal["rate", "reading"] = "rate"
     control_span_lead: Annotated[float, Field(ge=0.0, le=8.0)] | None = None
@@ -105,6 +105,20 @@ class SpeechRequest(GenerationOptions):
     input: str
     voice: str | None = None
     response_format: Literal["pcm", "wav"] = "pcm"
+
+
+# The speaker input fields a SpeechRequest `voice` cannot be combined with.
+SPEAKER_INPUT_FIELDS = (
+    "speaker_audio_base64",
+    "speaker_audio_name",
+    "speaker_reference_codes",
+    "speaker_embedding_base64",
+    "speaker_embedding_name",
+    "speaker_embedding_id",
+    "speaker_blend_embedding_id_a",
+    "speaker_blend_embedding_id_b",
+    "speaker_blend_t",
+)
 
 
 # ------------------------------------------------------------------------------------------------------- speakers
@@ -142,7 +156,7 @@ class EditWordIn(_Strict):
     word: str
     start: float
     end: float
-    tokens: List[str] | None = None   # edit tokens (zonos3.tts.textmatch.tokens of the word) when missing
+    tokens: List[str] | None = None  # edit tokens (zonos3.tts.textmatch.tokens of the word) when missing
     confidence: float | None = None
 
 

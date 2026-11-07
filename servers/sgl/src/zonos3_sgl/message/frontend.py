@@ -21,4 +21,3 @@ class BaseFrontendMsg:
     @staticmethod
     def decoder(json: Dict) -> BaseFrontendMsg:
         return deserialize_type(globals(), json)
-

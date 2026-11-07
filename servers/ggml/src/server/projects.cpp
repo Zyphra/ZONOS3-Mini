@@ -6,6 +6,8 @@
 #include "server/schema.h"
 #include "server/util.h"
 
+#include "zonos3-text.h"
+
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -41,13 +43,15 @@ constexpr size_t MAX_NAME = 200;
 
 bool valid_id(const std::string & id) {
     if (id.empty() || id.size() > 128 || !isalnum((unsigned char) id[0])) return false;
-    for (char c : id) if (!(isalnum((unsigned char) c) || c == '_' || c == '-')) return false;
+    for (char c : id)
+        if (!(isalnum((unsigned char) c) || c == '_' || c == '-')) return false;
     return true;
 }
 
 bool valid_sha(const std::string & sha) {
     if (sha.size() != 64) return false;
-    for (char c : sha) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    for (char c : sha)
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
     return true;
 }
 
@@ -71,7 +75,11 @@ std::vector<std::string> media_refs(const ojson & data) {
     return out;
 }
 
-struct Stat { bool ok = false; int64_t mtime_ns = 0, size = 0; double mtime = 0; };
+struct Stat {
+    bool ok = false;
+    int64_t mtime_ns = 0, size = 0;
+    double mtime = 0;
+};
 
 Stat stat_of(const fs::path & p) {
     Stat s;
@@ -94,7 +102,7 @@ Stat stat_of(const fs::path & p) {
     return s;
 }
 
-void touch(const fs::path & p) {   // os.utime(path): mtime = now
+void touch(const fs::path & p) { // os.utime(path): mtime = now
     std::error_code ec;
     fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
 }
@@ -117,7 +125,7 @@ bool flush_sync(FILE * f) {
 #endif
 }
 
-void replace_file(const fs::path & from, const fs::path & to) {   // os.replace
+void replace_file(const fs::path & from, const fs::path & to) { // os.replace
 #ifdef _WIN32
     if (!MoveFileExW(from.wstring().c_str(), to.wstring().c_str(), MOVEFILE_REPLACE_EXISTING))
         throw std::runtime_error("cannot replace " + to.string());
@@ -135,7 +143,7 @@ ojson read_record(const fs::path & path) {
 
 // An exclusive flock on the store's .lock file (other servers sharing the directory).
 class FileLock {
-public:
+  public:
     explicit FileLock(const fs::path & path) {
 #ifdef _WIN32
         h_ = CreateFileW(path.wstring().c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -158,7 +166,8 @@ public:
         close(fd_);
 #endif
     }
-private:
+
+  private:
 #ifdef _WIN32
     HANDLE h_;
 #else
@@ -166,7 +175,7 @@ private:
 #endif
 };
 
-}  // namespace
+} // namespace
 
 ProjectStore::ProjectStore(const fs::path & root, int64_t max_project_bytes, int64_t max_media_bytes)
     : max_project_bytes(max_project_bytes), max_media_bytes(max_media_bytes), root_(root),
@@ -174,7 +183,7 @@ ProjectStore::ProjectStore(const fs::path & root, int64_t max_project_bytes, int
     for (const fs::path & d : {projects_dir_, media_dir_, tmp_dir_}) fs::create_directories(d);
     const double cutoff = unix_now() - STALE_TMP_SECONDS;
     std::error_code ec;
-    for (const auto & e : fs::directory_iterator(tmp_dir_, ec)) {   // leftovers of a killed server
+    for (const auto & e : fs::directory_iterator(tmp_dir_, ec)) { // leftovers of a killed server
         const Stat st = stat_of(e.path());
         if (st.ok && st.mtime < cutoff) fs::remove(e.path(), ec);
     }
@@ -184,7 +193,8 @@ json ProjectStore::capabilities() const {
     return {{"enabled", true}, {"max_media_bytes", max_media_bytes}, {"max_project_bytes", max_project_bytes}};
 }
 
-template <class F> auto ProjectStore::locked(F && f) {
+template <class F>
+auto ProjectStore::locked(F && f) {
     std::lock_guard<std::mutex> lk(thread_lock_);
     FileLock fl(lock_path_);
     return f();
@@ -197,8 +207,16 @@ void ProjectStore::atomic_write(const fs::path & path, const std::string & paylo
     const bool ok = fwrite(payload.data(), 1, payload.size(), f) == payload.size() && flush_sync(f);
     fclose(f);
     std::error_code ec;
-    if (!ok) { fs::remove(tmp, ec); throw std::runtime_error("cannot write " + path.string()); }
-    try { replace_file(tmp, path); } catch (...) { fs::remove(tmp, ec); throw; }
+    if (!ok) {
+        fs::remove(tmp, ec);
+        throw std::runtime_error("cannot write " + path.string());
+    }
+    try {
+        replace_file(tmp, path);
+    } catch (...) {
+        fs::remove(tmp, ec);
+        throw;
+    }
 }
 
 fs::path ProjectStore::project_path(const std::string & project_id) const {
@@ -220,7 +238,9 @@ ojson ProjectStore::list() {
         auto cached = list_cache_.find(id);
         if (cached == list_cache_.end() || cached->second.first != key) {
             ojson record;
-            try { record = read_record(e.path()); } catch (...) { continue; }   // deleted meanwhile, or not ours
+            try {
+                record = read_record(e.path());
+            } catch (...) { continue; } // deleted meanwhile, or not ours
             if (!record.is_object()) continue;
             const ojson data = record.value("data", ojson());
             ojson entry = {
@@ -274,8 +294,8 @@ json ProjectStore::put(const std::string & project_id, const std::string & name,
         }
         if (base_revision != stored) {
             const char * detail = base_revision && stored ? "the project changed elsewhere"
-                                : stored                 ? "a project with this id exists"
-                                                         : "the project does not exist (deleted elsewhere?)";
+                                  : stored                ? "a project with this id exists"
+                                                          : "the project does not exist (deleted elsewhere?)";
             fail(409, detail, json{{"revision", stored ? json(*stored) : json(nullptr)}});
         }
         int64_t media_bytes = 0;
@@ -322,7 +342,7 @@ json ProjectStore::gc(double min_age_seconds) {
         std::error_code ec;
         for (const auto & e : fs::directory_iterator(projects_dir_, ec)) {
             if (e.path().extension() != ".json") continue;
-            try {   // an unreadable project could reference anything: keep every blob
+            try { // an unreadable project could reference anything: keep every blob
                 const ojson record = read_record(e.path());
                 for (const auto & sha : media_refs(record.value("data", ojson()))) referenced.insert(sha);
             } catch (const HttpError & err) {
@@ -339,14 +359,20 @@ json ProjectStore::gc(double min_age_seconds) {
             const std::string name = path.filename().string();
             const bool is_type = name.size() > 5 && name.compare(name.size() - 5, 5, ".type") == 0;
             const std::string sha = is_type ? name.substr(0, name.size() - 5) : name;
-            if (!valid_sha(sha) || referenced.count(sha)) { kept += name == sha; continue; }
-            if (name != sha) {   // a type file goes with its blob
+            if (!valid_sha(sha) || referenced.count(sha)) {
+                kept += name == sha;
+                continue;
+            }
+            if (name != sha) { // a type file goes with its blob
                 if (!fs::exists(media_dir_ / sha, ec)) fs::remove(path, ec);
                 continue;
             }
             const Stat st = stat_of(path);
             if (!st.ok) continue;
-            if (st.mtime > cutoff) { ++kept; continue; }
+            if (st.mtime > cutoff) {
+                ++kept;
+                continue;
+            }
             fs::remove(path, ec);
             fs::remove(media_dir_ / (sha + ".type"), ec);
             ++removed;
@@ -379,7 +405,7 @@ json ProjectStore::put_media(const std::string & sha256, const BodyReader & read
     const fs::path path = media_dir_ / sha256;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
-        touch(path);   // restart the GC grace period: a save referencing it follows
+        touch(path); // restart the GC grace period: a save referencing it follows
         store_type(sha256, mime);
         return {{"sha256", sha256}, {"size", (int64_t) fs::file_size(path, ec)}, {"created", false}};
     }
@@ -392,9 +418,15 @@ json ProjectStore::put_media(const std::string & sha256, const BodyReader & read
     bool write_ok = true;
     const bool read_ok = read([&](const char * data, size_t n) {
         size += (int64_t) n;
-        if (size > max_media_bytes) { too_large = true; return false; }
+        if (size > max_media_bytes) {
+            too_large = true;
+            return false;
+        }
         digest.update(data, n);
-        if (fwrite(data, 1, n, f) != n) { write_ok = false; return false; }
+        if (fwrite(data, 1, n, f) != n) {
+            write_ok = false;
+            return false;
+        }
         return true;
     });
     const bool synced = write_ok && flush_sync(f);
@@ -405,7 +437,7 @@ json ProjectStore::put_media(const std::string & sha256, const BodyReader & read
         if (!synced) throw std::runtime_error("cannot write " + tmp.string());
         const std::string actual = digest.hex();
         if (actual != sha256) fail(400, "content does not match its hash", json{{"sha256", actual}});
-        replace_file(tmp, path);   // a concurrent upload of the same blob renames identical bytes
+        replace_file(tmp, path); // a concurrent upload of the same blob renames identical bytes
     } catch (...) {
         fs::remove(tmp, ec);
         throw;
@@ -424,83 +456,83 @@ void register_project_routes(httplib::Server & svr, ProjectStore * store) {
     auto no_store = [](httplib::Response & res) { res.set_header("Cache-Control", "no-store"); };
 
     svr.Get("/v2/projects", guarded([need, no_store](const httplib::Request &, httplib::Response & res) {
-        const ojson list = need().list();
-        no_store(res);
-        res.set_content(list.dump(), "application/json");
-    }));
+                const ojson list = need().list();
+                no_store(res);
+                res.set_content(list.dump(), "application/json");
+            }));
     svr.Post("/v2/projects/gc", guarded([need, no_store](const httplib::Request & req, httplib::Response & res) {
-        double min_age = ProjectStore::GC_MIN_AGE_SECONDS;
-        if (req.has_param("min_age_seconds")) {
-            const std::string raw = req.get_param_value("min_age_seconds");
-            char * end = nullptr;
-            min_age = strtod(raw.c_str(), &end);
-            if (raw.empty() || !end || *end)
-                throw HttpError(422, json{{"detail", json::array({json{{"loc", json::array({"query", "min_age_seconds"})},
-                                                                       {"msg", "Input should be a valid number"},
-                                                                       {"type", "float_parsing"}}})}});
-        }
-        if (!(min_age >= 0)) fail(400, "min_age_seconds must be >= 0");
-        const json out = need().gc(min_age);
-        no_store(res);
-        send_json(res, out);
-    }));
+                 double min_age = ProjectStore::GC_MIN_AGE_SECONDS;
+                 if (req.has_param("min_age_seconds")) {
+                     const std::string raw = req.get_param_value("min_age_seconds");
+                     char * end = nullptr;
+                     min_age = strtod(raw.c_str(), &end);
+                     if (raw.empty() || !end || *end)
+                         throw HttpError(422, json{{"detail", json::array({json{{"loc", json::array({"query", "min_age_seconds"})},
+                                                                                {"msg", "Input should be a valid number"},
+                                                                                {"type", "float_parsing"}}})}});
+                 }
+                 if (!(min_age >= 0)) fail(400, "min_age_seconds must be >= 0");
+                 const json out = need().gc(min_age);
+                 no_store(res);
+                 send_json(res, out);
+             }));
     svr.Get(R"(/v2/projects/([^/]+))", guarded([need, no_store](const httplib::Request & req, httplib::Response & res) {
-        const std::string raw = need().get_bytes(req.matches[1]);
-        no_store(res);
-        res.set_content(raw, "application/json");
-    }));
+                const std::string raw = need().get_bytes(req.matches[1]);
+                no_store(res);
+                res.set_content(raw, "application/json");
+            }));
     svr.Put(R"(/v2/projects/([^/]+))", guarded([need, no_store](const httplib::Request & req, httplib::Response & res) {
-        ProjectStore & s = need();
-        const std::string id = req.matches[1];
-        check_id(id);
-        // 413 before the body is parsed; strict JSON (no NaN / Infinity) is a 400
-        if ((int64_t) req.body.size() > s.max_project_bytes)
-            fail(413, "request too large (> " + std::to_string(s.max_project_bytes) + " bytes)");
-        ojson parsed;
-        try {
-            parsed = ojson::parse(req.body);
-        } catch (const std::exception & e) {
-            fail(400, std::string("invalid JSON: ") + e.what());
-        }
-        // The body is a ProjectPutRequest (422 like every request schema of the API); the store checks media
-        // references, revisions and sizes (400 / 409 / 413).
-        if (auto errors = schema::validate("ProjectPutRequest", json::parse(parsed.dump()))) throw HttpError(422, *errors);
-        std::optional<int64_t> base;
-        if (parsed.contains("base_revision") && !parsed["base_revision"].is_null()) base = parsed["base_revision"].get<int64_t>();
-        const json out = s.put(id, parsed["name"].get<std::string>(), parsed["data"], base);
-        no_store(res);
-        send_json(res, out);
-    }));
+                ProjectStore & s = need();
+                const std::string id = req.matches[1];
+                check_id(id);
+                // 413 before the body is parsed; strict JSON (no NaN / Infinity) is a 400
+                if ((int64_t) req.body.size() > s.max_project_bytes)
+                    fail(413, "request too large (> " + std::to_string(s.max_project_bytes) + " bytes)");
+                ojson parsed;
+                try {
+                    parsed = ojson::parse(req.body);
+                } catch (const std::exception & e) {
+                    fail(400, std::string("invalid JSON: ") + e.what());
+                }
+                // The body is a ProjectPutRequest (422 like every request schema of the API); the store checks media
+                // references, revisions and sizes (400 / 409 / 413).
+                if (auto errors = schema::validate("ProjectPutRequest", json::parse(parsed.dump()))) throw HttpError(422, *errors);
+                std::optional<int64_t> base;
+                if (parsed.contains("base_revision") && !parsed["base_revision"].is_null()) base = parsed["base_revision"].get<int64_t>();
+                const json out = s.put(id, parsed["name"].get<std::string>(), parsed["data"], base);
+                no_store(res);
+                send_json(res, out);
+            }));
     svr.Delete(R"(/v2/projects/([^/]+))", guarded([need, no_store](const httplib::Request & req, httplib::Response & res) {
-        const std::string id = req.matches[1];
-        need().remove(id);
-        no_store(res);
-        send_json(res, json{{"deleted", id}});
-    }));
+                   const std::string id = req.matches[1];
+                   need().remove(id);
+                   no_store(res);
+                   send_json(res, json{{"deleted", id}});
+               }));
     svr.Get(R"(/v2/media/([^/]+))", guarded([need](const httplib::Request & req, httplib::Response & res) {
-        const std::string sha = req.matches[1];
-        const auto [path, mime] = need().media(sha);
-        res.set_header("ETag", "\"" + sha + "\"");
-        res.set_header("Cache-Control", MEDIA_CACHE);
-        if (req.get_header_value("If-None-Match").find(sha) != std::string::npos) {
-            res.status = 304;
-            return;
-        }
-        std::error_code ec;
-        const auto size = (size_t) fs::file_size(path, ec);
-        auto file = std::make_shared<std::ifstream>(path, std::ios::binary);
-        if (ec || !*file) fail(404, "no such media");
-        if (size == 0) return res.set_content("", mime.empty() ? "application/octet-stream" : mime);
-        res.set_content_provider(size, mime.empty() ? "application/octet-stream" : mime,
-                                 [file](size_t offset, size_t length, httplib::DataSink & sink) {
-                                     char buf[65536];
-                                     file->clear();
-                                     file->seekg((std::streamoff) offset);
-                                     file->read(buf, (std::streamsize) std::min(length, sizeof(buf)));
-                                     const auto got = (size_t) file->gcount();
-                                     return got > 0 && sink.write(buf, got);
-                                 });
-    }));
+                const std::string sha = req.matches[1];
+                const auto [path, mime] = need().media(sha);
+                res.set_header("ETag", "\"" + sha + "\"");
+                res.set_header("Cache-Control", MEDIA_CACHE);
+                if (req.get_header_value("If-None-Match").find(sha) != std::string::npos) {
+                    res.status = 304;
+                    return;
+                }
+                std::error_code ec;
+                const auto size = (size_t) fs::file_size(path, ec);
+                auto file = std::make_shared<std::ifstream>(path, std::ios::binary);
+                if (ec || !*file) fail(404, "no such media");
+                if (size == 0) return res.set_content("", mime.empty() ? "application/octet-stream" : mime);
+                res.set_content_provider(size, mime.empty() ? "application/octet-stream" : mime,
+                                         [file](size_t offset, size_t length, httplib::DataSink & sink) {
+                                             char buf[65536];
+                                             file->clear();
+                                             file->seekg((std::streamoff) offset);
+                                             file->read(buf, (std::streamsize) std::min(length, sizeof(buf)));
+                                             const auto got = (size_t) file->gcount();
+                                             return got > 0 && sink.write(buf, got);
+                                         });
+            }));
     svr.Put(R"(/v2/media/([^/]+))", [need, no_store](const httplib::Request & req, httplib::Response & res,
                                                      const httplib::ContentReader & reader) {
         bool body_read = false;
@@ -514,8 +546,7 @@ void register_project_routes(httplib::Server & svr, ProjectStore * store) {
             if (type.empty()) type = req.get_header_value("Content-Type");
             const json out = s.put_media(req.matches[1], [&](const std::function<bool(const char *, size_t)> & sink) {
                 body_read = reader([&](const char * data, size_t n) { return sink(data, n); });
-                return body_read;
-            }, type);
+                return body_read; }, type);
             no_store(r);
             send_json(r, out, out["created"].get<bool>() ? 201 : 200);
         })(req, res);
@@ -525,4 +556,4 @@ void register_project_routes(httplib::Server & svr, ProjectStore * store) {
     });
 }
 
-}  // namespace zs
+} // namespace zs

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 
 import torch
+
 from zonos3_sgl.distributed import get_tp_info
 from zonos3_sgl.utils.misc import divide_up
 
@@ -26,8 +27,7 @@ def _shard_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Te
     ]
 
     gdn_prefixes = tuple(
-        key.removesuffix("in_proj.weight")
-        for key in state_dict if key.endswith(".attention.in_proj.weight")
+        key.removesuffix("in_proj.weight") for key in state_dict if key.endswith(".attention.in_proj.weight")
     )
     for key, value in state_dict.items():
         if gdn_prefixes and key.startswith(gdn_prefixes):
@@ -126,10 +126,11 @@ def _load_torch_weight(path: str) -> Dict[str, torch.Tensor]:
 def load_checkpoint_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
     """Load a Zonos3 TTS checkpoint (consolidated model.pth + params.json).
 
-    Accepts a local path or a Hugging Face repo id (e.g. ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k``).
+    Accepts a local path or a Hugging Face repo id (e.g. ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo``).
     """
-    from zonos3_sgl.utils.logger import init_logger
     from zonos3.utils.hf import resolve_model_path
+
+    from zonos3_sgl.utils.logger import init_logger
 
     logger = init_logger(__name__)
     model_path = resolve_model_path(model_path)

@@ -1,8 +1,8 @@
-// zonos3-server: the HTTP API v2 (api/openapi.yaml) over the native GGUF backbone, ZAC decoder and companions, and the
+// zonos3-server: the HTTP API v2 (servers/api/openapi.yaml) over the native GGUF backbone, ZAC decoder and companions, and the
 // studio at /. Module layout (src/server/):
 //   main.cpp          flags, model/companion loading, route registration, the accept loop (zonos3_server_main)
 //   http.*            {"detail"} errors, CORS, ZONOS3_ACCESS_TOKEN, X-Keepalive, X-TTS-Session-ID, studio serving
-//   schema.*          request validation against the embedded api/openapi.json (422 ValidationError)
+//   schema.*          request validation against the embedded servers/api/openapi.json (422 ValidationError)
 //   scheduler.*       continuous batching (backbone worker) + ZAC decode lanes (prefix / whole decode)
 //   speakers.*        default + session voices, speaker prompts of requests, /v2/speakers*
 //   generate.*        /v2/generate, /v1/audio/speech
@@ -48,58 +48,61 @@ using namespace zs;
 
 void usage(const char * a0) {
     fprintf(stderr,
-        "usage: %s <model.gguf> [--zac <zac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--zac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
-        "  (zac-keep2.gguf (the default keep2 decoder; --zac zac.gguf = the full-size one), spk-encoder.gguf,\n"
-        "   zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
-        "   auto-detected next to <model.gguf> when their flags are omitted)\n"
-        "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
-        "                      raw-reference cloning needs --zac-encoder + --ssl-teacher instead)\n"
-        "  --host H            bind address (default 127.0.0.1)\n"
-        "  --port P            port (default 1919; 0 picks a free ephemeral port)\n"
-        "  --gpu | --cpu       backend (default cpu)\n"
-        "  --zac-cpu           run the ZAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
-        "  --zac-gpu           run the ZAC decoder on the --gpu backend (default)\n"
-        "  --max N             max frames per request (default %d, ~%ds; shrunk to the slot rows a prompt leaves)\n"
-        "  --batch N           continuous-batching width / concurrent syntheses (default 8). A decode-graph\n"
-        "                      ladder runs the narrowest width covering the active slots; cache/state memory\n"
-        "                      scales with slots and context capacity.\n"
-        "  --zac-threads N     ZAC decode pool lanes, parallel decode across requests (default 4)\n"
-        "  --reference-idle-unload N\n"
-        "                      free the reference encoder + SSL teacher after N idle seconds\n"
-        "                      (default 60; 0 keeps them loaded once used)\n"
-        "  --stream-decode-default prefix|whole\n"
-        "                      streaming decode of requests without stream_decode (default prefix: chunks of\n"
-        "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames (the first one\n"
-        "                      ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES=4) behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3\n"
-        "                      hold-back; whole: one exact chunk at EOS)\n"
-        "  --tts-default-voices-dir DIR\n"
-        "                      default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy\n"
-        "                      speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)\n"
-        "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
-        "                      model/src of the checkout holding the executable, else python/ beside it)\n"
-        "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
-        "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and speech editing and plugins\n"
-        "                      (pyhost.py: zonos3.tts.edit_runtime and the --plugins routers; word timings\n"
-        "                      need fusealign-hub installed), each one persistent worker. Speech recognition\n"
-        "                      (Qwen3-ASR, optional: transcribes clips sent without their transcript) runs in its\n"
-        "                      own interpreter: ZONOS3_ASR_PYTHON (default <repo>/.venv-asr/bin/python, set up by\n"
-        "                      tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE picks its device)\n"
-        "  --plugins NAME[,NAME...]\n"
-        "                      server plugins (repeatable): the zonos3_<NAME> package installed in --worker-python\n"
-        "                      serves /v2/<NAME>/* and /<NAME> through the Python host\n"
-        "  --steer PATH        steering bundle (steer.gguf) for request controls and /v2/controls\n"
-        "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
-        "  --laci-heads LANG=PATH      LACI alignment heads of a language (repeatable)\n"
-        "  --tts-phoneme-lexicon DIR   gold pronunciation lexicon (LMDB) for /v2/phonemize\n"
-        "  --studio-projects-dir DIR   server-side studio projects and media (/v2/projects, /v2/media)\n"
-        "  --studio-dir DIR    studio production build (/ chooser, /studio, /lite) (default: studio/dist of the checkout\n"
-        "                      holding the executable, else studio/ beside it)\n",
-        a0, zonos3_generation().max_frames, (int) (zonos3_generation().max_frames / ZONOS3_FRAME_RATE));
+            "usage: %s <model.gguf> [--zac <zac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--zac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
+            "  (zac-keep2.gguf (the default keep2 decoder; --zac zac.gguf = the full-size one), spk-encoder.gguf,\n"
+            "   zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
+            "   auto-detected next to <model.gguf> when their flags are omitted)\n"
+            "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
+            "                      raw-reference cloning needs --zac-encoder + --ssl-teacher instead)\n"
+            "  --host H            bind address (default 127.0.0.1)\n"
+            "  --port P            port (default 1919; 0 picks a free ephemeral port)\n"
+            "  --gpu | --cpu       backend (default cpu)\n"
+            "  --zac-cpu           run the ZAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
+            "  --zac-gpu           run the ZAC decoder on the --gpu backend (default)\n"
+            "  --max N             max frames per request (default %d, ~%ds; shrunk to the slot rows a prompt leaves)\n"
+            "  --batch N           continuous-batching width / concurrent syntheses (default 8). A decode-graph\n"
+            "                      ladder runs the narrowest width covering the active slots; cache/state memory\n"
+            "                      scales with slots and context capacity.\n"
+            "  --zac-threads N     ZAC decode pool lanes, parallel decode across requests (default 4)\n"
+            "  --reference-idle-unload N\n"
+            "                      free the reference encoder + SSL teacher after N idle seconds\n"
+            "                      (default 60; 0 keeps them loaded once used)\n"
+            "  --stream-decode-default prefix|whole\n"
+            "                      streaming decode of requests without stream_decode (default prefix: chunks of\n"
+            "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames (the first one\n"
+            "                      ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES=4) behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3\n"
+            "                      hold-back; whole: one exact chunk at EOS)\n"
+            "  --tts-default-voices-dir DIR\n"
+            "                      default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy\n"
+            "                      speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)\n"
+            "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
+            "                      model/src of the checkout holding the executable, else python/ beside it)\n"
+            "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
+            "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and speech editing and plugins\n"
+            "                      (pyhost.py: zonos3.tts.edit_runtime and the --plugins routers; word timings\n"
+            "                      need fusealign-hub installed), each one persistent worker. Speech recognition\n"
+            "                      (Qwen3-ASR, optional: transcribes clips sent without their transcript) runs in its\n"
+            "                      own interpreter: ZONOS3_ASR_PYTHON (default <repo>/.venv-asr/bin/python, set up by\n"
+            "                      tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE picks its device)\n"
+            "  --plugins NAME[,NAME...]\n"
+            "                      server plugins (repeatable): the zonos3_<NAME> package installed in --worker-python\n"
+            "                      serves /v2/<NAME>/* and /<NAME> through the Python host\n"
+            "  --steer PATH        steering bundle (steer.gguf) for request controls and /v2/controls\n"
+            "  --accent-adapters PATH      accent adapters (accents.gguf)\n"
+            "  --laci-heads LANG=PATH      LACI alignment heads of a language (repeatable)\n"
+            "  --tts-phoneme-lexicon DIR   gold pronunciation lexicon (LMDB) for /v2/phonemize\n"
+            "  --studio-projects-dir DIR   server-side studio projects and media (/v2/projects, /v2/media)\n"
+            "  --studio-dir DIR    studio production build (/ chooser, /studio, /lite) (default: studio/dist of the checkout\n"
+            "                      holding the executable, else studio/ beside it)\n",
+            a0, zonos3_generation().max_frames, (int) (zonos3_generation().max_frames / ZONOS3_FRAME_RATE));
 }
 
 bool env_int(const char * name, int dflt, int & out) {
     const char * v = getenv(name);
-    if (!v || !*v) { out = dflt; return true; }
+    if (!v || !*v) {
+        out = dflt;
+        return true;
+    }
     char * end = nullptr;
     const long x = strtol(v, &end, 10);
     if (!end || *end) return false;
@@ -108,9 +111,12 @@ bool env_int(const char * name, int dflt, int & out) {
 }
 
 int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
-    if (argc < 2) { usage(argv[0]); return 1; }
+    if (argc < 2) {
+        usage(argv[0]);
+        return 1;
+    }
 #ifndef _WIN32
-    signal(SIGPIPE, SIG_IGN);   // a helper worker that exits must not kill the server mid-write
+    signal(SIGPIPE, SIG_IGN); // a helper worker that exits must not kill the server mid-write
 #endif
 
     ServerState s;
@@ -121,7 +127,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         const bool has_value = i + 1 < argc;
-        if      (a == "--zac" && has_value) zac_path = value(i);
+        if (a == "--zac" && has_value) zac_path = value(i);
         else if (a == "--zac-encoder" && has_value) s.encoder_path = value(i);
         else if (a == "--ssl-teacher" && has_value) s.teacher_path = value(i);
         else if (a == "--spk-encoder" && has_value) s.spk_path = value(i);
@@ -135,9 +141,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
                 fprintf(stderr, "error: --laci-heads takes LANG=PATH, got '%s'\n", spec.c_str());
                 return 1;
             }
-            s.laci_heads[spec.substr(0, eq)] = spec.substr(eq + 1);
-        }
-        else if (a == "--host" && has_value) host = value(i);
+            std::string lang = spec.substr(0, eq); // zonos3.tts.laci.parse_laci_heads: lowercase, '-' -> '_'
+            for (char & c : lang) c = c == '-' ? '_' : (char) tolower((unsigned char) c);
+            s.laci_heads[lang] = spec.substr(eq + 1);
+        } else if (a == "--host" && has_value) host = value(i);
         else if (a == "--port" && has_value) port = atoi(value(i));
         else if (a == "--gpu") s.use_gpu = true;
         else if (a == "--cpu") s.use_gpu = false;
@@ -153,8 +160,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
                 fprintf(stderr, "error: --stream-decode-default must be prefix or whole\n");
                 return 1;
             }
-        }
-        else if (a == "--tts-default-voices-dir" && has_value) s.default_voice_dir = value(i);
+        } else if (a == "--tts-default-voices-dir" && has_value) s.default_voice_dir = value(i);
         else if (a == "--python-src" && has_value) s.python_src = value(i);
         else if (a == "--worker-python" && has_value) s.worker_python = value(i);
         else if (a == "--plugins" && has_value) {
@@ -176,10 +182,12 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
                 if (comma == std::string::npos) break;
                 start = comma + 1;
             }
-        }
-        else if (a == "--studio-projects-dir" && has_value) projects_dir = value(i);
+        } else if (a == "--studio-projects-dir" && has_value) projects_dir = value(i);
         else if (a == "--studio-dir" && has_value) s.studio_dir = value(i);
-        else { usage(argv[0]); return 1; }
+        else {
+            usage(argv[0]);
+            return 1;
+        }
     }
     if (!mp_file_exists(model_path)) {
         fprintf(stderr, "failed to load model %s\n", model_path.c_str());
@@ -201,7 +209,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
     {
         std::string err;
-        if (!configure_silence_prefill(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+        if (!configure_silence_prefill(s, err)) {
+            fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
     }
 
     // Companion discovery next to the backbone (the reference-audio models load lazily).
@@ -218,13 +229,22 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     companion(s.steer_path, "steer.gguf");
     companion(s.accent_adapters_path, "accents.gguf");
     for (const std::string * p : {&s.encoder_path, &s.teacher_path, &s.spk_path, &s.steer_path, &s.accent_adapters_path}) {
-        if (!p->empty() && !mp_file_exists(*p)) { fprintf(stderr, "error: companion file %s does not exist\n", p->c_str()); return 1; }
+        if (!p->empty() && !mp_file_exists(*p)) {
+            fprintf(stderr, "error: companion file %s does not exist\n", p->c_str());
+            return 1;
+        }
     }
     for (const auto & [lang, path] : s.laci_heads)
-        if (!mp_file_exists(path)) { fprintf(stderr, "error: --laci-heads %s=%s: no such file\n", lang.c_str(), path.c_str()); return 1; }
+        if (!mp_file_exists(path)) {
+            fprintf(stderr, "error: --laci-heads %s=%s: no such file\n", lang.c_str(), path.c_str());
+            return 1;
+        }
     if (!s.phoneme_lexicon_dir.empty()) {
         std::string err;
-        if (!open_phoneme_lexicon(s, err)) { fprintf(stderr, "error: --tts-phoneme-lexicon: %s\n", err.c_str()); return 1; }
+        if (!open_phoneme_lexicon(s, err)) {
+            fprintf(stderr, "error: --tts-phoneme-lexicon: %s\n", err.c_str());
+            return 1;
+        }
     }
     if (zac_path.empty()) {
         fprintf(stderr, "error: --zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to <model.gguf>)\n");
@@ -261,7 +281,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         std::string err;
         s.fusealign_installed = run_process({s.worker_python, "-c",
                                              "import importlib.util, sys; "
-                                             "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"}, err) == 0;
+                                             "sys.exit(importlib.util.find_spec('fusealign_hub') is None)"},
+                                            err) == 0;
         if (!s.fusealign_installed)
             fprintf(stderr, "zonos3-server: warning: %s has no fusealign_hub; speech editing is off\n",
                     s.worker_python.c_str());
@@ -319,7 +340,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
     {
         std::string err;
-        if (!load_accent_adapters(s, err)) { fprintf(stderr, "error: %s\n", err.c_str()); return 1; }
+        if (!load_accent_adapters(s, err)) {
+            fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
     }
     if (s.studio_dir.empty()) s.studio_dir = zonos3_find_studio_dir();
 
@@ -332,15 +356,18 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     // ZAC decode pool: one backend + thread per lane (ggml backends are not reentrant); lanes share s.zac's weights.
     s.zac_lanes = std::vector<ZacLane>(s.zac_threads);
     for (int i = 0; i < s.zac_threads; ++i)
-        if (!zac_clone(s.zac_lanes[i].zac, s.zac)) { fprintf(stderr, "failed to load zac for pool lane %d\n", i); return 1; }
+        if (!zac_clone(s.zac_lanes[i].zac, s.zac)) {
+            fprintf(stderr, "failed to load zac for pool lane %d\n", i);
+            return 1;
+        }
 
     start_scheduler(s);
     start_reference_reaper(s);
 
     httplib::Server svr;
-    svr.set_payload_max_length((size_t) ProjectStore::MAX_MEDIA_BYTES);   // media uploads; JSON bodies carry audio
+    svr.set_payload_max_length((size_t) ProjectStore::MAX_MEDIA_BYTES); // media uploads; JSON bodies carry audio
     svr.set_read_timeout(120);
-    svr.set_write_timeout(600);   // long synthesis streams
+    svr.set_write_timeout(600); // long synthesis streams
 
     install_middleware(svr);
     register_capability_routes(svr, s);
@@ -350,7 +377,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     register_edit_routes(svr, s);
     register_plugin_routes(svr, s);
     register_project_routes(svr, s.projects.get());
-    install_studio(svr, s.studio_dir);   // last: every API route matches first
+    install_studio(svr, s.studio_dir); // last: every API route matches first
 
     fprintf(stderr, "zonos3-server: backbone=%s zac=%s spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d zac-threads=%d python-src=%s\n",
             model_path.c_str(), zac_path.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
@@ -361,28 +388,36 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     // embedding app reads back from ctl->port.
     bool bound = !s.worker_failed;
     if (bound) {
-        if (port == 0) { port = svr.bind_to_any_port(host); bound = port > 0; }
-        else bound = svr.bind_to_port(host, port);
+        if (port == 0) {
+            port = svr.bind_to_any_port(host);
+            bound = port > 0;
+        } else bound = svr.bind_to_port(host, port);
     }
     bool ok = false;
     if (bound) {
         fprintf(stderr, "zonos3-server: listening on http://%s:%d  (studio: %s)\n", host.c_str(), port,
                 s.studio_dir.empty() ? "not built" : s.studio_dir.c_str());
-        if (ctl) { ctl->svr = &svr; ctl->port.store(port); }
+        if (ctl) {
+            ctl->svr = &svr;
+            ctl->port.store(port);
+        }
         ok = svr.listen_after_bind();
     }
 
-    if (s.pyhost) s.pyhost->close();   // before the scheduler: its engine calls finish first
-    stop_scheduler(s);   // stop the worker, reaper + ZAC pool before returning
+    if (s.pyhost) s.pyhost->close(); // before the scheduler: its engine calls finish first
+    stop_scheduler(s);               // stop the worker, reaper + ZAC pool before returning
     stop_reference_reaper(s);
     if (s.text_normalizer) s.text_normalizer->close();
-    if (ctl) ctl->svr = nullptr;   // svr is about to go out of scope
-    if (!bound) { fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port); return 1; }
+    if (ctl) ctl->svr = nullptr; // svr is about to go out of scope
+    if (!bound) {
+        fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port);
+        return 1;
+    }
     // listen_after_bind() returns true on a graceful stop() and false only if the accept loop died on a real error.
     return ok ? 0 : 1;
 }
 
-}  // namespace
+} // namespace
 
 int zonos3_server_main(int argc, char ** argv, zonos3_server_ctl * ctl) {
     const int rc = server_run(argc, argv, ctl);
@@ -391,5 +426,7 @@ int zonos3_server_main(int argc, char ** argv, zonos3_server_ctl * ctl) {
 }
 
 #ifndef ZONOS3_APP_EMBED
-int main(int argc, char ** argv) { return zonos3_server_main(argc, argv, nullptr); }
+int main(int argc, char ** argv) {
+    return zonos3_server_main(argc, argv, nullptr);
+}
 #endif

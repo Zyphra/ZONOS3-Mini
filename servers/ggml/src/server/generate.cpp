@@ -8,6 +8,7 @@
 #include "server/textnorm.h"
 #include "server/util.h"
 
+#include "wav.h"
 #include "zonos3-languages.h"
 #include "zonos3-markup.h"
 
@@ -29,23 +30,29 @@ std::string py_list(const std::vector<std::string> & items) {
     return out + "]";
 }
 
-bool set(const json & j, const char * key) { return j.contains(key) && !j[key].is_null(); }
-double num(const json & j, const char * key, double d) { return set(j, key) ? j[key].get<double>() : d; }
+bool set(const json & j, const char * key) {
+    return j.contains(key) && !j[key].is_null();
+}
+double num(const json & j, const char * key, double d) {
+    return set(j, key) ? j[key].get<double>() : d;
+}
 // Python truthiness of an optional container (None, {} and [] are false).
-bool truthy(const json & j, const char * key) { return set(j, key) && !j[key].empty(); }
+bool truthy(const json & j, const char * key) {
+    return set(j, key) && !j[key].empty();
+}
 
 // R1 (zonos3.tts.plan.validate_tag_cfg): tagged-vs-plain guidance needs recognized markup and no other CFG.
 void validate_tag_cfg(const std::string & text, double scale, double speaker_cfg, double controls_cfg) {
     const zonos3_generation_registry & limits = zonos3_generation();
     if (!std::isfinite(scale) || scale < limits.tag_cfg_min_scale || scale > limits.tag_cfg_max_scale)
         fail(400, "tag_cfg_scale must be finite and between " + json(limits.tag_cfg_min_scale).dump() + " and " +
-                  json(limits.tag_cfg_max_scale).dump() + ".");
+                      json(limits.tag_cfg_max_scale).dump() + ".");
     if (scale == 1.0) return;
     if (!zonos3_has_nonverbal_markup(text) || zonos3_strip_nonverbal_markup(text) == text) {
         std::string tags;
         for (const auto & t : zonos3_nonverbal_markup_tags()) tags += (tags.empty() ? "" : ", ") + ("<" + t + "/>");
         fail(400, "tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags " + tags +
-                  " or the same names as span tags (<shouting>...</shouting>).");
+                      " or the same names as span tags (<shouting>...</shouting>).");
     }
     if (speaker_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.");
     if (controls_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.");
@@ -61,7 +68,7 @@ std::string resolve_speaker_mode(const ServerState & s, const json & body) {
     return mode;
 }
 
-}  // namespace
+} // namespace
 
 // R3 (zonos3.tts.plan.resolve_condition_buckets): explicit ids win, raw values map through the edges, anything else is
 // unknown.
@@ -106,7 +113,7 @@ std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json
             bucket = id->second.get<int>();
             if (bucket < 0 || bucket > n_buckets)
                 fail(400, "condition_buckets[" + name + "] must be in [0, " + std::to_string(n_buckets - 1) + "] or " +
-                          std::to_string(n_buckets) + " (= unknown)");
+                              std::to_string(n_buckets) + " (= unknown)");
         } else if (val != vals.end() && !val->second.is_null()) {
             const double v = val->second.get<double>();
             if (!std::isfinite(v)) fail(400, "condition_values[" + name + "] must be finite");
@@ -172,8 +179,7 @@ void apply_accent(const ServerState & s, const json & body, GenReq & gr) {
 void apply_controls(ServerState & s, const json & body, GenReq & gr) {
     if (!truthy(body, "controls") && !truthy(body, "control_spans")) return;
     if (!s.steer_loaded)
-        fail(400, "This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); "
-                  "`controls` are unavailable.");
+        fail(400, std::string(NO_STEERING) + "; `controls` are unavailable.");
     std::map<std::string, double> controls;
     if (set(body, "controls"))
         for (auto it = body["controls"].begin(); it != body["controls"].end(); ++it) controls[it.key()] = it.value().get<double>();
@@ -188,7 +194,7 @@ void apply_controls(ServerState & s, const json & body, GenReq & gr) {
         }
     const double rate = set(body, "control_span_rate") ? body["control_span_rate"].get<double>() : 0.0;
     std::string err;
-    if (!zonos3_steer_resolve(s.steer, controls, spans, zonos3_steer_text_chars(gr.raw_text), rate,
+    if (!zonos3_steer_resolve(s.steer, controls, spans, (int) utf8_length(gr.raw_text), rate,
                               gr.speaker_mode == "embedding" ? &gr.speaker_embedding : nullptr, gr.steering, err))
         fail(400, err);
 }
@@ -198,34 +204,6 @@ void apply_controls(ServerState & s, const json & body, GenReq & gr) {
 void check_phoneme_groups(const ServerState & s, const std::string & text) {
     const std::string err = zonos3_check_phoneme_groups(s.model.tok, text);
     if (!err.empty()) fail(400, err);
-}
-
-std::u32string utf8_to_u32(const std::string & s) {
-    std::u32string out;
-    for (size_t i = 0; i < s.size();) {
-        const unsigned char c = (unsigned char) s[i];
-        const int n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
-        char32_t cp = n == 1 ? c : n == 2 ? (c & 0x1F) : n == 3 ? (c & 0x0F) : (c & 0x07);
-        for (int k = 1; k < n && i + k < s.size(); ++k) cp = (cp << 6) | ((unsigned char) s[i + k] & 0x3F);
-        out.push_back(cp);
-        i += n;
-    }
-    return out;
-}
-
-std::string u32_to_utf8(const std::u32string & s) {
-    std::string out;
-    for (char32_t cp : s) {
-        if (cp < 0x80) out += (char) cp;
-        else if (cp < 0x800) { out += (char) (0xC0 | (cp >> 6)); out += (char) (0x80 | (cp & 0x3F)); }
-        else if (cp < 0x10000) {
-            out += (char) (0xE0 | (cp >> 12)); out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F));
-        } else {
-            out += (char) (0xF0 | (cp >> 18)); out += (char) (0x80 | ((cp >> 12) & 0x3F));
-            out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F));
-        }
-    }
-    return out;
 }
 
 // UTF-8 bytes behind a model text id of the SuperBPE tokenizer: a byte-level symbol holds one code point per byte; an
@@ -285,13 +263,13 @@ void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
         // from the character of its first byte to the one of its last (tokenizers' byte-level offsets).
         bpe = [&tok](const std::u32string & piece) {
             std::vector<zonos3_follow::Range> out;
-            const std::string utf8 = u32_to_utf8(piece);
+            const std::string utf8 = utf8_from_u32(piece);
             std::vector<int> char_of(utf8.size() + 1, (int) piece.size());
             for (size_t b = 0, c = 0; b < utf8.size(); ++b) {
                 if (b > 0 && ((unsigned char) utf8[b] & 0xC0) != 0x80) ++c;
                 char_of[b] = (int) c;
             }
-            const std::vector<int32_t> ids = zonos3_tokenize(tok, utf8);   // [BOS] tokens [EOS]
+            const std::vector<int32_t> ids = zonos3_tokenize(tok, utf8); // [BOS] tokens [EOS]
             size_t at = 0;
             for (size_t i = 1; i + 1 < ids.size(); ++i) {
                 const size_t n = (size_t) token_bytes(tok, ids[i]);
@@ -313,7 +291,7 @@ void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
     gr.follow_tokens.assign(tokens.begin(), tokens.end());
 }
 
-// sgl _resolve_stream_decode for a streaming response.
+// zonos3.server.speech.resolve_stream_decode for a streaming response.
 bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
     if (!streaming) return false;
     if (!set(body, "stream_decode")) return s.stream_decode_default == "prefix";
@@ -401,7 +379,7 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     if (set(body, "repetition_codebooks")) gr.sp.rep_codebooks = body["repetition_codebooks"].get<int>();
     if (gr.sp.rep_codebooks < 0) gr.sp.rep_codebooks = (int) s.model.hp.n_codebooks;
     if (set(body, "seed")) gr.sp.seed = (uint32_t) body["seed"].get<uint64_t>();
-    else {   // secrets.randbelow(2**31)
+    else { // secrets.randbelow(2**31)
         static std::random_device rd;
         gr.sp.seed = (uint32_t) (rd() & 0x7FFFFFFFu);
     }
@@ -420,22 +398,6 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     // text normalization (the tokenizer's: TTSTextNormalizer when enabled and requested)
     gr.text = normalize_text(s, text, gr.language, !set(body, "text_normalization") || body["text_normalization"].get<bool>());
     resolve_follow_tokens(s, gr);
-    return out;
-}
-
-// float32 PCM as a 16-bit mono WAV, samples clipped to [-1, 1] (sgl _pcm16_wav: (x * 32767).astype("<i2")).
-std::string pcm16_wav(const std::vector<float> & audio, int sample_rate) {
-    std::string out;
-    auto w32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) out += (char) (v >> (8 * i)); };
-    auto w16 = [&](uint16_t v) { out += (char) v; out += (char) (v >> 8); };
-    const uint32_t data = (uint32_t) audio.size() * 2;
-    out += "RIFF"; w32(36 + data); out += "WAVE";
-    out += "fmt "; w32(16); w16(1); w16(1); w32((uint32_t) sample_rate); w32((uint32_t) sample_rate * 2); w16(2); w16(16);
-    out += "data"; w32(data);
-    for (float v : audio) {
-        const float c = std::min(1.0f, std::max(-1.0f, v));
-        w16((uint16_t) (int16_t) (c * 32767.0f));
-    }
     return out;
 }
 
@@ -477,8 +439,7 @@ void generate(ServerState & s, const json & body, const std::optional<std::strin
                     sink.done();
                     return true;
                 }
-            }
-        }, [job](bool) {   // the response is gone (finished, failed or never written): stop generating
+            } }, [job](bool) { // the response is gone (finished, failed or never written): stop generating
             std::lock_guard<std::mutex> lk(job->m);
             if (!job->finished) job->client_dropped = true;
         });
@@ -493,18 +454,28 @@ void generate(ServerState & s, const json & body, const std::optional<std::strin
         for (auto & b : job->pcm) audio.insert(audio.end(), b.begin(), b.end());
     }
     if (failed) fail(500, "generation failed");
-    if (wav) res.set_content(pcm16_wav(audio, sr), "audio/wav");
-    else res.set_content((const char *) audio.data(), audio.size() * sizeof(float), "audio/pcm");
+    if (wav) {
+        const std::vector<uint8_t> bytes = wav_pcm16_bytes(audio, sr);
+        res.set_content((const char *) bytes.data(), bytes.size(), "audio/wav");
+    } else {
+        res.set_content((const char *) audio.data(), audio.size() * sizeof(float), "audio/pcm");
+    }
 }
 
 // The speaker input fields a SpeechRequest `voice` cannot be combined with.
 const char * SPEAKER_INPUT_FIELDS[] = {
-    "speaker_audio_base64", "speaker_audio_name", "speaker_reference_codes", "speaker_embedding_base64",
-    "speaker_embedding_name", "speaker_embedding_id", "speaker_blend_embedding_id_a", "speaker_blend_embedding_id_b",
+    "speaker_audio_base64",
+    "speaker_audio_name",
+    "speaker_reference_codes",
+    "speaker_embedding_base64",
+    "speaker_embedding_name",
+    "speaker_embedding_id",
+    "speaker_blend_embedding_id_a",
+    "speaker_blend_embedding_id_b",
     "speaker_blend_t",
 };
 
-}  // namespace
+} // namespace
 
 bool configure_silence_prefill(ServerState & s, std::string & err) {
     const zonos3_generation_registry & limits = zonos3_generation();
@@ -623,11 +594,12 @@ std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, c
     gr.stream = false;
     gr.prefix = false;
     gr.laci_duration = take.duration;
-    if (take.scale) {   // _laci_take_rate_scale
+    if (take.scale) { // _laci_take_rate_scale
         const LaciTake::Scale & sc = *take.scale;
         const auto & hp = s.model.hp;
         int index = -1;
-        for (size_t i = 0; i < hp.cond_names.size(); ++i) if (hp.cond_names[i] == "speaking_rate") index = (int) i;
+        for (size_t i = 0; i < hp.cond_names.size(); ++i)
+            if (hp.cond_names[i] == "speaking_rate") index = (int) i;
         if (index < 0) fail(400, "an extended speaking-rate scale needs the checkpoint's speaking-rate condition");
         zonos3_laci::RateBuckets rates;
         rates.index = index;
@@ -636,19 +608,23 @@ std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, c
         rates.first = sc.first;
         if (!(rates.first <= sc.bucket && sc.bucket <= rates.last()))
             fail(400, "speaking-rate bucket " + std::to_string(sc.bucket) + " is outside the scale [" +
-                      std::to_string(rates.first) + ", " + std::to_string(rates.last()) + "]");
+                          std::to_string(rates.first) + ", " + std::to_string(rates.last()) + "]");
         const std::vector<float> base = gr.steering.hidden;
         std::vector<std::vector<float>> deltas;
         for (int b = rates.first; b <= rates.last(); ++b) {
             const auto dose = sc.doses.find(b);
-            if (dose == sc.doses.end()) { deltas.push_back(base); continue; }
+            if (dose == sc.doses.end()) {
+                deltas.push_back(base);
+                continue;
+            }
             if (!s.steer_loaded) fail(400, "a steered speaking-rate bucket needs the steering bundle (steer.gguf)");
             zonos3_steering tempo;
             std::string err;
             if (!zonos3_steer_resolve(s.steer, {{sc.direction, dose->second}}, {}, 0, 0.0, nullptr, tempo, err))
                 fail(400, err);
             std::vector<float> d = tempo.hidden.empty() ? base : tempo.hidden;
-            if (!tempo.hidden.empty()) for (size_t i = 0; i < base.size() && i < d.size(); ++i) d[i] += base[i];
+            if (!tempo.hidden.empty())
+                for (size_t i = 0; i < base.size() && i < d.size(); ++i) d[i] += base[i];
             deltas.push_back(std::move(d));
         }
         gr.steering.hidden = deltas[(size_t) (sc.bucket - rates.first)];
@@ -676,28 +652,28 @@ TakeResult wait_take(const std::shared_ptr<ReqJob> & job) {
 
 void register_generate_routes(httplib::Server & svr, ServerState & s) {
     svr.Post("/v2/generate", guarded([&s](const httplib::Request & req, httplib::Response & res) {
-        const json body = schema::parse_body(req, "GenerateRequest");
-        generate(s, body, session_id(req), res);
-    }));
+                 const json body = schema::parse_body(req, "GenerateRequest");
+                 generate(s, body, session_id(req), res);
+             }));
     // OpenAI-compatible: the /v2/generate request of `input` (pcm streams, wav is buffered), with `voice` (a speaker
     // id of GET /v2/speakers) as its speaker_embedding_id.
     svr.Post("/v1/audio/speech", guarded([&s](const httplib::Request & req, httplib::Response & res) {
-        json body = schema::parse_body(req, "SpeechRequest");
-        const auto session = session_id(req);
-        const std::string format = set(body, "response_format") ? body["response_format"].get<std::string>() : "pcm";
-        if (set(body, "voice")) {
-            for (const char * field : SPEAKER_INPUT_FIELDS)
-                if (set(body, field)) fail(400, "voice cannot be combined with speaker_* fields");
-            const std::string voice = body["voice"].get<std::string>();
-            if (!speaker_known(s, session, voice)) fail(400, "unknown voice '" + voice + "'");
-            body["speaker_embedding_id"] = voice;
-        }
-        body["text"] = body["input"];
-        body["stream"] = format == "pcm";
-        body["format"] = format;
-        for (const char * k : {"model", "input", "voice", "response_format"}) body.erase(k);
-        generate(s, body, session, res);
-    }));
+                 json body = schema::parse_body(req, "SpeechRequest");
+                 const auto session = session_id(req);
+                 const std::string format = set(body, "response_format") ? body["response_format"].get<std::string>() : "pcm";
+                 if (set(body, "voice")) {
+                     for (const char * field : SPEAKER_INPUT_FIELDS)
+                         if (set(body, field)) fail(400, "voice cannot be combined with speaker_* fields");
+                     const std::string voice = body["voice"].get<std::string>();
+                     if (!speaker_known(s, session, voice)) fail(400, "unknown voice '" + voice + "'");
+                     body["speaker_embedding_id"] = voice;
+                 }
+                 body["text"] = body["input"];
+                 body["stream"] = format == "pcm";
+                 body["format"] = format;
+                 for (const char * k : {"model", "input", "voice", "response_format"}) body.erase(k);
+                 generate(s, body, session, res);
+             }));
 }
 
-}  // namespace zs
+} // namespace zs

@@ -9,7 +9,8 @@
 import { batch, effect, signal, untracked } from '@preact/signals';
 import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped, type Zippable } from 'fflate';
 import * as api from '../api';
-import { embeddingOnly, MissingMedia, RevisionConflict, type Backend } from '../api';
+import { embeddingOnly, type Backend } from '../api';
+import { MissingMedia, RevisionConflict } from '../lib/http';
 import { previewText } from '../audio/preview';
 import { errorText } from '../audio/render';
 import { download, slug } from '../lib/files';

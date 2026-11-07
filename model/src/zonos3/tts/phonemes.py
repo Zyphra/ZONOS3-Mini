@@ -162,12 +162,12 @@ class PhonemeLexicon:
         segments, pos = [], 0
         for a, b, ipa, status in spans:
             if a > pos:
-                segments.append(dict(text=text[pos:a], ipa=None, status=None))
-            segments.append(dict(text=text[a:b], ipa=ipa, status=status))
+                segments.append({"text": text[pos:a], "ipa": None, "status": None})
+            segments.append({"text": text[a:b], "ipa": ipa, "status": status})
             pos = b
         if pos < len(text):
-            segments.append(dict(text=text[pos:], ipa=None, status=None))
-        return dict(language=code, segments=segments)
+            segments.append({"text": text[pos:], "ipa": None, "status": None})
+        return {"language": code, "segments": segments}
 
     @staticmethod
     def _word_spans(text: str) -> list[tuple[int, int]]:
@@ -215,8 +215,13 @@ class PhonemeLexicon:
             if mode == "korean":
                 value = self.get(code, text[i:j])
                 spans.append((i, j, value or None, _status(value)))
-            elif cls == "han" and mode == "japanese" and j < n and _char_class(text[j]) == "hira" \
-                    and text[j] not in _JA_PARTICLES:
+            elif (
+                cls == "han"
+                and mode == "japanese"
+                and j < n
+                and _char_class(text[j]) == "hira"
+                and text[j] not in _JA_PARTICLES
+            ):
                 spans.append((i, j, None, "skipped"))
             else:
                 spans.extend(self._max_match(text, i, j, code))
@@ -231,7 +236,7 @@ class PhonemeLexicon:
         spans, i, pending = [], start, None
         while i < end:
             for length in range(min(_CJK_MAX, end - i), 1, -1):
-                value = self.get(code, text[i:i + length])
+                value = self.get(code, text[i : i + length])
                 if value is not None:
                     if pending is not None:
                         spans.append((pending, i, None, "skipped"))
@@ -251,16 +256,32 @@ class PhonemeLexicon:
 _ESPEAK_SYMBOLS = {
     # CMUdict-derived English: no length marks, rhotic ɝ/ɚ, no flaps or glottal stops.
     "eng": (
-        ("ɜː", "ɝ"), ("ɜ", "ɝ"), ("oːɹ", "ɔɹ"), ("ː", ""), ("ɐ", "ə"), ("ᵻ", "ɪ"), ("ɾ", "t"),
-        ("ʔ", "t"), ("n̩", "ən"), ("l̩", "əl"), ("m̩", "əm"), ("ɒ", "ɑ"), ("x", "k"),
+        ("ɜː", "ɝ"),
+        ("ɜ", "ɝ"),
+        ("oːɹ", "ɔɹ"),
+        ("ː", ""),
+        ("ɐ", "ə"),
+        ("ᵻ", "ɪ"),
+        ("ɾ", "t"),
+        ("ʔ", "t"),
+        ("n̩", "ən"),
+        ("l̩", "əl"),
+        ("m̩", "əm"),
+        ("ɒ", "ɑ"),
+        ("x", "k"),
     ),
     # WikiPron German: uvular ʁ, vocalized -er as ɐ, front long a, marked diphthongs.
     "deu": (("ɾ", "ʁ"), ("r", "ʁ"), ("ɜ", "ɐ"), ("ɑː", "aː"), ("aʊ", "aʊ̯"), ("aɪ", "aɪ̯"), ("ɔø", "ɔɪ̯")),
     # WikiPron Italian: geminates spelled double, no lax final vowels or taps.
     "ita": (
-        ("tʃː", "ttʃ"), ("dʒː", "ddʒ"), ("tsː", "tts"), ("dzː", "ddz"),
+        ("tʃː", "ttʃ"),
+        ("dʒː", "ddʒ"),
+        ("tsː", "tts"),
+        ("dzː", "ddz"),
         *((c + "ː", c + c) for c in "bdfklmnprstvzʃʎɲɡ"),
-        ("ɪ", "i"), ("ʊ", "u"), ("ɾ", "r"),
+        ("ɪ", "i"),
+        ("ʊ", "u"),
+        ("ɾ", "r"),
     ),
     # WikiPron Russian: retroflex ш/ж, ɨ for ы, plain l with ʲ, a/ə vowels.
     "rus": (("ɭ", "l"), ("ʃ", "ʂ"), ("ʒ", "ʐ"), ("y", "ɨ"), ("ɑ", "a"), ("ʌ", "ə")),

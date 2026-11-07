@@ -3,7 +3,7 @@
  * the server) and voice embeddings as raw float32. One stored copy however many projects, takes
  * or versions refer to it.
  */
-import { encodeWav } from '../lib/files';
+import { wavBytes } from '../lib/wav';
 import { sha256 } from '../lib/hash';
 
 export interface MediaInfo {
@@ -51,7 +51,7 @@ export class MediaSink {
 
   /** Audio as a WAV: `exact` gives the bytes when some exist, else 16-bit PCM. */
   audio(pcm: Float32Array, sr: number, exact?: () => ArrayBuffer): string {
-    return this.hit(pcm, 'audio/wav') ?? this.add(pcm, 'audio/wav', new Uint8Array(exact ? exact() : encodeWav(pcm, sr)));
+    return this.hit(pcm, 'audio/wav') ?? this.add(pcm, 'audio/wav', exact ? new Uint8Array(exact()) : wavBytes(pcm, sr));
   }
 
   /** WAV bytes as they are (a voice's reference clip). */

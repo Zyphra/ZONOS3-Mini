@@ -21,7 +21,10 @@ embedding.
 | `servers/web/` | The `zonos3-web` package: the in-browser server (WebGPU in a Web Worker, the v2 API behind a fetch-compatible transport) the studio runs with `?api=web` |
 | `studio/` | Zonos Voice Studio (Preact, pnpm); `studio/dist/` is the committed production build every server serves at `/` |
 | `tools/` | Checkpoint and GGUF conversion tools (`zonos3-tools`) |
-| `default_voices/`, `steering/`, `laci_heads/` | Runtime assets shared by the servers |
+| `servers/api/` | The HTTP contract every server implements (`openapi.yaml`, its bundled `openapi.json`) and its conformance tests (`zonos3-api`) |
+| `servers/space/` | The ZeroGPU Hugging Face Space (`app.py`) and its deploy script |
+| `assets/` | Runtime assets shared by the servers: `default_voices/`, `steering/` (steering bundles), `laci_heads/` (LACI alignment heads) |
+| `third_party/` | Third-party license texts (`third_party/licenses/`) and the FuseAlign submodule |
 
 ## Requirements
 
@@ -73,12 +76,12 @@ voice-cloning page at `/lite` (pick, upload, record or load a voice embedding, t
 | Variable | Effect |
 | --- | --- |
 | `SERVE_MODEL` | Checkpoint directory or `hf://` location (`--model-path`); default the release LM |
-| `SERVE_VOICES` | Default-voice directory (`--tts-default-voices-dir`); default `default_voices/` |
-| `STEER_BUNDLE` | Steering bundle (`--steer-bundle`) behind every steering control (emotion axes, styles, accent directions, …); default `steering/studio_bundle_mect60k.json`, empty serves no controls |
+| `SERVE_VOICES` | Default-voice directory (`--tts-default-voices-dir`); default `assets/default_voices/` |
+| `STEER_BUNDLE` | Steering bundle (`--steer-bundle`) behind every steering control (emotion axes, styles, accent directions, …); default `assets/steering/studio_bundle_mect60k.json`, empty serves no controls |
 | `PHONEME_LEXICON` | Gold pronunciation lexicon directory (`--tts-phoneme-lexicon`) for `POST /v2/phonemize` |
 | `ZONOS3_STUDIO_PROJECTS` | Shared studio project store (`--studio-projects-dir`); empty (default) keeps projects in the browser |
 | `LACI_HEADS` | `"lang=path ..."` LACI alignment heads (`--laci-heads`) |
-| `LACI_ALL` | `1` passes LACI heads for every language that has them, from `LACI_HEADS_DIR` (default `laci_heads/`) |
+| `LACI_ALL` | `1` passes LACI heads for every server language, from `LACI_HEADS_DIR` (default `assets/laci_heads/`): the directory's `*_heads.json` for every language, overridden by a `*_heads_<speech code>.json` (`*_heads_zh.json` for Chinese); `en_gb` included |
 | `PLUGINS` | `"name ..."` server plugins (`--plugins`), e.g. `dub` from [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub) |
 
 ## Generate
@@ -91,7 +94,7 @@ Every request should carry a voice: a reference clip (`speaker_audio_base64`) or
 python3 - <<'EOF' > body.json
 import base64, json
 print(json.dumps({"text": "Hello from ZONOS3.", "language": "en_us", "stream": False,
-                  "speaker_audio_base64": base64.b64encode(open("default_voices/AmericanFemale.mp3", "rb").read()).decode()}))
+                  "speaker_audio_base64": base64.b64encode(open("assets/default_voices/AmericanFemale.mp3", "rb").read()).decode()}))
 EOF
 
 # Whole utterance: raw float32 little-endian PCM, 44.1 kHz mono (the seed used comes back in X-Seed)
@@ -108,7 +111,7 @@ curl -X POST http://127.0.0.1:1919/v1/audio/speech -H 'Content-Type: application
 `stream: true` returns the audio progressively (prefix re-decode of the causal decoder); `"format": "wav"` returns a
 buffered 16-bit WAV instead of raw PCM (with `stream: false`). Open `http://127.0.0.1:1919/studio` for the Zonos Voice
 Studio (its steering controls come from the default `STEER_BUNDLE`). The API
-guide is [docs/api.md](docs/api.md); the schemas are in [api/openapi.yaml](api/openapi.yaml).
+guide is [docs/api.md](docs/api.md); the schemas are in [servers/api/openapi.yaml](servers/api/openapi.yaml).
 
 ## Offline Python API
 
@@ -130,8 +133,8 @@ tts.save_audio(result["audio"], "offline.wav")
 
 # Clone a voice from a reference clip (raw reference prefix) or a speaker embedding
 (cloned,) = tts.generate(["This is spoken in the cloned voice."], TTSSamplingParams(seed=42),
-                         speaker_reference_audio="default_voices/AmericanFemale.mp3")
-emb = tts.embed_speaker_file("default_voices/AmericanFemale.mp3")
+                         speaker_reference_audio="assets/default_voices/AmericanFemale.mp3")
+emb = tts.embed_speaker_file("assets/default_voices/AmericanFemale.mp3")
 by_embedding = tts.generate_one("Same voice, from its embedding.", TTSSamplingParams(seed=42), speaker_embedding=emb)
 ```
 
@@ -154,7 +157,7 @@ the same modules with `uv run --package zonos3-tools python tools/convert_gguf.p
 
 | Feature | Where |
 | --- | --- |
-| HTTP API (`/v2/generate`, `/v1/audio/speech`, `/v2/phonemize`, …) | [docs/api.md](docs/api.md), [api/openapi.yaml](api/openapi.yaml) |
+| HTTP API (`/v2/generate`, `/v1/audio/speech`, `/v2/phonemize`, …) | [docs/api.md](docs/api.md), [servers/api/openapi.yaml](servers/api/openapi.yaml) |
 | Raw-reference and embedding voice cloning, speaker CFG, condition rows | [docs/guide.md](docs/guide.md) |
 | Steering controls (emotion axes, moods, styles, voice quality, accent directions) and accent adapters | [docs/guide.md](docs/guide.md) |
 | Speech editing | [docs/guide.md](docs/guide.md) |
@@ -203,16 +206,19 @@ Tests that load weights run when `ZONOS3_TEST_MODEL` names a checkpoint (e.g. th
 The API conformance suite runs against a live server of any kind (tests of capabilities the server lacks skip):
 
 ```bash
-uv run --package zonos3-api pytest api/tests/conformance --base-url http://127.0.0.1:1919
+uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919
 ```
 
 The ggml parity tests compare the C++ build with the reference:
 `uv run --package zonos3-tools pytest servers/ggml/tests/parity --ggml-build servers/ggml/build`. On Apple Silicon,
 `uv run --package zonos3-mlx pytest servers/mlx/tests` runs the MLX server's tests (they skip elsewhere).
-`pnpm --dir servers/web test` runs the in-browser server's unit tests, and `pnpm --dir servers/web parity` its WebGPU
-parity checks against CPU ggml goldens in headless Chrome.
+`pnpm install` at the root installs the pnpm workspace (`studio`, `studio/mcp`, `servers/web`; one `pnpm-lock.yaml`);
+every `typecheck`, `build` and `test` script regenerates the untracked `src/api/schema.ts` from `servers/api/openapi.json`
+first (`gen:api`). `pnpm --dir servers/web test` runs the in-browser server's unit tests, `pnpm --dir studio/mcp test`
+the MCP server's, and `pnpm --dir servers/web parity` the WebGPU parity checks against CPU ggml goldens in headless
+Chrome.
 
 ## License
 
 ZONOS3 is released under the [MIT License](LICENSE). Third-party components are listed in [`NOTICE`](NOTICE) and
-[`licenses/`](licenses/).
+[`third_party/licenses/`](third_party/licenses/).

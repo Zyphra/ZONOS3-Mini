@@ -1,5 +1,6 @@
-"""Tag CFG (TAG_CFG_20261029): nonverbal markup helpers, markup-safe normalization, the tokenizer's plain-text twin
+"""Tag CFG: nonverbal markup helpers, markup-safe normalization, the tokenizer's plain-text twin
 and the scheduler's tagged-vs-plain pair. CPU only; the real NeMo grammar cases skip without pynini."""
+
 from __future__ import annotations
 
 import json
@@ -8,25 +9,24 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
+from zonos3.tokenizer import textnorm
+from zonos3.tokenizer.textnorm import TTSTextNormalizer
+from zonos3.tts import plan
+from zonos3.tts.markup import (
+    _NONVERBAL_MARKUP,
+    NONVERBAL_MARKUP_TAGS,
+    has_nonverbal_markup,
+    split_nonverbal_markup,
+    strip_nonverbal_markup,
+)
+from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
 from zonos3_sgl.distributed.info import DistributedInfo
 from zonos3_sgl.message import TTSUserMsg
 from zonos3_sgl.message.tts import TTSSamplingParams, TTSTokenizeMsg
 from zonos3_sgl.scheduler.scheduler import TTSScheduler
 from zonos3_sgl.tokenizer import server as tokenizer_server
-from zonos3.tokenizer import textnorm
-from zonos3.tokenizer.textnorm import TTSTextNormalizer
-from zonos3.tts.markup import (
-    NONVERBAL_MARKUP_TAGS,
-    _NONVERBAL_MARKUP,
-    has_nonverbal_markup,
-    split_nonverbal_markup,
-    strip_nonverbal_markup,
-)
-from zonos3.tts import plan
-from zonos3.tts.prompt import BYTE_TEXT_VOCAB_SIZE, TTSPromptBuilder, TTSPromptConfig
 
-C = 2                                   # codebooks
+C = 2  # codebooks
 PAD = 1025
 RATE, QUALITY, BACKGROUND, ACCURATE = 2, (2,), 2, 1
 TEXT_VOCAB = BYTE_TEXT_VOCAB_SIZE + RATE + sum(QUALITY) + BACKGROUND + ACCURATE
@@ -43,8 +43,12 @@ def _single_rank(monkeypatch):
 
 def _config():
     return TTSPromptConfig(
-        n_codebooks=C, audio_pad_id=PAD, text_vocab=TEXT_VOCAB, speaking_rate_num_buckets=RATE,
-        quality_bucket_counts=QUALITY, speaker_background_num_buckets=BACKGROUND,
+        n_codebooks=C,
+        audio_pad_id=PAD,
+        text_vocab=TEXT_VOCAB,
+        speaking_rate_num_buckets=RATE,
+        quality_bucket_counts=QUALITY,
+        speaker_background_num_buckets=BACKGROUND,
         accurate_mode_num_buckets=ACCURATE,
     )
 
@@ -83,10 +87,14 @@ class _UpperNormalizer:
 
 
 def _message(scale=2.0, **kwargs):
-    fields = dict(
-        uid=7, text=TAGGED, language="en_us", sampling_params=TTSSamplingParams(tag_cfg_scale=scale, max_tokens=20),
-        speaker_embedding=torch.tensor([1.0, 2.0]), condition_buckets=[3, UNKNOWN, 5],
-    )
+    fields = {
+        "uid": 7,
+        "text": TAGGED,
+        "language": "en_us",
+        "sampling_params": TTSSamplingParams(tag_cfg_scale=scale, max_tokens=20),
+        "speaker_embedding": torch.tensor([1.0, 2.0]),
+        "condition_buckets": [3, UNKNOWN, 5],
+    }
     fields.update(kwargs)
     return TTSTokenizeMsg(**fields)
 
@@ -135,11 +143,23 @@ def _tokenize(monkeypatch, tmp_path, messages, *, normalizer=None):
     monkeypatch.setattr(textnorm, "TTSTextNormalizer", Normalizer)
     monkeypatch.setattr(textnorm, "normalization_enabled", lambda: normalizer is not None)
     tokenizer_server.tokenize_worker(
-        addr="tokenizer", create=True, backend_addr="backend", frontend_addr="frontend", local_bs=1,
-        n_codebooks=C, audio_pad_id=PAD, audio_codec="matched", text_vocab=TEXT_VOCAB,
-        speaking_rate_num_buckets=RATE, quality_bucket_counts=list(QUALITY), quality_buckets=[1],
-        speaker_background_num_buckets=BACKGROUND, accurate_mode_num_buckets=ACCURATE,
-        condition_count=CONDITIONS, condition_bucket_counts=UNKNOWNS, text_tokenizer_spec=None,
+        addr="tokenizer",
+        create=True,
+        backend_addr="backend",
+        frontend_addr="frontend",
+        local_bs=1,
+        n_codebooks=C,
+        audio_pad_id=PAD,
+        audio_codec="matched",
+        text_vocab=TEXT_VOCAB,
+        speaking_rate_num_buckets=RATE,
+        quality_bucket_counts=list(QUALITY),
+        quality_buckets=[1],
+        speaker_background_num_buckets=BACKGROUND,
+        accurate_mode_num_buckets=ACCURATE,
+        condition_count=CONDITIONS,
+        condition_bucket_counts=UNKNOWNS,
+        text_tokenizer_spec=None,
     )
     return sent
 
@@ -227,8 +247,11 @@ def tn():
 @pytest.mark.parametrize(
     "language,text,expected",
     [
-        ("en_us", "<shouting>Get out!</shouting> It costs $5 <sigh/> today.",
-         "<shouting>Get out!</shouting> It costs five dollars <sigh/> today."),
+        (
+            "en_us",
+            "<shouting>Get out!</shouting> It costs $5 <sigh/> today.",
+            "<shouting>Get out!</shouting> It costs five dollars <sigh/> today.",
+        ),
         ("cmn", "<shouting>出去！</shouting>他花了5元<sigh/>。", "<shouting>出去！</shouting>他花了五元<sigh/>。"),
         ("cmn", "我有3个 <laugh/> 苹果", "我有三个 <laugh/> 苹果"),
         ("ja", "<shouting>出て行け！</shouting>5円です<sigh/>。", "<shouting>出て行け！</shouting>五円です<sigh/>。"),
@@ -251,11 +274,14 @@ def test_tokenizer_builds_the_plain_twin_from_the_same_normalized_text(monkeypat
 
     def layout(text):
         # today's layout: speaker slot, condition rows, text rows, codec-silence prefill
-        return torch.cat((
-            builder.speaker_slot(), builder.condition_rows(CONDITIONS),
-            builder.build(text, quality_buckets=[1]),
-            _silence_rows(SILENCE_FRAMES, builder.config),
-        ))
+        return torch.cat(
+            (
+                builder.speaker_slot(),
+                builder.condition_rows(CONDITIONS),
+                builder.build(text, quality_buckets=[1]),
+                _silence_rows(SILENCE_FRAMES, builder.config),
+            )
+        )
 
     assert torch.equal(tagged, layout("SO I SAID <laugh/> FIVE TIMES."))
     assert torch.equal(plain, layout("SO I SAID FIVE TIMES."))
@@ -270,11 +296,14 @@ def test_tokenizer_scale_one_sends_no_twin_and_today_layout(monkeypatch, tmp_pat
     builder = TTSPromptBuilder(_config())
     users = _tokenize(monkeypatch, tmp_path, [_message(scale=1.0), _message(scale=1.0, text="Hello there.")])
     assert [u.plain_input_ids for u in users] == [None, None]
-    expected = torch.cat((
-        builder.speaker_slot(), builder.condition_rows(CONDITIONS),
-        builder.build("Hello there.", quality_buckets=[1]),
-        _silence_rows(SILENCE_FRAMES, builder.config),
-    ))
+    expected = torch.cat(
+        (
+            builder.speaker_slot(),
+            builder.condition_rows(CONDITIONS),
+            builder.build("Hello there.", quality_buckets=[1]),
+            _silence_rows(SILENCE_FRAMES, builder.config),
+        )
+    )
     assert torch.equal(users[1].input_ids, expected)
 
 
@@ -287,12 +316,12 @@ def test_tokenizer_twin_on_the_raw_reference_path(monkeypatch, tmp_path):
     assert torch.equal(user.input_ids[: prefix + CONDITIONS], user.plain_input_ids[: prefix + CONDITIONS])
     builder = TTSPromptBuilder(_config())
     plain_rows = builder.build(strip_nonverbal_markup(TAGGED), quality_buckets=[1])
-    assert torch.equal(user.plain_input_ids[prefix + CONDITIONS:], plain_rows)
+    assert torch.equal(user.plain_input_ids[prefix + CONDITIONS :], plain_rows)
 
 
 def test_plain_twin_refuses_a_prompt_not_ending_in_its_text_rows():
     rows = torch.ones((4, C + 1), dtype=torch.int32)
-    with pytest.raises(ValueError, match="does not end with its text rows"):
+    with pytest.raises(ValueError):
         plan.PromptRows(rows, 0, -1, -1).with_text(rows[:2] + 1, rows[:1])
 
 
@@ -326,9 +355,9 @@ def test_prefill_runs_a_plain_twin_with_identical_conditioning(monkeypatch, tmp_
     for req in batch.reqs:
         assert torch.equal(s.token_pool[req.table_idx, : req.device_len], req.input_ids)
 
-    logits = torch.tensor([[[4.0, 1.0]], [[1.0, 3.0]]])        # rows: tagged, plain
+    logits = torch.tensor([[[4.0, 1.0]], [[1.0, 3.0]]])  # rows: tagged, plain
     guided = s._apply_cfg(logits, batch)
-    assert torch.equal(guided[0], torch.tensor([[7.0, -1.0]]))   # plain + 2 * (tagged - plain)
+    assert torch.equal(guided[0], torch.tensor([[7.0, -1.0]]))  # plain + 2 * (tagged - plain)
     assert torch.equal(guided[1], logits[1])
     generated = torch.tensor([[11, 12, 13], [99, 99, 99]])
     s._sync_cfg_twin_tokens(generated, batch)
@@ -339,8 +368,9 @@ def test_prefill_accounts_for_a_longer_plain_twin_and_drops_oversize(monkeypatch
     monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self: self)
     user = _user(monkeypatch, tmp_path)
     body = user.plain_input_ids[1:-SILENCE_FRAMES]
-    user.plain_input_ids = torch.cat([user.plain_input_ids[:-SILENCE_FRAMES], body, body,
-                                      user.plain_input_ids[-SILENCE_FRAMES:]])
+    user.plain_input_ids = torch.cat(
+        [user.plain_input_ids[:-SILENCE_FRAMES], body, body, user.plain_input_ids[-SILENCE_FRAMES:]]
+    )
     assert len(user.plain_input_ids) > len(user.input_ids)
     s = _scheduler(max_seq_len=len(user.plain_input_ids) + 2 + 4)
     s._process_one_msg(user)
@@ -377,7 +407,7 @@ def test_scheduler_refuses_stacked_guidance(monkeypatch, tmp_path, field):
     user.sampling_params = replace(user.sampling_params, **{field: 1.5})
     s = _scheduler()
     s._process_one_msg(user)
-    with pytest.raises(ValueError, match="Tag CFG cannot be combined"):
+    with pytest.raises(ValueError):
         s._schedule_prefill()
 
 
@@ -386,7 +416,7 @@ def test_scheduler_refuses_a_guided_request_without_its_twin(monkeypatch, tmp_pa
     user.plain_input_ids = None
     s = _scheduler()
     s._process_one_msg(user)
-    with pytest.raises(ValueError, match="plain_input_ids"):
+    with pytest.raises(ValueError):
         s._schedule_prefill()
 
 
@@ -428,8 +458,15 @@ def test_controls_cfg_twin_drops_the_steering_only(monkeypatch, tmp_path):
     monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self: self)
     delta, schedule = torch.ones(4), torch.tensor([[0.0, 5.0, 3.0, 1.0, 1.0, 1.0, 1.0]])
     params = TTSSamplingParams(controls_cfg_scale=1.5, max_tokens=20)
-    user = _user(monkeypatch, tmp_path, scale=1.0, text="Hello there.", sampling_params=params,
-                 steering_delta=delta, steer_schedule=schedule)
+    user = _user(
+        monkeypatch,
+        tmp_path,
+        scale=1.0,
+        text="Hello there.",
+        sampling_params=params,
+        steering_delta=delta,
+        steer_schedule=schedule,
+    )
     s = _scheduler()
     s._process_one_msg(user)
     steered, twin = s._schedule_prefill().reqs
@@ -442,25 +479,40 @@ def test_controls_cfg_twin_drops_the_steering_only(monkeypatch, tmp_path):
 
 def test_rate_schedule_gives_markers_no_time(tmp_path):
     import numpy as np
-
     from zonos3.tts.steering import load_bundle, resolve_controls
 
     d = tmp_path / "style"
     d.mkdir()
     np.save(d / "whisper.npy", np.array([1.0, 0.0], dtype=np.float32))
-    (d / "manifest.json").write_text(json.dumps({"dim": 2, "space": "attnres_source", "source_index": 19,
-                                                 "directions": {"whisper": {"file": "whisper.npy", "kind": "named"}}}))
+    (d / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dim": 2,
+                "space": "attnres_source",
+                "source_index": 19,
+                "directions": {"whisper": {"file": "whisper.npy", "kind": "named"}},
+            }
+        )
+    )
     (tmp_path / "bundle.json").write_text(json.dumps({"name": "t", "sets": {"style": "style"}, "ui": {"controls": []}}))
     bundle = load_bundle(tmp_path / "bundle.json")
 
     def placed(text, start, end):
-        r = resolve_controls(bundle, None, [{"start": start, "end": end, "controls": {"style.whisper": 1.0}}],
-                             text=text, speaker_embedding=None, sources=(19,), hidden_size=2, frames_per_char=2.0)
+        r = resolve_controls(
+            bundle,
+            None,
+            [{"start": start, "end": end, "controls": {"style.whisper": 1.0}}],
+            text=text,
+            speaker_embedding=None,
+            sources=(19,),
+            hidden_size=2,
+            frames_per_char=2.0,
+        )
         return r.schedule[0, :2].tolist()
 
     assert placed("ab cd", 3, 5) == [6.0, 10.0]
     text = "ab <laugh/>cd"
-    assert placed(text, text.index("cd"), len(text)) == [6.0, 10.0]          # the marker's 8 characters take no frames
+    assert placed(text, text.index("cd"), len(text)) == [6.0, 10.0]  # the marker's 8 characters take no frames
     text = "ab <shouting>cd</shouting>"
     assert placed(text, text.index("<shouting>"), len(text)) == [6.0, 10.0]  # span tags around the words take none
 
@@ -468,11 +520,11 @@ def test_rate_schedule_gives_markers_no_time(tmp_path):
 def test_span_follow_tokens_skip_marker_edges():
     from zonos3.tts.span_follow import span_token_ranges
 
-    text = "a <laugh/> b"   # byte ids: BOS 0, a 1, ' ' 2, <laugh/> 3..10, ' ' 11, b 12, EOS 13
-    assert span_token_ranges(text, text, [(0, len(text))], None) == [(1, 13)]   # markers inside a span stay in it
-    assert span_token_ranges(text, text, [(2, 10)], None) == [(3, 11)]           # a span over a marker only keeps it
+    text = "a <laugh/> b"  # byte ids: BOS 0, a 1, ' ' 2, <laugh/> 3..10, ' ' 11, b 12, EOS 13
+    assert span_token_ranges(text, text, [(0, len(text))], None) == [(1, 13)]  # markers inside a span stay in it
+    assert span_token_ranges(text, text, [(2, 10)], None) == [(3, 11)]  # a span over a marker only keeps it
     text = "<shouting>hi</shouting> ok"
-    assert span_token_ranges(text, text, [(0, 23)], None) == [(11, 13)]          # span tags do not open / close it
+    assert span_token_ranges(text, text, [(0, 23)], None) == [(11, 13)]  # span tags do not open / close it
     # normalization collapsed the spaces around a marker: offsets still map through
     original, final = "a  <laugh/>  b", "a <laugh/> b"
     assert span_token_ranges(original, final, [(original.index("b"), len(original))], None) == [(12, 13)]

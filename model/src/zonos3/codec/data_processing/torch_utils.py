@@ -22,9 +22,7 @@ def materialize_weight_norm(torch, model) -> None:
     for module in model.modules():
         try:
             if torch.nn.utils.parametrize.is_parametrized(module, "weight"):
-                torch.nn.utils.parametrize.remove_parametrizations(
-                    module, "weight", leave_parametrized=True
-                )
+                torch.nn.utils.parametrize.remove_parametrizations(module, "weight", leave_parametrized=True)
                 continue
         except (AttributeError, ValueError):
             pass
@@ -72,9 +70,7 @@ def compile_fixed(
             lock_path = cache_root / f"{cache_dir.name}.lock"
             with lock_path.open("a+b") as compile_lock:
                 fcntl.flock(compile_lock, fcntl.LOCK_EX)
-                optimized = torch.compile(
-                    function, mode="reduce-overhead", fullgraph=True
-                )
+                optimized = torch.compile(function, mode="reduce-overhead", fullgraph=True)
                 optimized(*warmup_args)
                 # reduce-overhead may defer its CUDA-graph recording until the
                 # next invocation; complete it before processing timers start.

@@ -5,7 +5,7 @@
    "name": "american_male",
    "file": "american_male.s16",
    "samples": 170400,
-   "source": "default_voices/AmericanMale.mp3",
+   "source": "assets/default_voices/AmericanMale.mp3",
    "source_start": 0.0,
    "tokens": [
     "Hi,",
@@ -200,7 +200,7 @@
    "name": "british_female",
    "file": "british_female.s16",
    "samples": 89600,
-   "source": "default_voices/BritishFemale.mp3",
+   "source": "assets/default_voices/BritishFemale.mp3",
    "source_start": 0.0,
    "tokens": [
     "Hello,",
@@ -315,7 +315,7 @@
    "name": "british_female_2",
    "file": "british_female_2.s16",
    "samples": 112000,
-   "source": "default_voices/BritishFemale.mp3",
+   "source": "assets/default_voices/BritishFemale.mp3",
    "source_start": 6.6,
    "tokens": [
     "One",

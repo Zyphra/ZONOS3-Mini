@@ -4,7 +4,7 @@ import { b64DecodeStrict } from '../b64';
 import { REFERENCE_AUDIO_MAX_SECONDS, REFERENCE_MAX_FRAMES, SAMPLE_RATE } from '../generation';
 import { CODEBOOK_SIZE } from '../prompt';
 import { disabledControls } from '../request/steer';
-import { wavBytes } from '../wav';
+import { wavBytes } from '../../../../studio/src/lib/wav';
 import type { Engine } from './engine';
 import { fail, isSet, parseBody, pyRepr, sendBytes, sendJson, sessionId, str, type EngineRequest, type Sink } from './http';
 
@@ -254,7 +254,7 @@ export class Speakers {
     if (v.isDefault && v.sourceType !== 'audio') fail(400, 'Default embedding speakers do not include preview audio.');
     if (v.isDefault && !v.pcm) fail(400, `Failed to read default voice '${v.label}'.`);
     if (!v.pcm) fail(404, 'Cached speaker preview audio is not available.');
-    sendBytes(sink, wavBytes(v.pcm, SAMPLE_RATE, 'rint'), 'audio/wav');
+    sendBytes(sink, wavBytes(v.pcm, SAMPLE_RATE), 'audio/wav');
   }
 
   async embedding(req: EngineRequest, sink: Sink, id: string): Promise<void> {
@@ -275,7 +275,7 @@ function randomHex(n: number): string {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('').slice(0, n);
 }
 
-/** sgl _default_speaker_label: the explicit label, else the file name's stem, else the fallback. */
+/** zonos3.server.voices.speaker_label: the explicit label, else the file name's stem, else the fallback. */
 function uploadLabel(label: string | null, fileName: string | null, fallback: string): string {
   if (label && label.trim()) return label.trim();
   if (fileName) {
@@ -305,7 +305,7 @@ function decodedAudio(body: Record<string, unknown>, pcm: Float32Array | undefin
   return pcm;
 }
 
-/** sgl _slerp_embeddings (float32). */
+/** zonos3.reference.synth.slerp (float32). */
 export function slerp(v0: Float32Array, v1: Float32Array, t: number): Float32Array {
   const f = Math.fround;
   if (v0.length !== v1.length)
@@ -425,7 +425,7 @@ function parseNpz(z: Uint8Array): [string, Uint8Array][] | string {
   return out;
 }
 
-/** sgl _load_embedding_vector: .npy, or .npz with `emb` (or exactly one array); squeezed; (D,) or (N, D) averaged. */
+/** zonos3.reference.synth.load_embedding_vector: .npy, or .npz with `emb` (or exactly one array); squeezed; (D,) or (N, D) averaged. */
 export function loadEmbeddingVector(bytes: Uint8Array, expectedDim: number, fileName: string | null): Float32Array {
   const desc = fileName ? fileName : 'Speaker embedding file';
   const invalid = `${desc} must be a valid .npy or .npz file saved without pickle.`;

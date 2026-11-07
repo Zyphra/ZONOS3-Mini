@@ -10,7 +10,8 @@ import type { ControlSpec, Dose, EditRequest, EditTake } from '../api';
 import * as player from '../audio/player';
 import { errorText, isAbort } from '../audio/render';
 import { MIN_GAP_FRAMES, contextWindows, isTagToken, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
-import { bytesToBase64, base64ToBytes, encodeWav, parseWav } from '../lib/files';
+import { bytesToBase64, base64ToBytes } from '../lib/files';
+import { parseWav, wavBytes } from '../lib/wav';
 import { clamp, uid } from '../lib/math';
 import { parsePron, pronProblem, spokenText, toSent } from '../lib/pron';
 import { EDIT_LANGUAGES, langLabel } from '../lib/languages';
@@ -184,7 +185,7 @@ export const seconds = (frames: number) => frames / fps.value;
 // ── Opening a clip ────────────────────────────────────────────────────────────────────────────────
 
 export async function wavOf(pcm: Float32Array, sr: number): Promise<string> {
-  return bytesToBase64(encodeWav(pcm, sr));
+  return bytesToBase64(wavBytes(pcm, sr).buffer);
 }
 
 /** Each clip's language, remembered with the project (by source and length). */

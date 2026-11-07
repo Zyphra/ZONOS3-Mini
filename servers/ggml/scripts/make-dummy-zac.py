@@ -5,12 +5,12 @@ and iSTFT head geometry (hop 184, n_fft 736/2208, FIR 127), shrunk widths. Tenso
 
 Usage:  python scripts/make-dummy-zac.py -o dummy-zac.gguf [--codes-out dummy-zac-codes.npy]
 """
+
 from __future__ import annotations
 
 import argparse
 import os
 import sys
-
 
 import numpy as np
 from gguf import GGUFWriter
@@ -31,25 +31,52 @@ def main():
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--codes-out", help="also write deterministic delayed codes [40,10] and PATH.eos.npy = [31, 0]")
     args = ap.parse_args()
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools"))
+    import convert_gguf
+
     rng = np.random.default_rng(0)
     w = GGUFWriter(args.out, ARCH)
     w.add_string("general.name", "mossdual_istft dummy")
-    for key, val in {"sample_rate": 44100, "internal_sample_rate": 44160, "frame_rate": 15, "hop": 2940,
-                     "internal_hop": 2944, "n_codebooks": 10, "codebook_size": 4096, "latent_dim": LATENT,
-                     "semantic_dim": SEM, "sem_head.depth": SEM_DEPTH, "resample.orig": RS_ORIG,
-                     "resample.new": RS_NEW, "resample.width": RS_WIDTH}.items():
+    for key, val in {
+        "sample_rate": 44100,
+        "internal_sample_rate": 44160,
+        "frame_rate": 15,
+        "hop": 2940,
+        "internal_hop": 2944,
+        "n_codebooks": 10,
+        "codebook_size": 4096,
+        "latent_dim": LATENT,
+        "semantic_dim": SEM,
+        "sem_head.depth": SEM_DEPTH,
+        "resample.orig": RS_ORIG,
+        "resample.new": RS_NEW,
+        "resample.width": RS_WIDTH,
+    }.items():
         w.add_uint32(f"{ARCH}.{key}", val)
     w.add_float32(f"{ARCH}.ln_eps", 1e-5)
     w.add_float32(f"{ARCH}.convnext_eps", 1e-6)
-    for key, val in {"head.depth": HEAD_DEPTH, "head.hidden": HEAD_HIDDEN, "head.hop": HEAD_HOP,
-                     "head.fir_kernel": FIR, "head.step": HEAD_STEP}.items():
+    for key, val in {
+        "head.depth": HEAD_DEPTH,
+        "head.hidden": HEAD_HIDDEN,
+        "head.hop": HEAD_HOP,
+        "head.fir_kernel": FIR,
+        "head.step": HEAD_STEP,
+    }.items():
         w.add_uint32(f"{ARCH}.{key}", val)
     w.add_array(f"{ARCH}.head.n_fft", N_FFT)
     w.add_float32(f"{ARCH}.head.max_log_magnitude", float(np.log(100.0)))
     w.add_float32(f"{ARCH}.headroom_db", 3.0)
     w.add_string(f"{ARCH}.head.variant", "full_mr")
-    for key, vals in {"in_dim": IN_DIM, "out_dim": OUT_DIM, "d_model": [D_MODEL] * 5, "n_head": [N_HEAD] * 5,
-                      "n_layer": [N_LAYER] * 5, "n_ff": [N_FF] * 5, "context": CONTEXT, "patch": PATCH}.items():
+    for key, vals in {
+        "in_dim": IN_DIM,
+        "out_dim": OUT_DIM,
+        "d_model": [D_MODEL] * 5,
+        "n_head": [N_HEAD] * 5,
+        "n_layer": [N_LAYER] * 5,
+        "n_ff": [N_FF] * 5,
+        "context": CONTEXT,
+        "patch": PATCH,
+    }.items():
         w.add_array(f"{ARCH}.stage.{key}", vals)
     count = 0
 
@@ -116,13 +143,10 @@ def main():
     mixer = 0.01 * rng.standard_normal((len(N_FFT), FIR)).astype(np.float32)
     mixer[0, (FIR - 1) // 2] = 1.0
     put("head.mixer.weight", mixer)
-    for i, n in enumerate(N_FFT):   # torch.hann_window(n, periodic=True)
+    for i, n in enumerate(N_FFT):  # torch.hann_window(n, periodic=True)
         put(f"head.window.{i}", (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(n) / n)).astype(np.float32))
     put("resample.kernel", rnd(RS_NEW, 2 * RS_WIDTH + RS_ORIG))
-    w.write_header_to_file()
-    w.write_kv_data_to_file()
-    w.write_tensors_to_file(progress=False)
-    w.close()
+    convert_gguf.write_gguf(w, progress=False)
     print(f"wrote {count} mossdual_istft dummy tensors to {args.out}")
     if args.codes_out:
         codes = np.random.default_rng(0).integers(0, 4096, size=(40, 10)).astype(np.float32)

@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from zonos3 import languages
+from zonos3.languages import UNSPACED
 
-UNSPACED = frozenset(lang.code for lang in languages.SPOKEN if lang.unspaced)
 _CJK_BLOCKS = (
     (0x3040, 0x30FF),
     (0x31F0, 0x31FF),

@@ -1,4 +1,5 @@
 """Helpers behind the GDN CUDA-graph decode: static index tables and FLA cache pinning."""
+
 from __future__ import annotations
 
 import sys

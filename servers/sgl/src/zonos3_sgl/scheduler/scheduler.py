@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-import os
-
 import json
 import logging
-from pathlib import Path
+import os
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
 import torch.nn.functional as F
-from zonos3_sgl.core import TTSBatch, TTSReq
 from zonos3.speaker_cfg import guided_logits, speaker_cfg_twin
+from zonos3.tts.delay import apply_cold_start_delay
+
+from zonos3_sgl.core import TTSBatch, TTSReq
 from zonos3_sgl.env import ENV
 from zonos3_sgl.message import (
     BaseTTSBackendMsg,
@@ -33,8 +34,9 @@ from .io import SchedulerIOMixin
 from .table import TTSTableManager
 
 if TYPE_CHECKING:
-    from zonos3_sgl.engine.sample import TTSBatchSamplingArgs
     from zonos3.tts.laci import LaciSession
+
+    from zonos3_sgl.engine.sample import TTSBatchSamplingArgs
 
 logger = init_logger(__name__)
 
@@ -185,19 +187,15 @@ def _apply_cold_start_delay_mask(
     n_codebooks: int,
     audio_pad_id: int,
 ) -> None:
-    """Force the unsupervised initial delay triangle to audio padding.
-
-    In training, codebook ``c`` is shifted by ``c`` frames and targets in the
-    leading triangle are ignored. Sampling those logits can create an immediate
-    EOA or arbitrary residual codes. This matches native Lingua inference by
-    padding codebooks whose delayed stream has not started, while preserving
-    ordinary continuation for prompts that already contain an audio prefix.
-    """
+    """zonos3.tts.delay.apply_cold_start_delay on every row of the batch."""
     for row, req in enumerate(batch.reqs):
-        step = int(req.total_generated)
-        if req.has_audio_prefix or step >= n_codebooks - 1:
-            continue
-        next_tokens[row, step + 1 : n_codebooks] = int(audio_pad_id)
+        apply_cold_start_delay(
+            next_tokens[row],
+            int(req.total_generated),
+            n_codebooks=n_codebooks,
+            pad_id=int(audio_pad_id),
+            has_audio_prefix=req.has_audio_prefix,
+        )
 
 
 def _speaking_rate_buckets(model_config, condition_unknowns: Tuple[int, ...]):
@@ -255,17 +253,11 @@ class TTSScheduler(SchedulerIOMixin):
         self.condition_unknowns = (
             tuple(int(n) for n in model_config.condition_bucket_counts) if self.condition_count else ()
         )
-        self.speaker_background_token_enabled = bool(
-            getattr(model_config, "speaker_background_token_enabled", False)
-        )
-        self.accurate_mode_token_enabled = bool(
-            getattr(model_config, "accurate_mode_token_enabled", False)
-        )
+        self.speaker_background_token_enabled = bool(getattr(model_config, "speaker_background_token_enabled", False))
+        self.accurate_mode_token_enabled = bool(getattr(model_config, "accurate_mode_token_enabled", False))
         self.speaker_background_num_buckets = 2 if self.speaker_background_token_enabled else 0
         self.accurate_mode_num_buckets = (
-            1
-            if self.accurate_mode_token_enabled and self.speaker_background_num_buckets > 0
-            else 0
+            1 if self.accurate_mode_token_enabled and self.speaker_background_num_buckets > 0 else 0
         )
         self.speaking_rate_num_buckets = int(getattr(model_config, "speaking_rate_num_buckets", 0))
         quality_buckets = getattr(model_config, "quality_buckets", None) or {}
@@ -273,9 +265,7 @@ class TTSScheduler(SchedulerIOMixin):
         if not quality_features:
             quality_features = tuple(quality_buckets.keys())
         self.quality_features = quality_features
-        self.quality_bucket_counts = [
-            len(quality_buckets.get(feature, ())) for feature in quality_features
-        ]
+        self.quality_bucket_counts = [len(quality_buckets.get(feature, ())) for feature in quality_features]
         # Frame width includes n_codebooks audio codes and one text token.
         self.frame_width = self.n_codebooks + 1
 
@@ -291,9 +281,7 @@ class TTSScheduler(SchedulerIOMixin):
         )
 
         # Initialize TTS-specific managers
-        self.table_manager = TTSTableManager(
-            config.max_running_req, self.engine.page_table, self.frame_width
-        )
+        self.table_manager = TTSTableManager(config.max_running_req, self.engine.page_table, self.frame_width)
         self.cache_manager = CacheManager(self.device, self.engine.num_pages, config.cache_type)
         self.decode_manager = TTSDecodeManager()
 
@@ -405,9 +393,13 @@ class TTSScheduler(SchedulerIOMixin):
                     )
                 )
                 if not req.context_sent and (req.decode_context_codes is not None or req.prefill_rows is not None):
-                    logger.info("TTS %d: decode context sent with generated row %d (context %s, prefill %s)", req.uid, generated,
-                                None if req.decode_context_codes is None else tuple(req.decode_context_codes.shape),
-                                None if req.prefill_rows is None else tuple(req.prefill_rows.shape))
+                    logger.info(
+                        "TTS %d: decode context sent with generated row %d (context %s, prefill %s)",
+                        req.uid,
+                        generated,
+                        None if req.decode_context_codes is None else tuple(req.decode_context_codes.shape),
+                        None if req.prefill_rows is None else tuple(req.prefill_rows.shape),
+                    )
                 req.context_sent = True
 
             if finished:
@@ -418,7 +410,14 @@ class TTSScheduler(SchedulerIOMixin):
                     self.finished_reqs.add(req.cfg_twin)
                     self.decode_manager.remove_req(req.cfg_twin)
                 if os.environ.get("LONG_TTS_EVAL") == "1":
-                    logger.info("LONG_FINISH uid=%s generated=%s eos_frame=%s context_frames=%s output_limit=%s", req.uid, generated, req.eos_frame, req.device_len, req.sampling_params.max_tokens)
+                    logger.info(
+                        "LONG_FINISH uid=%s generated=%s eos_frame=%s context_frames=%s output_limit=%s",
+                        req.uid,
+                        generated,
+                        req.eos_frame,
+                        req.device_len,
+                        req.sampling_params.max_tokens,
+                    )
                 logger.debug("TTS %d finished: %d frames generated", req.uid, generated)
                 dump_dir = os.environ.get("ZONOS3_DUMP_TOKENS")
                 if dump_dir:
@@ -427,9 +426,18 @@ class TTSScheduler(SchedulerIOMixin):
                     Path(dump_dir).mkdir(parents=True, exist_ok=True)
                     rows = self.token_pool[req.table_idx, : req.device_len].cpu().numpy()
                     np.save(Path(dump_dir) / f"uid{req.uid}.npy", rows)
-                    (Path(dump_dir) / f"uid{req.uid}.json").write_text(json.dumps(dict(
-                        uid=req.uid, prompt_rows=int(len(req.input_ids)), device_len=int(req.device_len),
-                        generated=int(generated), eos_frame=req.eos_frame, is_cfg_uncond=bool(req.is_cfg_uncond))))
+                    (Path(dump_dir) / f"uid{req.uid}.json").write_text(
+                        json.dumps(
+                            {
+                                "uid": req.uid,
+                                "prompt_rows": int(len(req.input_ids)),
+                                "device_len": int(req.device_len),
+                                "generated": int(generated),
+                                "eos_frame": req.eos_frame,
+                                "is_cfg_uncond": bool(req.is_cfg_uncond),
+                            }
+                        )
+                    )
 
         # Free resources for finished but not ongoing reqs
         ongoing_reqs = ongoing_data[0].batch.reqs if ongoing_data else []
@@ -453,8 +461,11 @@ class TTSScheduler(SchedulerIOMixin):
 
         if key not in self.laci_heads:
             raise ValueError(f"no LACI alignment heads for {key!r} (configured: {sorted(self.laci_heads) or 'none'})")
-        if (float(sampling_params.speaker_cfg_scale) != 1.0 or float(sampling_params.controls_cfg_scale) != 1.0
-                or float(getattr(sampling_params, "tag_cfg_scale", 1.0)) != 1.0):
+        if (
+            float(sampling_params.speaker_cfg_scale) != 1.0
+            or float(sampling_params.controls_cfg_scale) != 1.0
+            or float(getattr(sampling_params, "tag_cfg_scale", 1.0)) != 1.0
+        ):
             raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = tag_cfg_scale = 1")
         if sampling_params.end_token != "utterance":
             raise ValueError("LACI needs end_token = 'utterance' (no edit spans)")
@@ -479,18 +490,26 @@ class TTSScheduler(SchedulerIOMixin):
             if msg.laci_rate_edges is not None:  # a take on an extended speaking-rate scale (steered buckets)
                 if rates is None:
                     raise ValueError("an extended speaking-rate scale needs the checkpoint's speaking-rate condition")
-                rates = RateBuckets(rates.index, tuple(float(e) for e in msg.laci_rate_edges), rates.n_buckets,
-                                    int(msg.laci_rate_first))
+                rates = RateBuckets(
+                    rates.index, tuple(float(e) for e in msg.laci_rate_edges), rates.n_buckets, int(msg.laci_rate_first)
+                )
                 bucket = int(msg.laci_rate_bucket)
                 if not rates.first <= bucket <= rates.last:
-                    raise ValueError(f"speaking-rate bucket {bucket} is outside the scale [{rates.first}, {rates.last}]")
+                    raise ValueError(
+                        f"speaking-rate bucket {bucket} is outside the scale [{rates.first}, {rates.last}]"
+                    )
             session = LaciSession(
-                heads=self.laci_heads[msg.laci], cfg=self.laci_config,
+                heads=self.laci_heads[msg.laci],
+                cfg=self.laci_config,
                 prefill_rows=prefill if prefill is not None else torch.zeros((0, self.frame_width), dtype=torch.int32),
-                seed=msg.sampling_params.seed, max_tokens=int(msg.sampling_params.max_tokens),
-                n_codebooks=self.n_codebooks, duration=duration, rates=rates,
+                seed=msg.sampling_params.seed,
+                max_tokens=int(msg.sampling_params.max_tokens),
+                n_codebooks=self.n_codebooks,
+                duration=duration,
+                rates=rates,
                 condition_values=None if msg.condition_values is None else [int(v) for v in msg.condition_values],
-                bucket=bucket, rate_deltas=None if msg.laci_rate_edges is None else list(msg.laci_rate_deltas),
+                bucket=bucket,
+                rate_deltas=None if msg.laci_rate_edges is None else list(msg.laci_rate_deltas),
                 follower=self._span_follower(msg),
             )
             laci = self.laci_requests[msg.uid] = _LaciRequest(session, msg)
@@ -509,12 +528,16 @@ class TTSScheduler(SchedulerIOMixin):
         if key is None or schedule is None:
             return None
         if key not in self.laci_heads:
-            logger.warning("TTS %s: no alignment heads for %r, its control spans keep the character-rate schedule",
-                           msg.uid, key)
+            logger.warning(
+                "TTS %s: no alignment heads for %r, its control spans keep the character-rate schedule", msg.uid, key
+            )
             return None
-        lead, lag = msg.steer_follow_gate if msg.steer_follow_gate is not None else (FollowConfig.lead, FollowConfig.lag)
-        return SpanFollower(msg.steer_follow_tokens, schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag)),
-                            origin=origin)
+        lead, lag = (
+            msg.steer_follow_gate if msg.steer_follow_gate is not None else (FollowConfig.lead, FollowConfig.lag)
+        )
+        return SpanFollower(
+            msg.steer_follow_tokens, schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag)), origin=origin
+        )
 
     def _laci_rows(self, req: TTSReq, laci: _LaciRequest, finished: bool) -> list[TTSDetokenizeMsg]:
         """Detokenize messages for the rows of a LACI request that became final; on finish, either queue the rollback's
@@ -526,21 +549,34 @@ class TTSScheduler(SchedulerIOMixin):
             if continuation is not None:
                 t = laci.template
                 prompt = t.input_ids[: len(t.input_ids) - session.n_prefill]
-                self.waiting_reqs.insert(0, replace(
-                    t,
-                    input_ids=torch.cat((prompt, continuation.rows.to(prompt.dtype)), dim=0),
-                    sampling_params=replace(t.sampling_params, seed=continuation.seed,
-                                            max_tokens=continuation.max_tokens),
-                    history_rows=continuation.history_rows,
-                    condition_values=(continuation.condition_values if continuation.condition_values is not None
-                                      else t.condition_values),
-                    steering_delta=(continuation.steering_delta if continuation.swap_delta
-                                           else t.steering_delta),
-                ))
+                self.waiting_reqs.insert(
+                    0,
+                    replace(
+                        t,
+                        input_ids=torch.cat((prompt, continuation.rows.to(prompt.dtype)), dim=0),
+                        sampling_params=replace(
+                            t.sampling_params, seed=continuation.seed, max_tokens=continuation.max_tokens
+                        ),
+                        history_rows=continuation.history_rows,
+                        condition_values=(
+                            continuation.condition_values
+                            if continuation.condition_values is not None
+                            else t.condition_values
+                        ),
+                        steering_delta=(continuation.steering_delta if continuation.swap_delta else t.steering_delta),
+                    ),
+                )
                 failure = session.failures[-1]
-                logger.info("LACI uid=%s: %s (bin %s) at row %s, rolling back to row %s, retry %d/%d", req.uid,
-                            failure["kind"], failure["bin"], failure["detect_row"], failure["rollback_row"],
-                            session.attempts, session.cfg.max_retries)
+                logger.info(
+                    "LACI uid=%s: %s (bin %s) at row %s, rolling back to row %s, retry %d/%d",
+                    req.uid,
+                    failure["kind"],
+                    failure["bin"],
+                    failure["detect_row"],
+                    failure["rollback_row"],
+                    session.attempts,
+                    session.cfg.max_retries,
+                )
             else:
                 final = True
         rows = session.drain(final=final)
@@ -551,22 +587,30 @@ class TTSScheduler(SchedulerIOMixin):
         for k, row in enumerate(rows):
             last = final and k == len(rows) - 1
             first = not laci.context_sent
-            msgs.append(TTSDetokenizeMsg(
-                uid=req.uid,
-                audio_codes=row[: self.n_codebooks].tolist(),
-                finished=last,
-                eos_frame=session.eos_frame() if last else None,
-                stream_decode=getattr(req.sampling_params, "stream_decode", None),
-                decode_context_codes=laci.template.decode_context_codes if first else None,
-                prefill_rows=laci.template.prefill_rows if first else None,
-                laci=record if last else None,
-                end_token=req.sampling_params.end_token,
-            ))
+            msgs.append(
+                TTSDetokenizeMsg(
+                    uid=req.uid,
+                    audio_codes=row[: self.n_codebooks].tolist(),
+                    finished=last,
+                    eos_frame=session.eos_frame() if last else None,
+                    stream_decode=getattr(req.sampling_params, "stream_decode", None),
+                    decode_context_codes=laci.template.decode_context_codes if first else None,
+                    prefill_rows=laci.template.prefill_rows if first else None,
+                    laci=record if last else None,
+                    end_token=req.sampling_params.end_token,
+                )
+            )
             laci.context_sent = True
         if final:
             del self.laci_requests[req.uid]
-            logger.info("LACI uid=%s: end=%s attempts=%d rows=%d (generated %d)", req.uid, record["end"],
-                        record["attempts"], record["final_rows"], record["generated_total"])
+            logger.info(
+                "LACI uid=%s: end=%s attempts=%d rows=%d (generated %d)",
+                req.uid,
+                record["end"],
+                record["attempts"],
+                record["final_rows"],
+                record["generated_total"],
+            )
         return msgs
 
     def _process_one_msg(self, msg: BaseTTSBackendMsg) -> None:
@@ -599,9 +643,7 @@ class TTSScheduler(SchedulerIOMixin):
             return self.eoa_id
         if end_token == "span":
             if self.span_end_id is None:
-                raise ValueError(
-                    "end_token='span' needs a checkpoint with a span-end token (span_end_id)"
-                )
+                raise ValueError("end_token='span' needs a checkpoint with a span-end token (span_end_id)")
             return self.span_end_id
         raise ValueError(f"end_token must be 'utterance' or 'span', got {end_token!r}")
 
@@ -679,9 +721,7 @@ class TTSScheduler(SchedulerIOMixin):
             self._speaker_background_token(True),
             self._speaker_background_token(False),
         }
-        frame1 = _frame_text_token(
-            input_ids, 1, n_codebooks=self.n_codebooks, audio_pad_id=self.audio_pad_id
-        )
+        frame1 = _frame_text_token(input_ids, 1, n_codebooks=self.n_codebooks, audio_pad_id=self.audio_pad_id)
         if frame1 not in background_ids:
             inserted = [_marker(self._speaker_background_token(False))]
             if needs_accurate:
@@ -689,13 +729,9 @@ class TTSScheduler(SchedulerIOMixin):
             return torch.cat([input_ids[:1]] + inserted + [input_ids[1:]], dim=0)
 
         if needs_accurate:
-            frame2 = _frame_text_token(
-                input_ids, 2, n_codebooks=self.n_codebooks, audio_pad_id=self.audio_pad_id
-            )
+            frame2 = _frame_text_token(input_ids, 2, n_codebooks=self.n_codebooks, audio_pad_id=self.audio_pad_id)
             if frame2 != self._accurate_mode_token():
-                return torch.cat(
-                    [input_ids[:2], _marker(self._accurate_mode_token()), input_ids[2:]], dim=0
-                )
+                return torch.cat([input_ids[:2], _marker(self._accurate_mode_token()), input_ids[2:]], dim=0)
 
         return input_ids
 
@@ -736,7 +772,9 @@ class TTSScheduler(SchedulerIOMixin):
             condition_token_start = int(getattr(msg, "condition_token_start", -1))
             if condition_values is not None:
                 if self.condition_count != len(condition_values):
-                    raise ValueError(f"request {msg.uid}: {len(condition_values)} condition rows for a model with {self.condition_count}")
+                    raise ValueError(
+                        f"request {msg.uid}: {len(condition_values)} condition rows for a model with {self.condition_count}"
+                    )
                 condition_token_start += len(input_ids) - len(msg.input_ids)
             elif self.condition_count:
                 raise ValueError(f"request {msg.uid}: the tokenizer sent no condition rows for a condition-row model")
@@ -757,14 +795,22 @@ class TTSScheduler(SchedulerIOMixin):
             # Speaker CFG on either path: the twin is the prompt without its speaker conditioning (the reference
             # prefix or the reserved speaker row), no speaker embedding, all-unknown condition rows = the evaluation
             # generator's twin (zonos3.speaker_cfg.speaker_cfg_twin).
-            cfg_twin_spec = speaker_cfg_twin(
-                msg, input_ids, n_codebooks=self.n_codebooks, audio_pad_id=self.audio_pad_id, text_vocab=self.text_vocab,
-                speaker_token_position=speaker_token_position, condition_values=condition_values,
-                condition_token_start=condition_token_start, condition_unknowns=self.condition_unknowns,
-            ) if speaker_cfg else None
-            twin_input_ids = (
-                cfg_twin_spec.input_ids if speaker_cfg else plain_input_ids if tag_cfg else input_ids
+            cfg_twin_spec = (
+                speaker_cfg_twin(
+                    msg,
+                    input_ids,
+                    n_codebooks=self.n_codebooks,
+                    audio_pad_id=self.audio_pad_id,
+                    text_vocab=self.text_vocab,
+                    speaker_token_position=speaker_token_position,
+                    condition_values=condition_values,
+                    condition_token_start=condition_token_start,
+                    condition_unknowns=self.condition_unknowns,
+                )
+                if speaker_cfg
+                else None
             )
+            twin_input_ids = cfg_twin_spec.input_ids if speaker_cfg else plain_input_ids if tag_cfg else input_ids
             use_cfg = speaker_cfg or controls_cfg or tag_cfg
             needed_slots = 2 if use_cfg else 1
             if self.table_manager.available_size < needed_slots:
@@ -775,10 +821,7 @@ class TTSScheduler(SchedulerIOMixin):
             prompt_len = max(input_len, len(twin_input_ids)) if tag_cfg else input_len
             max_seq_len = self.engine.max_seq_len
             if prompt_len >= max_seq_len:
-                logger.warning_rank0(
-                    f"TTS input len {prompt_len} exceeds {max_seq_len}, "
-                    f"request {msg.uid} is dropped."
-                )
+                logger.warning_rank0(f"TTS input len {prompt_len} exceeds {max_seq_len}, request {msg.uid} is dropped.")
                 self.waiting_reqs.pop(0)
                 continue
 
@@ -817,9 +860,7 @@ class TTSScheduler(SchedulerIOMixin):
 
             # Copy input_ids to token pool
             input_ids_i32 = input_ids.to(torch.int32)
-            self.token_pool[table_idx, :input_len].copy_(
-                input_ids_i32.pin_memory().to(self.device), non_blocking=True
-            )
+            self.token_pool[table_idx, :input_len].copy_(input_ids_i32.pin_memory().to(self.device), non_blocking=True)
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     "TTS %d prefill: input_len=%d, input_ids shape=%s",
@@ -883,9 +924,12 @@ class TTSScheduler(SchedulerIOMixin):
                 align_probe=align_probe,
                 history_rows=history_rows,
                 cfg_scale=(
-                    float(msg.sampling_params.speaker_cfg_scale) if speaker_cfg
-                    else float(msg.sampling_params.tag_cfg_scale) if tag_cfg
-                    else float(msg.sampling_params.controls_cfg_scale) if controls_cfg
+                    float(msg.sampling_params.speaker_cfg_scale)
+                    if speaker_cfg
+                    else float(msg.sampling_params.tag_cfg_scale)
+                    if tag_cfg
+                    else float(msg.sampling_params.controls_cfg_scale)
+                    if controls_cfg
                     else 1.0
                 ),
                 accent_slot=accent_slot,
@@ -906,12 +950,15 @@ class TTSScheduler(SchedulerIOMixin):
                 if tag_cfg:
                     logger.info_rank0(
                         "Tag CFG uid=%d scale=%.3g: tagged prompt %d rows, plain twin %d rows",
-                        msg.uid, float(msg.sampling_params.tag_cfg_scale), input_len, len(twin_input_ids),
+                        msg.uid,
+                        float(msg.sampling_params.tag_cfg_scale),
+                        input_len,
+                        len(twin_input_ids),
                     )
                 twin_table_idx = self.table_manager.allocate()
                 twin_cache_handle = self.cache_manager.allocate_new_handle()
                 twin_ids_i32 = twin_input_ids.to(torch.int32)
-                self.token_pool[twin_table_idx, :len(twin_ids_i32)].copy_(
+                self.token_pool[twin_table_idx, : len(twin_ids_i32)].copy_(
                     twin_ids_i32.pin_memory().to(self.device), non_blocking=True
                 )
                 twin = TTSReq(
@@ -1096,16 +1143,22 @@ class TTSScheduler(SchedulerIOMixin):
             return self.tts_sampler.sample_to_tensor(logits, sample_args)
         rows = [i for i, req in enumerate(batch.reqs) if not req.is_cfg_uncond]
         indices = torch.tensor(rows, dtype=torch.long, device=logits.device)
+
         def select(value):
             return None if value is None else value.index_select(0, indices)
-        visible_args = replace(sample_args,
-            temperatures=select(sample_args.temperatures), top_ks=select(sample_args.top_ks),
-            top_ps=select(sample_args.top_ps), min_ps=select(sample_args.min_ps),
+
+        visible_args = replace(
+            sample_args,
+            temperatures=select(sample_args.temperatures),
+            top_ks=select(sample_args.top_ks),
+            top_ps=select(sample_args.top_ps),
+            min_ps=select(sample_args.min_ps),
             repetition_token_ids=select(sample_args.repetition_token_ids),
             repetition_penalties=select(sample_args.repetition_penalties),
             stop_token_ids=select(sample_args.stop_token_ids),
             stop_blocked=select(sample_args.stop_blocked),
-            generators=[sample_args.generators[i] for i in rows])
+            generators=[sample_args.generators[i] for i in rows],
+        )
         sampled = self.tts_sampler.sample_to_tensor(logits.index_select(0, indices), visible_args)
         result = torch.empty((len(batch.reqs), sampled.shape[1]), dtype=sampled.dtype, device=sampled.device)
         result.index_copy_(0, indices, sampled)
@@ -1144,12 +1197,8 @@ class TTSScheduler(SchedulerIOMixin):
             offset += req.extend_len
 
         if emb_values:
-            batch.speaker_emb_values = torch.stack(emb_values, dim=0).to(
-                self.device, non_blocking=True
-            )
-            batch.speaker_token_positions = torch.tensor(
-                token_positions, dtype=torch.long, device=self.device
-            )
+            batch.speaker_emb_values = torch.stack(emb_values, dim=0).to(self.device, non_blocking=True)
+            batch.speaker_token_positions = torch.tensor(token_positions, dtype=torch.long, device=self.device)
         else:
             batch.speaker_emb_values = None
             batch.speaker_token_positions = None
@@ -1174,10 +1223,12 @@ class TTSScheduler(SchedulerIOMixin):
         rows = []
         for index in range(self.condition_count):
             if positions[index]:
-                rows.append((
-                    torch.tensor(values[index], dtype=torch.long, device=self.device),
-                    torch.tensor(positions[index], dtype=torch.long, device=self.device),
-                ))
+                rows.append(
+                    (
+                        torch.tensor(values[index], dtype=torch.long, device=self.device),
+                        torch.tensor(positions[index], dtype=torch.long, device=self.device),
+                    )
+                )
             else:
                 rows.append(None)
         batch.condition_rows = rows if any(row is not None for row in rows) else None
@@ -1192,9 +1243,7 @@ class TTSScheduler(SchedulerIOMixin):
         slots = torch.tensor([req.accent_slot for req in reqs], dtype=torch.int32)
         scales = torch.tensor([req.accent_scale for req in reqs], dtype=torch.float32)
         batch.accent_slots = torch.repeat_interleave(slots, lengths).to(self.device, non_blocking=True)
-        batch.accent_scales = torch.repeat_interleave(scales, lengths).to(
-            self.device, non_blocking=True
-        )
+        batch.accent_scales = torch.repeat_interleave(scales, lengths).to(self.device, non_blocking=True)
 
     def _forward(self, forward_input: TTSForwardInput) -> TTSForwardOutput:
         """Run forward pass on batch."""
@@ -1213,9 +1262,7 @@ class TTSScheduler(SchedulerIOMixin):
                 if req.total_generated < 10:
                     input_tokens = batch.input_ids[0].tolist()
                     eoa_id = self.eoa_id
-                    eoa_positions = [
-                        i for i, t in enumerate(input_tokens[: self.n_codebooks]) if t == eoa_id
-                    ]
+                    eoa_positions = [i for i, t in enumerate(input_tokens[: self.n_codebooks]) if t == eoa_id]
                     logger.debug(
                         "Forward decode step %d: input tokens = %s",
                         req.total_generated,
@@ -1229,11 +1276,7 @@ class TTSScheduler(SchedulerIOMixin):
                     positions = batch.attn_metadata.positions
                     logger.debug(
                         "Forward positions: %s",
-                        (
-                            positions[: batch.size].tolist()
-                            if hasattr(positions, "tolist")
-                            else positions
-                        ),
+                        (positions[: batch.size].tolist() if hasattr(positions, "tolist") else positions),
                     )
 
         # Forward through engine - get multi-codebook logits
@@ -1348,8 +1391,3 @@ class TTSScheduler(SchedulerIOMixin):
         torch.cuda.synchronize(self.device)
         self.sync_all_ranks()
         self.engine.shutdown()
-
-# CONDITION_ROWS_RUNTIME_20261016
-# EMBEDDING_CFG_20261016
-
-# DECODE_CONTEXT_RUNTIME2_20261017

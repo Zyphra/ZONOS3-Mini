@@ -34,9 +34,7 @@ class _Record:
 
     @property
     def complete(self) -> bool:
-        return self.sample.error is not None or all(
-            piece.output is not None for piece in self.pieces
-        )
+        return self.sample.error is not None or all(piece.output is not None for piece in self.pieces)
 
 
 @dataclass
@@ -99,11 +97,7 @@ class IndependentBatcher:
             <= 0
         ):
             raise ValueError("batcher dimensions and window must be positive")
-        if (
-            chunk_seconds <= 0
-            or continuation_context_seconds < 0
-            or trailing_context_seconds < 0
-        ):
+        if chunk_seconds <= 0 or continuation_context_seconds < 0 or trailing_context_seconds < 0:
             raise ValueError("batcher durations are invalid")
 
         self.torch = torch
@@ -123,12 +117,8 @@ class IndependentBatcher:
 
         frames_per_second = self.sample_rate / self.hop_length
         self.chunk_frames = max(1, math.floor(chunk_seconds * frames_per_second))
-        self.context_frames = max(
-            0, math.ceil(continuation_context_seconds * frames_per_second)
-        )
-        self.trailing_context_frames = max(
-            0, math.ceil(trailing_context_seconds * frames_per_second)
-        )
+        self.context_frames = max(0, math.ceil(continuation_context_seconds * frames_per_second))
+        self.trailing_context_frames = max(0, math.ceil(trailing_context_seconds * frames_per_second))
         if self.context_frames + self.trailing_context_frames >= self.chunk_frames:
             raise ValueError("combined context must be shorter than a chunk")
         self.chunk_samples = self.chunk_frames * self.hop_length
@@ -149,8 +139,7 @@ class IndependentBatcher:
                 or waveform.shape[2] <= 0
             ):
                 raise ValueError(
-                    "prepared audio must be non-empty "
-                    f"[1, {self.input_channels}, time], got {tuple(waveform.shape)}"
+                    f"prepared audio must be non-empty [1, {self.input_channels}, time], got {tuple(waveform.shape)}"
                 )
             waveform = waveform.contiguous()
         except Exception as exc:
@@ -167,9 +156,7 @@ class IndependentBatcher:
         while start < total_samples:
             first = start == 0
             context_samples = 0 if first else self.context_samples
-            capacity = (
-                self.chunk_samples - context_samples - self.trailing_context_samples
-            )
+            capacity = self.chunk_samples - context_samples - self.trailing_context_samples
             end = min(total_samples, start + capacity)
             history_start = start - context_samples
             trailing_samples = min(self.trailing_context_samples, total_samples - end)
@@ -178,9 +165,7 @@ class IndependentBatcher:
                     waveform=waveform[..., history_start : end + trailing_samples],
                     context_frames=0 if first else self.context_frames,
                     output_frames=math.ceil((end - start) / self.hop_length),
-                    trailing_context_frames=math.ceil(
-                        trailing_samples / self.hop_length
-                    ),
+                    trailing_context_frames=math.ceil(trailing_samples / self.hop_length),
                     output_start_frame=0 if first else self.context_frames,
                 )
             )
@@ -217,9 +202,7 @@ class IndependentBatcher:
                 )
             )
             start = head_frames
-            interior_frames = (
-                self.chunk_frames - self.context_frames - self.trailing_context_frames
-            )
+            interior_frames = self.chunk_frames - self.context_frames - self.trailing_context_frames
             while start < total_frames:
                 remaining = total_frames - start
                 if remaining + self.context_frames <= self.chunk_frames:
@@ -246,8 +229,7 @@ class IndependentBatcher:
                     _Piece(
                         waveform=waveform[
                             ...,
-                            source_start * self.hop_length : source_end
-                            * self.hop_length,
+                            source_start * self.hop_length : source_end * self.hop_length,
                         ],
                         context_frames=self.context_frames,
                         output_frames=interior_frames,
@@ -300,9 +282,7 @@ class IndependentBatcher:
             ),
         ]
 
-    def _prepare_batch(
-        self, records: list[_Record], pieces: list[_Piece]
-    ) -> _PreparedBatch:
+    def _prepare_batch(self, records: list[_Record], pieces: list[_Piece]) -> _PreparedBatch:
         batch = self.torch.zeros(
             (self.batch_size, self.input_channels, self.chunk_samples),
             device="cpu",
@@ -336,9 +316,7 @@ class IndependentBatcher:
             ready.record(transfer_stream)
         return batch, ready
 
-    def _encode(
-        self, prepared: _PreparedBatch, batch, ready, transfer_stream
-    ) -> tuple[int, int, int, _EncodedBatch]:
+    def _encode(self, prepared: _PreparedBatch, batch, ready, transfer_stream) -> tuple[int, int, int, _EncodedBatch]:
         pieces = prepared.pieces
         if ready is not None:
             self.torch.cuda.current_stream(self.device).wait_event(ready)
@@ -356,14 +334,10 @@ class IndependentBatcher:
         if (
             outputs.ndim != 3
             or outputs.shape[0] != batch.shape[0]
-            or outputs.shape[1]
-            < max(piece.output_start_frame + piece.output_frames for piece in pieces)
+            or outputs.shape[1] < max(piece.output_start_frame + piece.output_frames for piece in pieces)
             or outputs.shape[2] != self.feature_dim
         ):
-            raise ValueError(
-                "encoder must return [batch, time, feature], got "
-                f"{tuple(outputs.shape)}"
-            )
+            raise ValueError(f"encoder must return [batch, time, feature], got {tuple(outputs.shape)}")
 
         if self.output_dtype == np.dtype(np.float32):
             output_torch_dtype = self.torch.float32
@@ -399,11 +373,7 @@ class IndependentBatcher:
         work_frames = 0
         for lane, piece in enumerate(pieces):
             content_frames += piece.output_frames
-            work_frames += (
-                piece.context_frames
-                + piece.output_frames
-                + piece.trailing_context_frames
-            )
+            work_frames += piece.context_frames + piece.output_frames + piece.trailing_context_frames
         encoded = _EncodedBatch(
             pieces,
             host_output,
@@ -432,9 +402,7 @@ class IndependentBatcher:
             return 0.0
         return encoded.compute_started.elapsed_time(encoded.compute_finished) / 1000.0
 
-    def encode_stream(
-        self, samples: Iterable[object]
-    ) -> Iterator[tuple[object, Optional[np.ndarray]]]:
+    def encode_stream(self, samples: Iterable[object]) -> Iterator[tuple[object, Optional[np.ndarray]]]:
         if self.device.type == "cuda":
             self.torch.cuda.set_device(self.device)
 
@@ -505,15 +473,9 @@ class IndependentBatcher:
             finally:
                 put(end)
 
-        producer = threading.Thread(
-            target=produce, name=f"{self.label}-input-preparation", daemon=True
-        )
+        producer = threading.Thread(target=produce, name=f"{self.label}-input-preparation", daemon=True)
         producer.start()
-        transfer_stream = (
-            self.torch.cuda.Stream(device=self.device)
-            if self.device.type == "cuda"
-            else None
-        )
+        transfer_stream = self.torch.cuda.Stream(device=self.device) if self.device.type == "cuda" else None
         records: list[_Record] = []
         pack_count = 0
         content_frames = 0
@@ -541,9 +503,7 @@ class IndependentBatcher:
                 record = records.pop(0)
                 output = None
                 if record.sample.error is None:
-                    output = np.concatenate(
-                        [piece.output for piece in record.pieces], axis=0
-                    )
+                    output = np.concatenate([piece.output for piece in record.pieces], axis=0)
                 started = time.perf_counter()
                 yield record.sample, output
                 downstream_time += time.perf_counter() - started
@@ -572,9 +532,7 @@ class IndependentBatcher:
                         next_staged = self._stage(next_item, transfer_stream)
 
                     started = time.perf_counter()
-                    content, work, scheduled, encoded = self._encode(
-                        item, *staged, transfer_stream
-                    )
+                    content, work, scheduled, encoded = self._encode(item, *staged, transfer_stream)
                     encode_time += time.perf_counter() - started
                     pending_outputs.append(encoded)
                     pack_count += 1

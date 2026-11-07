@@ -14,8 +14,9 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 import torch
+from zonos3.models.accent_format import FORMAT_GROWN
 from zonos3.tts.directions import HIDDEN_SPACE, SPACES, Calibration, DirectionSet
-from zonos3.tts.steering import Direction, RateExtension, SteeringBundle
+from zonos3.tts.steering import SteeringBundle, build_bundle
 
 from zonos3_mlx.gguf_io import GGUFFile
 
@@ -29,18 +30,6 @@ def _expect(f: GGUFFile, arch: str) -> None:
 
 def _vector(f: GGUFFile, name: str) -> torch.Tensor:
     return torch.from_numpy(np.array(f.array(name), dtype=np.float32).reshape(-1))
-
-
-def _calibration(text: str) -> Calibration | None:
-    """A set's calibration.json text (``zonos3_steer.set.calibrations``; "" without one)."""
-    if not text:
-        return None
-    data = json.loads(text)
-    return Calibration(
-        by_speaker={k: {e: float(v) for e, v in d.items()} for k, d in data.get("by_speaker", {}).items()},
-        default={e: float(v) for e, v in data.get("default", {}).items()},
-        global_default=float(data.get("global_default", 1.0)),
-    )
 
 
 def load_steer(path: str | Path) -> SteeringBundle:
@@ -58,33 +47,29 @@ def load_steer(path: str | Path) -> SteeringBundle:
     for i, (did, kind) in enumerate(zip(ids, kinds)):
         set_name, _, name = did.partition(".")
         groups[set_name][kind][name] = _vector(f, f"steer.dir.{i}")
-    sets, directions = {}, {}
+    sets = {}
     for set_name, space, source, calibration in zip(set_names, spaces, sources, calibrations):
         if space not in SPACES:
             raise ValueError(f"{path}: set {set_name!r} is {space!r}; bundles take raw or attnres_source sets")
         named, axes = groups[set_name]["named"], groups[set_name]["axis"]
-        dim = int(next(iter({**named, **axes}.values())).numel())
-        sets[set_name] = DirectionSet(dim=dim, named=named, axes=axes, space=space,
-                                      source_index=source if space == HIDDEN_SPACE else None,
-                                      calibration=_calibration(calibration))
-        for name, vec in {**named, **axes}.items():
-            did = f"{set_name}.{name}"
-            directions[did] = Direction(did, set_name, name, space, vec, source if space == HIDDEN_SPACE else None)
-    rate_extension = None
-    raw = f.meta(k("rate_extension"), "")
-    if raw:
-        r = json.loads(raw)
-        if r["direction"] not in directions or directions[r["direction"]].space != HIDDEN_SPACE:
-            raise ValueError(f"{path}: rate_extension direction {r['direction']!r} is not a hidden direction of the bundle")
-        rate_extension = RateExtension(
-            direction=r["direction"], row_edges=tuple(float(e) for e in r["row_edges"]),
-            below=tuple(float(e) for e in r["below"]), above=tuple(float(e) for e in r["above"]),
-            doses={lang: {int(b): float(d) for b, d in doses.items()} for lang, doses in r["languages"].items()},
-            reference_sides=tuple(r.get("reference_sides", ("slower", "faster"))),
+        dim = int(next(iter({**named, **axes}.values())).numel()) if named or axes else 0
+        sets[set_name] = DirectionSet(
+            dim=dim,
+            named=named,
+            axes=axes,
+            space=space,
+            source_index=source if space == HIDDEN_SPACE else None,
+            calibration=Calibration.from_document(json.loads(calibration)) if calibration else None,
         )
-    return SteeringBundle(name=f.meta(k("name")), path=Path(path), sets=sets, directions=directions,
-                          timing=json.loads(f.meta(k("timing"), "{}")), ui=json.loads(f.meta(k("ui"), "{}")),
-                          rate_extension=rate_extension)
+    raw = f.meta(k("rate_extension"), "")
+    return build_bundle(
+        Path(path),
+        f.meta(k("name")),
+        sets,
+        timing=json.loads(f.meta(k("timing"), "{}")),
+        ui=json.loads(f.meta(k("ui"), "{}")),
+        rate_extension=json.loads(raw) if raw else None,
+    )
 
 
 # ----------------------------------------------------------------------------------------------------- accents
@@ -93,7 +78,9 @@ def load_steer(path: str | Path) -> SteeringBundle:
 @dataclass
 class _Slot:
     linear: dict[str, tuple[mx.array, mx.array]]  # GGUF base name -> (down [K, in], up [out, K])
-    experts: dict[int, dict[str, tuple[mx.array, mx.array]]]  # layer -> gate|up|down -> (down [E, r, in], up [E, out, r])
+    experts: dict[
+        int, dict[str, tuple[mx.array, mx.array]]
+    ]  # layer -> gate|up|down -> (down [E, r, in], up [E, out, r])
     router_bias: dict[int, mx.array]
 
 
@@ -103,16 +90,16 @@ class AccentBank:
 
     def __init__(self, names: list[str], formats: list[str], slots: list[_Slot]):
         self.names, self.formats, self._slots = names, formats, slots
-        edits = [name for name, fmt in zip(names, formats) if fmt == "zonos-accent-lora/3"]
+        edits = [name for name, fmt in zip(names, formats) if fmt == FORMAT_GROWN]
         if len(edits) > 1:
             raise ValueError(f"accents.gguf holds more than one speech-edit adapter ({', '.join(edits)})")
         self.edit = edits[0] if edits else None
         self.accent_names = [name for name in names if name != self.edit]
 
     @classmethod
-    def load(cls, path: str | Path, *, head_rows: int | None = None, n_codebooks: int = 0) -> "AccentBank":
-        """``head_rows`` / ``n_codebooks``: the backbone's output head, to fit the head factor of an adapter trained
-        before the vocabulary grew (zonos3.models.accent_format.fit_head: zero rows at each block's span-end row)."""
+    def load(cls, path: str | Path, *, head_rows: int | None = None) -> "AccentBank":
+        """``head_rows``: the backbone's output head, to fit the head factor of an adapter trained before the vocabulary
+        grew (zonos3.models.accent_format.fit_head: zero rows at each block's span-end row)."""
         f = GGUFFile(path)
         _expect(f, ACC_ARCH)
         names = list(f.meta(f"{ACC_ARCH}.names"))
@@ -137,10 +124,14 @@ class AccentBank:
                 kind = base.rsplit(".", 1)[1].removeprefix("ffn_").removesuffix("_exps")
                 slots[slot].experts.setdefault(layer, {})[kind] = (down, up)
             else:
-                if base == "output" and head_rows is not None and n_codebooks and up.shape[0] == head_rows - n_codebooks:
-                    k = up.shape[1]
-                    blocks = up.reshape(n_codebooks, -1, k)
-                    up = mx.concatenate([blocks, mx.zeros((n_codebooks, 1, k), up.dtype)], axis=1).reshape(head_rows, k)
+                if base == "output" and head_rows is not None and up.shape[0] < head_rows:
+                    n_codebooks = head_rows - up.shape[0]
+                    if up.shape[0] % n_codebooks == 0:  # zonos3.models.accent_format.fit_head
+                        k = up.shape[1]
+                        blocks = up.reshape(n_codebooks, -1, k)
+                        up = mx.concatenate([blocks, mx.zeros((n_codebooks, 1, k), up.dtype)], axis=1).reshape(
+                            head_rows, k
+                        )
                 slots[slot].linear[base] = (down, up)
         return cls(names, formats, slots)
 

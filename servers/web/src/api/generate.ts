@@ -6,18 +6,19 @@
 import type { ProbeInput } from '../backbone';
 import { locateTextSpan, probeReduce } from '../probe';
 import {
-  DECODE_CONTEXT_FRAMES, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES, TAG_CFG_MAX_SCALE,
+  ALIGN_PROBE_MAX_TEXT, CONTEXT_CAPACITY, DECODE_CONTEXT_FRAMES, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES, TAG_CFG_MAX_SCALE,
   TAG_CFG_MIN_SCALE,
 } from '../generation';
 import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
 import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
-import { resolveControls, Steering, textChars, type ControlSpan } from '../request/steer';
+import { NO_STEERING, resolveControls, Steering, textChars, type ControlSpan } from '../request/steer';
 import { defaultSampling, Sampler, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { newSlot, sampleFrame, type SlotState } from '../slot';
-import { applyFade, wavBytes } from '../wav';
+import { wavBytes } from '../../../../studio/src/lib/wav';
+import { applyFade } from '../wav';
 import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
 import type { Engine } from './engine';
 import {
@@ -26,11 +27,6 @@ import {
 } from './http';
 import type { Speakers } from './speakers';
 
-const HOP = 2940;
-/** Slot rows: native context_capacity = min(context_length, max_frames + 4096). */
-export const CONTEXT_CAPACITY = MAX_FRAMES + 4096;
-/** probe_max_text = min(2048, context_capacity) with LACI heads. */
-const PROBE_MAX_TEXT = 2048;
 /** Prefix streaming (PrefixStreamSettings defaults): chunk, hold-back, and the shorter first chunk of a request
  *  (ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES on the native servers). */
 const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3, PREFIX_FIRST_CHUNK_FRAMES = 4;
@@ -169,8 +165,7 @@ function checkAccent(body: Body): void {
 function applyControls(e: Engine, body: Body, p: Plan): void {
   if (!truthy(body, 'controls') && !truthy(body, 'control_spans')) return;
   if (!e.steer)
-    fail(400, 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); ' +
-      '`controls` are unavailable.');
+    fail(400, `${NO_STEERING}; \`controls\` are unavailable.`);
   const controls = isSet(body, 'controls') ? body.controls as Record<string, number> : {};
   const spans = isSet(body, 'control_spans') ? body.control_spans as ControlSpan[] : [];
   const rate = num(body, 'control_span_rate', 0);
@@ -366,8 +361,8 @@ function attachProbe(e: Engine, p: Plan): { probe: Probe | null; follower: SpanF
   if (!heads) return { probe: null, follower: null, laci: null };
   const span = locateTextSpan(p.prompt.ids, NCB);
   if (!span) fail(400, 'the prompt has no complete text span for the alignment probe');
-  if (span.len > PROBE_MAX_TEXT)
-    fail(400, `the text is too long for the alignment probe (${span.len} text rows; at most ${PROBE_MAX_TEXT})`);
+  if (span.len > ALIGN_PROBE_MAX_TEXT)
+    fail(400, `the text is too long for the alignment probe (${span.len} text rows; at most ${ALIGN_PROBE_MAX_TEXT})`);
   const probe: Probe = { textStart: span.start, textLen: span.len, heads: heads.heads.map(h => ({ ...h })), windows: [] };
   let follower: SpanFollower | null = null;
   if (p.follow && p.steering.spans.length) {
@@ -652,7 +647,7 @@ async function generate(e: Engine, spk: Speakers, body: Body, req: EngineRequest
   for (const part of parts) { audio.set(part, o); o += part.length; }
   if (wav) {
     sink.start(200, { ...headers, 'content-type': 'audio/wav' });
-    sink.chunk(wavBytes(audio, SAMPLE_RATE, 'trunc'));
+    sink.chunk(wavBytes(audio, SAMPLE_RATE));
   } else {
     sink.start(200, { ...headers, 'content-type': 'audio/pcm' });
     sink.chunk(new Uint8Array(audio.buffer));

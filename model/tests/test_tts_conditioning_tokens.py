@@ -21,26 +21,14 @@ ACCURATE_BUCKETS = 1
 
 def test_conditioned_text_vocab_size_matches_release_model():
     assert (
-        conditioned_text_vocab_size(
-            RATE_BUCKETS, sum(QUALITY_COUNTS), BACKGROUND_BUCKETS, ACCURATE_BUCKETS
-        )
+        conditioned_text_vocab_size(RATE_BUCKETS, sum(QUALITY_COUNTS), BACKGROUND_BUCKETS, ACCURATE_BUCKETS)
         == TEXT_VOCAB
     )
 
 
 def test_conditioning_token_ids_use_training_layout():
-    assert (
-        quality_token_id(
-            TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, 0, 0, BACKGROUND_BUCKETS, ACCURATE_BUCKETS
-        )
-        == 456
-    )
-    assert (
-        quality_token_id(
-            TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, 5, 7, BACKGROUND_BUCKETS, ACCURATE_BUCKETS
-        )
-        == 515
-    )
+    assert quality_token_id(TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, 0, 0, BACKGROUND_BUCKETS, ACCURATE_BUCKETS) == 456
+    assert quality_token_id(TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, 5, 7, BACKGROUND_BUCKETS, ACCURATE_BUCKETS) == 515
     assert (
         speaker_background_token_id(
             TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, True, BACKGROUND_BUCKETS, ACCURATE_BUCKETS
@@ -53,12 +41,7 @@ def test_conditioning_token_ids_use_training_layout():
         )
         == 517
     )
-    assert (
-        accurate_mode_token_id(
-            TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, BACKGROUND_BUCKETS, ACCURATE_BUCKETS
-        )
-        == 518
-    )
+    assert accurate_mode_token_id(TEXT_VOCAB, RATE_BUCKETS, QUALITY_COUNTS, BACKGROUND_BUCKETS, ACCURATE_BUCKETS) == 518
 
 
 def test_quality_rows_prepended_in_feature_order():

@@ -29,7 +29,6 @@ export const lookupLanguage = computed(() => (languages.value.includes(pronLangu
 export const guessed = signal<Record<string, string>>({});
 
 import { langLabel } from '../lib/languages';
-export { langLabel };
 
 // ── Phonemize ─────────────────────────────────────────────────────────────────────────────────────
 

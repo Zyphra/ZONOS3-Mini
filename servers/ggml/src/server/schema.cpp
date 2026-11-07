@@ -59,7 +59,7 @@ std::shared_ptr<json_validator> validator_for(const std::string & name) {
     auto it = g_validators.find(name);
     if (it != g_validators.end()) return it->second;
     if (!spec()["components"]["schemas"].contains(name))
-        throw std::runtime_error("api/openapi.json has no schema " + name);
+        throw std::runtime_error("servers/api/openapi.json has no schema " + name);
     auto v = std::make_shared<json_validator>(
         [](const nlohmann::json_uri &, json & schema) { schema = spec(); },
         [](const std::string &, const std::string &) {});   // formats (binary, ...) are not request constraints

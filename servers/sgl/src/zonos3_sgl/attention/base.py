@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     import torch
+
     from zonos3_sgl.core import TTSBatch
 
 
@@ -27,9 +28,7 @@ class BaseAttnBackend(ABC):
     def prepare_metadata(self, batch: TTSBatch) -> None: ...
 
     @abstractmethod
-    def init_capture_graph(
-        self, max_seq_len: int, bs_list: List[int], frame_width: int = 1
-    ) -> None: ...
+    def init_capture_graph(self, max_seq_len: int, bs_list: List[int], frame_width: int = 1) -> None: ...
 
     @abstractmethod
     def prepare_for_capture(self, batch: TTSBatch) -> None: ...
@@ -57,9 +56,7 @@ class HybridBackend(BaseAttnBackend):
         backend = self.prefill_backend if batch.is_prefill else self.decode_backend
         return backend.prepare_metadata(batch)
 
-    def init_capture_graph(
-        self, max_seq_len: int, bs_list: List[int], frame_width: int = 1
-    ) -> None:
+    def init_capture_graph(self, max_seq_len: int, bs_list: List[int], frame_width: int = 1) -> None:
         self.decode_backend.init_capture_graph(max_seq_len, bs_list, frame_width)
 
     def prepare_for_capture(self, batch: TTSBatch) -> None:

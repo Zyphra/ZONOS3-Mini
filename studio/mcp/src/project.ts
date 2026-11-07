@@ -2,6 +2,7 @@
  * Studio projects on the server (`/v2/projects`, `/v2/media`): load (re-registering voices the server lost, as the
  * studio's `reconcile` does), patch, save against the loaded revision, retry on conflicts.
  */
+import { ApiError, MissingMedia, RevisionConflict } from '../../src/lib/http';
 import { createHash } from 'node:crypto';
 import { encodeNpy, slug } from '../../src/lib/files';
 import { uid } from '../../src/lib/math';
@@ -18,7 +19,6 @@ export const RELOAD_HINT = 'If this project is open in Studio, choose Reload whe
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 export const b64 = (bytes: Uint8Array | ArrayBuffer) => Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString('base64');
-export const isRiff = (b: Uint8Array) => b.length >= 12 && Buffer.from(b.subarray(0, 4)).toString('latin1') === 'RIFF' && Buffer.from(b.subarray(8, 12)).toString('latin1') === 'WAVE';
 
 /** A new project as the studio's `emptyDoc` builds it, minus the demo script. */
 export function newProjectDoc(id: string, name: string, language: string): ProjectDoc {
@@ -126,7 +126,7 @@ export async function openProject(projectId?: string, opts: { create?: boolean }
   try {
     p = await zonos.getProject(id);
   } catch (e) {
-    if (e instanceof zonos.ZonosError && e.status === 404) throw new Error(`Unknown project '${id}' (see zonos_project action=list)`);
+    if (e instanceof ApiError && e.status === 404) throw new Error(`Unknown project '${id}' (see zonos_project action=list)`);
     throw e;
   }
   state.activeProjectId = id;
@@ -160,7 +160,7 @@ export async function saveProject<T>(s: Session, act: Act, patch: (doc: ProjectD
       try {
         saved = await zonos.putProject(s.id, body);
       } catch (e) {
-        if (!(e instanceof zonos.MissingMedia)) throw e;
+        if (!(e instanceof MissingMedia)) throw e;
         await upload(e.missing);
         saved = await zonos.putProject(s.id, body);
       }
@@ -168,7 +168,7 @@ export async function saveProject<T>(s: Session, act: Act, patch: (doc: ProjectD
       state.activeProjectId = s.id;
       return { result, project: { id: s.id, name: s.doc.name, revision: saved.revision, url: `${config.server}/studio?project=${encodeURIComponent(s.id)}#${act}` }, session: s };
     } catch (e) {
-      if (!(e instanceof zonos.RevisionConflict)) throw e;
+      if (!(e instanceof RevisionConflict)) throw e;
       if (attempt >= 3) throw new Error('Project changed elsewhere 3 times in a row; try again');
       const fresh = await openProject(s.id);
       s = { ...fresh, warnings: [...s.warnings, ...fresh.warnings] };

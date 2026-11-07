@@ -18,6 +18,7 @@ the file's start / end, clipped to it) select the part to transcribe; ``language
 ``language`` the language Qwen3-ASR reports (the forced one, or the detected ones joined with ","; "" for an empty
 selection). The items of one request share batched forwards.
 """
+
 import argparse
 import json
 import os
@@ -56,8 +57,10 @@ def transcribe(model, languages: list[str], items: list) -> list[dict]:
                 raise ValueError(f"transcribe: items[{k}].{key} must be a number of seconds or null")
         language = item.get("language")
         if language is not None and language not in languages:
-            raise ValueError(f"transcribe: items[{k}].language {language!r} is not a Qwen3-ASR language "
-                             f"(supported: {', '.join(languages)})")
+            raise ValueError(
+                f"transcribe: items[{k}].language {language!r} is not a Qwen3-ASR language "
+                f"(supported: {', '.join(languages)})"
+            )
         parts.append(read_part(item["audio"], item.get("start"), item.get("end")))
         langs.append(language)
     results = [{"text": "", "language": ""} for _ in items]
@@ -90,16 +93,24 @@ def serve(lines: Iterable[str], out: TextIO, model_id: str, languages: list[str]
                 raise ValueError(f"unknown op {op!r}")
             response.update(id=rid, status="ok")
         except Exception as exc:  # noqa: BLE001 - one bad request must not kill the worker
-            response = {"id": rid, "status": "error", "error": repr(exc), "message": str(exc),
-                        "invalid": isinstance(exc, ValueError)}
+            response = {
+                "id": rid,
+                "status": "error",
+                "error": repr(exc),
+                "message": str(exc),
+                "invalid": isinstance(exc, ValueError),
+            }
         out.write(json.dumps(response, ensure_ascii=False) + "\n")
         out.flush()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--device", default=os.environ.get("ZONOS3_ASR_DEVICE"),
-                        help="torch device (default: $ZONOS3_ASR_DEVICE, else cuda:0 when available, else cpu)")
+    parser.add_argument(
+        "--device",
+        default=os.environ.get("ZONOS3_ASR_DEVICE"),
+        help="torch device (default: $ZONOS3_ASR_DEVICE, else cuda:0 when available, else cpu)",
+    )
     parser.add_argument("--model", default=MODEL, help=f"Qwen3-ASR checkpoint (default: {MODEL})")
     args = parser.parse_args()
     # Keep stdout for responses only: library prints go to stderr.

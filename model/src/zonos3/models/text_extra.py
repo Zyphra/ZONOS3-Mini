@@ -42,7 +42,9 @@ class TextExtraRows:
             if (phonemes["open_id"], phonemes["close_id"]) != (text_vocab + 1, text_vocab + 2):
                 raise ValueError(f"{path}: exported phoneme rows must start at the padding row + 1")
             if 2 + len(phonemes["symbols"]) != extra["rows"].shape[0]:
-                raise ValueError(f"{path}: {extra['rows'].shape[0]} rows for {len(phonemes['symbols'])} phoneme symbols")
+                raise ValueError(
+                    f"{path}: {extra['rows'].shape[0]} rows for {len(phonemes['symbols'])} phoneme symbols"
+                )
         return cls(extra["rows"].float(), text_vocab, phonemes, extra.get("run"))
 
     @property
@@ -61,8 +63,9 @@ class TextExtraRows:
             raise ValueError("phoneme rows need a SuperBPE text_tokenizer_spec")
         if spec.get("phonemes") is not None:
             raise ValueError("the model already has phoneme tokens")
-        phonemes = dict(self.phonemes, open_id=self.phonemes["open_id"] + existing,
-                        close_id=self.phonemes["close_id"] + existing)
+        phonemes = dict(
+            self.phonemes, open_id=self.phonemes["open_id"] + existing, close_id=self.phonemes["close_id"] + existing
+        )
         return {**spec, "phonemes": phonemes}
 
     def append(self, table: torch.Tensor) -> torch.Tensor:

@@ -1,4 +1,4 @@
-// Request validation against api/openapi.json (embedded at build time) with pboettch/json-schema-validator.
+// Request validation against servers/api/openapi.json (embedded at build time) with pboettch/json-schema-validator.
 #pragma once
 
 #include "json.hpp"
@@ -11,7 +11,7 @@ namespace zs::schema {
 
 using json = nlohmann::json;
 
-// The embedded API spec (api/openapi.json).
+// The embedded API spec (servers/api/openapi.json).
 const json & spec();
 // Validate `body` against #/components/schemas/<name>: nullopt when it conforms, else the 422 ValidationError body
 // {"detail": [{"loc": ["body", ...], "msg", "type": "value_error"}, ...]}.

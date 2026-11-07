@@ -5,7 +5,7 @@ def test_text_units_french_merges_dash_and_roundtrips():
     text = "Les requins — existent, bien."
     units = text_units(text, "fr")
     assert [u["text"] for u in units] == ["Les", "requins —", "existent,", "bien."]
-    assert "".join(text[a["start"]:b["start"]] for a, b in zip(units, units[1:])) + units[-1]["text"] == text
+    assert "".join(text[a["start"] : b["start"]] for a, b in zip(units, units[1:])) + units[-1]["text"] == text
 
 
 def test_text_units_leading_punctuation_joins_first_unit():

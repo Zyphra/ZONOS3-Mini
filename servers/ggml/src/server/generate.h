@@ -20,11 +20,11 @@ namespace zs {
 struct GeneratePlan {
     GenReq gr;
     zonos3_prompt prompt;
-    zonos3_prompt twin;               // n_rows == 0: no CFG twin
+    zonos3_prompt twin; // n_rows == 0: no CFG twin
     // "" | "speaker" (speaker row / reference prefix dropped) | "tag" (markup stripped) | "controls" (same prompt,
     // no steering delta)
     std::string cfg_kind;
-    std::string span_follow;          // X-Control-Span-Follow: "" (no control_spans) | "rate" | "reading"
+    std::string span_follow; // X-Control-Span-Follow: "" (no control_spans) | "rate" | "reading"
 };
 
 // Throws HttpError (fail) with sgl's status and detail for an invalid request. The plan's frame budget is the
@@ -49,7 +49,7 @@ struct LaciTake {
     nlohmann::json request;
     zonos3_laci::DurationTarget duration;
     struct Scale {
-        std::vector<double> edges;   // bucket edges (UTF-8 bytes / s); buckets first..first + edges.size()
+        std::vector<double> edges; // bucket edges (UTF-8 bytes / s); buckets first..first + edges.size()
         int first = 0;
         int bucket = 0;              // the take's bucket on the scale
         std::map<int, double> doses; // steered buckets -> tempo dose
@@ -61,13 +61,13 @@ struct LaciTake {
 // Plan every take first, then submit_job each and wait_take (the takes interleave with other requests).
 std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, const std::optional<std::string> & session);
 struct TakeResult {
-    std::vector<float> pcm;   // 44.1 kHz mono float32 with the decoder gain (empty: no audio)
-    nlohmann::json laci;      // LaciSession.record()
+    std::vector<float> pcm; // 44.1 kHz mono float32 with the decoder gain (empty: no audio)
+    nlohmann::json laci;    // LaciSession.record()
 };
 // Blocks until the job finishes; throws std::runtime_error when the generation failed.
 TakeResult wait_take(const std::shared_ptr<ReqJob> & job);
 
-// The silence-prefill default (sgl _silence_prefill_spec) from the environment: ZONOS3_SILENCE_PREFILL_FRAMES (default
+// The silence-prefill default (zonos3.server.capabilities.silence_prefill_spec) from the environment: ZONOS3_SILENCE_PREFILL_FRAMES (default
 // and unparsable: the registry's silence_prefill_frames.default) frames, off when ZONOS3_SILENCE_PREFILL_DEFAULT is
 // 0/false/no/off. False when above the registry's maximum.
 bool configure_silence_prefill(ServerState & s, std::string & err);
@@ -93,4 +93,4 @@ std::string normalize_text(ServerState & s, const std::string & text, const std:
 
 void register_generate_routes(httplib::Server & svr, ServerState & s);
 
-}  // namespace zs
+} // namespace zs

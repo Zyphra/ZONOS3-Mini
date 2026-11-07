@@ -47,6 +47,7 @@ process), answered ``{"call": N, "status": "ok", ...}`` or ``{"call": N, "status
 Audio crosses as file paths (same host): ``audio`` is a file of the upload's bytes (``encode`` of a plugin's reference
 clip: a float WAV of the clip); the host creates and removes the temp dirs of its engine calls.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -170,8 +171,13 @@ class RpcEditEngine:
         return np.asarray(reply["codes"], dtype=np.int64).reshape(-1, self.model.n_codebooks)
 
     async def check(self, target_text: str, doses, condition_buckets, condition_values) -> set[str]:
-        reply = await self.pipe.call("check", target_text=target_text, doses=doses,
-                                     condition_buckets=condition_buckets, condition_values=condition_values)
+        reply = await self.pipe.call(
+            "check",
+            target_text=target_text,
+            doses=doses,
+            condition_buckets=condition_buckets,
+            condition_values=condition_values,
+        )
         return set(reply["raw"])
 
     async def fill(self, job) -> tuple[np.ndarray, int]:
@@ -203,10 +209,13 @@ class RpcHost:
     async def synthesize_laci(self, takes, session_id: str | None) -> list:
         with tempfile.TemporaryDirectory(prefix="zonos3-pyhost-") as tmp:
             outs = [os.path.join(tmp, f"take{k}.wav") for k in range(len(takes))]
-            reply = await self.pipe.call("laci_takes", session=session_id,
-                                         takes=[take.to_json(out) for take, out in zip(takes, outs)])
-            return [(read_wav(out) if take["audio"] else None, take["record"])
-                    for take, out in zip(reply["takes"], outs, strict=True)]
+            reply = await self.pipe.call(
+                "laci_takes", session=session_id, takes=[take.to_json(out) for take, out in zip(takes, outs)]
+            )
+            return [
+                (read_wav(out) if take["audio"] else None, take["record"])
+                for take, out in zip(reply["takes"], outs, strict=True)
+            ]
 
     async def encode_reference(self, audio: np.ndarray, sample_rate: int, max_seconds: float) -> list[list[int]]:
         with tempfile.TemporaryDirectory(prefix="zonos3-pyhost-") as tmp:
@@ -215,15 +224,25 @@ class RpcHost:
             return (await self.pipe.call("encode", audio=path, max_seconds=max_seconds))["codes"]
 
 
-async def asgi_request(app, method: str, path: str, query: str, headers: list[list[str]], body_path: str | None,
-                       out_path: str) -> tuple[int, list[list[str]]]:
+async def asgi_request(
+    app, method: str, path: str, query: str, headers: list[list[str]], body_path: str | None, out_path: str
+) -> tuple[int, list[list[str]]]:
     """Run one HTTP request through the ASGI ``app``: the body streamed from ``body_path`` in 1 MiB chunks, the
     response body written to ``out_path``. Returns the status and response headers."""
-    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
-             "method": method.upper(), "scheme": "http", "path": path, "raw_path": path.encode("utf-8"),
-             "query_string": (query or "").encode("latin-1"), "root_path": "",
-             "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers],
-             "client": ("127.0.0.1", 0), "server": ("127.0.0.1", 80)}
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method.upper(),
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
+        "query_string": (query or "").encode("latin-1"),
+        "root_path": "",
+        "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers],
+        "client": ("127.0.0.1", 0),
+        "server": ("127.0.0.1", 80),
+    }
     body = open(body_path, "rb") if body_path else None
     start: dict = {}
     done = asyncio.Event()
@@ -239,6 +258,7 @@ async def asgi_request(app, method: str, path: str, query: str, headers: list[li
         return {"type": "http.disconnect"}
 
     with open(out_path, "wb") as out:
+
         async def send(message: dict) -> None:
             if message["type"] == "http.response.start":
                 start["status"] = int(message["status"])
@@ -312,8 +332,15 @@ class Worker:
         name = request.get("plugin")
         if not any(p.name == name for p in self.plugins):
             raise ValueError(f"plugin {name!r} is not loaded")
-        status, headers = await asgi_request(self.app, request["method"], request["path"], request.get("query") or "",
-                                             request.get("headers") or [], request.get("body"), request["out"])
+        status, headers = await asgi_request(
+            self.app,
+            request["method"],
+            request["path"],
+            request.get("query") or "",
+            request.get("headers") or [],
+            request.get("body"),
+            request["out"],
+        )
         return {"status": status, "headers": headers}
 
     def close_plugins(self) -> None:

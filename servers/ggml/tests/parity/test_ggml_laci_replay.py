@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
 from zonos3.tts import span_follow as sf
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciHeads, LaciSession, RateBuckets
 
@@ -27,8 +26,10 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "laci-replay"
 
 TEXT_LEN = 100
 FPT = 4
-HEADS = {"frames_per_token": float(FPT), "heads": [{"layer": 7, "head": 4, "radius": 3},
-                                                   {"layer": 3, "head": 2, "radius": 5}]}
+HEADS = {
+    "frames_per_token": float(FPT),
+    "heads": [{"layer": 7, "head": 4, "radius": 3}, {"layer": 3, "head": 2, "radius": 5}],
+}
 EDGES = [10.117, 12.123, 13.286, 14.25, 15.14, 16.079, 17.094, 18.489, 21.208]  # ZONOS3 Mini release speaking rate
 
 
@@ -58,19 +59,35 @@ def run_laci(t: dict) -> dict:
     cfg = LaciConfig(**t.get("cfg", {}))
     n_prefill = t.get("n_prefill", 0)
     d = t.get("duration_target")
-    duration = None if d is None else (DurationTarget(float(d)) if isinstance(d, (int, float))
-                                       else DurationTarget(float(d["frames"]), d.get("adjust_rate", True)))
+    duration = (
+        None
+        if d is None
+        else (
+            DurationTarget(float(d))
+            if isinstance(d, (int, float))
+            else DurationTarget(float(d["frames"]), d.get("adjust_rate", True))
+        )
+    )
     r = t.get("rates")
     rates = None if r is None else RateBuckets(r["index"], tuple(r["edges"]), r["n_buckets"], r.get("first", 0))
     rd = t.get("rate_deltas")
     rate_deltas = None if rd is None else [None if e is None else torch.tensor(e, dtype=torch.float32) for e in rd]
     fj = t.get("follower")
     follower = None if fj is None else _follower(fj)
-    s = LaciSession(heads=heads, cfg=cfg, prefill_rows=torch.full((n_prefill, 1), -1, dtype=torch.int32),
-                    seed=t["seed"] if "seed" in t else 0, max_tokens=t.get("max_tokens", 4000),
-                    n_codebooks=t.get("n_codebooks", 10), duration=duration, rates=rates,
-                    condition_values=t.get("condition_values"), bucket=t.get("bucket"), rate_deltas=rate_deltas,
-                    follower=follower)
+    s = LaciSession(
+        heads=heads,
+        cfg=cfg,
+        prefill_rows=torch.full((n_prefill, 1), -1, dtype=torch.int32),
+        seed=t["seed"] if "seed" in t else 0,
+        max_tokens=t.get("max_tokens", 4000),
+        n_codebooks=t.get("n_codebooks", 10),
+        duration=duration,
+        rates=rates,
+        condition_values=t.get("condition_values"),
+        bucket=t.get("bucket"),
+        rate_deltas=rate_deltas,
+        follower=follower,
+    )
     attempts = t.get("attempts") or [{"steps": t["steps"], "eos_at": t.get("eos_at"), "eos_lag": t.get("eos_lag", 0)}]
     C = s.n_codebooks
     out_attempts = []
@@ -110,23 +127,41 @@ def run_laci(t: dict) -> dict:
         if follower is not None:
             rec["follower_weights"] = fweights
         cont = s.finish_attempt()
-        rec["continuation"] = None if cont is None else {
-            "n_rows": int(cont.rows.shape[0]), "history_rows": cont.history_rows, "seed": cont.seed,
-            "max_tokens": cont.max_tokens, "condition_values": cont.condition_values, "swap_delta": cont.swap_delta,
-            "steering_delta": None if cont.steering_delta is None else cont.steering_delta.tolist(),
-            "probe_mask": _mask(s.probe_mask()),
-        }
+        rec["continuation"] = (
+            None
+            if cont is None
+            else {
+                "n_rows": int(cont.rows.shape[0]),
+                "history_rows": cont.history_rows,
+                "seed": cont.seed,
+                "max_tokens": cont.max_tokens,
+                "condition_values": cont.condition_values,
+                "swap_delta": cont.swap_delta,
+                "steering_delta": None if cont.steering_delta is None else cont.steering_delta.tolist(),
+                "probe_mask": _mask(s.probe_mask()),
+            }
+        )
         out_attempts.append(rec)
         if cont is None:
             break
-    out = {"attempts": out_attempts, "final_drain": _tags(s.drain(final=True)), "eos_frame": s.eos_frame(),
-           "end": list(s.end), "record": s.record(), "stream": _tags(s.stream[s.n_prefill:])}
+    out = {
+        "attempts": out_attempts,
+        "final_drain": _tags(s.drain(final=True)),
+        "eos_frame": s.eos_frame(),
+        "end": list(s.end),
+        "record": s.record(),
+        "stream": _tags(s.stream[s.n_prefill :]),
+    }
     return json.loads(json.dumps(out))
 
 
 def _follower(j: dict) -> sf.SpanFollower:
-    return sf.SpanFollower([tuple(r) for r in j["ranges"]], torch.tensor(j["deltas"], dtype=torch.float32),
-                           sf.FollowConfig(**j.get("cfg", {})), j.get("origin", 0))
+    return sf.SpanFollower(
+        [tuple(r) for r in j["ranges"]],
+        torch.tensor(j["deltas"], dtype=torch.float32),
+        sf.FollowConfig(**j.get("cfg", {})),
+        j.get("origin", 0),
+    )
 
 
 def run_span_follow(t: dict) -> dict:
@@ -180,13 +215,17 @@ def run_span_ranges(t: dict, monkeypatch) -> dict:
     assert [list(m) for m in nonverbal_marker_spans(final)] == t["markers"]
     ops = difflib.SequenceMatcher(None, text, final, autojunk=False).get_opcodes()
     spans = [tuple(s) for s in t["spans"]]
-    return json.loads(json.dumps({
-        "opcodes": [list(o) for o in ops],
-        "map_starts": sf.map_offsets(text, final, t["offsets"]),
-        "map_ends": sf.map_offsets(text, final, t["offsets"], end=True),
-        "token_ranges": sf.token_char_ranges(final, spec),
-        "span_ranges": sf.span_token_ranges(text, final, spans, spec),
-    }))
+    return json.loads(
+        json.dumps(
+            {
+                "opcodes": [list(o) for o in ops],
+                "map_starts": sf.map_offsets(text, final, t["offsets"]),
+                "map_ends": sf.map_offsets(text, final, t["offsets"], end=True),
+                "token_ranges": sf.token_char_ranges(final, spec),
+                "span_ranges": sf.span_token_ranges(text, final, spans, spec),
+            }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------------------------------------- traces
@@ -206,57 +245,95 @@ def tail(n=60, jitter=0.0):
 
 
 def base(**kw) -> dict:
-    t = {"mode": "laci", "text_len": TEXT_LEN, "heads_json": HEADS, "n_prefill": 3, "n_codebooks": 10,
-         "max_tokens": 4000, "seed": 0}
+    t = {
+        "mode": "laci",
+        "text_len": TEXT_LEN,
+        "heads_json": HEADS,
+        "n_prefill": 3,
+        "n_codebooks": 10,
+        "max_tokens": 4000,
+        "seed": 0,
+    }
     t.update(kw)
     return t
 
 
 def laci_traces() -> dict[str, dict]:
-    stall_follow = {"ranges": [[2, 9], [30, 45], [60, 60]], "deltas": [[1, 0, 0.5], [0, 2, -1], [3, 3, 3]],
-                    "cfg": {"lead": 1.0, "lag": 0.0, "smooth": 3, "ramp": 3}}
+    stall_follow = {
+        "ranges": [[2, 9], [30, 45], [60, 60]],
+        "deltas": [[1, 0, 0.5], [0, 2, -1], [3, 3, 3]],
+        "cfg": {"lead": 1.0, "lag": 0.0, "smooth": 3, "ramp": 3},
+    }
     traces = {
         "clean": base(steps=reading(jitter=0.4) + tail(jitter=0.2)),
-        "skip": base(seed=7, attempts=[
-            {"steps": reading(0, 40, jitter=0.3) + reading(56, 100, jitter=0.3) + tail()},
-            {"steps": reading(38, 100, jitter=0.3) + tail()},
-        ]),
-        "stall": base(seed=5, follower=stall_follow, attempts=[
-            {"steps": reading(0, 40) + [[39, 39.2]] * 200},
-            {"steps": reading(36, 100, jitter=0.5) + tail()},
-        ]),
-        "early_eos": base(attempts=[
-            {"steps": reading(0, 30), "eos_at": 120 - 12, "eos_lag": 4},
-            {"steps": reading(18, 100) + tail()},
-        ]),
+        "skip": base(
+            seed=7,
+            attempts=[
+                {"steps": reading(0, 40, jitter=0.3) + reading(56, 100, jitter=0.3) + tail()},
+                {"steps": reading(38, 100, jitter=0.3) + tail()},
+            ],
+        ),
+        "stall": base(
+            seed=5,
+            follower=stall_follow,
+            attempts=[
+                {"steps": reading(0, 40) + [[39, 39.2]] * 200},
+                {"steps": reading(36, 100, jitter=0.5) + tail()},
+            ],
+        ),
+        "early_eos": base(
+            attempts=[
+                {"steps": reading(0, 30), "eos_at": 120 - 12, "eos_lag": 4},
+                {"steps": reading(18, 100) + tail()},
+            ]
+        ),
         # the release heads file (two heads, its own pace prior) through LaciHeads.load
-        "release_heads": base(heads_json=str(REPO / "laci_heads" / "zonos3_mini_mect60k_heads.json"), seed=11,
-                              attempts=[
-                                  {"steps": reading(0, 50, fpt=3, jitter=0.8) + reading(70, 100, fpt=3) + tail()},
-                                  {"steps": reading(45, 100, fpt=3, jitter=0.8) + tail()},
-                              ]),
+        "release_heads": base(
+            heads_json=str(REPO / "assets" / "laci_heads" / "zonos3_mini_mect60k_heads.json"),
+            seed=11,
+            attempts=[
+                {"steps": reading(0, 50, fpt=3, jitter=0.8) + reading(70, 100, fpt=3) + tail()},
+                {"steps": reading(45, 100, fpt=3, jitter=0.8) + tail()},
+            ],
+        ),
         # duration target 600 for a 400-frame reading: pace_fast retakes in slower buckets until the pace budget
-        "pace_miss": base(duration_target={"frames": 600, "adjust_rate": True},
-                          rates={"index": 2, "edges": EDGES, "n_buckets": 10}, condition_values=[10, 10, 4],
-                          bucket=4, steps=reading() + tail()),
+        "pace_miss": base(
+            duration_target={"frames": 600, "adjust_rate": True},
+            rates={"index": 2, "edges": EDGES, "n_buckets": 10},
+            condition_values=[10, 10, 4],
+            bucket=4,
+            steps=reading() + tail(),
+        ),
         # extended scale: a slow take in a steered bucket comes back into the row with its delta swapped
-        "pace_slow_extended": base(duration_target=200, rates={"index": 2, "edges": [8.4, 9.2, *EDGES, 23.3],
-                                                               "n_buckets": 10, "first": -2},
-                                   condition_values=[10, 10, 10], bucket=-1,
-                                   rate_deltas=[None if 0 <= b < 10 else [float(b)] * 4 for b in range(-2, 11)],
-                                   steps=reading() + tail()),
+        "pace_slow_extended": base(
+            duration_target=200,
+            rates={"index": 2, "edges": [8.4, 9.2, *EDGES, 23.3], "n_buckets": 10, "first": -2},
+            condition_values=[10, 10, 10],
+            bucket=-1,
+            rate_deltas=[None if 0 <= b < 10 else [float(b)] * 4 for b in range(-2, 11)],
+            steps=reading() + tail(),
+        ),
         # a stall the target pace catches before the detector, then a truncation one bucket slower
-        "pace_stall_then_eos": base(heads_json={**HEADS, "frames_per_token": 1.0}, duration_target=100,
-                                    rates={"index": 2, "edges": EDGES, "n_buckets": 10}, condition_values=[10, 10, 4],
-                                    attempts=[
-                                        {"steps": reading(0, 30, fpt=1) + [[29, 29.0]] * 35 + reading(30, 100, fpt=1)},
-                                        {"steps": reading(20, 40, fpt=1), "eos_at": 15, "eos_lag": 2},
-                                        {"steps": reading(10, 100, fpt=1) + tail(30)},
-                                    ]),
-        "capped_budget": base(cfg={"max_retries": 1}, max_tokens=300, seed=None, attempts=[
-            {"steps": reading(0, 40) + [[39, 39.0]] * 200},
-            {"steps": reading(30, 50) + [[49, 49.0]] * 200},
-        ]),
+        "pace_stall_then_eos": base(
+            heads_json={**HEADS, "frames_per_token": 1.0},
+            duration_target=100,
+            rates={"index": 2, "edges": EDGES, "n_buckets": 10},
+            condition_values=[10, 10, 4],
+            attempts=[
+                {"steps": reading(0, 30, fpt=1) + [[29, 29.0]] * 35 + reading(30, 100, fpt=1)},
+                {"steps": reading(20, 40, fpt=1), "eos_at": 15, "eos_lag": 2},
+                {"steps": reading(10, 100, fpt=1) + tail(30)},
+            ],
+        ),
+        "capped_budget": base(
+            cfg={"max_retries": 1},
+            max_tokens=300,
+            seed=None,
+            attempts=[
+                {"steps": reading(0, 40) + [[39, 39.0]] * 200},
+                {"steps": reading(30, 50) + [[49, 49.0]] * 200},
+            ],
+        ),
     }
     rng = random.Random(1234)
     for k in range(4):
@@ -285,8 +362,11 @@ def _random_trace(rng: random.Random) -> dict:
         p0 = max(0, p0 + rng.randint(-5, 25))
     t = base(seed=rng.randint(0, 2**32 - 1), cfg={"max_retries": rng.choice([1, 3, 8])}, attempts=attempts)
     if rng.random() < 0.5:
-        t.update(duration_target={"frames": rng.choice([150, 300, 450, 700]), "adjust_rate": rng.random() < 0.8},
-                 rates={"index": 2, "edges": EDGES, "n_buckets": 10}, condition_values=[10, 10, rng.randint(0, 9)])
+        t.update(
+            duration_target={"frames": rng.choice([150, 300, 450, 700]), "adjust_rate": rng.random() < 0.8},
+            rates={"index": 2, "edges": EDGES, "n_buckets": 10},
+            condition_values=[10, 10, rng.randint(0, 9)],
+        )
     return t
 
 
@@ -302,31 +382,59 @@ def span_follow_traces() -> dict[str, dict]:
     for f in range(41, 120):
         ops.append(["weights", f])
         ops.append(["observe", f, reading_[f] + (3 if f in (50, 51) else 0)])
-    scheduler = {"mode": "span_follow", "ranges": [[1, 5], [10, 20], [30, 30], [25, 38]],
-                 "deltas": [[0.1, -0.2, 0.3], [1.0, 0.5, -0.25], [9, 9, 9], [-0.7, 0.05, 2.0]], "ops": ops}
+    scheduler = {
+        "mode": "span_follow",
+        "ranges": [[1, 5], [10, 20], [30, 30], [25, 38]],
+        "deltas": [[0.1, -0.2, 0.3], [1.0, 0.5, -0.25], [9, 9, 9], [-0.7, 0.05, 2.0]],
+        "ops": ops,
+    }
     # a span at the text start (on before any readout), on_step with an origin, wider smoothing and ramp
     ops2 = [["weights", 0], ["weights", 1]]
     pos = [0, 0, 1, 1, 3, 2, 2, 5, 6, 6, 9, 7, 8, 10, 12, 14, 14, 15, 15, 15, 16, 18, 19, 19, 20]
     for s, p in enumerate(pos, start=1):
         ops2 += [["on_step", s, p], ["delta", 7 + s], ["weights", 7 + s]]
     ops2 += [["truncate", 15], ["delta", 15], ["on_step", 30, 12], ["weights", 40], ["position"]]
-    origin = {"mode": "span_follow", "ranges": [[0, 3], [6, 9], [12, 18]],
-              "deltas": [[1.0, 2.0], [0.5, -0.5], [0.25, 4.0]],
-              "cfg": {"lead": 2.5, "lag": 1.0, "smooth": 5, "ramp": 4}, "origin": 7, "ops": ops2}
+    origin = {
+        "mode": "span_follow",
+        "ranges": [[0, 3], [6, 9], [12, 18]],
+        "deltas": [[1.0, 2.0], [0.5, -0.5], [0.25, 4.0]],
+        "cfg": {"lead": 2.5, "lag": 1.0, "smooth": 5, "ramp": 4},
+        "origin": 7,
+        "ops": ops2,
+    }
     return {"span_follow_scheduler": scheduler, "span_follow_origin": origin}
 
 
 def span_range_traces() -> dict[str, dict]:
     text = "Dr. Smith paid $5   <laugh/> today, honestly."
     final = "Doctor Smith paid five dollars <laugh/> today, honestly."
-    words = {"mode": "span_ranges", "text": text, "final": final, "bpe": "words",
-             "spans": [[0, 9], [10, 17], [15, 28], [20, 28], [29, 45], [17, 20], [44, 44]],
-             "markers": [[31, 39]], "offsets": [0, 3, 4, 15, 16, 17, 18, 20, 45, 50]}
-    plain = dict(words, bpe=None, text="Größe: 3 km — naïve café", final="Größe: drei Kilometer, naïve café",
-                 spans=[[0, 5], [7, 11], [14, 24], [5, 7]], markers=[], offsets=[0, 6, 7, 8, 10, 11, 13, 24])
-    phon = dict(words, text="say \ue000tə\ue001 now", final="say \ue000tə\ue001 now", spans=[[4, 8], [0, 3], [9, 12]],
-                markers=[], offsets=[0, 4, 8, 12],
-                phonemes={"open_marker": "\ue000", "close_marker": "\ue001"})
+    words = {
+        "mode": "span_ranges",
+        "text": text,
+        "final": final,
+        "bpe": "words",
+        "spans": [[0, 9], [10, 17], [15, 28], [20, 28], [29, 45], [17, 20], [44, 44]],
+        "markers": [[31, 39]],
+        "offsets": [0, 3, 4, 15, 16, 17, 18, 20, 45, 50],
+    }
+    plain = dict(
+        words,
+        bpe=None,
+        text="Größe: 3 km — naïve café",
+        final="Größe: drei Kilometer, naïve café",
+        spans=[[0, 5], [7, 11], [14, 24], [5, 7]],
+        markers=[],
+        offsets=[0, 6, 7, 8, 10, 11, 13, 24],
+    )
+    phon = dict(
+        words,
+        text="say \ue000tə\ue001 now",
+        final="say \ue000tə\ue001 now",
+        spans=[[4, 8], [0, 3], [9, 12]],
+        markers=[],
+        offsets=[0, 4, 8, 12],
+        phonemes={"open_marker": "\ue000", "close_marker": "\ue001"},
+    )
     return {"span_ranges_words": words, "span_ranges_bytes": plain, "span_ranges_phonemes": phon}
 
 
@@ -385,8 +493,10 @@ CTEST_CASES = ("clean", "skip", "stall", "early_eos", "pace_miss", "span_follow_
 
 def _ctest_cases() -> dict[str, tuple[dict, dict]]:
     sft = span_follow_traces()
-    return {name: (LACI[name], run_laci(LACI[name])) if name in LACI else (sft[name], run_span_follow(sft[name]))
-            for name in CTEST_CASES}
+    return {
+        name: (LACI[name], run_laci(LACI[name])) if name in LACI else (sft[name], run_span_follow(sft[name]))
+        for name in CTEST_CASES
+    }
 
 
 def test_ctest_fixtures_are_current():

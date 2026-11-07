@@ -10,9 +10,10 @@ from .base import BaseAttnBackend, BaseAttnMetadata
 from .utils import BaseCaptureData, make_positions
 
 if TYPE_CHECKING:
+    from zonos3.models.config import ModelConfig
+
     from zonos3_sgl.core import TTSBatch
     from zonos3_sgl.kvcache import BaseKVCache
-    from zonos3.models.config import ModelConfig
 
 
 @dataclass
@@ -119,9 +120,7 @@ class FlashAttentionBackend(BaseAttnBackend):
             page_table=new_page_table,
         )
 
-    def init_capture_graph(
-        self, max_seq_len: int, bs_list: List[int], frame_width: int = 1
-    ) -> None:
+    def init_capture_graph(self, max_seq_len: int, bs_list: List[int], frame_width: int = 1) -> None:
         assert self.capture is None, "Capture already initialized."
         max_bs = max(bs_list)
         capture = FACaptureData.create(max_bs, max_seq_len, self.kvcache.device, frame_width)

@@ -4,7 +4,7 @@
     exporter stores them) against `zonos3-cli --validate` on the F16 GGUF, checked by `tools/compare_golden.py`: every
     capture at whole-tensor cosine >= 0.9999 and exact all-row logits argmax. The element tolerance (atol 0.05,
     rtol 0.01) covers the CPU backend's F16 matmul, which rounds activations to F16 (logits reach |x| ~ 30);
-(b) the LACI alignment probe on one English prompt (laci_heads/zonos3_mini_mect60k_heads.json): `zonos3-cli --generate
+(b) the LACI alignment probe on one English prompt (assets/laci_heads/zonos3_mini_mect60k_heads.json): `zonos3-cli --generate
     --greedy --probe-heads --dump-probe` against `Zonos3LM.forward(probe=ProbeSpec)` teacher-forced on the rows ggml
     generated: identical argmax per decode step, centroids within 0.05 text rows.
 
@@ -31,11 +31,14 @@ REPO = Path(__file__).resolve().parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 
-LM_DIR = Path(os.environ.get(
-    "ZONOS3_TEST_MODEL", "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted"))
+LM_DIR = Path(
+    os.environ.get(
+        "ZONOS3_TEST_MODEL", "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted"
+    )
+)
 GGUF = Path(os.environ.get("ZONOS3_GGUF", REPO / "servers" / "ggml" / "models" / "zonos3-f16.gguf"))
 SPEAKER = REPO / "servers" / "ggml" / "tests" / "fixtures" / "speaker-embedding.npy"
-HEADS = REPO / "laci_heads" / "zonos3_mini_mect60k_heads.json"
+HEADS = REPO / "assets" / "laci_heads" / "zonos3_mini_mect60k_heads.json"
 BUCKETS = [3, 5, 29]
 GOLDEN_TEXT = "The quick brown fox jumps."
 PROBE_TEXT = "Alignment heads follow the text one word at a time, from the first syllable to the last."
@@ -64,13 +67,46 @@ def cli(ggml_build: Path, *args: str) -> str:
 
 def test_golden_logits(release, ggml_build, tmp_path):
     golden, native = tmp_path / "golden", tmp_path / "cpp"
-    subprocess.run([sys.executable, str(TOOLS / "dump_golden.py"), "lm", str(LM_DIR), "-o", str(golden),
-                    "--text", GOLDEN_TEXT, "--speaker-embedding", str(SPEAKER),
-                    "--condition-buckets", ",".join(map(str, BUCKETS)), "--silence-prefill", "3",
-                    "--weight-type", "f16"], check=True, capture_output=True, text=True)
+    subprocess.run(
+        [
+            sys.executable,
+            str(TOOLS / "dump_golden.py"),
+            "lm",
+            str(LM_DIR),
+            "-o",
+            str(golden),
+            "--text",
+            GOLDEN_TEXT,
+            "--speaker-embedding",
+            str(SPEAKER),
+            "--condition-buckets",
+            ",".join(map(str, BUCKETS)),
+            "--silence-prefill",
+            "3",
+            "--weight-type",
+            "f16",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     cli(ggml_build, "--validate", str(golden / "input_ids.npy"), str(native))
-    run = subprocess.run([sys.executable, str(TOOLS / "compare_golden.py"), str(golden), str(native),
-                          "--cos", "0.9999", "--atol", "0.05", "--rtol", "0.01"], capture_output=True, text=True)
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(TOOLS / "compare_golden.py"),
+            str(golden),
+            str(native),
+            "--cos",
+            "0.9999",
+            "--atol",
+            "0.05",
+            "--rtol",
+            "0.01",
+        ],
+        capture_output=True,
+        text=True,
+    )
     print(run.stdout)
     assert run.returncode == 0, run.stdout + run.stderr
     rows = {m[1]: float(m[2]) for m in re.finditer(r"^(\S+)\s+\([^)]*\)\s+\S+\s+\S+\s+\S+\s+(\S+)", run.stdout, re.M)}
@@ -99,8 +135,21 @@ def test_laci_probe_readout(release, ggml_build, tmp_path):
     save_cond(prompt_path.with_suffix(".cond.json"), cond)
 
     probe_path, ids_path = tmp_path / "probe.npy", tmp_path / "ids.npy"
-    cli(ggml_build, "--generate", str(prompt_path), str(tmp_path / "codes.npy"), "--greedy", "--max", str(PROBE_FRAMES),
-        "--dump-ids", str(ids_path), "--probe-heads", str(HEADS), "--dump-probe", str(probe_path))
+    cli(
+        ggml_build,
+        "--generate",
+        str(prompt_path),
+        str(tmp_path / "codes.npy"),
+        "--greedy",
+        "--max",
+        str(PROBE_FRAMES),
+        "--dump-ids",
+        str(ids_path),
+        "--probe-heads",
+        str(HEADS),
+        "--dump-probe",
+        str(probe_path),
+    )
     probe = np.load(probe_path)
     ids = np.load(ids_path).astype(np.int64)
     n0, steps = len(prompt), len(probe)
@@ -114,17 +163,21 @@ def test_laci_probe_readout(release, ggml_build, tmp_path):
     cache = LMCache()
     with torch.no_grad():
         model(torch.from_numpy(ids[:n0]), cache, speaker_rows=speaker_rows, condition_rows=condition_rows)
-        readouts = [model(torch.from_numpy(row[None]), cache, probe=spec).probe[0] for row in ids[n0:n0 + steps]]
+        readouts = [model(torch.from_numpy(row[None]), cache, probe=spec).probe[0] for row in ids[n0 : n0 + steps]]
 
     got_argmax, got_centroid = probe[:, 0].astype(np.int64), probe[:, 1].astype(np.float64)
     want_argmax = np.array([a for a, _ in readouts])
     want_centroid = np.array([c for _, c in readouts], dtype=np.float64)
     drift = np.abs(got_centroid - want_centroid)
-    print(f"probe: {steps} steps over a {length}-row text span, {len(heads)} heads; argmax "
-          f"{int((got_argmax == want_argmax).sum())}/{steps} identical, argmax path {got_argmax.min()}..{got_argmax.max()}, "
-          f"max centroid diff {drift.max():.2e} (mean {drift.mean():.2e})")
+    print(
+        f"probe: {steps} steps over a {length}-row text span, {len(heads)} heads; argmax "
+        f"{int((got_argmax == want_argmax).sum())}/{steps} identical, argmax path {got_argmax.min()}..{got_argmax.max()}, "
+        f"max centroid diff {drift.max():.2e} (mean {drift.mean():.2e})"
+    )
     mismatch = np.flatnonzero(got_argmax != want_argmax)
-    assert not len(mismatch), (f"argmax differs at steps {mismatch.tolist()}: ggml {got_argmax[mismatch].tolist()} vs "
-                               f"reference {want_argmax[mismatch].tolist()}")
+    assert not len(mismatch), (
+        f"argmax differs at steps {mismatch.tolist()}: ggml {got_argmax[mismatch].tolist()} vs "
+        f"reference {want_argmax[mismatch].tolist()}"
+    )
     assert drift.max() <= 0.05, f"centroid drift {drift.max()} at step {int(drift.argmax())}"
     assert got_argmax.max() > got_argmax.min(), "the probe never moved along the text"

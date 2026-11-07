@@ -21,11 +21,25 @@ import triton.language as tl
 
 @triton.jit
 def _expert_lora_kernel(
-    rows_ptr, row_stride, tokens_ptr, experts_ptr, slots_ptr, scales_ptr, first_ptr,
-    down_ptr, up_ptr, out_ptr, out_stride,
-    IN: tl.constexpr, OUT: tl.constexpr, RANK: tl.constexpr, RANK_PAD: tl.constexpr,
-    BLOCK_IN: tl.constexpr, BLOCK_OUT: tl.constexpr,
-    GATHER_ROWS: tl.constexpr, ZERO_OTHERS: tl.constexpr,
+    rows_ptr,
+    row_stride,
+    tokens_ptr,
+    experts_ptr,
+    slots_ptr,
+    scales_ptr,
+    first_ptr,
+    down_ptr,
+    up_ptr,
+    out_ptr,
+    out_stride,
+    IN: tl.constexpr,
+    OUT: tl.constexpr,
+    RANK: tl.constexpr,
+    RANK_PAD: tl.constexpr,
+    BLOCK_IN: tl.constexpr,
+    BLOCK_OUT: tl.constexpr,
+    GATHER_ROWS: tl.constexpr,
+    ZERO_OTHERS: tl.constexpr,
 ):
     pair = tl.program_id(0)
     cols = tl.program_id(1) * BLOCK_OUT + tl.arange(0, BLOCK_OUT)
@@ -51,12 +65,16 @@ def _expert_lora_kernel(
             k = k0 + tl.arange(0, BLOCK_IN)
             k_mask = k < IN
             x = tl.load(rows_ptr + row * row_stride + k, mask=k_mask, other=0.0).to(tl.float32)
-            d = tl.load(down + k[:, None] * RANK + ranks[None, :],
-                        mask=k_mask[:, None] & rank_mask[None, :], other=0.0).to(tl.float32)
+            d = tl.load(
+                down + k[:, None] * RANK + ranks[None, :], mask=k_mask[:, None] & rank_mask[None, :], other=0.0
+            ).to(tl.float32)
             hidden += tl.sum(d * x[:, None], axis=0)
         hidden = hidden * tl.load(scales_ptr + token).to(tl.float32)
-        up = tl.load(up_ptr + group * (RANK * OUT) + ranks[:, None] * OUT + cols[None, :],
-                     mask=rank_mask[:, None] & col_mask[None, :], other=0.0).to(tl.float32)
+        up = tl.load(
+            up_ptr + group * (RANK * OUT) + ranks[:, None] * OUT + cols[None, :],
+            mask=rank_mask[:, None] & col_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
         out = tl.sum(up * hidden[:, None], axis=0)
         tl.store(out_row, out.to(out_ptr.dtype.element_ty), mask=col_mask)
 
@@ -96,8 +114,24 @@ def expert_lora_shift(
     block_out = 256
     grid = (pairs, triton.cdiv(out_features, block_out))
     _expert_lora_kernel[grid](
-        rows, rows.stride(0), tokens, experts, slots, scales, first, down, up, out, out.stride(0),
-        IN=in_features, OUT=out_features, RANK=rank, RANK_PAD=max(16, triton.next_power_of_2(rank)),
-        BLOCK_IN=128, BLOCK_OUT=block_out, GATHER_ROWS=gather_rows, ZERO_OTHERS=zero_others,
+        rows,
+        rows.stride(0),
+        tokens,
+        experts,
+        slots,
+        scales,
+        first,
+        down,
+        up,
+        out,
+        out.stride(0),
+        IN=in_features,
+        OUT=out_features,
+        RANK=rank,
+        RANK_PAD=max(16, triton.next_power_of_2(rank)),
+        BLOCK_IN=128,
+        BLOCK_OUT=block_out,
+        GATHER_ROWS=gather_rows,
+        ZERO_OTHERS=zero_others,
         num_warps=2,
     )

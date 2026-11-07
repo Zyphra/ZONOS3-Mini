@@ -94,7 +94,6 @@ def get_default_config(
     topk: int,
     is_marlin: bool,
 ) -> Dict[str, int]:
-
     config = {
         "BLOCK_SIZE_M": 64,
         "BLOCK_SIZE_N": 64,
@@ -137,7 +136,6 @@ def fused_experts_impl(
     no_combine: bool = False,
     routed_scaling_factor: Optional[float] = None,
 ):
-
     padded_size = 0
     assert hidden_states.shape[1] == w1.shape[2] - padded_size, "Hidden size mismatch"
     assert topk_weights.shape == topk_ids.shape, "topk shape mismatch"
@@ -233,11 +231,9 @@ def fused_experts_impl(
         )
 
         if activation == "silu":
-
             silu_and_mul(intermediate_cache1.view(-1, N), intermediate_cache2)
 
         elif activation == "gelu":
-
             gelu_and_mul(intermediate_cache1.view(-1, N), intermediate_cache2)
 
         else:
@@ -279,7 +275,6 @@ def fused_experts_impl(
         else:
             # According to micro benchmark results, torch.compile can get better performance for small token.
             if tokens_in_chunk <= 32:
-
                 moe_sum_reduce_torch_compile(
                     intermediate_cache3.view(*intermediate_cache3.shape),
                     out_hidden_states[begin_chunk_idx:end_chunk_idx],
@@ -304,7 +299,6 @@ def inplace_fused_experts(
     apply_router_weight_on_input: bool = False,
     routed_scaling_factor: Optional[float] = None,
 ) -> None:
-
     fused_experts_impl(
         hidden_states,
         w1,
@@ -356,7 +350,6 @@ def fused_experts(
     no_combine: bool = False,
     routed_scaling_factor: Optional[float] = None,
 ):
-
     if inplace:
         assert not no_combine, "no combine + inplace makes no sense"
         inplace_fused_experts(
@@ -395,7 +388,6 @@ def fused_moe(
     activation: str = "silu",
     no_combine: bool = False,
 ) -> torch.Tensor:
-
     topk_weights, topk_ids = select_experts(
         hidden_states=hidden_states,
         router_logits=gating_output,

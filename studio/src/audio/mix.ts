@@ -1,5 +1,6 @@
 import type { Rendered } from '../api';
-import { encodeWav, download } from '../lib/files';
+import { download } from '../lib/files';
+import { wavBytes } from '../lib/wav';
 
 export function resample(pcm: Float32Array, from: number, to: number): Float32Array {
   if (from === to) return pcm;
@@ -30,5 +31,5 @@ export function sequence(clips: Pick<Rendered, 'pcm' | 'sr'>[], gap: number): { 
 }
 
 export function exportWav(pcm: Float32Array, sr: number, name: string) {
-  download(encodeWav(pcm, sr), name.endsWith('.wav') ? name : `${name}.wav`);
+  download(wavBytes(pcm, sr).buffer, name.endsWith('.wav') ? name : `${name}.wav`);
 }

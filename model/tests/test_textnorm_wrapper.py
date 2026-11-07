@@ -1,9 +1,6 @@
 """Wrapper-level text normalization: line breaks, per-language pre-passes, sentence-level fallback (2026-10-19)."""
-import os
 
 import pytest
-
-from zonos3.tokenizer import textnorm
 from zonos3.tokenizer.textnorm import TTSTextNormalizer, collapse_line_breaks, post_normalize, pre_normalize
 
 
@@ -22,7 +19,9 @@ def test_pre_pass_en_spoken_conventions():
     assert pre_normalize("We are open 24/7.", "en") == "We are open 24 7 ."  # digit-period spacing as before, then 24 7
     assert pre_normalize("a 50/50 call, an 80/20 split", "en") == "a 50 50 call, an 80 20 split"
     assert pre_normalize("on 9/11", "en") == "on 9 11"
-    assert pre_normalize("3/4 of the cake on 10/19", "en") == "3/4 of the cake on 10/19"  # fractions and dates untouched
+    assert (
+        pre_normalize("3/4 of the cake on 10/19", "en") == "3/4 of the cake on 10/19"
+    )  # fractions and dates untouched
     assert pre_normalize("Save $20k or $1.5k or £2k.", "en") == "Save $20,000 or $1,500 or £2,000."
     assert pre_normalize("In 1990, he left.", "en") == "In 1990 , he left."  # the digit-punct rule as before
 

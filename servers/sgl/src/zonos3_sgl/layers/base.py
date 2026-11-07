@@ -56,15 +56,11 @@ class BaseOP:
                     matched_keys.sort(key=extract_expert_index)
 
                     if not matched_keys:
-                        raise ValueError(
-                            f"No weights found in state_dict for {prefix} and {mapped_name}"
-                        )
+                        raise ValueError(f"No weights found in state_dict for {prefix} and {mapped_name}")
 
                     # Check if weights are already stacked (no per-expert indices)
                     # or per-expert (have indices like experts.0.gate_up_proj)
-                    has_expert_indices = any(
-                        re.search(r"experts\.\d+\.", k) for k in matched_keys
-                    )
+                    has_expert_indices = any(re.search(r"experts\.\d+\.", k) for k in matched_keys)
 
                     if has_expert_indices:
                         # Per-expert weights - stack them
@@ -74,38 +70,28 @@ class BaseOP:
                         item = torch.stack(items, dim=0)
                     else:
                         # Already stacked weights - use directly
-                        assert len(matched_keys) == 1, (
-                            f"Expected single stacked weight key, got {matched_keys}"
-                        )
+                        assert len(matched_keys) == 1, f"Expected single stacked weight key, got {matched_keys}"
                         item = state_dict.pop(matched_keys[0])
                 else:
                     item = state_dict.pop(_concat_prefix(prefix, name))
 
                 assert isinstance(item, torch.Tensor)
-                assert (
-                    param.shape == item.shape
-                ), f"Shape mismatch: param {param.shape} vs item {item.shape}"
+                assert param.shape == item.shape, f"Shape mismatch: param {param.shape} vs item {item.shape}"
                 if param.dtype != item.dtype:
                     if param.is_floating_point() and item.is_floating_point():
                         item = item.to(dtype=param.dtype)
                     else:
                         key = _concat_prefix(prefix, name)
-                        raise AssertionError(
-                            f"Dtype mismatch for {key}: param {param.dtype} vs item {item.dtype}"
-                        )
+                        raise AssertionError(f"Dtype mismatch for {key}: param {param.dtype} vs item {item.dtype}")
 
                 setattr(self, name, item)
 
             elif isinstance(param, BaseOP):
-                param.load_state_dict(
-                    state_dict, prefix=_concat_prefix(prefix, name), _internal=True
-                )
+                param.load_state_dict(state_dict, prefix=_concat_prefix(prefix, name), _internal=True)
 
         if not _internal and state_dict:
             keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})")
 
 
 class StateLessOP(BaseOP):
@@ -122,9 +108,7 @@ class StateLessOP(BaseOP):
         if not _internal and state_dict:
             _ = prefix
             keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})")
 
     def state_dict(self, *, prefix: str = "", result: _STATE_DICT | None = None) -> _STATE_DICT:
         _ = prefix
@@ -157,6 +141,4 @@ class OPList(BaseOP, Generic[T]):
 
         if not _internal and state_dict:
             keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})")

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Dict, List
 
 import torch
-from pathlib import Path
+from zonos3.condition_buckets import check_ids
+from zonos3.generation import SAMPLE_RATE
+from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
+from zonos3.tts import plan
+from zonos3.tts.conditioning import default_quality_buckets
+from zonos3.tts.delay import shear_up
+from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
+
 from zonos3_sgl.distributed import DistributedInfo
 from zonos3_sgl.message import (
     BaseTTSBackendMsg,
@@ -19,13 +26,6 @@ from zonos3_sgl.message.tts import TTSSamplingParams
 from zonos3_sgl.scheduler import SchedulerConfig
 from zonos3_sgl.scheduler.scheduler import TTSScheduler
 from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
-from zonos3.condition_buckets import check_ids
-from zonos3.generation import SAMPLE_RATE
-from zonos3.tts import plan
-from zonos3.tts.conditioning import default_quality_buckets
-from zonos3.tts.delay import shear_up
-
-from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 
 
 class RequestAllFinished(Exception):
@@ -144,22 +144,13 @@ class TTSLLM(TTSScheduler):
         if text_vocab is not None:
             self.text_vocab = text_vocab
         self.tts_sampler.audio_pad_id = self.audio_pad_id
-        self.tts_sampler.end_token_ids = (
-            (self.eoa_id,) if self.span_end_id is None else (self.eoa_id, self.span_end_id)
-        )
+        self.tts_sampler.end_token_ids = (self.eoa_id,) if self.span_end_id is None else (self.eoa_id, self.span_end_id)
 
         self.decode_audio = decode_audio
 
         # Text normalization, gated exactly like the server tokenizer worker so the
         # offline path produces the same tokens (e.g. "123" -> "one hundred ...").
-        from zonos3.tokenizer.textnorm import TTSTextNormalizer, normalization_enabled
-
-        self._text_normalizer = TTSTextNormalizer() if normalization_enabled() else None
-        if self._text_normalizer is not None:
-            # Compile the English grammars off the hot path, matching the server.
-            threading.Thread(
-                target=self._text_normalizer.warmup, args=(["en"],), daemon=True
-            ).start()
+        self._text_normalizer = load_normalizer(warmup=True)
 
         # Speaker encoder is loaded lazily on first embed_speaker* call.
         self._speaker_embedder = None
@@ -201,9 +192,7 @@ class TTSLLM(TTSScheduler):
         """
         if isinstance(value, list):
             if len(value) != n:
-                raise ValueError(
-                    f"Expected {n} per-prompt values, got {len(value)}."
-                )
+                raise ValueError(f"Expected {n} per-prompt values, got {len(value)}.")
             return value
         return [value] * n
 
@@ -219,17 +208,12 @@ class TTSLLM(TTSScheduler):
             raise ValueError("Current model does not support speaker conditioning.")
 
         if self._speaker_embedder is None:
-            import os
+            from zonos3.models.speaker_cloning import create_speaker_embedder, speaker_embedder_device
 
-            from zonos3.models.speaker_cloning import create_speaker_embedder
-
-            # Load the encoder on CPU by default (same env var the server uses) so
-            # it does not permanently occupy GPU memory next to the TTS model.
-            device = os.getenv("ZONOS3_SPEAKER_EMBEDDER_DEVICE", "cpu")
             self._speaker_embedder = create_speaker_embedder(
                 self.speaker_embedding_codec,
                 self.speaker_embedding_dim,
-                device=device,
+                device=speaker_embedder_device(),
             )
 
         with torch.inference_mode():
@@ -288,9 +272,7 @@ class TTSLLM(TTSScheduler):
             2D tensor of shape (seq_len, frame_width)
         """
         if isinstance(prompt, str):
-            text = prompt
-            if text_normalization and self._text_normalizer is not None:
-                text = self._text_normalizer.normalize(text, language)
+            text = normalize_request_text(prompt, language, self._text_normalizer if text_normalization else None)
             # legacy quality-conditioned checkpoints get the server's default quality tokens
             return self._prompt_builder.build(
                 text, quality_buckets=default_quality_buckets(self.quality_features, self.quality_bucket_counts)
@@ -327,8 +309,14 @@ class TTSLLM(TTSScheduler):
             return resolved
         if torch.is_tensor(codes) or (isinstance(codes, list) and codes and isinstance(codes[0], (int, float))):
             items = [codes] * n
-        elif isinstance(codes, list) and codes and isinstance(codes[0], list) and codes[0] and isinstance(codes[0][0], (int, float)):
-            items = [codes] * n                      # one [frames, codebooks] list applied to every prompt
+        elif (
+            isinstance(codes, list)
+            and codes
+            and isinstance(codes[0], list)
+            and codes[0]
+            and isinstance(codes[0][0], (int, float))
+        ):
+            items = [codes] * n  # one [frames, codebooks] list applied to every prompt
         else:
             items = list(codes)
         if len(items) != n:
@@ -350,7 +338,9 @@ class TTSLLM(TTSScheduler):
 
         return int(entry(self.engine.model_config.audio_codec)["hop"])
 
-    def encode_reference(self, waveform: torch.Tensor, sample_rate: int, *, max_seconds: float | None = None) -> torch.Tensor:
+    def encode_reference(
+        self, waveform: torch.Tensor, sample_rate: int, *, max_seconds: float | None = None
+    ) -> torch.Tensor:
         """Reference waveform -> prefix codes with the checkpoint's codec (same path as the server tokenizer)."""
         from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
 
@@ -461,9 +451,19 @@ class TTSLLM(TTSScheduler):
         req.align_probe, req.history_rows = probe, history
 
     def edit(
-        self, audio_codes, target_text, spans, sampling_params=None, *,
-        language="en_us", text_normalization=True, decode_audio=None,
-        speaker_embedding=None, condition_buckets=None, windows=None, min_frames=None,
+        self,
+        audio_codes,
+        target_text,
+        spans,
+        sampling_params=None,
+        *,
+        language="en_us",
+        text_normalization=True,
+        decode_audio=None,
+        speaker_embedding=None,
+        condition_buckets=None,
+        windows=None,
+        min_frames=None,
     ) -> dict:
         """Generate masked regions independently and preserve unmasked codec frames.
 
@@ -494,7 +494,9 @@ class TTSLLM(TTSScheduler):
             )
         max_spans = edit_marker_rows(model_config.text_extra_tokens, self._prompt_builder.config.text_tokenizer_spec)
         if max_spans <= 0:
-            raise ValueError("Speech editing needs edit marker rows; this checkpoint's extra text rows are phoneme tokens")
+            raise ValueError(
+                "Speech editing needs edit marker rows; this checkpoint's extra text rows are phoneme tokens"
+            )
         codes = torch.as_tensor(audio_codes, dtype=torch.int64, device="cpu")
         validate_edit_spans(spans, len(codes), max_spans)
         config = self._prompt_builder.config
@@ -505,21 +507,27 @@ class TTSLLM(TTSScheduler):
         fills, stopped = [None] * len(spans), [None] * len(spans)
         for window in windows or [whole_clip_window(spans, len(codes), target_text)]:
             text_rows = self._tokenize_one(
-                window.text, language=language, text_normalization=text_normalization,
+                window.text,
+                language=language,
+                text_normalization=text_normalization,
             )
-            window_codes, window_spans, window_fills = codes[window.start: window.end], window.spans(spans), []
+            window_codes, window_spans, window_fills = codes[window.start : window.end], window.spans(spans), []
             for region in window.regions:
                 prompt = edit_prompt_tokens(
                     text_rows, window_codes, window_spans, window_fills, config, span_end_id=span_end_id
                 )
                 result = self.generate(
-                    [prompt.tolist()], decode_audio=False,
+                    [prompt.tolist()],
+                    decode_audio=False,
                     sampling_params=replace(sp, min_frames=min_frames[region] if min_frames else 0),
-                    speaker_embedding=speaker_embedding, condition_buckets=condition_buckets,
+                    speaker_embedding=speaker_embedding,
+                    condition_buckets=condition_buckets,
                 )[0]
                 fill, ended = extract_fill(
-                    result["audio_tokens"], result["eos_frame"],
-                    audio_pad_id=self.audio_pad_id, codebook_sizes=config.codebook_sizes,
+                    result["audio_tokens"],
+                    result["eos_frame"],
+                    audio_pad_id=self.audio_pad_id,
+                    codebook_sizes=config.codebook_sizes,
                 )
                 window_fills.append(fill)
                 fills[region], stopped[region] = fill, ended
@@ -529,9 +537,15 @@ class TTSLLM(TTSScheduler):
         if should_decode:
             if self._vocoder is None:
                 raise ValueError("Audio decoding requires a vocoder")
-            output["audio"] = self._vocoder.decode_all(
-                spliced[None].cuda(), apply_shear_up=False,
-            )[0].cpu().numpy().astype("float32")
+            output["audio"] = (
+                self._vocoder.decode_all(
+                    spliced[None].cuda(),
+                    apply_shear_up=False,
+                )[0]
+                .cpu()
+                .numpy()
+                .astype("float32")
+            )
         return output
 
     def generate(
@@ -612,9 +626,7 @@ class TTSLLM(TTSScheduler):
             clamped = plan.max_tokens_budget(max_tokens, self.engine.max_seq_len)
             sampling_params = [replace(sp, max_tokens=clamped) for sp in sampling_params]
         speaker_embeddings = self._broadcast_per_prompt(speaker_embedding, len(prompts))
-        reference_codes = self._resolve_reference_codes(
-            speaker_reference_codes, speaker_reference_audio, len(prompts)
-        )
+        reference_codes = self._resolve_reference_codes(speaker_reference_codes, speaker_reference_audio, len(prompts))
         # condition_buckets: one list of ids for every prompt, or one list per prompt (None entries = all unknown)
         if condition_buckets is None:
             condition_lists = [None] * len(prompts)
@@ -668,7 +680,9 @@ class TTSLLM(TTSScheduler):
                 if condition_values is not None:
                     condition_token_start += prefix_length
             elif float(getattr(sp, "speaker_cfg_scale", 1.0)) != 1.0 and spk_emb is None:
-                raise ValueError("speaker_cfg_scale != 1 needs a speaker prompt (a raw reference or a speaker embedding)")
+                raise ValueError(
+                    "speaker_cfg_scale != 1 needs a speaker prompt (a raw reference or a speaker embedding)"
+                )
             self.pending_requests.append(
                 PendingRequest(
                     input_ids=input_ids,
@@ -697,8 +711,12 @@ class TTSLLM(TTSScheduler):
         history = list(audio_prefill_history) if audio_prefill_history is not None else [0] * n
         laci_on = self._broadcast_per_prompt(laci, n)
         durations = list(laci_duration) if isinstance(laci_duration, (list, tuple)) else [laci_duration] * n
-        for name, values in (("audio_prefill_rows", rows_list), ("align_probes", probes),
-                             ("audio_prefill_history", history), ("laci_duration", durations)):
+        for name, values in (
+            ("audio_prefill_rows", rows_list),
+            ("align_probes", probes),
+            ("audio_prefill_history", history),
+            ("laci_duration", durations),
+        ):
             if len(values) != n:
                 raise ValueError(f"{name} must have one entry per prompt")
         for idx, (req, rows, probe, hist, on, duration) in enumerate(
@@ -808,28 +826,8 @@ class TTSLLM(TTSScheduler):
         path: str,
         sample_rate: int = SAMPLE_RATE,
     ) -> None:
-        """Save PCM audio bytes to a WAV file.
-
-        Args:
-            audio_bytes: PCM audio data (float32)
-            path: Output file path
-            sample_rate: Audio sample rate
-        """
-        import wave
-
+        """Save float32 PCM bytes as a 16-bit mono WAV file (:func:`zonos3.tts.audio.write_pcm16_wav`)."""
         import numpy as np
+        from zonos3.tts.audio import write_pcm16_wav
 
-        audio = np.frombuffer(audio_bytes, dtype=np.float32)
-        # Convert to int16 for WAV
-        audio_int16 = (audio * 32767).astype(np.int16)
-
-        with wave.open(path, "wb") as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)  # 16-bit
-            f.setframerate(sample_rate)
-            f.writeframes(audio_int16.tobytes())
-
-# CONDITION_ROWS_RUNTIME_20261016
-# EMBEDDING_CFG_20261016
-
-# LLM_AUDIO_PREFILL_20261017
+        write_pcm16_wav(path, np.frombuffer(audio_bytes, np.float32), sample_rate)

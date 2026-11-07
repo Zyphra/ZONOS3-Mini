@@ -1,9 +1,10 @@
-"""Per-table bucket counts of the condition rows (port of minisgl's CONDITION_BUCKET_COUNTS_20261031).
+"""Per-table bucket counts of the condition rows (port of minisgl's CONDITION_BUCKET_COUNTS).
 
 The cond3 finetunes share one bucket count for their tables (params ``condition_n_buckets``; the id equal to the count
 is the unknown row). The rate30 finetunes widen one table (params ``condition_bucket_counts`` [10, 10, 30]): table i
 has counts[i] + 1 rows and its unknown id is counts[i]. Without the field every table has ``condition_n_buckets``.
 """
+
 from __future__ import annotations
 
 from typing import Sequence

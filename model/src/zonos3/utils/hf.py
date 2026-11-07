@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-import logging
 from zonos3.utils.moe_topk import normalize_special_topk_layers
 
 logger = logging.getLogger(__name__)
@@ -20,9 +20,9 @@ def resolve_model_path(model_path: str) -> str:
     """Resolve a model path to a local directory.
 
     Local paths are returned as-is. A Hugging Face repo id (e.g.
-    ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k``) is downloaded to the local HF cache first.
+    ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo``) is downloaded to the local HF cache first.
     """
-    from zonos3.utils.release import is_hf, resolve_dir_or_local  # RELEASE_HF_20261021
+    from zonos3.utils.release import is_hf, resolve_dir_or_local
 
     if is_hf(model_path):
         return resolve_dir_or_local(model_path)
@@ -142,9 +142,7 @@ class Zonos3Config:
     loss_softcap: float = 15.0
 
     def __post_init__(self) -> None:
-        self.special_topk_layers = normalize_special_topk_layers(
-            self.special_topk_layers
-        )
+        self.special_topk_layers = normalize_special_topk_layers(self.special_topk_layers)
         if self.speaking_rate_buckets is not None:
             self.speaking_rate_buckets = [str(item) for item in self.speaking_rate_buckets]
         if self.quality_features is not None:
@@ -158,14 +156,10 @@ class Zonos3Config:
                 self.quality_features = list(self.quality_buckets.keys())
             if int(self.quality_num_buckets or 0) <= 0:
                 self.quality_num_buckets = sum(
-                    len(self.quality_buckets.get(feature, ()))
-                    for feature in (self.quality_features or [])
+                    len(self.quality_buckets.get(feature, ())) for feature in (self.quality_features or [])
                 )
         if self.quality_dropout is not None:
-            self.quality_dropout = {
-                str(feature): float(dropout)
-                for feature, dropout in self.quality_dropout.items()
-            }
+            self.quality_dropout = {str(feature): float(dropout) for feature, dropout in self.quality_dropout.items()}
         if self.condition_names is not None:
             self.condition_names = [str(item) for item in self.condition_names]
         if self.condition_bucket_counts is not None:
@@ -180,18 +174,13 @@ class Zonos3Config:
             self.condition_flags = {str(name): dict(spec or {}) for name, spec in self.condition_flags.items()}
         self.speaker_background_token_enabled = bool(self.speaker_background_token_enabled)
         self.accurate_mode_token_enabled = bool(self.accurate_mode_token_enabled)
-        self.speaker_reference_prefix_enabled = bool(
-            self.speaker_reference_prefix_enabled
-        )
+        self.speaker_reference_prefix_enabled = bool(self.speaker_reference_prefix_enabled)
         self.residual_type = str(self.residual_type).strip().lower().replace("-", "_")
         if self.residual_type not in {"standard", "block_attnres", "full_attnres"}:
             raise ValueError(
-                "residual_type must be 'standard', 'block_attnres' or 'full_attnres', got "
-                f"{self.residual_type!r}."
+                f"residual_type must be 'standard', 'block_attnres' or 'full_attnres', got {self.residual_type!r}."
             )
-        if int(self.block_attnres_block_size) <= 0 or int(
-            self.block_attnres_block_size
-        ) % 2:
+        if int(self.block_attnres_block_size) <= 0 or int(self.block_attnres_block_size) % 2:
             raise ValueError("block_attnres_block_size must be a positive even number.")
         if float(self.speaker_reference_max_seconds) <= 0:
             raise ValueError("speaker_reference_max_seconds must be positive.")
@@ -201,6 +190,7 @@ class Zonos3Config:
             self.speaker_embedding_codec = str(self.speaker_embedding_codec)
         self.audio_codec = str(self.audio_codec).strip().lower().replace("-", "_")
         from zonos3.tokenizer.matched_codec import codec_names
+
         supported_audio_codecs = codec_names()
         if self.audio_codec not in supported_audio_codecs:
             raise ValueError(f"Unsupported audio codec: {self.audio_codec!r}")
@@ -209,10 +199,7 @@ class Zonos3Config:
         else:
             self.codebook_sizes = [int(item) for item in self.codebook_sizes]
         if len(self.codebook_sizes) != int(self.n_codebooks):
-            raise ValueError(
-                "codebook_sizes must contain one size per codebook: "
-                f"{self.codebook_sizes!r}"
-            )
+            raise ValueError(f"codebook_sizes must contain one size per codebook: {self.codebook_sizes!r}")
         if any(size <= 0 or size > int(self.codebook_size) for size in self.codebook_sizes):
             raise ValueError(
                 "Each per-codebook size must be within the shared LM head: "
@@ -254,18 +241,12 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
         reference_index = _cfg_get(data_cfg, "speaker_reference_index_path", None)
         sources = _cfg_get(data_cfg, "sources", None) or {}
         if not reference_index and hasattr(sources, "values"):
-            reference_index = any(
-                _cfg_get(source, "speaker_reference_index", None) for source in sources.values()
-            )
+            reference_index = any(_cfg_get(source, "speaker_reference_index", None) for source in sources.values())
         if reference_index:
             model_params.setdefault("speaker_reference_prefix_enabled", True)
-            reference_max_seconds = _cfg_get(
-                data_cfg, "speaker_reference_max_seconds", None
-            )
+            reference_max_seconds = _cfg_get(data_cfg, "speaker_reference_max_seconds", None)
             if reference_max_seconds is not None:
-                model_params.setdefault(
-                    "speaker_reference_max_seconds", float(reference_max_seconds)
-                )
+                model_params.setdefault("speaker_reference_max_seconds", float(reference_max_seconds))
 
         rate_buckets = _cfg_get(data_cfg, "speaking_rate_buckets", None) or []
         rate_buckets = [str(item) for item in rate_buckets]
@@ -287,9 +268,7 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
         if bool(_cfg_get(data_cfg, "quality_enabled", False)):
             raw_features = _cfg_get(data_cfg, "quality_features", None)
             if hasattr(raw_features, "items"):
-                quality_features = [
-                    str(feature) for feature, enabled in raw_features.items() if bool(enabled)
-                ]
+                quality_features = [str(feature) for feature, enabled in raw_features.items() if bool(enabled)]
             else:
                 quality_features = [str(item) for item in (raw_features or ())]
             raw_buckets = _cfg_get(data_cfg, "quality_buckets", None) or {}
@@ -299,9 +278,7 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
             }
             if quality_buckets and "quality_buckets" not in model_params:
                 model_params["quality_buckets"] = quality_buckets
-                model_params["quality_features"] = quality_features or list(
-                    quality_buckets.keys()
-                )
+                model_params["quality_features"] = quality_features or list(quality_buckets.keys())
             raw_dropout = _cfg_get(data_cfg, "quality_dropout", None)
             if raw_dropout is not None and "quality_dropout" not in model_params:
                 if hasattr(raw_dropout, "items"):
@@ -312,12 +289,8 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
         # Training configs name the marker-token flags after their data pipeline.
         background_enabled = _cfg_get(data_cfg, "speaker_embedding_origin_token_enabled", None)
         if background_enabled is not None:
-            model_params.setdefault(
-                "speaker_background_token_enabled", bool(background_enabled)
-            )
-        accurate_enabled = _cfg_get(
-            data_cfg, "speaker_embedding_cartesia_clone_source_token_enabled", None
-        )
+            model_params.setdefault("speaker_background_token_enabled", bool(background_enabled))
+        accurate_enabled = _cfg_get(data_cfg, "speaker_embedding_cartesia_clone_source_token_enabled", None)
         if accurate_enabled is not None:
             model_params.setdefault("accurate_mode_token_enabled", bool(accurate_enabled))
 
@@ -325,18 +298,9 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
             try:
                 from zonos3.tts.prompt import conditioned_text_vocab_size
 
-                quality_count = sum(
-                    len(buckets)
-                    for buckets in (model_params.get("quality_buckets") or {}).values()
-                )
-                background_count = (
-                    2 if model_params.get("speaker_background_token_enabled") else 0
-                )
-                accurate_count = (
-                    1
-                    if model_params.get("accurate_mode_token_enabled") and background_count
-                    else 0
-                )
+                quality_count = sum(len(buckets) for buckets in (model_params.get("quality_buckets") or {}).values())
+                background_count = 2 if model_params.get("speaker_background_token_enabled") else 0
+                accurate_count = 1 if model_params.get("accurate_mode_token_enabled") and background_count else 0
                 model_params["text_vocab"] = conditioned_text_vocab_size(
                     rate_count, quality_count, background_count, accurate_count
                 )
@@ -371,7 +335,7 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
             model_params = params["model"]
         else:
             model_params = params
-        spec = model_params.get("text_tokenizer_spec")  # RELEASE_HF_20261021: hf:// or checkpoint-relative tokenizer file
+        spec = model_params.get("text_tokenizer_spec")  # hf:// or checkpoint-relative tokenizer file
         if isinstance(spec, dict) and spec.get("path"):
             from zonos3.utils.release import resolve_tokenizer_path
 
@@ -391,16 +355,12 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
 
                     with open(config_yaml, "r") as f:
                         cfg = yaml.safe_load(f)
-                    _apply_data_sidecar(
-                        model_params, cfg.get("data") if isinstance(cfg, dict) else None
-                    )
+                    _apply_data_sidecar(model_params, cfg.get("data") if isinstance(cfg, dict) else None)
                 break
 
         _validate_model_type(model_params)
         _validate_text_conditioning(model_params)
-        result = Zonos3Config(
-            **{k: v for k, v in model_params.items() if hasattr(Zonos3Config, k)}
-        )
+        result = Zonos3Config(**{k: v for k, v in model_params.items() if hasattr(Zonos3Config, k)})
         logger.debug("Loaded Zonos3Config from params.json")
         return result
 
@@ -423,9 +383,7 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
                 _apply_data_sidecar(model_cfg, getattr(cfg, "data", None))
                 _validate_model_type(model_cfg)
                 _validate_text_conditioning(model_cfg)
-                result = Zonos3Config(
-                    **{k: v for k, v in model_cfg.items() if hasattr(Zonos3Config, k)}
-                )
+                result = Zonos3Config(**{k: v for k, v in model_cfg.items() if hasattr(Zonos3Config, k)})
                 logger.debug("Loaded Zonos3Config from config.yaml")
                 return result
             except ImportError:
@@ -439,15 +397,11 @@ def _load_zonos3_config(model_path: str) -> Zonos3Config:
                 _apply_data_sidecar(model_cfg, cfg.get("data") if isinstance(cfg, dict) else None)
                 _validate_model_type(model_cfg)
                 _validate_text_conditioning(model_cfg)
-                result = Zonos3Config(
-                    **{k: v for k, v in model_cfg.items() if hasattr(Zonos3Config, k)}
-                )
+                result = Zonos3Config(**{k: v for k, v in model_cfg.items() if hasattr(Zonos3Config, k)})
                 logger.debug("Loaded Zonos3Config from config.yaml (yaml)")
                 return result
 
-    raise ValueError(
-        f"Could not find config.yaml or params.json for zonos3 checkpoint at {model_path}"
-    )
+    raise ValueError(f"Could not find config.yaml or params.json for zonos3 checkpoint at {model_path}")
 
 
 def _is_zonos3_checkpoint(model_path: str) -> bool:
@@ -480,7 +434,3 @@ def _load_config(model_path: str) -> Zonos3Config:
 def cached_load_checkpoint_config(model_path: str) -> Zonos3Config:
     config = _load_config(model_path)
     return Zonos3Config(**config.to_dict())
-
-# CONDITION_ROWS_RUNTIME_20261016
-
-# CONDITION_FLAG_RUNTIME_20261017

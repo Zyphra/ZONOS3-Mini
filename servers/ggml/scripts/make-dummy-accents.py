@@ -12,17 +12,31 @@ read from the backbone GGUF.
 Usage:  uv run --package zonos3-tools python servers/ggml/scripts/make-dummy-accents.py \
             [--model tests/fixtures/dummy-zonos3.gguf] -o tests/fixtures/dummy-accents.gguf
 """
+
 from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import numpy as np
 from gguf import GGUFReader, GGUFWriter
 
 ARCH = "zonos3_accents"
-LINEAR_LEAVES = ("attn_q", "attn_k", "attn_v", "attn_output", "attn_gate", "gdn_in", "ffn_up", "ffn_gate", "ffn_down",
-                 "ffn_latent_down", "ffn_latent_up", "router")
+LINEAR_LEAVES = (
+    "attn_q",
+    "attn_k",
+    "attn_v",
+    "attn_output",
+    "attn_gate",
+    "gdn_in",
+    "ffn_up",
+    "ffn_gate",
+    "ffn_down",
+    "ffn_latent_down",
+    "ffn_latent_up",
+    "router",
+)
 
 
 def main():
@@ -31,22 +45,30 @@ def main():
     ap.add_argument("--model", default=os.path.join(here, "..", "tests", "fixtures", "dummy-zonos3.gguf"))
     ap.add_argument("-o", "--out", required=True)
     args = ap.parse_args()
+    sys.path.insert(0, os.path.join(here, "..", "..", "..", "tools"))
+    import convert_gguf
 
     reader = GGUFReader(args.model)
     shapes = {t.name: tuple(int(v) for v in reversed(t.shape.tolist())) for t in reader.tensors}  # numpy order
     del reader
 
-    linear = sorted(name[: -len(".weight")] for name, shape in shapes.items()
-                    if name.endswith(".weight") and len(shape) == 2
-                    and (name == "output.weight" or name.split(".")[-2] in LINEAR_LEAVES))
+    linear = sorted(
+        name[: -len(".weight")]
+        for name, shape in shapes.items()
+        if name.endswith(".weight")
+        and len(shape) == 2
+        and (name == "output.weight" or name.split(".")[-2] in LINEAR_LEAVES)
+    )
     moe_layers = sorted({int(name.split(".")[1]) for name in shapes if name.endswith("ffn_up_exps.weight")})
     rng = np.random.default_rng(1)
 
     def rnd(*shape, scale=0.05):
         return (rng.standard_normal(shape) * scale).astype(np.float32)
 
-    adapters = [("alpha", "zonos-accent-lora/2", 4, linear, moe_layers[:1], moe_layers[:2]),
-                ("beta", "zonos-accent-lora/1", 2, linear[::3] + ["output"], [], moe_layers[-1:])]
+    adapters = [
+        ("alpha", "zonos-accent-lora/2", 4, linear, moe_layers[:1], moe_layers[:2]),
+        ("beta", "zonos-accent-lora/1", 2, linear[::3] + ["output"], [], moe_layers[-1:]),
+    ]
     w = GGUFWriter(args.out, ARCH)
     w.add_string("general.name", "zonos3-dummy-accents")
     w.add_array(f"{ARCH}.names", [a[0] for a in adapters])
@@ -65,10 +87,7 @@ def main():
         for layer in router_layers:
             (experts,) = shapes[f"blk.{layer}.router_bias"]
             w.add_tensor(f"acc.{slot}.blk.{layer}.router_bias", rnd(experts, scale=0.5))
-    w.write_header_to_file()
-    w.write_kv_data_to_file()
-    w.write_tensors_to_file()
-    w.close()
+    convert_gguf.write_gguf(w)
     print(f"wrote {args.out}")
 
 

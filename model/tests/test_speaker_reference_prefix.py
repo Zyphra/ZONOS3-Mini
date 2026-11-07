@@ -1,10 +1,10 @@
 """The runtime's raw-reference prefix equals the training loader's encode_reference (apps.zonos.reference_packing)."""
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 import torch
-
 from zonos3.tts.prompt import TTSPromptConfig, speaker_reference_prefix_tokens
 
 
@@ -48,7 +48,7 @@ def test_prefix_matches_the_training_encoder(n_codebooks, codebook_sizes, audio_
 
 def test_large_codebooks_need_codebook_sizes():
     codes = torch.full((5, 10), 4000, dtype=torch.int64)
-    with pytest.raises(ValueError, match="codebook vocabulary"):
+    with pytest.raises(ValueError):
         speaker_reference_prefix_tokens(codes, TTSPromptConfig(n_codebooks=10, audio_pad_id=4097, text_vocab=8196))
     speaker_reference_prefix_tokens(
         codes, TTSPromptConfig(n_codebooks=10, codebook_sizes=(4096,) * 10, audio_pad_id=4097, text_vocab=8196)

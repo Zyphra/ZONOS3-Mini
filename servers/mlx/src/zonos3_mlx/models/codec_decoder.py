@@ -14,7 +14,7 @@ from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
-from zonos3.tts.delay import shear_up
+from zonos3.tts.stream import StreamDecoder
 
 from zonos3_mlx.gguf_io import GGUFFile, Weight, matmul
 
@@ -64,17 +64,18 @@ class Params:
 
 
 def _is_matrix(name: str, shape: tuple[int, ...]) -> bool:
-    return (len(shape) == 2 and name.endswith(".weight") and ".dw." not in name and "norm" not in name
-            and not name.startswith(("sem.", "res.")) and name != "head.mixer.weight")
+    return (
+        len(shape) == 2
+        and name.endswith(".weight")
+        and ".dw." not in name
+        and "norm" not in name
+        and not name.startswith(("sem.", "res."))
+        and name != "head.mixer.weight"
+    )
 
 
 def _identity(x: mx.array) -> mx.array:
     return x
-
-
-def bf16_round(x: mx.array) -> mx.array:
-    """A BF16 tensor boundary of the autocast encoder recipe: round to bfloat16, keep computing in float32."""
-    return x.astype(mx.bfloat16).astype(mx.float32)
 
 
 def causal_depthwise(x: mx.array, w: mx.array, b: mx.array | None) -> mx.array:
@@ -116,8 +117,11 @@ def windowed_attention(q: mx.array, k: mx.array, v: mx.array, context: int, scal
         kp = mx.arange(left, e)[None, :]
         diff = qp - kp
         mask = (diff >= 0) & (diff < context)
-        outs.append(mx.fast.scaled_dot_product_attention(q[None, :, a:e], k[None, :, left:e], v[None, :, left:e],
-                                                         scale=scale, mask=mask)[0])
+        outs.append(
+            mx.fast.scaled_dot_product_attention(
+                q[None, :, a:e], k[None, :, left:e], v[None, :, left:e], scale=scale, mask=mask
+            )[0]
+        )
     return outs[0] if len(outs) == 1 else mx.concatenate(outs, axis=1)
 
 
@@ -131,7 +135,7 @@ def moss_layer(P: Params, x: mx.array, p: str, hp: StageHP, ln_eps: float, rnd=_
     qkv = rnd(P.lin(p + ".qkv.weight", rnd(h))).reshape(T, 3, nh, hd).transpose(1, 2, 0, 3)  # [3, nh, T, hd]
     q = rnd(mx.fast.rope(qkv[0], hd, traditional=True, base=10000.0, scale=1.0, offset=0))
     k = rnd(mx.fast.rope(qkv[1], hd, traditional=True, base=10000.0, scale=1.0, offset=0))
-    o = rnd(windowed_attention(q, k, qkv[2], hp.context, hd ** -0.5).transpose(1, 0, 2).reshape(T, d))
+    o = rnd(windowed_attention(q, k, qkv[2], hp.context, hd**-0.5).transpose(1, 0, 2).reshape(T, d))
     x = x + rnd(P.lin(p + ".wo.weight", o)) * P.t[p + ".attn_scale"]
     h = _layer_norm(x, P.t[p + ".norm2.weight"], P.t[p + ".norm2.bias"], ln_eps)
     h = rnd(P.lin(p + ".ffn2.weight", rnd(_gelu(rnd(P.lin(p + ".ffn1.weight", rnd(h)))))))
@@ -278,38 +282,35 @@ class CodecDecoder:
         db = self.headroom_db if headroom_db is None else float(headroom_db)
         return float(10.0 ** (-db / 20.0))
 
-    def decode_rows(self, rows, *, prefill: np.ndarray | None, eos_frame: int | None, context_codes=None,
-                    audio_pad_id: int = 4097, overlap: int = 4) -> np.ndarray:
+    def decode_rows(
+        self,
+        rows,
+        *,
+        prefill: np.ndarray | None,
+        eos_frame: int | None,
+        context_codes=None,
+        audio_pad_id: int = 4097,
+        overlap: int = 4,
+    ) -> np.ndarray:
         """End-of-stream decode of generated rows (zonos3.reference.synth.decode_rows): the prefill rows open the
         stream, EOS is the earliest of the aligned EOS frame and every row's EOA column, the last ``overlap`` prefill
         rows are re-decoded with the rest, and the reference tail decodes as left context at the stream start."""
-        import torch
 
-        n_cb = self.n_codebooks
-        eoa = audio_pad_id - 1
-        buffer = [] if prefill is None else [[int(v) for v in r[:n_cb]] for r in np.asarray(prefill).tolist()]
-        n_prefill = len(buffer)
-        candidates = [] if eos_frame is None else [max(0, int(eos_frame)) + n_prefill]
+        def decode(codes: np.ndarray) -> np.ndarray:
+            if ((codes < 0) | (codes >= self.codebook_size)).any():
+                raise ValueError("decode rows hold non-codec tokens")
+            return self.decode(codes)
+
+        decoder = StreamDecoder(
+            decode,
+            n_codebooks=self.n_codebooks,
+            audio_pad_id=audio_pad_id,
+            hop=self.hop,
+            prefill_rows=prefill,
+            context_codes=context_codes,
+            mode="whole",
+            overlap_frames=overlap,
+        )
         for row in rows:
-            row_codes = [int(v) for v in np.asarray(row)[:n_cb].tolist()]
-            buffer.append(row_codes)
-            cols = [i for i, tok in enumerate(row_codes) if tok == eoa]
-            if cols:
-                candidates.append(max(0, len(buffer) - 1 - max(cols)))
-        total = len(buffer)
-        target = total - (n_cb - 1)
-        if candidates:
-            target = min(target, min(candidates))
-        if target <= n_prefill:
-            return np.zeros(0, dtype=np.float32)
-        start = n_prefill - min(overlap, n_prefill)
-        raw_end = min(target + n_cb - 1, total)
-        codes = shear_up(torch.tensor(buffer[start:raw_end], dtype=torch.int64), audio_pad_id)[: target - start]
-        codes = codes.numpy()
-        context = 0
-        if start == 0 and context_codes is not None and len(context_codes):
-            context = len(context_codes)
-            codes = np.concatenate([np.asarray(context_codes, dtype=np.int64).reshape(-1, n_cb), codes], axis=0)
-        if ((codes < 0) | (codes >= self.codebook_size)).any():
-            raise ValueError("decode rows hold non-codec tokens")
-        return self.decode(codes)[context * self.hop :]
+            decoder.push(row, eos_frame)
+        return decoder.finish()

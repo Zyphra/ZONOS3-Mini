@@ -62,7 +62,7 @@ is in `src/styles/mobile.css` (`@media (max-width: 760px)`, loaded after `styles
 ## Develop and build
 
 ```bash
-pnpm --dir studio install
+pnpm install                 # at the repo root: the pnpm workspace (studio, studio/mcp, servers/web)
 echo "ZONOS_SERVER=https://<server>" > studio/.env.local   # or export ZONOS_SERVER; /v1 and /v2 are proxied there
 pnpm --dir studio dev         # http://localhost:5173/ (the chooser), /studio, /lite
 pnpm --dir studio typecheck   # gen:api, then tsc
@@ -73,17 +73,17 @@ Three pages, three Vite entries: `index.html` (`src/home/`) is the chooser at `/
 `studio.html` (`src/main.tsx`) is the Voice Studio at `/studio`, and `lite.html` (`src/lite/`) is the lite page at
 `/lite`. The chooser passes its query on (`/?api=web` opens `/studio?api=web`) and shows both apps on every device,
 phones included. Every server maps `/<page>` to
-`<page>.html` (the studio serving rule of `../api/openapi.yaml`; Vite's dev and preview servers and Cloudflare's
+`<page>.html` (the studio serving rule of `../servers/api/openapi.yaml`; Vite's dev and preview servers and Cloudflare's
 static assets do the same).
 
 `studio/dist/` is committed so a checkout serves the studio without Node: every server serves it (pages uncached,
-hashed assets immutable; `--studio-dir` points elsewhere). The API contract is `../api/openapi.json`:
-`pnpm gen:api` (run by `build` and `typecheck`) regenerates `src/api/schema.ts` from it (committed with the spec), and
+hashed assets immutable, other files revalidated; `--studio-dir` points elsewhere). The API contract is `../servers/api/openapi.json`:
+`pnpm gen:api` (run by `build`, `typecheck` and `test`) regenerates the untracked `src/api/schema.ts` from it, and
 `src/api.ts` aliases its schemas and sends every JSON call through an `openapi-fetch` client typed by its `paths`;
 the streamed `/v2/generate` and the raw-body / binary routes (`/v2/speakers/{id}/preview`,
 `/v2/media/{sha256}`) stay on `fetch` / XHR. `openapi-typescript`
-drives the TypeScript 5 compiler API, which the native TypeScript 7 the app type-checks with lacks: `.pnpmfile.cjs`
-gives it its own TypeScript 5.
+drives the TypeScript 5 compiler API, which the native TypeScript 7 the app type-checks with lacks: the root
+`.pnpmfile.cjs` gives it its own TypeScript 5.
 
 Backends are detected at startup: **live** (server has `GET /v2/controls`), **fixture** (server answers but
 `/v2/controls` is 404: bundled controls, renders sent without steering fields), **web** (no server answered, but the
@@ -92,7 +92,7 @@ browser has WebGPU and the site serves the in-browser engine at `/web-engine/eng
 applies every control). Force one with `?api=live|fixture|offline|web` (`?engine=URL` points at another engine
 build); point a build at another server with `?server=https://…` (CORS is open). Every request goes through one
 transport (`fetch`, or the engine's `localFetch` on the web backend; `src/lib/web-engine.ts`, shared with the lite
-page). On a Hugging Face Space framed by huggingface.co (the ZeroGPU Space of `../space/`), that transport adds the
+page). On a Hugging Face Space framed by huggingface.co (the ZeroGPU Space of `../servers/space/`), that transport adds the
 visitor's ZeroGPU headers to `/v2/generate` (`src/lib/zerogpu.ts`: the `supports-zerogpu-headers` /
 `zerogpu-headers` handshake Gradio's client does), so renders count against the visitor's GPU quota.
 `pnpm dev` / `pnpm preview` serve the engine

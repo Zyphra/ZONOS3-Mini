@@ -1,6 +1,6 @@
 /**
  * The only module that talks to the ZONOS3 server. Everything else sees the contract types below, which alias the
- * schemas of the v2 API spec (`api/openapi.json`, generated into `./api/schema.ts` by `pnpm gen:api`).
+ * schemas of the v2 API spec (`servers/api/openapi.json`, generated into `./api/schema.ts` by `pnpm gen:api`).
  *
  * Backends (picked once by `connect()`):
  *  - live:    the server serves GET /v2/controls; requests carry `controls` / `control_spans`.
@@ -13,8 +13,6 @@
  *             Picked in `auto` when no server answers and the browser has WebGPU and the engine is deployed.
  * Force one with `?api=live|fixture|offline|web` (or VITE_ZONOS_API); point at another server with `?server=URL`.
  */
-import createClient from 'openapi-fetch';
-import type { Readable } from 'openapi-typescript-helpers';
 import type { components, paths } from './api/schema';
 import fixtureSpec from './fixtures/controls.json';
 import { fixtureSpeakers, syntheticEmbedding } from './fixtures/embeddings';
@@ -24,7 +22,9 @@ import * as fixturePron from './fixtures/phonemize';
 import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
-import { encodeNpy, encodeWav, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
+import { ApiError, bodyOf, createHttp, errorOf, MissingMedia, newSessionId, readError, readFloat32Stream, RevisionConflict } from './lib/http';
+import { wavBytes } from './lib/wav';
+import { encodeNpy, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
 import { onEncoderProgress, selectWebEngine, startWebEngine, transport, webEngineAvailable } from './lib/web-engine';
 import { bootProgress, encoderDownload } from './state/app';
 
@@ -185,29 +185,6 @@ export type EditRequest = Schemas['EditRequest'];
 export type EditTake = Schemas['EditTake'];
 export type EditResponse = Schemas['EditResponse'];
 
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly detail: string,
-  ) {
-    super(detail);
-  }
-}
-
-/** 409 from `PUT /v2/projects/{id}`: someone saved since `base_revision`; `revision` is the stored one (null: deleted). */
-export class RevisionConflict extends ApiError {
-  constructor(readonly revision: Revision | null) {
-    super(409, 'The project changed elsewhere since it was opened');
-  }
-}
-
-/** 400 from `PUT /v2/projects/{id}`: media the document names that the server lacks (upload them, retry). */
-export class MissingMedia extends ApiError {
-  constructor(readonly missing: string[]) {
-    super(400, `${missing.length} media file${missing.length === 1 ? ' is' : 's are'} missing on the server`);
-  }
-}
-
 // ── Configuration ─────────────────────────────────────────────────────────────────────────────────
 
 const params = new URLSearchParams(location.search);
@@ -221,94 +198,13 @@ export const SAMPLE_RATE = 44100;
 function sessionId(): string {
   let id = localStorage.getItem('zvs.session');
   if (!id) {
-    // crypto.randomUUID exists only in secure contexts (https, localhost); a cluster host over http has none.
-    id = typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    id = newSessionId();
     localStorage.setItem('zvs.session', id);
   }
   return id;
 }
 
-/**
- * Long POSTs the server answers in keep-alive form (`X-Keepalive: 1`): 200 at once, whitespace heartbeats, then the
- * JSON — an error as `{detail, status_code}`. A proxy in front (a Cloudflare quick tunnel drops requests silent for
- * 100 s) then never times them out.
- */
-const KEEPALIVE = /^\/v2\/edit(\/|$)/;
-
-const headers = (json = false): HeadersInit => ({
-  'X-TTS-Session-ID': sessionId(),
-  ...(json ? { 'Content-Type': 'application/json' } : {}),
-});
-
-/** An error response as a short message: the server's `detail`, never a proxy's HTML page. */
-function errorOf(status: number, statusText: string, text: string): ApiError {
-  try {
-    const body = JSON.parse(text);
-    const detail = body?.detail ?? body;
-    return new ApiError(typeof body?.status_code === 'number' ? body.status_code : status, typeof detail === 'string' ? detail : JSON.stringify(detail));
-  } catch {
-    if (status === 524 || status === 504 || status === 408) return new ApiError(status, `The server didn’t answer in time (proxy ${status}) — try again`);
-    if (/^\s*</.test(text) || !text.trim()) return new ApiError(status, status >= 500 ? `Server error (${status})` : `${status} ${statusText}`.trim());
-    return new ApiError(status, text.slice(0, 300));
-  }
-}
-
-/** A successful response's JSON; a keep-alive body carrying `status_code` ≥ 400 is the error it reports. */
-function bodyOf<T>(status: number, text: string): T {
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw /^\s*</.test(text) ? new ApiError(status, 'The server sent a web page instead of an answer (a proxy error?) — try again') : new ApiError(status, 'unreadable response');
-  }
-  const code = (body as { status_code?: unknown } | null)?.status_code;
-  if (typeof code === 'number' && code >= 400) throw errorOf(code, '', text);
-  return body as T;
-}
-
-async function fail(res: Response): Promise<never> {
-  let text = '';
-  try {
-    text = await res.text();
-  } catch {
-    /* body unreadable: the status line */
-  }
-  throw errorOf(res.status, res.statusText, text);
-}
-
-/** Every JSON route: typed by the spec's `paths`, with the session (and keep-alive) headers. */
-const client = createClient<paths>({ baseUrl: server, fetch: transport });
-client.use({
-  onRequest({ request, schemaPath }) {
-    request.headers.set('X-TTS-Session-ID', sessionId());
-    if (KEEPALIVE.test(schemaPath)) request.headers.set('X-Keepalive', '1');
-    return request;
-  },
-  async onResponse({ response }) {
-    // A proxy's web page instead of JSON, or a keep-alive 200 whose body reports an error: an ApiError.
-    if (!response.ok || response.status === 204) return undefined;
-    const text = await response.clone().text();
-    if (text) bodyOf<unknown>(response.status, text);
-    return undefined;
-  },
-});
-
-/** A client call's error response (openapi-fetch parsed its body when it was JSON) as ApiError. */
-const httpError = (response: Response, error: unknown): ApiError =>
-  errorOf(response.status, response.statusText, typeof error === 'string' || error === undefined ? (error ?? '') : JSON.stringify(error));
-
-/**
- * The data of a client call, typed as the spec schema `T` (an HTTP error as ApiError). openapi-fetch types data as
- * `Readable<…>`, which turns tuples into arrays and drops null-typed keys: matching it against `Readable<T>` keeps
- * the route ↔ schema check while callers get the schema's own type.
- */
-async function ok<T>(call: Promise<{ data?: Readable<T>; error?: unknown; response: Response }>): Promise<T> {
-  const { data, error, response } = await call;
-  if (!response.ok) throw httpError(response, error);
-  return data as T;
-}
+const { client, headers, ok, send } = createHttp<paths>({ baseUrl: server, session: sessionId, fetch: transport });
 
 // ── Backend detection ─────────────────────────────────────────────────────────────────────────────
 
@@ -500,10 +396,10 @@ export async function getPreview(speaker: Speaker): Promise<ArrayBuffer> {
     const text = offlinePreviewText(speaker);
     const { pcm, words } = synthesizeWords(current().spec, { text, embedding, seed: 7 });
     fixtureEdit.remember(pcm, SAMPLE_RATE, { text, words, embedding });
-    return encodeWav(pcm, SAMPLE_RATE);
+    return wavBytes(pcm, SAMPLE_RATE).buffer;
   }
   const res = await transport(`${server}/v2/speakers/${encodeURIComponent(speaker.id)}/preview`, { headers: headers() });
-  if (!res.ok) await fail(res);
+  if (!res.ok) throw await readError(res);
   return res.arrayBuffer();
 }
 
@@ -558,33 +454,26 @@ export async function generate(req: GenerateRequest, opts: GenerateOptions = {})
   if (!b.tags || (body.tag_cfg_scale ?? 1) <= 1) delete body.tag_cfg_scale;
   if (b.kind === 'offline' || b.tags?.fixture) return offlineGenerate(body, opts, t0);
 
-  const res = await transport(`${server}/v2/generate`, { method: 'POST', headers: headers(true), body: JSON.stringify(body), signal: opts.signal });
-  if (!res.ok) await fail(res);
+  const res = await transport(`${server}/v2/generate`, { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body), signal: opts.signal });
+  if (!res.ok) throw await readError(res);
   const spanFollow: SpanFollow | undefined = body.control_spans?.length ? (res.headers.get('X-Control-Span-Follow') === 'reading' ? 'reading' : 'rate') : undefined;
   const sr = Number(res.headers.get('X-Audio-Sample-Rate')) || SAMPLE_RATE;
   if (!res.body) throw new ApiError(502, 'Empty audio stream');
 
-  const reader = res.body.getReader();
   const chunks: Float32Array[] = [];
-  let carry = new Uint8Array(0);
   let total = 0;
   let ttfbMs = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!ttfbMs) ttfbMs = performance.now() - t0;
-    const merged = new Uint8Array(carry.length + value.length);
-    merged.set(carry);
-    merged.set(value, carry.length);
-    const aligned = merged.length - (merged.length % 4);
-    if (aligned) {
-      const chunk = new Float32Array(merged.buffer.slice(0, aligned));
+  await readFloat32Stream(
+    res.body,
+    (chunk) => {
       chunks.push(chunk);
       total += chunk.length;
       opts.onChunk?.(chunk, sr);
-    }
-    carry = merged.slice(aligned);
-  }
+    },
+    () => {
+      if (!ttfbMs) ttfbMs = performance.now() - t0;
+    },
+  );
   const pcm = new Float32Array(total);
   let o = 0;
   for (const c of chunks) {
@@ -717,19 +606,24 @@ export function getProject(id: string): Promise<ServerProject> {
 /** Save a project; `base_revision` is the revision it was loaded at (null: a new project). 409 → RevisionConflict. */
 export async function putProject(id: string, body: ProjectPut): Promise<ProjectSaved> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.put(id, body));
-  const { data, error, response } = await client.PUT('/v2/projects/{project_id}', { ...projectParams(id), body });
-  if (data) return data;
+  const { response, text } = await send(client.PUT('/v2/projects/{project_id}', { ...projectParams(id), body }));
+  if (response.ok) return bodyOf<ProjectSaved>(response.status, text);
   // 409 / 400 carry the spec's Error body with `revision` / `missing`.
-  const err = (typeof error === 'object' && error ? error : {}) as Partial<Schemas['Error']>;
+  let err: Partial<Schemas['Error']> = {};
+  try {
+    err = JSON.parse(text) ?? {};
+  } catch {
+    /* not JSON: errorOf below */
+  }
   if (response.status === 409) throw new RevisionConflict(err.revision ?? null);
   if (response.status === 400 && err.missing) throw new MissingMedia(err.missing);
-  throw httpError(response, error);
+  throw errorOf(response.status, response.statusText, text);
 }
 
 export async function deleteProject(id: string): Promise<void> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.remove(id));
-  const { error, response } = await client.DELETE('/v2/projects/{project_id}', projectParams(id));
-  if (!response.ok && response.status !== 404) throw httpError(response, error);
+  const { response, text } = await send(client.DELETE('/v2/projects/{project_id}', projectParams(id)));
+  if (!response.ok && response.status !== 404) throw errorOf(response.status, response.statusText, text);
 }
 
 /** Whether the server holds media `hash` (HEAD: 200 / 404). */
@@ -737,14 +631,14 @@ export async function hasMedia(hash: string): Promise<boolean> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.hasMedia(hash));
   const res = await transport(mediaUrl(hash), { method: 'HEAD', headers: headers() });
   if (res.status === 404) return false;
-  if (!res.ok) await fail(res);
+  if (!res.ok) throw await readError(res);
   return true;
 }
 
 export async function getMedia(hash: string, type?: string): Promise<Blob> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.getMedia(hash));
   const res = await transport(mediaUrl(hash), { headers: headers() });
-  if (!res.ok) await fail(res);
+  if (!res.ok) throw await readError(res);
   const blob = await res.blob();
   // The stored type when the server kept one, else the document's.
   return type && blob.type !== type ? new Blob([blob], { type }) : blob;
@@ -753,6 +647,6 @@ export async function getMedia(hash: string, type?: string): Promise<Blob> {
 /** Upload media under its SHA-256 (the server checks it; idempotent: 201 stored, 200 already held). */
 export async function putMedia(hash: string, blob: Blob): Promise<void> {
   if (projectsFixture()) return viaFixture(() => fixtureProjects.putMedia(hash, blob));
-  const res = await transport(mediaUrl(hash), { method: 'PUT', headers: { ...headers(), 'Content-Type': blob.type || 'application/octet-stream' }, body: blob });
-  if (!res.ok) await fail(res);
+  const res = await transport(mediaUrl(hash), { method: 'PUT', headers: headers({ 'Content-Type': blob.type || 'application/octet-stream' }), body: blob });
+  if (!res.ok) throw await readError(res);
 }

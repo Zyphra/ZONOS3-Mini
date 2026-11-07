@@ -12,7 +12,6 @@ import unittest
 from types import SimpleNamespace
 
 import torch
-
 from zonos3.tts.laci import (
     DURATION_MIN_STALL_FRAMES,
     PACE_MAX_RETRIES,
@@ -93,7 +92,7 @@ class DetectorTest(unittest.TestCase):
 
     def test_skip(self):
         det = detector()
-        before = list(reading(0, 40))            # bins 0-4 fully read, frontier 4
+        before = list(reading(0, 40))  # bins 0-4 fully read, frontier 4
         for row, pos in before:
             self.assertIsNone(det.observe(row, pos))
         self.assertEqual(det.frontier, 4)
@@ -108,7 +107,7 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(f.detect_row, detect_row)
         share = det.pace_tok() * CFG.bin_tokens
         self.assertLessEqual(f.detect_row - jump_row, CFG.cover_frac * share)
-        self.assertEqual(det.frontier, 4)         # the frontier did not advance
+        self.assertEqual(det.frontier, 4)  # the frontier did not advance
 
     def test_skip_rollback_clamped(self):
         det = detector()
@@ -133,7 +132,7 @@ class DetectorTest(unittest.TestCase):
         det = detector()
         last_advance = None
         frontier = det.frontier
-        for row, pos in reading(0, 32):           # frontier reaches bin 3
+        for row, pos in reading(0, 32):  # frontier reaches bin 3
             self.assertIsNone(det.observe(row, pos))
             if det.frontier != frontier:
                 frontier, last_advance = det.frontier, row
@@ -143,7 +142,7 @@ class DetectorTest(unittest.TestCase):
         row = 3 + 32 * FPT
         f = None
         while f is None:
-            f = det.observe(row, 31)              # parked in bin 3
+            f = det.observe(row, 31)  # parked in bin 3
             if f is None:
                 self.assertLessEqual(row - last_advance, limit)
             row += 1
@@ -176,15 +175,17 @@ class DetectorTest(unittest.TestCase):
                 b.observe(row, pos)
         for det in (a, b):
             self.assertEqual(det.counts, b.counts)
-        self.assertEqual((a.counts, a.frontier, a.pace_tok(), a.stop_row()),
-                         (b.counts, b.frontier, b.pace_tok(), b.stop_row()))
+        self.assertEqual(
+            (a.counts, a.frontier, a.pace_tok(), a.stop_row()), (b.counts, b.frontier, b.pace_tok(), b.stop_row())
+        )
         self.assertEqual(a.last_pos_before(k), stream[149][1])
         # re-observing the same rows leaves them identical, through to the end
         for row, pos in stream[150:]:
             self.assertIsNone(a.observe(row, pos))
             self.assertIsNone(b.observe(row, pos))
-        self.assertEqual((a.counts, a.frontier, a.pace_tok(), a.stop_row()),
-                         (b.counts, b.frontier, b.pace_tok(), b.stop_row()))
+        self.assertEqual(
+            (a.counts, a.frontier, a.pace_tok(), a.stop_row()), (b.counts, b.frontier, b.pace_tok(), b.stop_row())
+        )
 
     def test_truncate_clears_done(self):
         det = detector()
@@ -263,7 +264,7 @@ class DetectorTest(unittest.TestCase):
         self.assertIsInstance(f, Failure)
         # one unread bin is tolerated: EOS may fire while the tail is being read
         det = detector()
-        for row, pos in reading(0, 96):           # frontier = nb-2 = 11
+        for row, pos in reading(0, 96):  # frontier = nb-2 = 11
             det.observe(row, pos)
         self.assertEqual(det.frontier, det.nb - 2)
         self.assertIsNone(det.on_eos(row + 1))
@@ -323,8 +324,14 @@ HEADS = LaciHeads(heads=((7, 4),), radius={(7, 4): 3}, frames_per_token=float(FP
 
 
 def session(cfg=CFG, max_tokens=4000, seed=0):
-    return LaciSession(heads=HEADS, cfg=cfg, prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32), seed=seed,
-                       max_tokens=max_tokens, n_codebooks=C)
+    return LaciSession(
+        heads=HEADS,
+        cfg=cfg,
+        prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32),
+        seed=seed,
+        max_tokens=max_tokens,
+        n_codebooks=C,
+    )
 
 
 def frame(tag):
@@ -567,9 +574,19 @@ EXT = RateBuckets(index=2, edges=(8.4, 9.2, *EDGES, 23.3), n_buckets=10, first=-
 
 
 def paced_session(target, adjust_rate=True, bucket=4, cfg=CFG, rates=RATES, rate_deltas=None):
-    return LaciSession(heads=HEADS, cfg=cfg, prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32), seed=0,
-                       max_tokens=4000, n_codebooks=C, duration=DurationTarget(target, adjust_rate), rates=rates,
-                       condition_values=[10, 10, rates.row(bucket)], bucket=bucket, rate_deltas=rate_deltas)
+    return LaciSession(
+        heads=HEADS,
+        cfg=cfg,
+        prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32),
+        seed=0,
+        max_tokens=4000,
+        n_codebooks=C,
+        duration=DurationTarget(target, adjust_rate),
+        rates=rates,
+        condition_values=[10, 10, rates.row(bucket)],
+        bucket=bucket,
+        rate_deltas=rate_deltas,
+    )
 
 
 class DurationSessionTest(unittest.TestCase):
@@ -599,8 +616,9 @@ class DurationSessionTest(unittest.TestCase):
 
     def test_emitted_rows_are_never_rolled_back_with_a_duration_target(self):
         def make(rng, cfg):
-            return paced_session(rng.choice([150, 300, 450, 700]), adjust_rate=rng.random() < 0.8,
-                                 bucket=rng.randint(0, 9), cfg=cfg)
+            return paced_session(
+                rng.choice([150, 300, 450, 700]), adjust_rate=rng.random() < 0.8, bucket=rng.randint(0, 9), cfg=cfg
+            )
 
         self.assertGreater(random_sessions(self, make), 20)
 
@@ -661,16 +679,30 @@ class DurationSessionTest(unittest.TestCase):
         heads = LaciHeads(heads=((7, 4),), radius={(7, 4): 3}, frames_per_token=1.0)
         clean = [p for _, p in reading(0, TEXT_LEN, start_row=0, fpt=1)] + [TEXT_LEN - 1] * 30
         held = clean[:30] + [29] * 35 + clean[30:]
-        plain = LaciSession(heads=heads, cfg=CFG, prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32), seed=0,
-                            max_tokens=4000, n_codebooks=C)
+        plain = LaciSession(
+            heads=heads,
+            cfg=CFG,
+            prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32),
+            seed=0,
+            max_tokens=4000,
+            n_codebooks=C,
+        )
         run_attempt(plain, held)
         self.assertIsNone(plain.finish_attempt())
         self.assertEqual(plain.failures, [])
 
         def timed():
-            return LaciSession(heads=heads, cfg=CFG, prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32),
-                               seed=0, max_tokens=4000, n_codebooks=C, duration=DurationTarget(100), rates=RATES,
-                               condition_values=[10, 10, 4])
+            return LaciSession(
+                heads=heads,
+                cfg=CFG,
+                prefill_rows=torch.full((P, C + 1), -1, dtype=torch.int32),
+                seed=0,
+                max_tokens=4000,
+                n_codebooks=C,
+                duration=DurationTarget(100),
+                rates=RATES,
+                condition_values=[10, 10, 4],
+            )
 
         s = timed()
         run_attempt(s, held)

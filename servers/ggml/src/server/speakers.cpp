@@ -8,6 +8,8 @@
 
 #include "audio-decode.h"
 #include "model-paths.h"
+#include "npy.h"
+#include "wav.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -30,7 +32,9 @@ using json = nlohmann::json;
 static const char * NO_SESSION = "Cached speaker operations require the X-TTS-Session-ID header.";
 
 // The registry's reference clip limit (seconds of uploaded or default-voice audio).
-static int reference_seconds() { return (int) zonos3_generation().reference_audio_max_seconds; }
+static int reference_seconds() {
+    return (int) zonos3_generation().reference_audio_max_seconds;
+}
 
 // R7: reference codes keep their first reference_max_frames frames (the GGUF servers' reference prefix).
 static void keep_reference_prefix(const ServerState & s, std::vector<int32_t> & codes) {
@@ -39,20 +43,27 @@ static void keep_reference_prefix(const ServerState & s, std::vector<int32_t> & 
 }
 
 std::vector<std::string> checkpoint_speaker_modes(const ServerState & s) {
-    std::vector<std::string> modes = {"reference"};   // the release architecture carries the raw reference prefix
+    std::vector<std::string> modes = {"reference"}; // the release architecture carries the raw reference prefix
     if (s.model.hp.speaker_dim > 0) modes.push_back("embedding");
     return modes;
 }
 
-bool reference_audio_available(const ServerState & s) { return !s.encoder_path.empty() && !s.teacher_path.empty(); }
-bool speaker_encoder_available(const ServerState & s) { return !s.spk_path.empty(); }
+bool reference_audio_available(const ServerState & s) {
+    return !s.encoder_path.empty() && !s.teacher_path.empty();
+}
+bool speaker_encoder_available(const ServerState & s) {
+    return !s.spk_path.empty();
+}
 
 // The modes a voice supports: an embedding voice the speaker row only; an audio voice every checkpoint mode its
 // companions (or shipped <stem>.codes.npy / <stem>.embedding.npy) can compute.
 static std::vector<std::string> voice_modes(const ServerState & s, const Speaker & sp) {
     std::vector<std::string> out;
     for (const std::string & m : checkpoint_speaker_modes(s)) {
-        if (sp.source_type == "embedding") { if (m == "embedding") out.push_back(m); continue; }
+        if (sp.source_type == "embedding") {
+            if (m == "embedding") out.push_back(m);
+            continue;
+        }
         if (m == "embedding" && (speaker_encoder_available(s) || !sp.embedding_path.empty() || !sp.embedding.empty())) out.push_back(m);
         if (m == "reference" && (reference_audio_available(s) || !sp.codes_path.empty() || !sp.codes.empty())) out.push_back(m);
     }
@@ -85,11 +96,7 @@ static bool is_audio_ext(const std::string & ext) {
     return std::find(exts.begin(), exts.end(), lower_ascii(ext)) != exts.end();
 }
 
-static bool ends_with(const std::string & s, const std::string & suffix) {
-    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-// sgl _default_voice_source_type: audio files and .npy/.npz embeddings; an audio voice's .codes.npy and
+// zonos3.server.voices.voice_source_type: audio files and .npy/.npz embeddings; an audio voice's .codes.npy and
 // .embedding.npy sidecars are no voice.
 static const char * default_source_type(const fs::path & p) {
     const std::string name = lower_ascii(p.filename().string());
@@ -102,7 +109,8 @@ static const char * default_source_type(const fs::path & p) {
 
 static std::string default_label(const fs::path & p) {
     std::string label = p.stem().string();
-    for (char & c : label) if (c == '_' || c == '-') c = ' ';
+    for (char & c : label)
+        if (c == '_' || c == '-') c = ' ';
     label = strip(label);
     return label.empty() ? p.filename().string() : label;
 }
@@ -119,12 +127,21 @@ static std::optional<std::string> read_transcript(const fs::path & p) {
 
 static void refresh_default_speakers_locked(ServerState & s) {
     std::map<std::string, Speaker> current;
-    if (s.default_voice_dir.empty()) { s.default_speakers.clear(); return; }
+    if (s.default_voice_dir.empty()) {
+        s.default_speakers.clear();
+        return;
+    }
     std::error_code ec;
     const fs::path given(s.default_voice_dir);
-    if (!fs::is_directory(given, ec)) { s.default_speakers.clear(); return; }
+    if (!fs::is_directory(given, ec)) {
+        s.default_speakers.clear();
+        return;
+    }
     const fs::path root = fs::canonical(given, ec);
-    if (ec) { s.default_speakers.clear(); return; }
+    if (ec) {
+        s.default_speakers.clear();
+        return;
+    }
     std::vector<fs::path> files;
     for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
         if (it->is_regular_file(ec)) files.push_back(it->path());
@@ -143,12 +160,18 @@ static void refresh_default_speakers_locked(ServerState & s) {
         sp.original_name = resolved.filename().string();
         sp.transcript = read_transcript(resolved);
         sp.is_default = true;
-        if (sp.source_type == "audio") {   // shipped sidecars beside the clip: <stem>.codes.npy, <stem>.embedding.npy
+        if (sp.source_type == "audio") { // shipped sidecars beside the clip: <stem>.codes.npy, <stem>.embedding.npy
             fs::path codes = resolved, emb = resolved;
             codes.replace_extension(".codes.npy");
             emb.replace_extension(".embedding.npy");
-            if (fs::is_regular_file(codes, ec)) { sp.codes_path = codes.string(); sp.codes_mtime = file_mtime(codes); }
-            if (fs::is_regular_file(emb, ec)) { sp.embedding_path = emb.string(); sp.embedding_mtime = file_mtime(emb); }
+            if (fs::is_regular_file(codes, ec)) {
+                sp.codes_path = codes.string();
+                sp.codes_mtime = file_mtime(codes);
+            }
+            if (fs::is_regular_file(emb, ec)) {
+                sp.embedding_path = emb.string();
+                sp.embedding_mtime = file_mtime(emb);
+            }
         }
         auto old = s.default_speakers.find(sp.id);
         if (old != s.default_speakers.end() && old->second.path == sp.path && old->second.mtime == sp.mtime &&
@@ -168,151 +191,86 @@ static void refresh_default_speakers_locked(ServerState & s) {
 
 namespace {
 
-uint32_t le32(const uint8_t * p) { return p[0] | (uint32_t) p[1] << 8 | (uint32_t) p[2] << 16 | (uint32_t) p[3] << 24; }
-uint16_t le16(const uint8_t * p) { return (uint16_t) (p[0] | p[1] << 8); }
-
-float half_to_float(uint16_t h) {
-    const uint32_t sign = (uint32_t) (h & 0x8000) << 16;
-    int exp = (h >> 10) & 0x1F;
-    uint32_t mant = h & 0x3FF, bits;
-    if (exp == 0) {
-        if (mant == 0) bits = sign;
-        else {
-            exp = 1;
-            while (!(mant & 0x400)) { mant <<= 1; --exp; }
-            mant &= 0x3FF;
-            bits = sign | (uint32_t) (exp + 112) << 23 | mant << 13;
-        }
-    } else if (exp == 31) bits = sign | 0x7F800000u | mant << 13;
-    else bits = sign | (uint32_t) (exp + 112) << 23 | mant << 13;
-    float f;
-    memcpy(&f, &bits, 4);
-    return f;
+uint32_t le32(const uint8_t * p) {
+    return p[0] | (uint32_t) p[1] << 8 | (uint32_t) p[2] << 16 | (uint32_t) p[3] << 24;
 }
-
-struct NpyArray { std::vector<int64_t> shape; std::vector<double> data; };
-
-// One .npy payload (numpy.lib.format, versions 1-3) as doubles; false when it is not a plain numeric array.
-bool parse_npy(const uint8_t * p, size_t n, NpyArray & out, std::string & why) {
-    if (n < 10 || memcmp(p, "\x93NUMPY", 6) != 0) { why = "not an NPY payload"; return false; }
-    const int major = p[6];
-    size_t hlen, off;
-    if (major == 1) { hlen = le16(p + 8); off = 10; }
-    else if ((major == 2 || major == 3) && n >= 12) { hlen = le32(p + 8); off = 12; }
-    else { why = "unsupported NPY version"; return false; }
-    if (off + hlen > n) { why = "truncated NPY header"; return false; }
-    const std::string header((const char *) p + off, hlen);
-    off += hlen;
-    auto field = [&](const char * key) -> size_t {
-        const size_t k = header.find(std::string("'") + key + "'");
-        return k == std::string::npos ? k : header.find(':', k);
-    };
-    const size_t d = field("descr"), f = field("fortran_order"), sh = field("shape");
-    if (d == std::string::npos || f == std::string::npos || sh == std::string::npos) { why = "invalid NPY header"; return false; }
-    const size_t q = header.find_first_not_of(" ", d + 1);
-    if (q == std::string::npos || (header[q] != '\'' && header[q] != '"')) { why = "structured NPY arrays are not supported"; return false; }
-    const size_t qe = header.find(header[q], q + 1);
-    const std::string descr = header.substr(q + 1, qe - q - 1);
-    const bool fortran = header.compare(header.find_first_not_of(" ", f + 1), 4, "True") == 0;
-    const size_t ps = header.find('(', sh), pe = header.find(')', sh);
-    if (ps == std::string::npos || pe == std::string::npos) { why = "invalid NPY shape"; return false; }
-    int64_t count = 1;
-    for (size_t i = ps + 1; i < pe;) {
-        if (!isdigit((unsigned char) header[i])) { ++i; continue; }
-        int64_t v = 0;
-        while (i < pe && isdigit((unsigned char) header[i])) v = v * 10 + (header[i++] - '0');
-        out.shape.push_back(v);
-        count *= v;
-    }
-    if (descr.size() < 3 || (descr[0] != '<' && descr[0] != '|' && descr[0] != '=')) { why = "big-endian NPY data"; return false; }
-    const char kind = descr[1];
-    const int bytes = atoi(descr.c_str() + 2);
-    if (!((kind == 'f' && (bytes == 2 || bytes == 4 || bytes == 8)) ||
-          ((kind == 'i' || kind == 'u') && (bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8)) ||
-          (kind == 'b' && bytes == 1))) { why = "unsupported NPY dtype " + descr; return false; }
-    if (count < 0 || off + (size_t) count * bytes > n) { why = "truncated NPY data"; return false; }
-    std::vector<double> flat((size_t) count);
-    for (int64_t i = 0; i < count; ++i) {
-        const uint8_t * e = p + off + (size_t) i * bytes;
-        double v;
-        if (kind == 'f') {
-            if (bytes == 2) v = half_to_float(le16(e));
-            else if (bytes == 4) { float t; memcpy(&t, e, 4); v = t; }
-            else memcpy(&v, e, 8);
-        } else {
-            uint64_t u = 0;
-            for (int b = 0; b < bytes; ++b) u |= (uint64_t) e[b] << (8 * b);
-            if (kind == 'i' && bytes < 8 && (u >> (8 * bytes - 1)) & 1) u |= ~0ull << (8 * bytes);
-            v = kind == 'i' ? (double) (int64_t) u : (double) u;
-        }
-        flat[(size_t) i] = v;
-    }
-    if (fortran && out.shape.size() > 1) {   // reorder to C order
-        std::vector<double> c(flat.size());
-        const size_t nd = out.shape.size();
-        std::vector<int64_t> idx(nd, 0);
-        for (size_t lin = 0; lin < flat.size(); ++lin) {
-            size_t fpos = 0, stride = 1;
-            for (size_t k = 0; k < nd; ++k) { fpos += (size_t) idx[k] * stride; stride *= (size_t) out.shape[k]; }
-            c[lin] = flat[fpos];
-            for (size_t k = nd; k-- > 0;) { if (++idx[k] < out.shape[k]) break; idx[k] = 0; }
-        }
-        flat.swap(c);
-    }
-    out.data = std::move(flat);
-    return true;
+uint16_t le16(const uint8_t * p) {
+    return (uint16_t) (p[0] | p[1] << 8);
 }
 
 // The stored (uncompressed, numpy.savez) members of a zip archive: name -> payload.
 bool parse_npz(const std::vector<uint8_t> & z, std::vector<std::pair<std::string, std::vector<uint8_t>>> & members,
                std::string & why) {
-    if (z.size() < 22) { why = "not a zip archive"; return false; }
+    if (z.size() < 22) {
+        why = "not a zip archive";
+        return false;
+    }
     size_t eocd = std::string::npos;
     for (size_t i = z.size() - 22 + 1; i-- > 0 && z.size() - i <= 22 + 65535;)
-        if (le32(&z[i]) == 0x06054b50) { eocd = i; break; }
-    if (eocd == std::string::npos) { why = "not a zip archive"; return false; }
+        if (le32(&z[i]) == 0x06054b50) {
+            eocd = i;
+            break;
+        }
+    if (eocd == std::string::npos) {
+        why = "not a zip archive";
+        return false;
+    }
     const size_t entries = le16(&z[eocd + 10]);
     size_t cd = le32(&z[eocd + 16]);
     for (size_t e = 0; e < entries; ++e) {
-        if (cd + 46 > z.size() || le32(&z[cd]) != 0x02014b50) { why = "corrupt zip directory"; return false; }
+        if (cd + 46 > z.size() || le32(&z[cd]) != 0x02014b50) {
+            why = "corrupt zip directory";
+            return false;
+        }
         const uint16_t method = le16(&z[cd + 10]);
         const uint32_t csize = le32(&z[cd + 20]);
         const uint16_t name_len = le16(&z[cd + 28]), extra_len = le16(&z[cd + 30]), comment_len = le16(&z[cd + 32]);
         const uint32_t local = le32(&z[cd + 42]);
         const std::string name((const char *) &z[cd + 46], name_len);
         cd += 46 + name_len + extra_len + comment_len;
-        if (local + 30 > z.size() || le32(&z[local]) != 0x04034b50) { why = "corrupt zip entry"; return false; }
+        if (local + 30 > z.size() || le32(&z[local]) != 0x04034b50) {
+            why = "corrupt zip entry";
+            return false;
+        }
         const size_t data = local + 30 + le16(&z[local + 26]) + le16(&z[local + 28]);
-        if (method != 0) { why = "compressed .npz archives (numpy.savez_compressed) are not supported; use numpy.savez or .npy"; return false; }
-        if (data + csize > z.size()) { why = "truncated zip entry"; return false; }
+        if (method != 0) {
+            why = "compressed .npz archives (numpy.savez_compressed) are not supported; use numpy.savez or .npy";
+            return false;
+        }
+        if (data + csize > z.size()) {
+            why = "truncated zip entry";
+            return false;
+        }
         members.emplace_back(name, std::vector<uint8_t>(z.begin() + data, z.begin() + data + csize));
     }
     return true;
 }
 
-}  // namespace
+} // namespace
 
-// sgl _load_embedding_vector: a .npy, or a .npz with an `emb` array (or exactly one array); squeezed; (D,) or (N, D)
+// zonos3.reference.synth.load_embedding_vector: a .npy, or a .npz with an `emb` array (or exactly one array); squeezed; (D,) or (N, D)
 // averaged over rows; dimension checked. Throws HttpError 400.
 static std::vector<float> load_embedding_vector(const std::vector<uint8_t> & bytes, int expected_dim,
                                                 const std::optional<std::string> & file_name) {
     const std::string desc = file_name && !file_name->empty() ? *file_name : "Speaker embedding file";
     const std::string invalid = desc + " must be a valid .npy or .npz file saved without pickle.";
-    NpyArray arr;
+    npy::Array arr;
     std::string why;
     if (bytes.size() >= 4 && bytes[0] == 'P' && bytes[1] == 'K') {
         std::vector<std::pair<std::string, std::vector<uint8_t>>> members;
         if (!parse_npz(bytes, members, why)) fail(400, invalid + " (" + why + ")");
         const std::vector<uint8_t> * pick = nullptr;
-        for (auto & [name, payload] : members) if (name == "emb.npy") pick = &payload;
+        for (auto & [name, payload] : members)
+            if (name == "emb.npy") pick = &payload;
         if (!pick && members.size() == 1) pick = &members[0].second;
         if (!pick) fail(400, "Embedding archive must contain an 'emb' array or exactly one array.");
-        if (!parse_npy(pick->data(), pick->size(), arr, why)) fail(400, invalid);
-    } else if (!parse_npy(bytes.data(), bytes.size(), arr, why)) {
+        if (!npy::parse(pick->data(), pick->size(), arr, why)) fail(400, invalid);
+    } else if (!npy::parse(bytes.data(), bytes.size(), arr, why)) {
         fail(400, invalid);
     }
     std::vector<int64_t> shape;
-    for (int64_t d : arr.shape) if (d != 1) shape.push_back(d);
+    for (int64_t d : arr.shape)
+        if (d != 1) shape.push_back(d);
     std::vector<float> vec;
     if (shape.size() == 1) {
         vec.assign(arr.data.begin(), arr.data.end());
@@ -321,7 +279,7 @@ static std::vector<float> load_embedding_vector(const std::vector<uint8_t> & byt
         const int64_t rows = shape[0], dim = shape[1];
         vec.assign((size_t) dim, 0.0f);
         for (int64_t j = 0; j < dim; ++j) {
-            float acc = 0.0f;   // numpy float32 mean: accumulate in float32
+            float acc = 0.0f; // numpy float32 mean: accumulate in float32
             for (int64_t i = 0; i < rows; ++i) acc += (float) arr.data[(size_t) (i * dim + j)];
             vec[(size_t) j] = acc / (float) rows;
         }
@@ -333,7 +291,7 @@ static std::vector<float> load_embedding_vector(const std::vector<uint8_t> & byt
     }
     if ((int) vec.size() != expected_dim)
         fail(400, "Reference embedding dimension mismatch. Model expects " + std::to_string(expected_dim) +
-                  ", but loaded file has " + std::to_string(vec.size()) + ".");
+                      ", but loaded file has " + std::to_string(vec.size()) + ".");
     return vec;
 }
 
@@ -369,7 +327,7 @@ std::vector<float> decode_audio_bytes(const std::vector<uint8_t> & bytes, int ma
     if (!ok || !closed) fail(500, "failed to write a temporary audio file");
     if (pcm.empty())
         fail(400, "could not decode the reference audio (any container ffmpeg reads, at most " + std::to_string(max_seconds) +
-                  " seconds)");
+                      " seconds)");
     return pcm;
 }
 
@@ -414,7 +372,10 @@ static void embed_speaker_locked(ServerState & s, const std::vector<float> & pcm
     if (!speaker_encoder_available(s))
         fail(400, "speaker-embedding cloning of audio requires spk-encoder.gguf; supply --spk-encoder");
     if (!s.spk_loaded) {
-        if (!spk_load(s.spk, s.spk_path.c_str(), s.use_gpu)) { spk_free(s.spk); fail(500, "failed to load the speaker encoder companion"); }
+        if (!spk_load(s.spk, s.spk_path.c_str(), s.use_gpu)) {
+            spk_free(s.spk);
+            fail(500, "failed to load the speaker encoder companion");
+        }
         s.spk_loaded = true;
     }
     if (pcm.empty() || pcm.size() > (size_t) max_seconds * sample_rate ||
@@ -423,7 +384,11 @@ static void embed_speaker_locked(ServerState & s, const std::vector<float> & pcm
         embedding.clear();
         fail(400, "speaker embedding computation failed (maximum " + std::to_string(max_seconds) + " seconds)");
     }
-    for (float v : embedding) if (!std::isfinite(v)) { embedding.clear(); fail(400, "speaker embedding computation failed"); }
+    for (float v : embedding)
+        if (!std::isfinite(v)) {
+            embedding.clear();
+            fail(400, "speaker embedding computation failed");
+        }
 }
 
 std::vector<int32_t> encode_audio_codes(ServerState & s, const std::vector<float> & pcm, int max_seconds) {
@@ -499,7 +464,10 @@ static void remember(ServerState & s, const std::optional<std::string> & session
         if (it != s.default_speakers.end() && it->second.path == v.path && it->second.mtime == v.mtime) dst = &it->second;
     } else if (session) {
         auto sit = s.sessions.find(*session);
-        if (sit != s.sessions.end()) { auto it = sit->second.find(v.id); if (it != sit->second.end()) dst = &it->second; }
+        if (sit != s.sessions.end()) {
+            auto it = sit->second.find(v.id);
+            if (it != sit->second.end()) dst = &it->second;
+        }
     }
     if (!dst) return;
     if (dst->codes.empty()) dst->codes = v.codes;
@@ -519,7 +487,7 @@ static std::vector<float> voice_embedding(ServerState & s, const std::optional<s
     Speaker v = lookup_voice(s, session, id);
     const int dim = (int) s.model.hp.speaker_dim;
     if (v.embedding.empty()) {
-        if (v.source_type == "embedding") {   // a default embedding file
+        if (v.source_type == "embedding") { // a default embedding file
             std::string raw;
             if (!read_file(v.path, raw)) fail(400, "Failed to read default voice '" + v.label + "'.");
             v.embedding = load_embedding_vector(std::vector<uint8_t>(raw.begin(), raw.end()), dim, v.original_name);
@@ -547,7 +515,7 @@ static std::vector<float> voice_embedding(ServerState & s, const std::optional<s
     }
     if ((int) v.embedding.size() != dim)
         fail(400, "Cached speaker '" + v.label + "' has " + std::to_string(v.embedding.size()) +
-                  " dimensions, but the current model expects " + std::to_string(dim) + ".");
+                      " dimensions, but the current model expects " + std::to_string(dim) + ".");
     return v.embedding;
 }
 
@@ -578,11 +546,11 @@ static std::vector<int32_t> voice_codes(ServerState & s, const std::optional<std
     return v.codes;
 }
 
-// sgl _slerp_embeddings (float32).
+// zonos3.reference.synth.slerp (float32), as the Python servers blend.
 static std::vector<float> slerp(const std::vector<float> & v0, const std::vector<float> & v1, double t) {
     if (v0.size() != v1.size())
         fail(400, "Cannot blend speaker embeddings with different shapes (" + std::to_string(v0.size()) + ",) and (" +
-                  std::to_string(v1.size()) + ",).");
+                      std::to_string(v1.size()) + ",).");
     if (t < 0.0 || t > 1.0) fail(400, "speaker_blend_t must be between 0.0 and 1.0.");
     const float blend = (float) t;
     float n0 = 0, n1 = 0;
@@ -604,8 +572,10 @@ static std::vector<float> slerp(const std::vector<float> & v0, const std::vector
     return out;
 }
 
-static bool set(const json & req, const char * key) { return req.contains(key) && !req[key].is_null(); }
-static bool nonempty(const json & req, const char * key) {   // Python truthiness of an optional string
+static bool set(const json & req, const char * key) {
+    return req.contains(key) && !req[key].is_null();
+}
+static bool nonempty(const json & req, const char * key) { // Python truthiness of an optional string
     return set(req, key) && !req[key].get<std::string>().empty();
 }
 static std::optional<std::string> opt_str(const json & req, const char * key) {
@@ -620,7 +590,7 @@ ResolvedSpeaker resolve_request_speaker(ServerState & s, const json & req, const
     const bool id = nonempty(req, "speaker_embedding_id");
     const bool blend_a = nonempty(req, "speaker_blend_embedding_id_a"), blend_b = nonempty(req, "speaker_blend_embedding_id_b");
     const bool codes = set(req, "speaker_reference_codes");
-    if (mode == "reference") {   // sgl _resolve_speaker_reference_audio
+    if (mode == "reference") { // sgl _resolve_speaker_reference_audio
         if (emb_file || blend_a || blend_b)
             fail(400, "This checkpoint conditions on raw reference audio and does not accept speaker embedding files or embedding blends.");
         if (codes) {
@@ -693,7 +663,7 @@ ResolvedSpeaker resolve_request_speaker(ServerState & s, const json & req, const
 
 // ------------------------------------------------------------------------------------------------ routes
 
-// sgl _default_speaker_label: the explicit label, else the file name's stem, else the fallback.
+// zonos3.server.voices.speaker_label: the explicit label, else the file name's stem, else the fallback.
 static std::string upload_label(const std::optional<std::string> & label, const std::optional<std::string> & file_name,
                                 const char * fallback) {
     if (label && !strip(*label).empty()) return strip(*label);
@@ -750,7 +720,8 @@ static void handle_list(ServerState & s, const httplib::Request & req, httplib::
     for (const Speaker * sp : defaults) arr.push_back(speaker_json(s, *sp));
     if (session) {
         auto it = s.sessions.find(*session);
-        if (it != s.sessions.end()) for (const auto & kv : it->second) cached.push_back(&kv.second);
+        if (it != s.sessions.end())
+            for (const auto & kv : it->second) cached.push_back(&kv.second);
         std::stable_sort(cached.begin(), cached.end(), [](const Speaker * a, const Speaker * b) { return a->created > b->created; });
         for (const Speaker * sp : cached) arr.push_back(speaker_json(s, *sp));
     }
@@ -767,7 +738,7 @@ static void handle_preview(ServerState & s, const httplib::Request & req, httpli
         remember(s, session, v);
     }
     if (v.pcm.empty()) fail(404, "Cached speaker preview audio is not available.");
-    const std::vector<uint8_t> wav = zac_wav_bytes(v.pcm, zonos3_generation().sample_rate);
+    const std::vector<uint8_t> wav = wav_pcm16_bytes(v.pcm, zonos3_generation().sample_rate);
     res.set_content((const char *) wav.data(), wav.size(), "audio/wav");
 }
 
@@ -789,4 +760,4 @@ void register_speaker_routes(httplib::Server & svr, ServerState & s) {
             guarded([&s](const httplib::Request & q, httplib::Response & r) { handle_embedding(s, q, r); }));
 }
 
-}  // namespace zs
+} // namespace zs
