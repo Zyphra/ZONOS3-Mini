@@ -11,14 +11,14 @@ STREAM_DECODE_MODES = ("prefix", "whole")
 
 
 def prefix_stream_supported(audio_codec: str) -> bool:
-    """Progressive (prefix re-decode) streaming exists for the matched long-context codecs only."""
+    """Progressive (prefix) streaming exists for the matched long-context codecs only."""
     from zonos3.tokenizer.matched_codec import codec_names
 
     return str(audio_codec) in codec_names()
 
 
 def stream_decode_default(prefix_supported: bool) -> str | None:
-    """The server default for a streaming response: progressive prefix re-decode whenever the codec supports it
+    """The server default for a streaming response: progressive prefix decode whenever the codec supports it
     (first audio after a few frames instead of at EOS). ZONOS3_STREAM_DECODE_DEFAULT=whole restores the one exact
     decode at EOS for every request that does not ask for a mode (None)."""
     wanted = os.environ.get("ZONOS3_STREAM_DECODE_DEFAULT", "prefix").strip().lower()

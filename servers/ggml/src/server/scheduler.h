@@ -73,8 +73,8 @@ struct GenReq {
 };
 
 // A ZAC decode unit handed from the backbone worker to the job's lane, with a snapshot of the code rows (the worker
-// keeps appending to job->codes). WINDOW stream-decodes frames up to f_hi (prefix streaming); FINALIZE does the exact
-// whole decode (emitting what the stream has not), then finishes the channel. `drop` finishes without decoding
+// keeps appending to job->codes). WINDOW stream-decodes frames up to f_hi (prefix streaming); FINALIZE continues the
+// job's stream to the end and flushes it, then finishes the channel. `drop` finishes without decoding
 // (client gone); `fail` finishes as failed.
 struct ReqJob;
 struct ZacTask {
@@ -119,7 +119,6 @@ struct ReqJob {
     int emitted = 0;                     // prefix streaming: frames handed to the lane
     int lane = 0;
     zac_stream dst;                      // lane-owned incremental decoder state (prefix streaming)
-    int64_t streamed_samples = 0;        // lane-owned: raw samples the stream decode produced
 
     std::chrono::steady_clock::time_point t_decode0;
     double decode_step_ms = 0.0;
@@ -143,13 +142,13 @@ struct ReqJob {
     bool client_dropped = false;
 };
 
-// Prefix streaming (sgl TTSVocoderManager): a chunk once ZONOS3_PREFIX_STREAM_CHUNK_FRAMES new frames are decodable
-// beyond ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES held-back frames; a job's first chunk (nothing past the silence prefill
-// emitted yet) waits for ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES instead (earlier first audio).
+// Prefix streaming: a chunk once `need` new frames are decodable beyond ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES held-back
+// frames, need = min(CHUNK_FRAMES, FIRST_CHUNK_FRAMES + frames emitted past the silence prefill): chunks ramp 1, 2, 4,
+// 8, then steady 15 (earliest first audio). CONTEXT_FRAMES is validated but unused.
 struct PrefixStreamSettings {
     int chunk_frames = 15;
-    int first_chunk_frames = 4;
-    int hold_back_frames = 3;
+    int first_chunk_frames = 1;
+    int hold_back_frames = 0;
     int context_frames = 450;
 };
 

@@ -52,7 +52,7 @@ class GenerationOptions(_Strict):
     repetition_penalty: float = SAMPLING["repetition_penalty"]
     repetition_codebooks: int = SAMPLING["repetition_codebooks"]
     seed: Seed | None = None  # None = drawn by the server (echoed in X-Seed)
-    # "prefix" streams prefix re-decodes (matched long-context codecs), "whole" one exact chunk at EOS.
+    # "prefix" streams chunks of an incremental (stateful) codec decode, "whole" one exact chunk at EOS.
     stream_decode: Literal["prefix", "whole"] | None = None
     speaker_mode: Literal["embedding", "reference"] | None = None
     # Condition rows of the cond3 finetunes: bucket ids per name or raw values mapped through the checkpoint's edges.

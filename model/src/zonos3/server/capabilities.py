@@ -36,7 +36,7 @@ class CapabilityFacts:
     codebook_sizes: list[int]
     audio_codec: str
     max_tokens: int  # the frame budget of a request
-    prefix_stream: bool  # progressive (prefix re-decode) streaming (speech.prefix_stream_supported)
+    prefix_stream: bool  # progressive (prefix) streaming (speech.prefix_stream_supported)
     silence_hop: int | None  # the codec's hop when codec-matched silence frames can be prefilled, else None
     tag_cfg_available: bool
     tag_cfg_trained: bool  # zonos3.tts.markup.trained_on_tags

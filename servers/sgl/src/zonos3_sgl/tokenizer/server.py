@@ -367,18 +367,6 @@ def tokenize_worker(
                     )
             if vocoder_msgs:
                 audio_chunks = tts_vocoder_manager.decode_frames(vocoder_msgs)
-                for receipt in tts_vocoder_manager.pop_prefix_receipts():
-                    logger.info(
-                        "prefix stream uid=%s: %s live chunks (%s/%s frames), live-vs-whole %s dB, max |d| %.4f, prefill %s, context %s",
-                        receipt["uid"],
-                        receipt["chunks"],
-                        receipt["emitted_frames"],
-                        receipt["frames"],
-                        receipt["live_vs_whole_rms_db"],
-                        receipt["live_vs_whole_max_abs"],
-                        receipt.get("prefill_frames", 0),
-                        receipt.get("context_frames", 0),
-                    )
                 frontend_replies.extend(
                     TTSAudioReply(uid=msg.uid, audio_data=audio, finished=msg.finished, laci=msg.laci)
                     for msg, audio in zip(vocoder_msgs, audio_chunks, strict=True)

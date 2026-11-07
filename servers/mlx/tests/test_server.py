@@ -116,7 +116,7 @@ def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path, monkey
 
 
 def test_prefix_stream_is_the_whole_decode_without_the_silence_prefill(client):
-    """A streamed request (prefix re-decode) carries the same audio as the buffered one; the buffered whole decode
+    """A streamed request (the stateful prefix stream) carries the same audio as the buffered one; the buffered whole decode
     also emits the re-decoded silence-prefill frames (3 by default) in front."""
     body = {"text": "hello there", "seed": 4, "max_tokens": 40}
     with client.stream("POST", "/v2/generate", json=body) as r:

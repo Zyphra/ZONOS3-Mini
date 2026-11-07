@@ -41,8 +41,8 @@ class TTSSamplingParams:
     # guided = plain + scale * (tagged - plain). Exclusive with controls and speaker CFG.
     tag_cfg_scale: float = 1.0
     # Progressive decode for the matched long-context codecs: "prefix" streams
-    # prefix re-decodes (causal decoder, -45 dB vs the whole decode) and the
-    # exact whole-decode tail at EOS; None = one exact chunk at EOS (default).
+    # chunks of an incremental decode on a stateful codec stream, flushed at EOS
+    # (equal to the whole decode); None = one exact chunk at EOS (default).
     stream_decode: str | None = None
 
 

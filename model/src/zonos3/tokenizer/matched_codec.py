@@ -140,14 +140,27 @@ def decode_model(model, codes, e):
     return audio.float().squeeze(1).cpu()
 
 
-def decode(codes, codec):
+def _model(codec):
+    """The codec's decoder on ZONOS3_AUDIO_CODEC_DEVICE (default cuda:0), loaded once after the checkpoint's sha256."""
     e = entry(codec)
-    if codes.ndim != 3 or codes.shape[-1] != e["codebooks"] or bool(((codes < 0) | (codes >= 4096)).any()):
-        raise ValueError("Invalid matched codec tokens")
     device = os.environ.get("ZONOS3_AUDIO_CODEC_DEVICE", "cuda:0")
     key = (codec, device)
     if key not in _CACHE:
         actual = sha256_file(resolve_file(e["checkpoint"]))
         assert actual == e["checkpoint_sha256"], ("generator checkpoint sha256", actual, e["checkpoint_sha256"])
         _CACHE[key] = load_model(codec, device)
-    return decode_model(_CACHE[key], codes, e)
+    return _CACHE[key]
+
+
+def decode(codes, codec):
+    e = entry(codec)
+    if codes.ndim != 3 or codes.shape[-1] != e["codebooks"] or bool(((codes < 0) | (codes >= 4096)).any()):
+        raise ValueError("Invalid matched codec tokens")
+    return decode_model(_model(codec), codes, e)
+
+
+def stream(codec):
+    """A fresh stateful decoder (ISTFTStream) on the cached model: decode(codes [n, codebooks]) -> final samples, flush()."""
+    from zonos3.codec.istft_head_a_20261002.stream import ISTFTStream
+
+    return ISTFTStream(_model(codec))

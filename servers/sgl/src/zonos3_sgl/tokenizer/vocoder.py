@@ -11,9 +11,10 @@ from zonos3.generation import SAMPLE_RATE
 from zonos3.tokenizer.matched_codec import codec_names as matched_codec_names
 from zonos3.tokenizer.matched_codec import decode as decode_matched
 from zonos3.tokenizer.matched_codec import entry as matched_codec_entry
+from zonos3.tokenizer.matched_codec import stream as stream_matched
 from zonos3.tts import plan
 from zonos3.tts.delay import shear_up, undelay_window
-from zonos3.tts.stream import StreamSettings, prefix_window
+from zonos3.tts.stream import PrefixDecoder, StreamSettings
 
 from zonos3_sgl.message import TTSDetokenizeMsg
 
@@ -29,8 +30,8 @@ class TTSVocoderManager:
 
     The model outputs tokens with a delay pattern where codebook j is delayed by j frames; shear_up removes this
     delay once n_codebooks - 1 later rows have arrived. The matched codecs are long-context neural decoders, so a
-    request is decoded whole at EOS (chunked overlap-add is not numerically equivalent to the reference decode),
-    unless it asks for the progressive prefix decode (stream_decode="prefix").
+    request is decoded whole at EOS, unless it asks for the progressive prefix decode (stream_decode="prefix"): that
+    decodes incrementally on a stateful codec stream (zonos3.tts.stream.PrefixDecoder) and flushes it at EOS.
     """
 
     def __init__(
@@ -66,9 +67,10 @@ class TTSVocoderManager:
         self.sample_rate = sample_rate
         self.overlap_frames = overlap_frames
         self.hop_length = int(specification["hop"])
-        # Opt-in progressive decode for the matched long-context codecs (request field stream_decode="prefix"): the
-        # causal decoder re-decodes the growing prefix holding back the last frames, and the exact whole decode at EOS
-        # supplies the tail. Explicit settings win over ZONOS3_PREFIX_STREAM_* (zonos3.tts.stream.StreamSettings).
+        # Opt-in progressive decode (request field stream_decode="prefix"): the frames are decoded incrementally on a
+        # stateful codec stream, chunks ramping from first_chunk (1, 2, 4, 8 ...) up to chunk behind hold_back frames,
+        # and at EOS the stream continues to the end and is flushed. Explicit settings win over ZONOS3_PREFIX_STREAM_*
+        # (zonos3.tts.stream.StreamSettings).
         self.prefix_stream_supported = True
         explicit = {
             "chunk": prefix_chunk_frames,
@@ -79,11 +81,7 @@ class TTSVocoderManager:
         self.prefix = dataclasses.replace(
             StreamSettings.from_env(), **{k: int(v) for k, v in explicit.items() if v is not None}
         )
-        self._prefix_mode: Dict[int, bool] = {}
-        self._prefix_emitted: Dict[int, int] = {}
-        self._prefix_live: Dict[int, List[np.ndarray]] = {}
-        self._prefix_receipts: List[dict] = []
-        self.last_prefix_receipt: dict | None = None
+        self._prefix: Dict[int, PrefixDecoder] = {}
 
         # Per-request state
         self._frame_buffers: Dict[int, List[List[int]]] = {}
@@ -207,12 +205,16 @@ class TTSVocoderManager:
                 self._context_codes[uid] = pending.get("context")
                 self._frame_buffers[uid] = prefill  # prefilled silence rows open the stream (never emitted)
                 self._decoded_counts[uid] = len(prefill)
-                self._prefix_mode[uid] = bool(
-                    self.prefix_stream_supported and getattr(msg, "stream_decode", None) == "prefix"
-                )
-                if self._prefix_mode[uid]:
-                    self._prefix_emitted[uid] = len(prefill)
-                    self._prefix_live[uid] = []
+                if self.prefix_stream_supported and getattr(msg, "stream_decode", None) == "prefix":
+                    self._prefix[uid] = PrefixDecoder(
+                        stream_matched(self.audio_codec),
+                        n_codebooks=self.n_codebooks,
+                        audio_pad_id=self.audio_pad_id,
+                        hop=self.hop_length,
+                        prefill=len(prefill),
+                        context_codes=self._context_codes.get(uid),
+                        settings=self.prefix,
+                    )
             # Accumulate frame
             self._frame_buffers[uid].append(msg.audio_codes)
 
@@ -246,13 +248,12 @@ class TTSVocoderManager:
             # End of stream: decode everything before EOS in one call.
             should_decode = msg.finished and complete_frames > self._decoded_counts[uid]
 
-            if self._prefix_mode.get(uid):
-                # Progressive decode: new prefix chunks as frames arrive, the exact
-                # whole-decode tail (plus a receipt) when the request finishes.
-                audio = (
-                    self._decode_prefix_final(uid) if msg.finished else self._decode_prefix_chunk(uid, complete_frames)
-                )
-                results.append(audio)
+            prefix = self._prefix.get(uid)
+            if prefix is not None:
+                # Progressive decode: the next ramped chunk on the request's codec stream; at EOS the rest + flush.
+                buffer = self._frame_buffers[uid]
+                audio = prefix.finish(buffer, complete_frames) if msg.finished else prefix.step(buffer, complete_frames)
+                results.append(audio.tobytes())
             elif should_decode:
                 audio = self._decode_final(uid)
                 results.append(audio)
@@ -264,9 +265,7 @@ class TTSVocoderManager:
                 self._frame_buffers.pop(uid, None)
                 self._decoded_counts.pop(uid, None)
                 self._eos_frames.pop(uid, None)
-                self._prefix_mode.pop(uid, None)
-                self._prefix_emitted.pop(uid, None)
-                self._prefix_live.pop(uid, None)
+                self._prefix.pop(uid, None)
                 self._prefill_len.pop(uid, None)
                 self._context_codes.pop(uid, None)
 
@@ -314,81 +313,6 @@ class TTSVocoderManager:
         self._decoded_counts[uid] = target_frames
         return audio.tobytes()
 
-    # ------------------------------------------------------------------ progressive (prefix) decode
-    def pop_prefix_receipts(self) -> List[dict]:
-        """Receipts (one per finished prefix-streamed request) accumulated since the last call."""
-        receipts, self._prefix_receipts = self._prefix_receipts, []
-        return receipts
-
-    def _decode_prefix_rows(
-        self, buffer: List[List[int]], start: int, frames_end: int, uid: int | None = None
-    ) -> np.ndarray:
-        """Decode output frames [start, frames_end) from the delayed rows; the rows after
-        frames_end (up to n_codebooks - 1 of them) complete the shear of the last frames."""
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        codes = undelay_window(buffer, start, frames_end, self.n_codebooks, self.audio_pad_id, device=device).unsqueeze(
-            0
-        )
-        if uid is None:
-            audio = decode_audio_codes(codes, self.audio_codec)
-            return audio[0].numpy().astype(np.float32)
-        return self._decode_with_context(uid, codes, start == 0)
-
-    def _decode_prefix_chunk(self, uid: int, complete_frames: int) -> bytes:
-        """Emit the samples of the next chunk of frames from a prefix re-decode (causal decoder): the window of
-        zonos3.tts.stream.prefix_window."""
-        emitted = self._prefix_emitted[uid]
-        window = prefix_window(complete_frames, emitted, self._prefill_len.get(uid, 0), self.prefix)
-        if window is None:
-            return b""
-        start, decodable = window
-        audio = self._decode_prefix_rows(self._frame_buffers[uid], start, complete_frames, uid)
-        chunk = audio[(emitted - start) * self.hop_length : (decodable - start) * self.hop_length].copy()
-        self._prefix_emitted[uid] = decodable
-        self._prefix_live[uid].append(chunk)
-        return chunk.tobytes()
-
-    def _decode_prefix_final(self, uid: int) -> bytes:
-        """At EOS: the exact whole decode (the same call as the non-streaming path) supplies everything after
-        the frames already streamed; the live chunks are compared with it for the receipt."""
-        buffer = self._frame_buffers[uid]
-        target_frames = len(buffer) - (self.n_codebooks - 1)
-        if uid in self._eos_frames:
-            target_frames = min(target_frames, self._eos_frames[uid])
-        live_chunks = self._prefix_live.get(uid) or []
-        emitted = min(self._prefix_emitted[uid], max(target_frames, 0))
-        context = self._context_codes.get(uid)
-        receipt = {
-            "uid": uid,
-            "frames": max(int(target_frames), 0),
-            "emitted_frames": int(emitted),
-            "chunks": len(live_chunks),
-            "live_vs_whole_max_abs": 0.0,
-            "live_vs_whole_rms_db": None,
-            "prefill_frames": int(self._prefill_len.get(uid, 0)),
-            "context_frames": int(len(context)) if context is not None else 0,
-        }
-        if target_frames <= 0:
-            self.last_prefix_receipt = receipt
-            self._prefix_receipts.append(receipt)
-            return b""
-        whole = self._decode_prefix_rows(buffer, 0, target_frames, uid)
-        live = np.concatenate(live_chunks) if live_chunks else np.zeros(0, dtype=np.float32)
-        skip = self._prefill_len.get(uid, 0) * self.hop_length  # prefilled silence: decoded, never emitted
-        n = min(live.size, emitted * self.hop_length - skip, whole.size - skip)
-        if n > 0:
-            diff = live[:n] - whole[skip : skip + n]
-            rms = float(np.sqrt(np.mean(np.square(whole[skip : skip + n], dtype=np.float64))))
-            receipt["live_vs_whole_max_abs"] = float(np.abs(diff).max())
-            receipt["live_vs_whole_rms_db"] = (
-                round(float(20 * np.log10(float(np.sqrt(np.mean(np.square(diff, dtype=np.float64)))) / rms + 1e-12)), 1)
-                if rms > 0
-                else None
-            )
-        self.last_prefix_receipt = receipt
-        self._prefix_receipts.append(receipt)
-        return whole[emitted * self.hop_length :].tobytes()
-
     def decode_all(
         self,
         codes: torch.Tensor,
@@ -419,13 +343,9 @@ class TTSVocoderManager:
             self._frame_buffers.pop(uid, None)
             self._decoded_counts.pop(uid, None)
             self._eos_frames.pop(uid, None)
-            self._prefix_mode.pop(uid, None)
-            self._prefix_emitted.pop(uid, None)
-            self._prefix_live.pop(uid, None)
+            self._prefix.pop(uid, None)
         else:
             self._frame_buffers.clear()
             self._decoded_counts.clear()
             self._eos_frames.clear()
-            self._prefix_mode.clear()
-            self._prefix_emitted.clear()
-            self._prefix_live.clear()
+            self._prefix.clear()

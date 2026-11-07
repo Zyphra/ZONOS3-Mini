@@ -740,8 +740,11 @@ def synthesize(
     gain = output_gain(c.audio_codec, req.headroom_db)
     prefix = emit = on_row = None
     if on_audio is not None and plan.laci is None and req.stream_decode != "whole":
+        from zonos3.codec.istft_head_a_20261002.stream import ISTFTStream
+
         prefix = StreamDecoder(
             _codec_decode(lm, assets, device),
+            stream=ISTFTStream(assets.decoder(c.audio_codec, torch.device(device))),
             n_codebooks=c.n_codebooks,
             audio_pad_id=c.audio_pad_id,
             hop=_codec_hop(lm),

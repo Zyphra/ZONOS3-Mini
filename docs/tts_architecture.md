@@ -210,13 +210,15 @@ the generator's conv-tail decoder is never used. The model is cached per device 
   undelays the rows with `shear_up` and decodes every complete pre-EOS frame in one codec call. The last
   `overlap_frames` (default 4) already-counted rows (the silence prefill) are re-decoded as left context.
 - **Prefix decode** (`stream_decode="prefix"`, the server default for streaming responses;
-  `ZONOS3_STREAM_DECODE_DEFAULT=whole` turns it off): the causal decoder re-decodes the growing prefix every
-  `ZONOS3_PREFIX_STREAM_CHUNK_FRAMES` (15, 1 s) new frames, holding back the last
-  `ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES` (3) frames as right context, and re-decodes at most
-  `ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES` (450, 30 s) of left context so the cost per chunk stays bounded. A request's
-  first chunk (nothing past the silence prefill emitted yet) waits for only `ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES`
-  (4) frames, so first audio needs 9 (shear) + 3 (hold-back) + 4 = 16 generated frames instead of 27. At EOS the
-  exact whole decode supplies everything after the frames already streamed.
+  `ZONOS3_STREAM_DECODE_DEFAULT=whole` turns it off): the frames are decoded incrementally on a stateful codec stream
+  (conv histories, per-layer KV caches, overlap-add iSTFT, FIR mixer and resampler state;
+  `zonos3.tts.stream.PrefixDecoder` over `ISTFTStream`), nothing decoded twice. Chunks ramp: the first waits
+  for `ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES` (1) complete frames past the silence prefill, each later one for
+  `first + frames emitted so far`, capped at `ZONOS3_PREFIX_STREAM_CHUNK_FRAMES` (15, 1 s): 1, 2, 4, 8, 15, 15, ...
+  `ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES` (0) complete frames stay undecoded until EOS, so first audio needs
+  9 (shear) + 1 generated frames. At EOS the stream continues to the end and is flushed. The stream emits only final
+  samples, so the concatenated chunks equal the whole decode. `ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES` is still
+  validated (>= chunk) but unused.
 - With a raw-reference prompt, `decode_context_frames` (default 30) of the reference's tail codes are prepended as
   decoder context whenever a decode starts at the stream start, and their samples dropped.
 

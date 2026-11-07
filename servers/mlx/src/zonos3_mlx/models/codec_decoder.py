@@ -4,6 +4,8 @@ Semantic RVQ table + causal ConvNeXt head, residual RVQ tables, five windowed-ca
 upsampling (15 -> 240 Hz), the multi-resolution iSTFT head (ConvNeXt trunk, two irfft branches, overlap-add) and the
 non-causal FIR mixer at 44160 Hz, then the exact 44160 -> 44100 sinc resampler. The C++ decoder streams in chunks with
 conv histories and ring KV caches; over a whole utterance that equals one causal pass, which is what ``decode`` runs.
+``CodecDecoder.stream()`` is the incremental form (``CodecStream``: conv histories, KV caches, the NumPy host half of
+zonos3.codec.stream_host) that the prefix-streaming decode drives.
 """
 
 from __future__ import annotations
@@ -78,20 +80,25 @@ def _identity(x: mx.array) -> mx.array:
     return x
 
 
-def causal_depthwise(x: mx.array, w: mx.array, b: mx.array | None) -> mx.array:
-    """x [T, C], w [C, K] (tap 0 oldest), zero history: h[t] = sum_k x[t + k - (K - 1)] * w[:, k]."""
+def causal_depthwise(x: mx.array, w: mx.array, b: mx.array | None, hist: mx.array | None = None) -> mx.array:
+    """x [T, C], w [C, K] (tap 0 oldest): h[t] = sum_k x[t + k - (K - 1)] * w[:, k]; the K-1 rows before x are ``hist``
+    [K-1, C] (zeros when None)."""
     T, K = x.shape[0], w.shape[1]
-    xf = mx.concatenate([mx.zeros((K - 1, x.shape[1]), dtype=x.dtype), x], axis=0)
+    if hist is None:
+        hist = mx.zeros((K - 1, x.shape[1]), dtype=x.dtype)
+    xf = mx.concatenate([hist.astype(x.dtype), x], axis=0)
     h = xf[0:T] * w[:, 0]
     for k in range(1, K):
         h = h + xf[k : k + T] * w[:, k]
     return h if b is None else h + b
 
 
-def convnext_block(P: Params, x: mx.array, p: str, eps: float, rnd=_identity, round_out: bool = False) -> mx.array:
+def convnext_block(
+    P: Params, x: mx.array, p: str, eps: float, rnd=_identity, round_out: bool = False, hist: mx.array | None = None
+) -> mx.array:
     """Causal ConvNeXt block. ``rnd`` marks the encoder's BF16 boundaries (zac.cpp ``encoder_round``; identity for the
-    decoder), ``round_out`` its rounded output (the semantic encoder's blocks)."""
-    h = causal_depthwise(rnd(x), P.t[p + ".dw.weight"], None)
+    decoder), ``round_out`` its rounded output (the semantic encoder's blocks); ``hist``: the previous K-1 inputs."""
+    h = causal_depthwise(rnd(x), P.t[p + ".dw.weight"], None, hist)
     h = rnd(rnd(h) + P.t[p + ".dw.bias"])
     h = rnd(_layer_norm(h, P.t[p + ".norm.weight"], P.t[p + ".norm.bias"], eps))
     h = rnd(_gelu(rnd(P.lin(p + ".pw1.weight", h, p + ".pw1.bias"))))
@@ -140,6 +147,34 @@ def moss_layer(P: Params, x: mx.array, p: str, hp: StageHP, ln_eps: float, rnd=_
     h = _layer_norm(x, P.t[p + ".norm2.weight"], P.t[p + ".norm2.bias"], ln_eps)
     h = rnd(P.lin(p + ".ffn2.weight", rnd(_gelu(rnd(P.lin(p + ".ffn1.weight", rnd(h)))))))
     return x + h * P.t[p + ".ffn_scale"]
+
+
+def moss_layer_cached(
+    P: Params, x: mx.array, p: str, hp: StageHP, ln_eps: float, pos0: int, cache: tuple[mx.array, mx.array] | None
+) -> tuple[mx.array, tuple[mx.array, mx.array] | None]:
+    """``moss_layer`` (decoder, no rounding) on stage positions [pos0, pos0+T) attending to ``cache``: the keys/values
+    [nh, Lc, hd] of the previous positions. Returns the output and the cache of the last context-1 positions."""
+    T, d = x.shape
+    nh = hp.n_head
+    hd = d // nh
+    h = _layer_norm(x, P.t[p + ".norm1.weight"], P.t[p + ".norm1.bias"], ln_eps)
+    qkv = P.lin(p + ".qkv.weight", h).reshape(T, 3, nh, hd).transpose(1, 2, 0, 3)  # [3, nh, T, hd]
+    q = mx.fast.rope(qkv[0], hd, traditional=True, base=10000.0, scale=1.0, offset=pos0)
+    k = mx.fast.rope(qkv[1], hd, traditional=True, base=10000.0, scale=1.0, offset=pos0)
+    v = qkv[2]
+    if cache is not None:
+        k = mx.concatenate([cache[0], k], axis=1)
+        v = mx.concatenate([cache[1], v], axis=1)
+    lc = k.shape[1] - T
+    diff = mx.arange(pos0, pos0 + T)[:, None] - mx.arange(pos0 - lc, pos0 + T)[None, :]
+    mask = (diff >= 0) & (diff < hp.context)
+    o = mx.fast.scaled_dot_product_attention(q[None], k[None], v[None], scale=hd**-0.5, mask=mask)[0]
+    x = x + P.lin(p + ".wo.weight", o.transpose(1, 0, 2).reshape(T, d)) * P.t[p + ".attn_scale"]
+    h = _layer_norm(x, P.t[p + ".norm2.weight"], P.t[p + ".norm2.bias"], ln_eps)
+    h = P.lin(p + ".ffn2.weight", _gelu(P.lin(p + ".ffn1.weight", h)))
+    keep = hp.context - 1
+    cache = (k[:, -keep:], v[:, -keep:]) if keep > 0 else None
+    return x + h * P.t[p + ".ffn_scale"], cache
 
 
 def read_stages(f: GGUFFile, arch: str) -> list[StageHP]:
@@ -193,10 +228,17 @@ class CodecDecoder:
         self.windows = [mx.array(host[f"head.window.{i}"]) for i in range(2)]
         self.mixer = mx.array(host["head.mixer.weight"])  # [2, K]
         self.rs_kernel = mx.array(host["resample.kernel"])  # [new, 2w + orig]
+        self.host_windows = [host[f"head.window.{i}"] for i in range(2)]
+        self.host_mixer = host["head.mixer.weight"]
+        self.host_rs_kernel = host["resample.kernel"]
 
     @classmethod
     def load(cls, path: str | Path) -> "CodecDecoder":
         return cls(path)
+
+    def stream(self) -> "CodecStream":
+        """A fresh incremental decoder over one utterance."""
+        return CodecStream(self)
 
     # -------------------------------------------------------------------------------------------------- trunk
     def _trunk(self, codes: mx.array) -> tuple[mx.array, mx.array]:
@@ -314,3 +356,84 @@ class CodecDecoder:
         for row in rows:
             decoder.push(row, eos_frame)
         return decoder.finish()
+
+
+class CodecStream:
+    """Incremental ``CodecDecoder.decode``: ``decode(codes [n, n_codebooks])`` returns the 44100 Hz samples that are
+    final (2940*F - 1470 after F frames), ``flush()`` the rest; the concatenation equals the whole decode. Conv
+    histories and per-layer KV caches carry the trunk state; the overlap-add iSTFT, the FIR mixer and the resampler run
+    on the host (zonos3.codec.stream_host, ports of zac.cpp's)."""
+
+    def __init__(self, dec: CodecDecoder, max_chunk: int = 32):
+        from zonos3.codec.stream_host import IstftHeadStream, ResamplerStream
+
+        self.dec = dec
+        self.max_chunk = int(max_chunk)
+        self.frames = 0
+        self.sem_hist: list[mx.array | None] = [None] * dec.sem_depth
+        self.head_hist: list[mx.array | None] = [None] * dec.head_depth
+        self.kv: list[list] = [[None] * hp.n_layer for hp in dec.stages]
+        self.head = IstftHeadStream(dec.n_fft, dec.head_hop, dec.host_windows, dec.host_mixer, dec.max_log_mag)
+        self.resampler = ResamplerStream(dec.host_rs_kernel, *dec.rs)
+
+    def decode(self, codes: np.ndarray) -> np.ndarray:
+        codes = np.asarray(codes)
+        if codes.ndim != 2 or codes.shape[1] != self.dec.n_codebooks:
+            raise ValueError(f"codes must be [frames, {self.dec.n_codebooks}], got {codes.shape}")
+        if len(codes) == 0:
+            return np.zeros(0, dtype=np.float32)
+        codes = np.clip(codes, 0, self.dec.codebook_size - 1).astype(np.int32)
+        return np.concatenate(
+            [self._chunk(codes[i : i + self.max_chunk]) for i in range(0, len(codes), self.max_chunk)]
+        )
+
+    def flush(self) -> np.ndarray:
+        out = np.concatenate([self.resampler.push(self.head.flush()), self.resampler.flush()])
+        mx.clear_cache()
+        return out
+
+    def _block(self, x: mx.array, p: str, hists: list, b: int) -> mx.array:
+        """convnext_block over the previous inputs' history; keeps the last K-1 inputs for the next chunk."""
+        hist = hists[b]
+        k = self.dec.P.t[p + ".dw.weight"].shape[1]
+        y = convnext_block(self.dec.P, x, p, self.dec.convnext_eps, hist=hist)
+        if hist is None:
+            hist = mx.zeros((k - 1, x.shape[1]), dtype=x.dtype)
+        hists[b] = mx.concatenate([hist, x], axis=0)[-(k - 1) :]
+        return y
+
+    def _chunk(self, codes: np.ndarray) -> np.ndarray:
+        d, P = self.dec, self.dec.P
+        ids = mx.array(codes)
+        x = P.t["sem.table"][ids[:, 0]] + P.t["sem.bias"]
+        for b in range(d.sem_depth):
+            x = self._block(x, f"sem_head.{b}", self.sem_hist, b)
+        x = P.lin("sem_head.out.weight", x, "sem_head.out.bias")
+        for c in range(1, d.n_codebooks):
+            x = x + P.t[f"res.{c - 1}.table"][ids[:, c]]
+        x = x + P.t["res.bias"]
+        mx.eval(x)
+        cpf = 1  # stage positions per code frame
+        for s, hp in enumerate(d.stages):
+            p = f"stage.{s}"
+            x = P.lin(p + ".in.weight", x)
+            for layer in range(hp.n_layer):
+                x, self.kv[s][layer] = moss_layer_cached(
+                    P, x, f"{p}.l{layer}", hp, d.ln_eps, self.frames * cpf, self.kv[s][layer]
+                )
+                mx.eval(x, self.kv[s][layer])
+            if hp.out_dim > 0:
+                x = P.lin(p + ".out.weight", x)
+            if hp.patch > 1:
+                x = patch_up(x, hp.patch)
+                cpf *= hp.patch
+        for b in range(d.head_depth):
+            x = self._block(x, f"head.{b}", self.head_hist, b)
+            mx.eval(x)
+        x = _layer_norm(x, P.t["head.norm.weight"], P.t["head.norm.bias"], d.convnext_eps)
+        y0 = P.lin("head.out.0.weight", x, "head.out.0.bias")
+        y1 = P.lin("head.out.1.weight", x, "head.out.1.bias")
+        mx.eval(y0, y1, [h for h in self.sem_hist + self.head_hist if h is not None])
+        out = self.resampler.push(self.head.push(np.array(y0, dtype=np.float32), np.array(y1, dtype=np.float32)))
+        self.frames += len(codes)
+        return out

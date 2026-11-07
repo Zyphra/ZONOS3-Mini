@@ -74,9 +74,6 @@ class _Vocoder:
     def silence_prompt_rows(self, frames, config):
         return _silence_rows(frames, config)
 
-    def pop_prefix_receipts(self):
-        return []
-
 
 class _UpperNormalizer:
     """Stand-in grammar: upper-cases, spells digits, and refuses any markup character it is handed."""

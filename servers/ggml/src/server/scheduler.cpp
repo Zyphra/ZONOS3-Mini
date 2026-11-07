@@ -104,17 +104,22 @@ static void zac_lane_loop(ServerState & s, ZacLane & lane) {
             if (t.kind == ZacTask::WINDOW) {
                 ok = zac_stream_decode(lane.zac, job.dst, t.codes.data(), t.H, t.f_hi, pcm);
                 if (ok) {
-                    job.streamed_samples += (int64_t) pcm.size();
                     finish_block(job, pcm);
                     push_pcm(job, std::move(pcm));
                 }
             } else {
-                // The exact whole decode; what prefix streaming already emitted is cut from its front.
+                // Continue the job's stream to the end and flush it (web runJob): no second decode.
                 const int eos = job.eos_frame >= 0 ? job.eos_frame + job.ctx_frames : -1;
-                ok = t.H <= 0 || zac_decode(lane.zac, t.codes.data(), t.H, ncb, eos, pcm);
+                const int E = std::min(eos >= 0 ? eos : t.H, t.H - ncb + 1);
+                if (t.H > 0 && E <= 0) {
+                    fprintf(stderr, "zac: no frames to decode (eos=%d, H=%d)\n", eos, t.H);
+                    ok = false;
+                } else {
+                    ok = t.H <= 0 ||
+                         ((E <= job.dst.n_done || zac_stream_decode(lane.zac, job.dst, t.codes.data(), t.H, E, pcm)) &&
+                          zac_stream_flush(lane.zac, job.dst, pcm));
+                }
                 if (ok) {
-                    const size_t done = std::min(pcm.size(), (size_t) job.streamed_samples);
-                    pcm.erase(pcm.begin(), pcm.begin() + done);
                     finish_block(job, pcm);
                     apply_fade(pcm, job.gr.fade_out_ms, sr);
                     push_pcm(job, std::move(pcm));
@@ -125,15 +130,15 @@ static void zac_lane_loop(ServerState & s, ZacLane & lane) {
     }
 }
 
-// Prefix streaming (sgl _decode_prefix_chunk): once chunk_frames new frames (first_chunk_frames for the job's first
-// chunk) are decodable beyond the hold-back, stream-decode up to there on the job's lane.
+// Prefix streaming: once `need` new frames are decodable beyond the hold-back, stream-decode up to there on the job's
+// lane. `need` ramps from first_chunk_frames, doubling with what was emitted (1, 2, 4, 8, ...), up to chunk_frames.
 static void prefix_submit_ready(ServerState & s, const std::shared_ptr<ReqJob> & job) {
     const int ncb = (int) s.model.hp.n_codebooks;
     const int H = (int) job->codes.size() / ncb;
     int complete = H - (ncb - 1);
     if (job->eos_frame >= 0) complete = std::min(complete, job->eos_frame);
     const int decodable = complete - s.prefix.hold_back_frames;
-    const int need = job->emitted == job->prompt.prefill_frames ? s.prefix.first_chunk_frames : s.prefix.chunk_frames;
+    const int need = std::min(s.prefix.chunk_frames, s.prefix.first_chunk_frames + job->emitted - job->prompt.prefill_frames);
     if (decodable - job->emitted < need) return;
     ZacTask t;
     t.job = job;

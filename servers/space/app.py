@@ -5,7 +5,7 @@ reference (zonos3.reference) with generation on ZeroGPU.
 The routes are the part of servers/api/openapi.yaml the studio and the lite page use when the server has no plugins or project
 store (``/v2/capabilities`` says so and the studio adapts): GET ``/v2/capabilities``, ``/v2/controls``,
 ``/v2/speakers``, ``/v2/speakers/{id}/preview``, ``/v2/speakers/{id}/embedding``, POST ``/v2/speakers``,
-``/v2/generate`` (prefix-streamed float32 PCM, a 4-frame first chunk), ``/v2/phonemize`` (the gold lexicon, espeak-ng
+``/v2/generate`` (prefix-streamed float32 PCM, chunks ramping from 1 frame), ``/v2/phonemize`` (the gold lexicon, espeak-ng
 guesses) and speech editing (``/v2/edit/transcribe``, ``/v2/edit/align``, ``/v2/edit``: the edit LoRA per request).
 Pronunciation groups read the release phoneme tokens, appended at load after the edit vocabulary. Speaker embeddings
 run on this process's CPU; generation, edit regions, Qwen3-ASR and FuseAlign run in a held GPU session

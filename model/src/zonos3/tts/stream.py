@@ -2,9 +2,13 @@
 
 Rows arrive delayed (codebook j of frame f in row f + j). The buffer opens with the silence-prefill rows (decoded,
 never emitted). ``whole`` mode decodes every pre-EOS frame once at end of stream, re-decoding the last
-``overlap_frames`` already-counted rows as left context; ``prefix`` mode re-decodes the growing prefix (the causal
-decoder) every ``chunk`` frames (the first chunk after ``first_chunk``, for an earlier first audio) behind a hold-back,
-with at most ``context`` frames of left context, and the exact whole decode supplies the tail at EOS.
+``overlap_frames`` already-counted rows as left context; ``prefix`` mode decodes incrementally on a stateful codec
+stream (``PrefixDecoder``): chunks ramp from ``first_chunk`` frames (1, 2, 4, 8, ...) up to ``chunk``, behind
+``hold_back`` frames, and at EOS the same stream continues to the end and is flushed; nothing is decoded twice.
+
+A codec stream is any object with ``frames: int``, ``decode(codes [n, n_codebooks] int64) -> float32 samples`` that
+are final and ``flush() -> float32 samples`` (zonos3.codec.istft_head_a_20261002.stream.ISTFTStream, zonos3_mlx's
+CodecStream). ggml's ``prefix_submit_ready`` and the web server's ``prefixReady`` follow the same rules.
 """
 
 from __future__ import annotations
@@ -25,13 +29,13 @@ PREFIX_ERROR = (
 
 @dataclass(frozen=True)
 class StreamSettings:
-    """Prefix streaming: a chunk once ``chunk`` new frames are decodable behind ``hold_back`` frames (``first_chunk``
-    for the stream's first), each decoding the prefix with at most ``context`` frames of left context. The defaults
-    are the arena's measured settings (1 s chunks, 3 frames held back, 30 s of left context, -48 dB vs whole)."""
+    """Prefix streaming: chunks ramp from ``first_chunk`` frames, doubling, up to ``chunk``, decoded behind
+    ``hold_back`` complete frames (``prefix_need``). ``context`` is validated (>= chunk) but no longer used: the stream
+    is stateful, nothing is re-decoded."""
 
     chunk: int = 15
-    first_chunk: int = 4
-    hold_back: int = 3
+    first_chunk: int = 1
+    hold_back: int = 0
     context: int = 450
 
     def __post_init__(self):
@@ -54,21 +58,11 @@ class StreamSettings:
             raise ValueError(PREFIX_ERROR) from None
 
 
-def prefix_window(complete: int, emitted: int, prefill: int, s: StreamSettings) -> tuple[int, int] | None:
-    """The next prefix chunk: ``(start, decodable)`` = decode output frames [start, complete) and emit the samples of
-    frames [emitted, decodable), or None while too few frames are decodable.
-
-    decodable = complete frames minus the held-back tail: the held-back frames are decoded as right context but not
-    emitted (the last decoded frame of the iSTFT head sits ~-22 dB from the whole decode; one frame of right context
-    already reaches the bf16 floor near -48 dB). The first chunk (nothing past the ``prefill`` silence rows emitted
-    yet) waits for ``first_chunk`` frames, every later one for ``chunk``. Once the history is longer than the context
-    window only the last ``context`` frames of left context are re-decoded, so the cost per chunk stays bounded."""
-    decodable = complete - s.hold_back
-    need = s.first_chunk if emitted == prefill else s.chunk
-    if decodable - emitted < need:
-        return None
-    start = max(0, emitted - s.context) if decodable > s.context + s.chunk else 0
-    return start, decodable
+def prefix_need(emitted: int, prefill: int, s: StreamSettings) -> int:
+    """Frames the next prefix chunk waits for: ``first_chunk`` for the first (nothing past the ``prefill`` silence rows
+    emitted yet), then ``first_chunk`` + the frames emitted so far, capped at ``chunk``: 1, 2, 4, 8, 15, 15, ... by
+    default (the next need stays geometric when more frames arrive at once)."""
+    return min(s.chunk, s.first_chunk + emitted - prefill)
 
 
 def _host(x) -> np.ndarray:
@@ -76,14 +70,84 @@ def _host(x) -> np.ndarray:
     return x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
 
 
+_EMPTY = np.zeros(0, dtype=np.float32)
+
+
+class PrefixDecoder:
+    """One request's prefix-mode decode on a stateful codec ``stream``. The stream decodes [decode-context frames |
+    silence-prefill frames | generated frames] from frame 0; the context and prefill samples are dropped. ``step`` emits
+    the next chunk once ``prefix_need`` frames are decodable behind the hold-back; ``finish`` decodes up to the target
+    and flushes the stream (no samples past the target's end)."""
+
+    def __init__(
+        self,
+        stream,
+        *,
+        n_codebooks: int,
+        audio_pad_id: int,
+        hop: int,
+        prefill: int,
+        context_codes=None,
+        settings: StreamSettings = StreamSettings(),
+    ):
+        self.stream = stream
+        self.n_codebooks, self.pad, self.hop = n_codebooks, audio_pad_id, hop
+        self.prefill = int(prefill)
+        self.settings = settings
+        self.context = None
+        if context_codes is not None and len(context_codes):
+            self.context = _host(context_codes).astype(np.int64).reshape(-1, n_codebooks)
+        ctx = 0 if self.context is None else len(self.context)
+        self.ctx = ctx
+        self.emitted = self.prefill
+        self.skip = (ctx + self.prefill) * hop  # raw stream samples still to drop
+        self.produced = 0  # raw stream samples
+        self.done = False
+
+    def step(self, buffer, complete: int) -> np.ndarray:
+        """The delayed rows so far and the complete (undelayable, pre-EOS) frame count -> the next chunk, or empty."""
+        decodable = complete - self.settings.hold_back
+        if decodable - self.emitted < prefix_need(self.emitted, self.prefill, self.settings):
+            return _EMPTY
+        return self._decode(buffer, decodable)
+
+    def finish(self, buffer, target: int) -> np.ndarray:
+        """End of stream: frames up to ``target`` (complete frames capped at EOS), then the stream's flush."""
+        if self.done:
+            raise RuntimeError("stream already finished")
+        self.done = True
+        parts = [self._decode(buffer, target)] if target > self.emitted else []
+        tail = self.stream.flush()
+        cap = max(0, (self.ctx + max(target, self.prefill)) * self.hop - self.produced)
+        parts.append(self._out(tail[:cap]))
+        return np.concatenate(parts).astype(np.float32, copy=False)
+
+    def _decode(self, buffer, end: int) -> np.ndarray:
+        start = 0 if self.stream.frames == 0 else self.emitted  # the first call decodes the prefill rows too
+        codes = undelay_window(buffer, start, end, self.n_codebooks, self.pad).numpy()
+        if start == 0 and self.context is not None:
+            codes = np.concatenate([self.context, codes], axis=0)
+        self.emitted = end
+        return self._out(self.stream.decode(codes))
+
+    def _out(self, raw) -> np.ndarray:
+        raw = np.asarray(raw, dtype=np.float32)
+        self.produced += len(raw)
+        drop = min(len(raw), self.skip)
+        self.skip -= drop
+        return raw[drop:]
+
+
 class StreamDecoder:
     """One request's rows as they come -> float32 PCM. ``decode(codes)`` runs the codec on undelayed int64 codes
-    [frames, n_codebooks] (the reference tail prepended at the stream start; its samples are dropped here)."""
+    [frames, n_codebooks] (whole mode; the reference tail prepended at the stream start, its samples dropped here);
+    prefix mode drives ``stream`` (a codec stream) through a ``PrefixDecoder``."""
 
     def __init__(
         self,
         decode: Callable[[np.ndarray], np.ndarray],
         *,
+        stream=None,
         n_codebooks: int,
         audio_pad_id: int,
         hop: int,
@@ -95,6 +159,8 @@ class StreamDecoder:
     ):
         if mode not in ("whole", "prefix"):
             raise ValueError(f"stream decode mode must be whole or prefix, got {mode!r}")
+        if mode == "prefix" and stream is None:
+            raise ValueError("prefix stream decode needs a codec stream")
         self.decode = decode
         self.n_codebooks, self.pad, self.eoa, self.hop = n_codebooks, audio_pad_id, audio_pad_id - 1, hop
         self.mode, self.overlap, self.settings = mode, overlap_frames, settings
@@ -108,7 +174,17 @@ class StreamDecoder:
         if context_codes is not None and len(context_codes):
             self.context = _host(context_codes).astype(np.int64).reshape(-1, n_codebooks)
         self.decoded = self.prefill  # whole mode: frames already counted
-        self.emitted = self.prefill  # prefix mode: frames already streamed
+        self.prefix = None
+        if mode == "prefix":
+            self.prefix = PrefixDecoder(
+                stream,
+                n_codebooks=n_codebooks,
+                audio_pad_id=audio_pad_id,
+                hop=hop,
+                prefill=self.prefill,
+                context_codes=self.context,
+                settings=settings,
+            )
         self.eos: int | None = None
         self.done = False
 
@@ -145,10 +221,10 @@ class StreamDecoder:
             self.eos = observed if self.eos is None else min(self.eos, observed)
         if finished:
             return self.finish()
-        return self._prefix_chunk() if self.mode == "prefix" else np.zeros(0, dtype=np.float32)
+        return self._prefix_chunk() if self.mode == "prefix" else _EMPTY
 
     def finish(self) -> np.ndarray:
-        """End of stream: the rest of the audio (the whole decode, or the prefix stream's exact tail)."""
+        """End of stream: the rest of the audio (the whole decode, or the prefix stream continued and flushed)."""
         if self.done:
             raise RuntimeError("stream already finished")
         self.done = True
@@ -159,26 +235,14 @@ class StreamDecoder:
         re-decoded and emitted with the rest, as TTSVocoderManager._decode_final does."""
         target = self._target()
         if target <= self.decoded:
-            return np.zeros(0, dtype=np.float32)
+            return _EMPTY
         start = self.decoded - min(self.overlap, self.decoded)
         audio = self._decode(start, target)
         self.decoded = target
         return audio
 
     def _prefix_chunk(self) -> np.ndarray:
-        complete = self._target()
-        window = prefix_window(complete, self.emitted, self.prefill, self.settings)
-        if window is None:
-            return np.zeros(0, dtype=np.float32)
-        start, decodable = window
-        audio = self._decode(start, complete)
-        chunk = audio[(self.emitted - start) * self.hop : (decodable - start) * self.hop]
-        self.emitted = decodable
-        return chunk
+        return self.prefix.step(self.buffer, self._target())
 
     def _prefix_final(self) -> np.ndarray:
-        target = self._target()
-        if target <= 0:
-            return np.zeros(0, dtype=np.float32)
-        emitted = min(self.emitted, target)
-        return self._decode(0, target)[emitted * self.hop :]
+        return self.prefix.finish(self.buffer, self._target())

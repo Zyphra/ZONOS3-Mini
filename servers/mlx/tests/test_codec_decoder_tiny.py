@@ -191,3 +191,21 @@ def test_decode_rows_overlaps_short_prefills(codes):
     # reference (zonos3.reference.synth.decode_rows) does
     assert len(audio) == len(full)
     np.testing.assert_allclose(audio, full, atol=1e-5)
+
+
+def test_stream_equals_the_whole_decode(codes):
+    """CodecStream in ramp chunks + flush is the whole decode; after F frames exactly 2940*F - 1470 samples are out."""
+    dec = CodecDecoder.load(GGUF)
+    full = dec.decode(codes)
+    stream, parts, at = dec.stream(), [], 0
+    for n in (1, 2, 4, 8, 15, len(codes)):
+        parts.append(stream.decode(codes[at : at + n]))
+        at = min(at + n, len(codes))
+        out = np.concatenate(parts)
+        assert len(out) == 2940 * at - 1470
+        np.testing.assert_allclose(out, full[: len(out)], atol=1e-5)
+        if at == len(codes):
+            break
+    out = np.concatenate(parts + [stream.flush()])
+    assert len(out) == len(full)
+    np.testing.assert_allclose(out, full, atol=1e-5)

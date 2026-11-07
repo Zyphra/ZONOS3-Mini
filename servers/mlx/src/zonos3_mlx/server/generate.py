@@ -29,7 +29,7 @@ from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
 
 logger = logging.getLogger("zonos3_mlx.server")
-# Progressive (prefix re-decode) streaming: StreamDecoder re-decodes the growing prefix with every zac decoder.
+# Progressive (prefix) streaming: StreamDecoder drives the decoder's stateful CodecStream.
 PREFIX_STREAM = True
 
 
@@ -53,6 +53,7 @@ class JobRun:
         if mode is not None:
             self.decoder = StreamDecoder(
                 dec.decode,
+                stream=dec.stream() if mode == "prefix" else None,
                 n_codebooks=c.n_codebooks,
                 audio_pad_id=c.audio_pad_id,
                 hop=dec.hop,

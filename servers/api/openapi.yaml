@@ -673,7 +673,7 @@ components:
           maximum: 4294967295
           default: null
         stream_decode:
-          description: "Streaming decode: `prefix` re-decodes growing prefixes, `whole` sends one exact chunk at EOS (null = the server default)."
+          description: "Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default)."
           enum: [prefix, whole, null]
           default: null
         speaker_mode:

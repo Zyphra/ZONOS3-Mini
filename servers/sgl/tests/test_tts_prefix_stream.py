@@ -1,11 +1,11 @@
-"""Progressive (prefix re-decode) streaming of the matched long-context codecs behind stream_decode="prefix".
+"""Progressive (prefix) streaming of the matched long-context codecs behind stream_decode="prefix".
 
 A fake decoder stands in for the codec: audio of frame f depends on the codes of frames [f - memory, f] only, i.e. it is
-causal with bounded context like the fixed-600k dual codec decoder, so prefix decodes must reproduce the whole decode
-exactly and every property below is checked bit for bit:
+causal with bounded context like the codec decoder; the fake codec stream decodes incrementally with that decoder, so
+every property below is checked bit for bit:
   * default (no flag): one exact chunk at EOS, the decoder is called once, bytes identical to the whole decode;
-  * prefix mode: chunks arrive while frames are still coming, their concatenation plus the EOS tail equals the whole
-    decode, the left-context window is used once the history is long, the receipt reports zero deviation;
+  * prefix mode: chunks ramp 1, 2, 4, 8, then chunk frames while frames are still coming, and their concatenation plus
+    the EOS tail equals the whole decode;
   * an EOS frame bounds both the streamed chunks and the tail;
   * the flag travels through the message serialization.
 """
@@ -78,10 +78,41 @@ def run(manager: vocoder.TTSVocoderManager, rows: list[list[int]], uid: int = 7,
     return chunks
 
 
+class FakeCodecStream:
+    """Stateful stream over the fake decoder: decode() returns the new frames' audio, nothing lags, flush() is empty."""
+
+    def __init__(self, decoder: CausalFakeDecoder):
+        self.decoder = decoder
+        self.history = np.zeros((0, N_CB), np.int64)
+        self.chunks: list[int] = []
+
+    @property
+    def frames(self) -> int:
+        return len(self.history)
+
+    def decode(self, codes: np.ndarray) -> np.ndarray:
+        start = len(self.history)
+        self.history = np.concatenate([self.history, codes])
+        self.chunks.append(len(codes))
+        audio = self.decoder(torch.tensor(self.history).unsqueeze(0), CODEC)
+        return audio[0, start * HOP :].numpy()
+
+    def flush(self) -> np.ndarray:
+        return np.zeros(0, np.float32)
+
+
 @pytest.fixture
 def fake(monkeypatch):
     decoder = CausalFakeDecoder(memory=3)
+    decoder.streams = []
+
+    def stream(codec):
+        assert codec == CODEC
+        decoder.streams.append(FakeCodecStream(CausalFakeDecoder(memory=3)))
+        return decoder.streams[-1]
+
     monkeypatch.setattr(vocoder, "decode_matched", decoder)
+    monkeypatch.setattr(vocoder, "stream_matched", stream)
     monkeypatch.setattr(vocoder.torch.cuda, "is_available", lambda: False)
     return decoder
 
@@ -98,11 +129,25 @@ def test_default_mode_is_one_exact_chunk_at_eos(fake):
     assert all(c == b"" for c in chunks[:-1])
     assert chunks[-1] == whole_decode(frames)
     assert fake.calls == [40]
-    assert manager.pop_prefix_receipts() == []
+    assert fake.streams == []
 
 
-def test_prefix_mode_streams_and_matches_the_whole_decode(fake):
+def test_prefix_mode_ramps_and_matches_the_whole_decode(fake):
     frames = make_frames(60, seed=1)
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
+    chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
+    # the first chunk (1 frame) once that frame is complete: after its row plus the shear tail
+    assert next(i for i, c in enumerate(chunks) if c) == 1 + (N_CB - 1) - 1
+    live = [len(c) // (HOP * 4) for c in chunks[:-1] if c]
+    assert live[:6] == [1, 2, 4, 8, 15, 15]
+    assert fake.streams[0].chunks[:6] == live[:6]
+    assert b"".join(chunks) == whole_decode(frames)
+    assert fake.calls == []
+    assert not manager._prefix
+
+
+def test_prefix_mode_hold_back_and_steady_chunks(fake):
+    frames = make_frames(60, seed=3)
     manager = vocoder.TTSVocoderManager(
         n_codebooks=N_CB,
         audio_pad_id=PAD,
@@ -112,47 +157,10 @@ def test_prefix_mode_streams_and_matches_the_whole_decode(fake):
         prefix_context_frames=12,
         prefix_first_chunk_frames=5,
     )
-    rows = delayed_rows(frames)
-    chunks = run(manager, rows, stream_decode="prefix")
-    live = [c for c in chunks[:-1] if c]
-    assert len(live) >= 8, "chunks must arrive while frames are still coming"
-    first = next(i for i, c in enumerate(chunks) if c)
-    # first chunk once chunk + hold_back frames are complete, i.e. after that many rows plus the shear tail
-    assert first == 5 + 2 + (N_CB - 1) - 1
-    assert all(len(c) % (HOP * 4) == 0 for c in live)
-    assert b"".join(chunks) == whole_decode(frames)
-    # the left-context window was used (decodes shorter than the full prefix) once the history was long
-    assert any(call < 60 - 2 and call <= 12 + 5 for call in fake.calls[1:-1])
-    assert fake.calls[-1] == 60
-    receipt = manager.pop_prefix_receipts()
-    assert len(receipt) == 1 and receipt[0]["chunks"] == len(live) and receipt[0]["frames"] == 60
-    assert receipt[0]["emitted_frames"] == 5 * len(live)
-    assert receipt[0]["live_vs_whole_max_abs"] == 0.0 and receipt[0]["live_vs_whole_rms_db"] < -200
-    assert manager.pop_prefix_receipts() == []
-    assert not manager._prefix_mode and not manager._prefix_live
-
-
-def test_prefix_mode_first_chunk_is_shorter(fake):
-    frames = make_frames(60, seed=3)
-    manager = vocoder.TTSVocoderManager(
-        n_codebooks=N_CB,
-        audio_pad_id=PAD,
-        audio_codec=CODEC,
-        prefix_chunk_frames=5,
-        prefix_hold_back_frames=2,
-        prefix_context_frames=12,
-        prefix_first_chunk_frames=2,
-    )
     chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
-    live = [c for c in chunks[:-1] if c]
-    # the first chunk arrives once first_chunk + hold_back frames are complete, and holds first_chunk frames
-    assert next(i for i, c in enumerate(chunks) if c) == 2 + 2 + (N_CB - 1) - 1
-    assert len(live[0]) == 2 * HOP * 4
-    assert all(len(c) == 5 * HOP * 4 for c in live[1:])
+    assert next(i for i, c in enumerate(chunks) if c) == 5 + 2 + (N_CB - 1) - 1
+    assert all(len(c) == 5 * HOP * 4 for c in chunks[:-1] if c)
     assert b"".join(chunks) == whole_decode(frames)
-    receipt = manager.pop_prefix_receipts()
-    assert receipt[0]["emitted_frames"] == 2 + 5 * (len(live) - 1)
-    assert receipt[0]["live_vs_whole_max_abs"] == 0.0
 
 
 def test_prefix_mode_respects_eos(fake):
@@ -169,9 +177,7 @@ def test_prefix_mode_respects_eos(fake):
     )
     chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
     assert b"".join(chunks) == whole_decode(frames[:eos])
-    assert fake.calls[-1] == eos
-    receipt = manager.pop_prefix_receipts()[0]
-    assert receipt["frames"] == eos and receipt["emitted_frames"] <= eos
+    assert sum(fake.streams[0].chunks) == eos
 
 
 def test_stream_decode_survives_serialization():
@@ -195,4 +201,4 @@ def test_prefix_settings_validation():
             n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, prefix_chunk_frames=20, prefix_context_frames=10
         )
     m = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
-    assert m.prefix == StreamSettings(chunk=15, first_chunk=4, hold_back=3, context=450)
+    assert m.prefix == StreamSettings(chunk=15, first_chunk=1, hold_back=0, context=450)

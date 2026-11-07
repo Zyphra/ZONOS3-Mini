@@ -27,9 +27,9 @@ import {
 } from './http';
 import type { Speakers } from './speakers';
 
-/** Prefix streaming (PrefixStreamSettings defaults): chunk, hold-back, and the shorter first chunk of a request
- *  (ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES on the native servers). */
-const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 3, PREFIX_FIRST_CHUNK_FRAMES = 4;
+/** Prefix streaming (PrefixStreamSettings defaults): chunks ramp from the first chunk, doubling (1, 2, 4, 8 frames),
+ *  up to the steady chunk (15), with no frame hold-back (ZONOS3_PREFIX_STREAM_* on the native servers). */
+const PREFIX_CHUNK_FRAMES = 15, PREFIX_HOLD_BACK_FRAMES = 0, PREFIX_FIRST_CHUNK_FRAMES = 1;
 
 /** A validated GenerateRequest resolved into what the scheduler runs (generate.cpp GenReq + GeneratePlan). */
 interface Plan {
@@ -459,7 +459,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
     let complete = H - (ncb - 1);
     if (eosFrame >= 0) complete = Math.min(complete, eosFrame);
     const decodable = complete - PREFIX_HOLD_BACK_FRAMES;
-    const need = emitted === p.prompt.prefillFrames ? PREFIX_FIRST_CHUNK_FRAMES : PREFIX_CHUNK_FRAMES;
+    const need = Math.min(PREFIX_CHUNK_FRAMES, PREFIX_FIRST_CHUNK_FRAMES + emitted - p.prompt.prefillFrames);
     if (decodable - emitted < need) return;
     decodeUpTo(decodeRows(codes, H, p.decodeContext, ctxFrames), H + ctxFrames, decodable + ctxFrames);
     emitted = decodable;

@@ -68,10 +68,10 @@ void usage(const char * a0) {
             "                      free the reference encoder + SSL teacher after N idle seconds\n"
             "                      (default 60; 0 keeps them loaded once used)\n"
             "  --stream-decode-default prefix|whole\n"
-            "                      streaming decode of requests without stream_decode (default prefix: chunks of\n"
-            "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15 frames (the first one\n"
-            "                      ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES=4) behind a ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=3\n"
-            "                      hold-back; whole: one exact chunk at EOS)\n"
+            "                      streaming decode of requests without stream_decode (default prefix: chunks\n"
+            "                      ramping from ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES=1, doubling, up to\n"
+            "                      ZONOS3_PREFIX_STREAM_CHUNK_FRAMES=15, behind ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES=0;\n"
+            "                      whole: one exact chunk at EOS)\n"
             "  --tts-default-voices-dir DIR\n"
             "                      default voices: audio files (+ <stem>.codes.npy reference codes and <stem>.embedding.npy\n"
             "                      speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)\n"
@@ -198,8 +198,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
 
     // Prefix streaming and silence prefill settings (the sgl vocoder's environment).
     if (!env_int("ZONOS3_PREFIX_STREAM_CHUNK_FRAMES", 15, s.prefix.chunk_frames) ||
-        !env_int("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", 4, s.prefix.first_chunk_frames) ||
-        !env_int("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", 3, s.prefix.hold_back_frames) ||
+        !env_int("ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES", 1, s.prefix.first_chunk_frames) ||
+        !env_int("ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES", 0, s.prefix.hold_back_frames) ||
         !env_int("ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES", 450, s.prefix.context_frames) ||
         s.prefix.chunk_frames < 1 || s.prefix.first_chunk_frames < 1 || s.prefix.hold_back_frames < 0 ||
         s.prefix.context_frames < s.prefix.chunk_frames) {

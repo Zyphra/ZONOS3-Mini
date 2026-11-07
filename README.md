@@ -108,7 +108,7 @@ curl -X POST http://127.0.0.1:1919/v1/audio/speech -H 'Content-Type: application
   --output hello2.wav
 ```
 
-`stream: true` returns the audio progressively (prefix re-decode of the causal decoder); `"format": "wav"` returns a
+`stream: true` returns the audio progressively (an incremental decode of the causal decoder); `"format": "wav"` returns a
 buffered 16-bit WAV instead of raw PCM (with `stream: false`). Open `http://127.0.0.1:1919/studio` for the Zonos Voice
 Studio (its steering controls come from the default `STEER_BUNDLE`). The API
 guide is [docs/api.md](docs/api.md); the schemas are in [servers/api/openapi.yaml](servers/api/openapi.yaml).
