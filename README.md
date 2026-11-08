@@ -136,9 +136,16 @@ tts.save_audio(result["audio"], "offline.wav")
                          speaker_reference_audio="assets/default_voices/AmericanFemale.mp3")
 emb = tts.embed_speaker_file("assets/default_voices/AmericanFemale.mp3")
 by_embedding = tts.generate_one("Same voice, from its embedding.", TTSSamplingParams(seed=42), speaker_embedding=emb)
+
+# Stream one prompt as the server streams /v2/generate (silence prefill, prefix codec stream, early first chunk):
+# float32 PCM chunks at 44.1 kHz as soon as they decode
+for chunk in tts.generate_stream("Streamed from the offline API.", TTSSamplingParams(seed=42), speaker_embedding=emb):
+    play(chunk)
 ```
 
-The offline path applies the server's text normalization and conditioning (speaker, condition rows, accents, LACI).
+The offline path applies the server's text normalization and conditioning (speaker, condition rows, accents, LACI);
+`generate_stream` runs the server's streaming request without the frontend, the tokenizer process and their IPC (its
+first call primes the codec stream and captures its CUDA graphs, as the server's tokenizer does at start).
 
 ## Reference model
 

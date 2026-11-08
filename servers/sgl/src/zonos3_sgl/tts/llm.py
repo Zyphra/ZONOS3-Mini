@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterator, List
 
+import numpy as np
 import torch
 from zonos3.condition_buckets import check_ids
 from zonos3.generation import SAMPLE_RATE
@@ -16,6 +17,7 @@ from zonos3.tts.delay import shear_up
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 
 from zonos3_sgl.distributed import DistributedInfo
+from zonos3_sgl.env import ENV
 from zonos3_sgl.message import (
     BaseTTSBackendMsg,
     BatchTTSTokenizerMsg,
@@ -159,6 +161,10 @@ class TTSLLM(TTSScheduler):
         self.pending_requests: List[PendingRequest] = []
         self.status_map: Dict[int, TTSRequestStatus] = {}
         self.counter = 0
+        # The rows of a generate_stream() request as the scheduler emits them (None outside it), and whether the codec's
+        # prefix stream is primed and its chunk shapes CUDA-graphed (on the first generate_stream()).
+        self._stream_msgs: List[TTSDetokenizeMsg] | None = None
+        self._stream_warm = False
 
         # Optional vocoder for audio decoding
         if decode_audio:
@@ -416,6 +422,8 @@ class TTSLLM(TTSScheduler):
         """Process results from the scheduler."""
         for msg in reply.data:
             assert isinstance(msg, TTSDetokenizeMsg)
+            if self._stream_msgs is not None:
+                self._stream_msgs.append(msg)
             status = self.status_map[msg.uid]
 
             if not msg.finished:
@@ -548,63 +556,27 @@ class TTSLLM(TTSScheduler):
             )
         return output
 
-    def generate(
+    def _enqueue(
         self,
         prompts: List[str] | List[List[List[int]]],
         sampling_params: TTSSamplingParams | List[TTSSamplingParams],
-        decode_audio: bool | None = None,
-        max_tokens: int | None = None,
-        language: str = "en_us",
-        text_normalization: bool = True,
-        speaker_embedding: torch.Tensor | List[torch.Tensor | None] | None = None,
-        speaker_reference_codes=None,
-        speaker_reference_audio=None,
-        condition_buckets=None,
-        audio_prefill_rows=None,
-        accent: str | List[str | None] | None = None,
-        accent_strength: float | List[float] = 1.0,
-        align_probes=None,
-        audio_prefill_history=None,
-        laci: bool | List[bool] = False,
-        laci_duration=None,
-    ) -> List[Dict]:
-        """Generate audio tokens for a batch of prompts.
-
-        Args:
-            prompts: List of text strings or pre-tokenized prompts
-            sampling_params: Sampling parameters (single or per-prompt)
-            decode_audio: Override instance setting for audio decoding
-            max_tokens: Per-request decode cap; clamped to the model limit and
-                applied to every sampling_params (server parity).
-            language: Server language code (e.g. "en_us") for text normalization.
-            text_normalization: Apply language-aware text normalization, matching
-                the server default.
-            speaker_embedding: Speaker embedding tensor for voice cloning (single,
-                applied to all prompts, or one per prompt; None disables cloning).
-                Use embed_speaker()/embed_speaker_file() to compute one from audio.
-            accent: Accent adapter name (single or per-prompt; None = base model),
-                one of the adapters the engine was started with (accent_adapters).
-            accent_strength: Adapter strength alpha (single or per-prompt): the
-                request runs base + alpha * adapter.
-            audio_prefill_rows: Sheared audio rows appended after each prompt (one tensor for all, or one per prompt);
-                they open the audio stream (e.g. codec silence) and are not part of the returned frames.
-            align_probes: One ``zonos3_sgl.tts.align_probe.AlignProbe`` (or None) per prompt.
-            audio_prefill_history: Per prompt, how many trailing prefill rows count as repetition-penalty history.
-            laci: LACI (zonos3.tts.laci), one flag for all prompts or one per prompt: the scheduler guards those
-                generations against skips / hallucinations / truncation with the alignment-head spec of ``language``
-                (``laci_heads`` of the TTSLLM config); speaker / controls CFG must be 1.
-            laci_duration: per LACI prompt, a ``zonos3.tts.laci.DurationTarget`` (or None) its take's length is held
-                to: a miss regenerates the take in the speaking-rate bucket the measured duration asks for
-                (``adjust_rate``; needs ``cache_type="naive"``) or is only recorded.
-
-        Returns:
-            List of dicts with:
-                - "audio_tokens": List of generated frames [[cb0, ..., cb8], ...]
-                - "eos_frame": Frame index where EOS was detected (or None)
-                - "audio": PCM audio bytes if decode_audio=True, else None
-                - "sample_rate": Audio sample rate (zonos3.generation.SAMPLE_RATE)
-                - "laci": the LACI record (attempts, end, failures, ...) of a LACI prompt, else None
-        """
+        *,
+        max_tokens: int | None,
+        language: str,
+        text_normalization: bool,
+        speaker_embedding,
+        speaker_reference_codes,
+        speaker_reference_audio,
+        condition_buckets,
+        audio_prefill_rows,
+        accent,
+        accent_strength,
+        align_probes,
+        audio_prefill_history,
+        laci,
+        laci_duration,
+    ) -> None:
+        """Reset the request state and queue ``prompts`` for the scheduler loop (``generate``'s arguments)."""
         # Validate the language code up front, as the server does.
         if text_normalization:
             from zonos3.languages import normalize
@@ -731,6 +703,82 @@ class TTSLLM(TTSScheduler):
             elif duration is not None:
                 raise ValueError(f"prompt {idx}: laci_duration needs laci")
 
+    def generate(
+        self,
+        prompts: List[str] | List[List[List[int]]],
+        sampling_params: TTSSamplingParams | List[TTSSamplingParams],
+        decode_audio: bool | None = None,
+        max_tokens: int | None = None,
+        language: str = "en_us",
+        text_normalization: bool = True,
+        speaker_embedding: torch.Tensor | List[torch.Tensor | None] | None = None,
+        speaker_reference_codes=None,
+        speaker_reference_audio=None,
+        condition_buckets=None,
+        audio_prefill_rows=None,
+        accent: str | List[str | None] | None = None,
+        accent_strength: float | List[float] = 1.0,
+        align_probes=None,
+        audio_prefill_history=None,
+        laci: bool | List[bool] = False,
+        laci_duration=None,
+    ) -> List[Dict]:
+        """Generate audio tokens for a batch of prompts.
+
+        Args:
+            prompts: List of text strings or pre-tokenized prompts
+            sampling_params: Sampling parameters (single or per-prompt)
+            decode_audio: Override instance setting for audio decoding
+            max_tokens: Per-request decode cap; clamped to the model limit and
+                applied to every sampling_params (server parity).
+            language: Server language code (e.g. "en_us") for text normalization.
+            text_normalization: Apply language-aware text normalization, matching
+                the server default.
+            speaker_embedding: Speaker embedding tensor for voice cloning (single,
+                applied to all prompts, or one per prompt; None disables cloning).
+                Use embed_speaker()/embed_speaker_file() to compute one from audio.
+            accent: Accent adapter name (single or per-prompt; None = base model),
+                one of the adapters the engine was started with (accent_adapters).
+            accent_strength: Adapter strength alpha (single or per-prompt): the
+                request runs base + alpha * adapter.
+            audio_prefill_rows: Sheared audio rows appended after each prompt (one tensor for all, or one per prompt);
+                they open the audio stream (e.g. codec silence) and are not part of the returned frames.
+            align_probes: One ``zonos3_sgl.tts.align_probe.AlignProbe`` (or None) per prompt.
+            audio_prefill_history: Per prompt, how many trailing prefill rows count as repetition-penalty history.
+            laci: LACI (zonos3.tts.laci), one flag for all prompts or one per prompt: the scheduler guards those
+                generations against skips / hallucinations / truncation with the alignment-head spec of ``language``
+                (``laci_heads`` of the TTSLLM config); speaker / controls CFG must be 1.
+            laci_duration: per LACI prompt, a ``zonos3.tts.laci.DurationTarget`` (or None) its take's length is held
+                to: a miss regenerates the take in the speaking-rate bucket the measured duration asks for
+                (``adjust_rate``; needs ``cache_type="naive"``) or is only recorded.
+
+        Returns:
+            List of dicts with:
+                - "audio_tokens": List of generated frames [[cb0, ..., cb8], ...]
+                - "eos_frame": Frame index where EOS was detected (or None)
+                - "audio": PCM audio bytes if decode_audio=True, else None
+                - "sample_rate": Audio sample rate (zonos3.generation.SAMPLE_RATE)
+                - "laci": the LACI record (attempts, end, failures, ...) of a LACI prompt, else None
+        """
+        self._enqueue(
+            prompts,
+            sampling_params,
+            max_tokens=max_tokens,
+            language=language,
+            text_normalization=text_normalization,
+            speaker_embedding=speaker_embedding,
+            speaker_reference_codes=speaker_reference_codes,
+            speaker_reference_audio=speaker_reference_audio,
+            condition_buckets=condition_buckets,
+            audio_prefill_rows=audio_prefill_rows,
+            accent=accent,
+            accent_strength=accent_strength,
+            align_probes=align_probes,
+            audio_prefill_history=audio_prefill_history,
+            laci=laci,
+            laci_duration=laci_duration,
+        )
+
         # Run generation
         try:
             self.run_forever()
@@ -783,6 +831,85 @@ class TTSLLM(TTSScheduler):
             )
 
         return results
+
+    def generate_stream(
+        self,
+        prompt: str,
+        sampling_params: TTSSamplingParams | None = None,
+        *,
+        max_tokens: int | None = None,
+        language: str = "en_us",
+        text_normalization: bool = True,
+        speaker_embedding: torch.Tensor | None = None,
+        silence_prefill_frames: int | None = None,
+    ) -> Iterator[np.ndarray]:
+        """Generate one prompt alone and yield its audio the way the server streams a /v2/generate response: float32
+        PCM chunks at SAMPLE_RATE, decoded on the request's prefix codec stream (``stream_decode="prefix"`` with the
+        request's ``stream_codebooks``) by the server's own ``TTSVocoderManager`` as the scheduler emits the rows --
+        the server's path without the frontend, the tokenizer process and the IPC between them (in-process latency).
+        Like ``generate``, the samples are the codec's, before the server's output stage
+        (``zonos3.tts.audio.output_pcm``: the decoder's headroom gain, then the soft limiter). The prompt ends with the
+        server's silence prefill (``silence_prefill_frames``: None = the server default, 0 = none). The first call primes
+        the codec's prefix stream and CUDA-graphs its chunk shapes, as the server's tokenizer does at start. Closing the
+        generator early runs the request to its end without decoding it (the scheduler has no abort)."""
+        if self._vocoder is None:
+            raise ValueError("generate_stream() needs decode_audio=True")
+        if not self._stream_warm:
+            self._vocoder.warm_prefix_stream()
+            self._stream_warm = True
+        frames = self._vocoder.silence_prefill_frames_for(silence_prefill_frames)
+        prefill = self._vocoder.silence_prompt_rows(frames, self._prompt_builder.config) if frames > 0 else None
+        self._enqueue(
+            [prompt],
+            replace(sampling_params or TTSSamplingParams(), stream_decode="prefix"),
+            max_tokens=max_tokens,
+            language=language,
+            text_normalization=text_normalization,
+            speaker_embedding=speaker_embedding,
+            speaker_reference_codes=None,
+            speaker_reference_audio=None,
+            condition_buckets=None,
+            audio_prefill_rows=prefill,
+            accent=None,
+            accent_strength=1.0,
+            align_probes=None,
+            audio_prefill_history=None,
+            laci=False,
+            laci_duration=None,
+        )
+        self._stream_msgs = []
+        data, finished = None, False
+        try:
+            while not finished:
+                try:
+                    data = self._step(data)
+                except RequestAllFinished:
+                    finished = True
+                msgs, self._stream_msgs = self._stream_msgs, []
+                for audio in self._vocoder.decode_frames(msgs) if msgs else ():
+                    if audio:
+                        yield np.frombuffer(audio, np.float32)
+        except GeneratorExit:
+            self._stream_msgs = None
+            while not finished:
+                try:
+                    data = self._step(data)
+                except RequestAllFinished:
+                    finished = True
+            raise
+        finally:
+            self._stream_msgs = None
+            self._vocoder.reset()
+
+    @torch.inference_mode()
+    def _step(self, data):
+        """One iteration of ``run_forever``'s loop; RequestAllFinished once the queue and the running batch are empty."""
+        if ENV.DISABLE_OVERLAP_SCHEDULING:
+            with self.engine_stream_ctx:
+                self.engine.stream.wait_stream(self.stream)
+                self.normal_loop()
+            return None
+        return self.overlap_loop(data)
 
     def generate_one(
         self,
