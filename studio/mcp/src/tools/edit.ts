@@ -19,7 +19,7 @@ import type { GenerationParams, TakeInfo, WidgetPayload } from '../payload';
 import { b64, openProject, projectLine, saveProject, type ProjectRef } from '../project';
 import { state, type EditDraft } from '../state';
 import * as zonos from '../zonos';
-import { editLanguage, guard, lineRef, PLAYER_URI, project, seed, text, values, warningsText, widget } from './common';
+import { editLanguage, guard, lineRef, PLAYER_META, project, seed, text, values, warningsText, widget } from './common';
 import { loadCtx, withSession } from './context';
 import { findLine } from './speak';
 import { readSource } from './voice';
@@ -69,7 +69,7 @@ export function registerEditTools(server: McpServer) {
         language: editLanguage.optional(),
         project,
       },
-      _meta: { ui: { resourceUri: PLAYER_URI } },
+      _meta: PLAYER_META,
     },
     guard(async (a) => {
       const c = await caps();

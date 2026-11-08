@@ -19,7 +19,7 @@ const INSTRUCTIONS = `Zonos Voice Studio: design voices, speak and edit speech. 
 - Speak lines with zonos_speak. Use delivery for how the whole line is said, and spans for specific words.
 - Change words of recorded speech with zonos_edit_speech, then keep a take with zonos_keep_edit.
 - Values are UI control values within each control's range. Stay inside the safe range unless the user asks for something extreme. Rough scale: "slightly" ≈ 1, "clearly" ≈ half of the safe max, "very" ≈ the safe max. Named moods have a recommended dose.
-- Results show in an audio player widget; summarise the parameters briefly instead of repeating them.`;
+- Compatible MCP Apps hosts show results in an audio player widget. If no widget appears, provide the Studio project link from the result; do not claim a player is visible. Summarise the parameters briefly instead of repeating them.`;
 
 /** dist/player.html next to dist/server.js. */
 const PLAYER_HTML = new URL('./player.html', import.meta.url);

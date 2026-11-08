@@ -4,9 +4,22 @@ An MCP server that lets LLM clients (Claude Desktop / claude.ai / Claude Code, C
 and generate and edit speech through the ZONOS3 v2 API. Everything it makes goes into a Studio project on the server
 (`/v2/projects`, `/v2/media`): voice designs become Cast personas, lines become Direct lines with takes, speech edits
 become Edit versions. Open the project in the Studio and it looks exactly like one the Studio wrote. Tool results
-render an MCP Apps widget (`ui://zonos/player.html`): each take with its waveform and playback, plus every parameter
+render an MCP Apps widget in compatible hosts (`ui://zonos/player.html`): each take with its waveform and playback, plus every parameter
 the render used (voice, design values with their safety zones, accents requested vs applied, painted delivery,
 steering doses, sampling, seed, timings, the exact request body).
+
+## Player compatibility
+
+Player tools declare the standard `_meta.ui.resourceUri` and the
+`_meta["openai/outputTemplate"]` compatibility alias. Player results repeat these
+fields because some Codex adapters resolve the template from result metadata.
+The standard URI remains the primary link; the alias supports hosts that use
+the OpenAI compatibility path.
+
+A tool invoked inside an orchestration wrapper still depends on the host preserving
+its MCP tool identity and full result; printing its text or JSON is not a request
+to mount a widget. If the host does not mount the player, open the Studio project
+URL returned by the tool. Do not regenerate speech just to retry the UI.
 
 ## Build and run
 

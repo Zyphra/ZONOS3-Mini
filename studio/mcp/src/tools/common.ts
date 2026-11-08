@@ -6,6 +6,12 @@ import type { WidgetPayload } from '../payload';
 
 export const PLAYER_URI = 'ui://zonos/player.html';
 
+/** Standard MCP Apps metadata plus the Codex/ChatGPT compatibility alias. */
+export const PLAYER_META = {
+  ui: { resourceUri: PLAYER_URI },
+  'openai/outputTemplate': PLAYER_URI,
+};
+
 const langs = Object.keys(LANG_LABEL) as [string, ...string[]];
 export const language = z.enum(langs).describe(`Server language code: ${langs.map((l) => `${l} (${LANG_LABEL[l]})`).join(', ')}`);
 export const editLanguage = z.enum(EDIT_LANGUAGES as [string, ...string[]]).describe('Language of the clip (picks the alignment model)');
@@ -19,7 +25,9 @@ export function text(body: string, structured?: Record<string, unknown>): CallTo
 }
 
 export function widget(body: string, payload: WidgetPayload): CallToolResult {
-  return text(body, { ...payload });
+  // Codex can resolve the template from the result when descriptor metadata is lost
+  // across a tool adapter. Keep this on player results only, never audio fetches.
+  return { ...text(body, { ...payload }), _meta: PLAYER_META };
 }
 
 /** A tool body whose errors come back as `isError` results with the message. */

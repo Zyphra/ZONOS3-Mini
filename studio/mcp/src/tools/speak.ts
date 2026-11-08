@@ -17,7 +17,7 @@ import type { TakeInfo } from '../payload';
 import { openProject, projectLine, saveProject } from '../project';
 import { state } from '../state';
 import * as zonos from '../zonos';
-import { guard, language, lineRef, PLAYER_URI, project, seed, values, warningsText, widget } from './common';
+import { guard, language, lineRef, PLAYER_META, project, seed, values, warningsText, widget } from './common';
 import { loadCtx, requireSteering, withSession } from './context';
 
 export function findLine(lines: Line[], ref: number | string): { line: Line; index: number } {
@@ -46,7 +46,7 @@ export function registerSpeakTool(server: McpServer) {
         takes: z.number().int().min(1).max(4).optional().describe('Takes to render (default 1)'),
         project,
       },
-      _meta: { ui: { resourceUri: PLAYER_URI } },
+      _meta: PLAYER_META,
     },
     guard(async (a) => {
       if (!a.text?.trim() && a.line === undefined) throw new Error('Pass text or line');

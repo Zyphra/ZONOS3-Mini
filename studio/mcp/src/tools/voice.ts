@@ -20,7 +20,7 @@ import type { TakeInfo } from '../payload';
 import { b64, openProject, projectLine, saveProject } from '../project';
 import { state } from '../state';
 import * as zonos from '../zonos';
-import { guard, PLAYER_URI, project, seed, text, values, warningsText, widget } from './common';
+import { guard, PLAYER_META, project, seed, text, values, warningsText, widget } from './common';
 import { loadCtx, requireSteering, withSession } from './context';
 
 const MIME: Record<string, string> = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4' };
@@ -54,7 +54,7 @@ export function registerVoiceTools(server: McpServer) {
         seed,
         project,
       },
-      _meta: { ui: { resourceUri: PLAYER_URI } },
+      _meta: PLAYER_META,
     },
     guard(async (a) => {
       const ctx = await loadCtx();
