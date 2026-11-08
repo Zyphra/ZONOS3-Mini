@@ -38,10 +38,20 @@ export function laciLanguages(e: Engine): string[] {
  *  speech-edit LoRA of `edit/`, serves edit fills only). */
 export const ACCENT_ADAPTERS: string[] = [];
 
-/** Edit regions per request: the speech-edit backbone's marker rows (zonos3.tts.edit edit_marker_rows; this export's
- *  tokenizer has no phoneme block, so every extra text row is a marker). */
+/** Edit regions per request: the speech-edit backbone's marker rows (zonos3.tts.edit edit_marker_rows, ggml
+ *  zonos3_edit_marker_rows): the extra text rows before the tokenizer's phoneme block (open, close, symbols), all of them
+ *  without one; 0 when the phoneme block does not end the extra rows. */
 export function editMaxSpans(e: Engine): number {
-  return e.edit ? e.edit.hp.textExtraTokens : 0;
+  if (!e.edit) return 0;
+  const hp = e.edit.hp;
+  const spec: unknown = JSON.parse(hp.textTokenizerSpec);
+  const phonemes = spec && typeof spec === 'object' && 'phonemes' in spec ? spec.phonemes : undefined;
+  if (!phonemes) return hp.textExtraTokens;
+  if (typeof phonemes !== 'object' || !('open_id' in phonemes) || !('symbols' in phonemes)) return 0;
+  const { open_id: openId, symbols } = phonemes;
+  if (typeof openId !== 'number' || !Array.isArray(symbols)) return 0;
+  const markers = openId - hp.textVocab - 1;
+  return markers + 2 + symbols.length === hp.textExtraTokens ? Math.max(markers, 0) : 0;
 }
 
 function conditionTokens(e: Engine): unknown {
