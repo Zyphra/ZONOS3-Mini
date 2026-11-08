@@ -18,8 +18,9 @@ async function probe() {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
   try {
-    const res = await fetch(`${server}/v2/capabilities`, { signal: ctrl.signal });
-    if (res.ok) {
+    const res = await fetch(`${server}/v2/capabilities`, { signal: ctrl.signal, headers: { accept: 'application/json' } });
+    // A static host answers every path with the app's HTML page: only JSON is a ZONOS server.
+    if (res.ok && /json/.test(res.headers.get('content-type') ?? '')) {
       line.textContent = `Server: ${origin}`;
       return;
     }

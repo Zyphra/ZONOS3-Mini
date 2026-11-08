@@ -1,5 +1,5 @@
 /** The open project's settings in one dialog: language, voice mode, tag strength, and what opening it did to its voices. */
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { LANG_LABEL } from '../lib/languages';
 import { backend, modalOpen, projectSettings, settingsOpen } from '../state/app';
 import { current, restoreReport, setSettings } from '../state/projects';
@@ -9,11 +9,11 @@ import { Icon } from './Icon';
 export function ProjectSettings() {
   const open = settingsOpen.value;
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     const back = document.activeElement as HTMLElement | null;
     modalOpen.value = true;
-    requestAnimationFrame(() => box.current?.querySelector<HTMLElement>('select')?.focus({ preventScroll: true }));
+    box.current?.querySelector<HTMLElement>('select')?.focus({ preventScroll: true });
     return () => {
       modalOpen.value = false;
       (back?.isConnected ? back : document.querySelector<HTMLElement>('#settings-btn'))?.focus({ preventScroll: true });

@@ -44,7 +44,7 @@ function editKeys(e: KeyboardEvent): boolean {
   const target = e.target as HTMLElement | null;
   const role = target?.getAttribute?.('role');
   // Tab cycles words only from the transcript or a word label; elsewhere it is the browser's.
-  const inWords = !!target?.closest?.('.ed-transcript textarea, .ew-wlabel');
+  const inWords = !!target?.closest?.('.ed-area, .ew-wlabel');
   if (mod || e.altKey || (isTyping(e.target) && !(e.key === 'Tab' && inWords)) || !E.version.value) return false;
   const d = E.displayed.value;
   // A selected word: the keys edit its timing.

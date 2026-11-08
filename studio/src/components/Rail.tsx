@@ -66,8 +66,8 @@ export function Rail({ id, side, title, children }: Props) {
     };
     window.addEventListener('keydown', onKey);
     // The page behind the drawer is inert: Tab stays in the drawer, screen readers see only it.
-    const stage = box.current?.closest('.stage');
-    const others = stage ? [...stage.children].filter((el) => el !== box.current && !el.classList.contains('rail-scrim')) : [];
+    const parent = box.current?.parentElement;
+    const others = parent ? [...parent.children].filter((el) => el !== box.current && !el.classList.contains('rail-scrim')) : [];
     for (const el of others) el.setAttribute('inert', '');
     return () => {
       window.removeEventListener('keydown', onKey);

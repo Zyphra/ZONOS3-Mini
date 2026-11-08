@@ -69,18 +69,18 @@ export function BackendPanel() {
     setAt(r ? { top: `${r.bottom + 6}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } : { top: '60px', right: '12px' });
   }, [open]);
   useEffect(() => {
-    if (!open) return;
+    if (!open || !at) return;
     const back = document.activeElement as HTMLElement | null;
     const outside = (e: PointerEvent) => {
       if (!box.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('#backend-pill')) backendPanelOpen.value = false;
     };
     document.addEventListener('pointerdown', outside);
-    requestAnimationFrame(() => box.current && focusFirst(box.current));
+    if (box.current) focusFirst(box.current);
     return () => {
       document.removeEventListener('pointerdown', outside);
       back?.focus({ preventScroll: true });
     };
-  }, [open]);
+  }, [open, !!at]);
   if (!b || !open || !at) return null;
   const rows: [string, string][] = [
     ['Server', b.kind === 'web' ? 'this browser' : b.kind === 'offline' ? 'none' : b.server || location.origin],
@@ -229,11 +229,11 @@ const EDIT_ROWS: [string, string][] = [
 export function Keys() {
   const open = showKeys.value;
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     const back = document.activeElement as HTMLElement | null;
     modalOpen.value = true;
-    requestAnimationFrame(() => box.current && focusFirst(box.current));
+    if (box.current) focusFirst(box.current);
     return () => {
       modalOpen.value = false;
       (back?.isConnected ? back : document.querySelector<HTMLElement>('#keys-btn'))?.focus({ preventScroll: true });
