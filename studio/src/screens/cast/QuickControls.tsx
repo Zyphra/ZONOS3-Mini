@@ -124,7 +124,8 @@ export function MoodControls({ b, compact, large, padOpens }: { b: Binding; comp
           inert={padOpens ? true : undefined}
           onDblClick={(e) => !(e.target as Element).closest('.mlm, .mlm-handle') && (b.begin(), b.set(cx.id, 0), b.set(cy.id, 0), b.end())}
           onPointerDown={(e) => {
-            if ((e.target as Element).closest('.mlm, .mlm-handle')) return;
+            // The second press of a double-click resets (onDblClick); it must not start a drag first.
+            if (e.detail === 2 || (e.target as Element).closest('.mlm, .mlm-handle')) return;
             b.begin();
             drag(
               e,
@@ -147,7 +148,7 @@ export function MoodControls({ b, compact, large, padOpens }: { b: Binding; comp
           )}
           <span class="mood-axis-x" />
           <span class="mood-axis-y" />
-          <MoodLandmarks b={b} pad={pad} width={width} font={font} blocked={cornerBoxes} />
+          <MoodLandmarks b={b} pad={pad} width={width} font={font} blocked={cornerBoxes} preview={padOpens} />
           <span
             class="mood-dot"
             style={{ left: `${px}%`, top: `${py}%` }}
@@ -155,8 +156,16 @@ export function MoodControls({ b, compact, large, padOpens }: { b: Binding; comp
             tabIndex={0}
             aria-label={`${cx.label} (x) and ${cy.label} (y)`}
             aria-valuetext={`${cx.label} ${vx.toFixed(1)}, ${cy.label} ${vy.toFixed(1)}`}
-            title={`${cx.label} × ${cy.label}: drag anywhere on the pad, arrow keys to nudge. Double-click the pad to reset.`}
+            title={`${cx.label} × ${cy.label}: drag anywhere on the pad, arrow keys to nudge, 0 or Delete to reset. Double-click the pad to reset.`}
             onKeyDown={(e) => {
+              if (e.key === '0' || e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                b.begin();
+                b.set(cx.id, 0);
+                b.set(cy.id, 0);
+                b.end();
+                return;
+              }
               const k = e.shiftKey ? 1 : 0.25;
               const dx = e.key === 'ArrowRight' ? k : e.key === 'ArrowLeft' ? -k : 0;
               const dy = e.key === 'ArrowUp' ? k : e.key === 'ArrowDown' ? -k : 0;
@@ -190,7 +199,10 @@ export function MoodControls({ b, compact, large, padOpens }: { b: Binding; comp
           {marked && <p class="hint">Landmarks sit where each mood measured at its default dose. Click one to add it, click again to remove; drag it or its handle along the line for strength. Arrow keys move between moods, + / − change the dose.</p>}
         </div>
       ) : (
-        <MoodChips values={b.values} onPick={pick} />
+        <>
+          <MoodChips values={b.values} onPick={pick} />
+          {compact && <p class="hint mood-hint">Dot = overall tone · chips add named moods</p>}
+        </>
       )}
       {!compact && !large && cx && cy && (
         <p class="hint">

@@ -22,6 +22,9 @@ export function AccentAtlas({ large }: { large?: boolean }) {
     if (tabs.includes(pin.tab)) setTab(pin.tab);
   }, [pin.tab]);
   const svg = useRef<SVGSVGElement>(null);
+  /** A burst of arrow presses is one undo step (ends after 400 ms idle). */
+  const keyIdle = useRef(0);
+  useEffect(() => () => clearTimeout(keyIdle.current), []);
   const color = hue('accent');
   const geo = geoOf(tab, accents);
   const mix = accentMix.value;
@@ -40,33 +43,49 @@ export function AccentAtlas({ large }: { large?: boolean }) {
     const p = pinHere ? pin : homePin(tab, accents);
     const dx = e.key === 'ArrowRight' ? k : e.key === 'ArrowLeft' ? -k : 0;
     const dy = e.key === 'ArrowDown' ? k : e.key === 'ArrowUp' ? -k : 0;
-    if (e.key === 'Home' || e.key === '0') {
+    if (e.key === 'Home' || e.key === '0' || e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       designs.apply({ ...design.value, pin: homePin(tab, accents) });
       return;
     }
     if (!dx && !dy) return;
     e.preventDefault();
-    designs.apply({ ...design.value, pin: { tab, x: clamp(p.x + dx, 6, ATLAS_W - 6), y: clamp(p.y + dy, 6, ATLAS_H - 6) } });
+    if (!keyIdle.current) designs.begin();
+    clearTimeout(keyIdle.current);
+    setPin({ tab, x: clamp(p.x + dx, 6, ATLAS_W - 6), y: clamp(p.y + dy, 6, ATLAS_H - 6) });
+    keyIdle.current = window.setTimeout(() => {
+      keyIdle.current = 0;
+      designs.end();
+    }, 400);
+  };
+  const tabKeys = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const i = tabs.indexOf(tab);
+    const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    setTab(next);
+    (e.currentTarget as HTMLElement).querySelector<HTMLElement>(`#atlas-tab-${next}`)?.focus();
   };
   const pinLabel = top ? `${top.a.label} ${top.v.toFixed(2)}${zoneOf(top.a, top.v) === 'safe' ? '' : ' · strong'}` : '';
   const labelLeft = pin.x > ATLAS_W - 300;
 
   return (
     <div class={`atlas${large ? ' is-large' : ''}`} style={{ '--fam': color }}>
-      <div class="atlas-tabs" role="tablist" aria-label="Accent maps">
+      <div class="atlas-tabs" role="tablist" aria-label="Accent maps" onKeyDown={tabKeys}>
         {tabs.map((t) => (
-          <button role="tab" aria-selected={t === tab} class={`tab${t === tab ? ' is-on' : ''}`} onClick={() => setTab(t)}>
+          <button id={`atlas-tab-${t}`} role="tab" aria-selected={t === tab} aria-controls={`atlas-panel-${t}`} tabIndex={t === tab ? 0 : -1} class={`tab${t === tab ? ' is-on' : ''}`} onClick={() => setTab(t)}>
             {TAB_LABEL[t] ?? t}
             {pin.tab === t && active.length > 0 && <span class="fam-dot" />}
           </button>
         ))}
         <div class="atlas-readout" title={active.map(({ a, v }) => `${a.label} ${v.toFixed(2)}`).join(' + ')}>
           {!pinHere && active.length > 0 ? (
-            <span class="muted">pin is on {TAB_LABEL[pin.tab] ?? pin.tab}</span>
-          ) : active.length > 1 ? (
-            <span class="muted">blend: {active.map(({ a, v }) => `${a.label} ${v.toFixed(1)}`).join(' + ')}</span>
-          ) : null}
+            <span class="muted">Dragging here replaces {TAB_LABEL[pin.tab] ?? pin.tab}</span>
+          ) : active.length ? (
+            <span class="muted">{active.map(({ a, v }) => `${a.label} ${v.toFixed(2)}`).join(' + ')}</span>
+          ) : (
+            <span class="muted">no accent</span>
+          )}
         </div>
         <button class="link home-btn" onClick={() => designs.apply({ ...design.value, pin: homePin(tab, accents) })} title="Back home: no accent">
           <Icon name="home" size={14} /> home
@@ -74,6 +93,7 @@ export function AccentAtlas({ large }: { large?: boolean }) {
       </div>
       <svg
         ref={svg}
+        id={`atlas-panel-${tab}`}
         class="atlas-map"
         viewBox={`0 0 ${ATLAS_W} ${ATLAS_H}`}
         role="slider"

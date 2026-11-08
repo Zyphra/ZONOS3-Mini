@@ -145,9 +145,10 @@ function doseAt(m: Mood, fx: number, fy: number): number {
 
 /**
  * Every measured mood as a labelled landmark on the pad, the active ones glowing with a strength handle on their
- * ray. Rendered inside the pad element (`pad`), which positions them.
+ * ray. Rendered inside the pad element (`pad`), which positions them. `preview`: the pad is a read-only picture
+ * (the strip's card): landmarks are plain dots, not buttons.
  */
-export function MoodLandmarks({ b, pad, width, font, blocked }: { b: Binding; pad: { current: HTMLElement | null }; width: number; font: number; blocked: { x: number; y: number; w: number; h: number }[] }) {
+export function MoodLandmarks({ b, pad, width, font, blocked, preview }: { b: Binding; pad: { current: HTMLElement | null }; width: number; font: number; blocked: { x: number; y: number; w: number; h: number }[]; preview?: boolean }) {
   const list = moods.value.filter((m) => m.at);
   if (!list.length || !width) return null;
   const at = layout(list, width, font + 6);
@@ -215,6 +216,16 @@ export function MoodLandmarks({ b, pad, width, font, blocked }: { b: Binding; pa
         const v = b.values[m.control.id] ?? 0;
         const { x, y } = at.get(m.control.id)!;
         const side = sides.get(m.control.id) ?? 'hidden';
+        if (preview)
+          return (
+            <span class={`mlm is-preview side-${side}${v > 0 ? ` is-on zone-${zoneOf(m.control, v)}` : ''}`} style={{ left: `${x * 100}%`, top: `${y * 100}%`, '--glow': Math.min(1.4, v / m.dose) }} aria-hidden="true">
+              <span class="mlm-dot" />
+              <span class="mlm-label">
+                {m.label}
+                {v > 0 && <b class="mlm-dose"> {fmt(v)}</b>}
+              </span>
+            </span>
+          );
         return (
           <button
             data-mood={m.control.id}

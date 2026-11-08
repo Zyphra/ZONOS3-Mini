@@ -4,14 +4,18 @@ import { nowPlaying } from '../../audio/player';
 import { FileDrop } from '../../components/FileDrop';
 import { Icon } from '../../components/Icon';
 import { confirm } from '../../components/ConfirmDialog';
+import { NameInput } from '../../components/Projects';
 import { notify } from '../../state/app';
 import { design, designs, switchBase } from '../../state/design';
+import { revealRow, setPhrase } from './Monitor';
 import {
   cast,
   clipLoading,
   ensureEmbedding,
+  RECORD_MAX_S,
   recording,
   removePersona,
+  renamePersona,
   restorePersona,
   speakers,
   speakersError,
@@ -51,7 +55,7 @@ function VoiceRow({ s }: { s: Speaker }) {
   const playing = nowPlaying.value?.id === `clip:${s.id}`;
   const busy = clipLoading.value === s.id;
   return (
-    <li class={`voice${on ? ' is-on' : ''}`}>
+    <li class={`voice${on ? ' is-on' : ''}`} data-voice={s.id}>
       <button
         class={`play-mini${playing ? ' is-playing' : ''}${busy ? ' is-busy' : ''}`}
         onClick={() => void toggleClip(s)}
@@ -80,8 +84,8 @@ function Recorder() {
   if (rec) {
     const s = Math.floor((Date.now() - rec.started) / 1000);
     return (
-      <button class="btn btn-rec is-recording" onClick={rec.stop}>
-        <span class="rec-dot" /> Stop · 0:{String(s).padStart(2, '0')}
+      <button class="btn btn-rec is-recording" onClick={rec.stop} title={`Recording stops by itself at ${RECORD_MAX_S} s`}>
+        <span class="rec-dot" /> Stop · 0:{String(s).padStart(2, '0')} / 0:{RECORD_MAX_S}
       </button>
     );
   }
@@ -89,7 +93,7 @@ function Recorder() {
     <button
       class="btn btn-rec"
       disabled={uploading.value}
-      onClick={() => void startRecording((s) => s && (switchBase(s.id, 'clip'), void ensureEmbedding(s)))}
+      onClick={() => void startRecording((s) => s && (switchBase(s.id, 'clip'), void ensureEmbedding(s), revealRow(`[data-voice="${s.id}"]`)))}
       title="Record 5-30 s of clean speech to clone a voice"
     >
       <Icon name="mic" /> Record
@@ -97,24 +101,36 @@ function Recorder() {
   );
 }
 
+/** Load a persona onto the bench; its signature line becomes the preview text. */
+function loadPersona(p: Persona) {
+  const base = speakers.value.find((s) => s.id === p.design.baseId);
+  if (!base) notify(`${p.name}'s voice is gone from the server; pick a base voice`, 'error');
+  designs.apply(structuredClone(p.design));
+  if (p.signature.trim()) setPhrase(p.signature);
+}
+
 function PersonaRow({ p }: { p: Persona }) {
   const base = speakers.value.find((s) => s.id === p.design.baseId);
+  const [renaming, setRenaming] = useState(false);
   return (
-    <li class="voice persona">
-      <button class="voice-name" onClick={() => designs.apply(structuredClone(p.design))} title={`Load ${p.name} onto the bench`}>
-        {p.name}
-        <span class="sub">{base?.label ?? 'missing base voice'}</span>
-      </button>
-      <button
-        class="icon-btn sm"
-        aria-label={`Duplicate ${p.name}`}
-        title="Duplicate onto the bench"
-        onClick={() => {
-          designs.apply(structuredClone(p.design));
-          notify(`Loaded a copy of ${p.name}; save it under a new name to keep both`);
-        }}
-      >
-        <Icon name="copy" size={14} />
+    <li class={`voice persona${base ? '' : ' is-missing'}`} data-persona={p.id}>
+      {renaming ? (
+        <NameInput
+          value={p.name}
+          label={`Rename ${p.name}`}
+          onDone={(name) => {
+            setRenaming(false);
+            if (name) renamePersona(p.id, name);
+          }}
+        />
+      ) : (
+        <button class="voice-name" onClick={() => loadPersona(p)} title={base ? `Load ${p.name} onto the bench` : `${p.name}'s base voice is gone from the server`}>
+          {p.name}
+          <span class="sub">{base?.label ?? 'voice unavailable'}</span>
+        </button>
+      )}
+      <button class="icon-btn sm" aria-label={`Rename ${p.name}`} title="Rename" onClick={() => setRenaming(true)}>
+        <Icon name="edit" size={14} />
       </button>
       <button class="icon-btn sm" aria-label={`Remove ${p.name}`} title="Remove from cast" onClick={() => void removeFromCast(p)}>
         <Icon name="trash" size={14} />
@@ -125,10 +141,11 @@ function PersonaRow({ p }: { p: Persona }) {
 
 /** A chosen or dropped clip becomes a voice of the project and the bench's base. */
 async function cloneFile(f: File) {
-  const s = await uploadClip(f, f.name.replace(/\.[^.]+$/, ''), f.name);
+  const s = await uploadClip(f, f.name.replace(/\.[^.]+$/, ''), f.name, true);
   if (s) {
     switchBase(s.id, 'clip');
     void ensureEmbedding(s);
+    revealRow(`[data-voice="${s.id}"]`);
   }
 }
 
