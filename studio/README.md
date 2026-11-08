@@ -79,6 +79,7 @@ pnpm install                 # at the repo root: the pnpm workspace (studio, stu
 echo "ZONOS_SERVER=https://<server>" > studio/.env.local   # or export ZONOS_SERVER; /v1 and /v2 are proxied there
 pnpm --dir studio dev         # http://localhost:5173/ (the chooser), /studio, /lite
 pnpm --dir studio typecheck   # gen:api, then tsc
+pnpm --dir studio test        # gen:api, then vitest (happy-dom) over src/**/*.test.ts
 pnpm --dir studio build       # gen:api, tsc, vite → studio/dist/ (commit it)
 ```
 
