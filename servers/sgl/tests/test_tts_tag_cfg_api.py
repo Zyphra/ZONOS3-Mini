@@ -41,6 +41,7 @@ class _Frontend:
             tts_audio_codec="opus_dual_3n_600k_sched600k_r4096_step600000",
             accent_adapters=None,
             laci_heads={},
+            share_tokenizer=True,  # ServerArgs with --num-tokenizer 0 (serve.sh): the frontend sends TTSNormalizeMsg
         )
         self.sent = []
         self.hints = []  # TTSNormalizeMsg: warms the tokenizer's normalizer memo, submits nothing

@@ -73,6 +73,7 @@ def _config(tmp_path, **extra):
         "accent_adapters": None,
         "steer_bundle": None,
         "laci_heads": {},
+        "share_tokenizer": True,  # ServerArgs with --num-tokenizer 0 (serve.sh): the frontend sends TTSNormalizeMsg
     }
     return SimpleNamespace(**{**fields, **extra})
 
