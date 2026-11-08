@@ -12,8 +12,123 @@ body,
 
 .app {
   display: grid;
-  grid-template-rows: 54px minmax(0, 1fr);
+  grid-template-rows: 54px auto minmax(0, 1fr);
   height: 100%;
+}
+.backend-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 18px;
+  font-size: 12.5px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+}
+.backend-banner .link {
+  color: inherit;
+}
+.pill {
+  cursor: pointer;
+  background: none;
+}
+.pill:hover,
+.pill[aria-expanded='true'] {
+  border-color: var(--line-2);
+  color: var(--text);
+}
+.backend-panel {
+  position: fixed;
+  z-index: 85;
+  width: min(360px, calc(100vw - 16px));
+  padding: 12px 14px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  animation: rise 160ms var(--ease);
+}
+.backend-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+}
+.backend-panel p {
+  margin: 0 0 10px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.backend-panel dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  margin: 0;
+}
+.backend-panel dt {
+  color: var(--text-3);
+}
+.backend-panel dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sheet-head h2 {
+  margin: 0;
+}
+.settings-sheet {
+  width: min(520px, calc(100vw - 24px));
+}
+.settings-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.settings-row > .hint {
+  grid-column: 2;
+  font-size: 11.5px;
+}
+.settings-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-range input {
+  flex: 1;
+}
+.boot-consent h2,
+.boot-error h2 {
+  margin-bottom: 6px;
+}
+.boot-server {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.boot-server label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+}
+.boot-server .input {
+  width: 260px;
 }
 .acts {
   display: flex;

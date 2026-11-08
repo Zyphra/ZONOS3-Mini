@@ -94,7 +94,7 @@ function tracker(): (p: EngineProgress) => Download {
     const parts = [`${size(p.loaded)} of ${size(p.total)}`];
     if (rate > 0.05 * MB && left > 0) parts.push(`${(rate / MB).toFixed(rate >= 10 * MB ? 0 : 1)} MB/s`, timeLeft(left / rate));
     return {
-      label: `${p.fetched > 0 ? 'Downloading' : 'Loading'} ${p.models.join(' + ')}`,
+      label: `${p.fetched > 0 ? 'Downloading' : 'Loading'} ${p.models.map(modelName).join(' + ')}`,
       fraction: p.total ? Math.min(1, p.loaded / p.total) : 0,
       detail: parts.join(' · '),
     };
@@ -102,6 +102,10 @@ function tracker(): (p: EngineProgress) => Download {
 }
 
 /** Picks the in-browser server and loads its models; `progress` gets the download as it goes. */
+/** Model file names as the reader knows them. */
+const MODEL_NAMES: Record<string, string> = { backbone: 'voice model', zac: 'audio codec', encoder: 'voice encoder', encoders: 'voice encoders' };
+const modelName = (m: string) => MODEL_NAMES[m] ?? m;
+
 export async function startWebEngine(progress: (d: Download) => void): Promise<void> {
   useWeb = true;
   const { engine } = await loadWebEngine();

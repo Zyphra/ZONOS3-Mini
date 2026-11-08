@@ -9,6 +9,8 @@ export const backend = signal<Backend | null>(null);
 export const bootError = signal<string | null>(null);
 /** Boot-screen download while a backend loads (the in-browser server's models). */
 export const bootProgress = signal<Download | null>(null);
+/** What boot is doing now ("Connecting to …", "Loading voices…", "Opening “x”…"). */
+export const bootStage = signal<string>('Opening the studio…');
 /** The encoder models a clip voice's first use loads on the in-browser server; null once they are in. */
 export const encoderDownload = signal<Download | null>(null);
 

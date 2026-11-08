@@ -15,10 +15,10 @@ import { previewText } from '../audio/preview';
 import { errorText } from '../audio/render';
 import { download, slug } from '../lib/files';
 import { uid } from '../lib/math';
-import { backend, notify, projectSettings } from './app';
+import { backend, dismissToast, notify, projectSettings } from './app';
 import { baseSpeaker, design, designs, setMode } from './design';
 import * as edit from './edit';
-import { cast, ownVoices, refreshSpeakers, speakers, uploading, type OwnVoice } from './library';
+import { cast, ownVoices, refreshSpeakers, speakers, speakersError, uploading, type OwnVoice } from './library';
 import { EMBEDDING_TYPE, MediaSink } from './media';
 import { emptyDoc, LEGACY_KEYS, legacyDoc, restore, snapshot, speakerUses } from './projectDoc';
 import { remapIds, SCHEMA, summaryOf, type ProjectDoc, type ProjectSettings } from './projectSchema';
@@ -40,6 +40,8 @@ export const storeKind = signal<Store['kind'] | null>(null);
 /** Projects still kept in this browser while the server holds projects: offered to move. */
 export const browserProjects = signal(0);
 export const moving = signal(false);
+/** Progress of `moveBrowserProjects`: k of n done. */
+export const movingProgress = signal<{ done: number; total: number } | null>(null);
 /** What opening the current project did about its voices. */
 export const restoreReport = signal<{ reRegistered: string[]; issues: string[] }>({ reRegistered: [], issues: [] });
 /** The browser's estimate for this origin (secure contexts only). */
@@ -74,7 +76,7 @@ function serial<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export function fmtBytes(n: number): string {
-  if (n < 1e6) return `${Math.max(1, Math.round(n / 1e3))} kB`;
+  if (n < 1e6) return `${Math.round(n / 1e3)} kB`;
   if (n < 1e9) return `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB`;
   return `${(n / 1e9).toFixed(1)} GB`;
 }
@@ -225,12 +227,12 @@ async function reconcile(doc: ProjectDoc): Promise<{ doc: ProjectDoc; map: Map<s
       map.set(v.id, s.id);
       reRegistered.push(v.label);
     } catch (e) {
-      issues.push(`“${v.label}” couldn’t be registered with the server again: ${errorText(e)}`);
+      issues.push(`“${v.label}”: ${errorText(e)}`);
     }
   }
   const owned = new Set(doc.voices.map((v) => v.id));
   for (const [id, uses] of speakerUses(doc)) {
-    if (!live.has(id) && !owned.has(id)) issues.push(`A voice used by ${[...uses].join(', ')} is gone from the server, and the project holds no clip or embedding to recreate it.`);
+    if (!live.has(id) && !owned.has(id)) issues.push(`the voice used by ${[...uses].join(', ')}: it is gone from the server, and the project holds no clip or embedding to recreate it`);
   }
   if (!map.size) return { doc, map, reRegistered, issues };
   await refreshSpeakers();
@@ -269,9 +271,19 @@ async function adopt(doc: ProjectDoc) {
 /** The Cast bench needs a voice the server has: the first default one when the project's is gone. */
 function pickBase() {
   const list = speakers.value;
-  if (list.some((s) => s.id === design.value.baseId)) return;
+  const old = design.value.baseId;
+  if (list.some((s) => s.id === old)) return;
   const first = list.find((s) => s.is_default) ?? list[0];
-  if (first) designs.reset({ ...design.value, baseId: first.id, mode: embeddingOnly(first) ? 'embedding' : projectSettings.value.voiceMode });
+  if (!first) return;
+  designs.reset({ ...design.value, baseId: first.id, mode: embeddingOnly(first) ? 'embedding' : projectSettings.value.voiceMode });
+  if (old) notify(`Bench switched to ${first.label} because its voice is gone from the server`);
+}
+
+/** "Untitled project", numbered when one with that name exists already ("Untitled project 2"). */
+function untitledName(): string {
+  const taken = new Set(projects.value.map((p) => p.name));
+  if (!taken.has(UNTITLED)) return UNTITLED;
+  for (let i = 2; ; i++) if (!taken.has(`${UNTITLED} ${i}`)) return `${UNTITLED} ${i}`;
 }
 
 // ── Opening ───────────────────────────────────────────────────────────────────────────────────────
@@ -282,7 +294,8 @@ async function load(id: string, b?: Backend) {
   const doc = JSON.parse(json) as ProjectDoc;
   if (doc.schema > SCHEMA) throw new Error('it was saved by a newer version of the studio');
   await refreshSpeakers();
-  const { doc: next, map, reRegistered, issues } = await reconcile(doc);
+  // Without the voice list nothing can be matched: don't re-register (or report) anything; say why instead.
+  const { doc: next, map, reRegistered, issues } = speakersError.value ? { doc, map: new Map<string, string>(), reRegistered: [], issues: [`Couldn’t list voices: ${speakersError.value}`] } : await reconcile(doc);
   const apply = await restore(next, (h) => store!.media(h));
   const meta = metaOf(next, json, revision);
   clearTimeout(timer);
@@ -312,7 +325,7 @@ async function memoryOnly(b: Backend, e: unknown) {
   saveState.value = 'off';
   saveError.value = `Projects can’t be stored ${b.projects ? 'on the server' : 'in this browser'} (${errorText(e)}): work in this tab is not saved.`;
   notify(saveError.value, 'error');
-  const doc = legacyDoc({ id: uid(), name: 'Unsaved project' });
+  const doc = legacyDoc({ id: uid(), name: UNTITLED });
   const apply = await restore(doc, () => Promise.reject(new Error('no storage')));
   batch(() => {
     backend.value = b;
@@ -345,7 +358,7 @@ export async function openLastProject(b: Backend) {
     const wanted = new URLSearchParams(location.search).get('project');
     let id = (projects.value.find((p) => p.id === wanted) ?? projects.value.find((p) => p.id === last) ?? projects.value[0])?.id;
     if (!id) {
-      id = await storeNew(legacyDoc({ id: uid(), name: 'My project' }));
+      id = await storeNew(legacyDoc({ id: uid(), name: UNTITLED }));
       for (const k of LEGACY_KEYS) localStorage.removeItem(`zvs.${k}`);
     }
     await load(id, b);
@@ -411,7 +424,7 @@ export async function openProject(id: string) {
   launcherOpen.value = false;
 }
 
-export function newProject(name = UNTITLED) {
+export function newProject(name = untitledName()) {
   return switchTo(() => storeNew(emptyDoc({ id: uid(), name }, projectSettings.value)));
 }
 
@@ -445,7 +458,7 @@ export async function duplicateProject(id: string) {
     if (id === current.value?.id) await save();
     const doc = JSON.parse((await store.read(id)).json) as ProjectDoc;
     const now = Date.now();
-    const copy: ProjectDoc = { ...doc, id: uid(), name: `${doc.name} copy`, createdAt: now, updatedAt: now };
+    const copy: ProjectDoc = { ...doc, id: uid(), name: `${doc.name} (copy)`, createdAt: now, updatedAt: now };
     await storeNew(copy);
     notify(`Duplicated as “${copy.name}”`, 'ok');
   } catch (e) {
@@ -500,7 +513,7 @@ export async function keepMineAsCopy() {
   if (!p || !store) return;
   try {
     const now = Date.now();
-    const head = { ...p, id: uid(), name: `${p.name} (my copy)`, createdAt: now, updatedAt: now, revision: null };
+    const head = { ...p, id: uid(), name: `${p.name} (copy)`, createdAt: now, updatedAt: now, revision: null };
     const sink = new MediaSink();
     const doc = await snap(head, sink);
     const json = JSON.stringify(doc);
@@ -534,6 +547,7 @@ export async function exportProject(id: string) {
     for (const [h, info] of Object.entries(doc.media)) files[mediaPath(h, info.type)] = [new Uint8Array(await (await store.media(h)).arrayBuffer()), { level: 0 }];
     const zip = zipSync(files, { mtime: doc.updatedAt });
     download(zip.buffer, `${slug(doc.name)}.voice-studio.zip`, 'application/zip');
+    notify(`Exported “${doc.name}”`, 'ok');
   } catch (e) {
     notify(`Couldn’t export the project: ${errorText(e)}`, 'error');
   }
@@ -542,26 +556,35 @@ export async function exportProject(id: string) {
 /** Import an exported zip (media checked against their hashes) into the store and open it; an id already there gets a new one. */
 export async function importProject(file: File) {
   if (!store) return notify(saveError.value ?? 'Projects are unavailable.', 'error');
+  const caps = backend.value?.projects;
+  const limit = caps ? caps.max_project_bytes + caps.max_media_bytes : 0;
+  if (limit && file.size > limit) return notify(`Too big: ${fmtBytes(file.size)}, limit ${fmtBytes(limit)}`, 'error');
+  const busy = notify(`Importing ${file.name}…`);
   try {
     let files: Unzipped;
     try {
       files = unzipSync(new Uint8Array(await file.arrayBuffer()));
     } catch {
-      throw new Error('it is not a zip file');
+      throw new Error('Not a Voice Studio project file (not a zip)');
     }
-    if (!files['project.json']) throw new Error('it has no project.json (not a Voice Studio project)');
-    const doc0 = JSON.parse(strFromU8(files['project.json'])) as ProjectDoc;
-    if (typeof doc0.schema !== 'number' || typeof doc0.id !== 'string' || !doc0.media) throw new Error('its project.json is not a Voice Studio project');
-    if (doc0.schema > SCHEMA) throw new Error('it was saved by a newer version of the studio');
+    if (!files['project.json']) throw new Error('Not a Voice Studio project file');
+    let doc0: ProjectDoc;
+    try {
+      doc0 = JSON.parse(strFromU8(files['project.json'])) as ProjectDoc;
+    } catch {
+      throw new Error('Not a Voice Studio project file');
+    }
+    if (typeof doc0.schema !== 'number' || typeof doc0.id !== 'string' || !doc0.media) throw new Error('Not a Voice Studio project file');
+    if (doc0.schema > SCHEMA) throw new Error('It was saved by a newer version of the studio');
     const media = new Map<string, Blob>();
     for (const [path, bytes] of Object.entries(files)) {
       const h = /^media\/([0-9a-f]{32}|[0-9a-f]{64})\./.exec(path)?.[1];
       if (!h) continue;
-      if (!(await matchesHash(h, bytes as Uint8Array<ArrayBuffer>))) throw new Error(`${path} is damaged`);
+      if (!(await matchesHash(h, bytes as Uint8Array<ArrayBuffer>))) throw new Error(`An audio file inside is damaged (${path})`);
       media.set(h, new Blob([bytes as Uint8Array<ArrayBuffer>], { type: doc0.media[h]?.type ?? '' }));
     }
     const missing = Object.keys(doc0.media).filter((h) => !media.has(h)).length;
-    if (missing) throw new Error(`${missing} media file${missing === 1 ? ' is' : 's are'} missing`);
+    if (missing) throw new Error(`${missing} audio file${missing === 1 ? ' is' : 's are'} missing from the file`);
     const r = await readdress(strFromU8(files['project.json']), media);
     let json = r.json;
     const doc = JSON.parse(json) as ProjectDoc;
@@ -571,9 +594,11 @@ export async function importProject(file: File) {
       json = JSON.stringify(doc);
     }
     await storeNew(doc, json, r.media);
+    dismissToast(busy);
     notify(`Imported “${doc.name}”`, 'ok');
     await openProject(doc.id);
   } catch (e) {
+    dismissToast(busy);
     notify(`Couldn’t import ${file.name}: ${errorText(e)}`, 'error');
   }
 }
@@ -585,7 +610,9 @@ export async function moveBrowserProjects() {
   let moved = 0;
   try {
     const local = await BrowserStore.open(false);
-    for (const meta of await local.list()) {
+    const all = await local.list();
+    movingProgress.value = { done: 0, total: all.length };
+    for (const meta of all) {
       const { json: json0 } = await local.read(meta.id);
       const doc0 = JSON.parse(json0) as ProjectDoc;
       const media = new Map<string, Blob>();
@@ -595,18 +622,21 @@ export async function moveBrowserProjects() {
       const doc = JSON.parse(json) as ProjectDoc;
       if (projects.value.some((p) => p.id === doc.id)) {
         doc.id = uid();
+        doc.name = `${doc.name} (moved)`;
         json = JSON.stringify(doc);
       }
       await storeNew(doc, json, r.media);
       await local.remove(meta.id);
       moved++;
       browserProjects.value--;
+      movingProgress.value = { done: moved, total: all.length };
     }
     notify(`Moved ${moved} project${moved === 1 ? '' : 's'} to the server`, 'ok');
   } catch (e) {
     notify(`Moved ${moved}; couldn’t move the rest: ${errorText(e)}`, 'error');
   } finally {
     moving.value = false;
+    movingProgress.value = null;
     void refreshList();
   }
 }

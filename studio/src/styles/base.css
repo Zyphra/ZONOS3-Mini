@@ -12,7 +12,7 @@
   --line-2: #ffffff33;
   --text: #f5f3ee;
   --text-2: #f5f3ee9e;
-  --text-3: #f5f3ee5c;
+  --text-3: #f5f3ee7a;
   --inv: #f5f3ee;
   --inv-text: #0a0a0a;
   --o: #e7620f;
@@ -594,6 +594,24 @@ select.input {
 .toast-error {
   border-color: color-mix(in srgb, var(--bad) 60%, transparent);
   color: var(--bad-text);
+}
+/* Static markup inside #app until the app renders (studio.html). */
+.boot-static {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 @keyframes rise {
   from {

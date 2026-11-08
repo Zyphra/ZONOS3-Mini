@@ -16,7 +16,7 @@ type Revision = components['schemas']['Project']['revision'];
  */
 export const KEEPALIVE_PATH = /^\/v2\/edit(\/|$)/;
 
-export const PROXY_PAGE = 'The server sent a web page instead of an answer (a proxy error?)';
+export const PROXY_PAGE = 'The server sent a web page instead of an answer (something in front of it didn’t pass the request on)';
 
 export class ApiError extends Error {
   constructor(
@@ -52,12 +52,27 @@ export function newSessionId(): string {
 }
 
 /** A `detail` as text: a string as is, the 422 list of `{loc, msg}` as `loc: msg; …`, anything else as JSON. */
+/** Request fields as the reader knows them (a 422's `loc`). */
+const FIELD_NAMES: Record<string, string> = {
+  speaker_audio_base64: 'voice clip',
+  speaker_embedding_id: 'voice',
+  speaker_embedding: 'voice embedding',
+  audio_base64: 'audio',
+  control_spans: 'painted spans',
+  controls: 'controls',
+  target_text: 'text',
+  original_text: 'transcript',
+  num_takes: 'takes',
+  tag_cfg_scale: 'tag strength',
+};
+const fieldName = (p: unknown) => (typeof p === 'string' ? (FIELD_NAMES[p] ?? p.replace(/_/g, ' ')) : String(p));
+
 function detailText(detail: unknown): string {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {
     return detail
       .map((d: { loc?: unknown; msg?: unknown }) => {
-        const loc = Array.isArray(d?.loc) ? d.loc.filter((p) => p !== 'body').join('.') : '';
+        const loc = Array.isArray(d?.loc) ? d.loc.filter((p) => p !== 'body').map(fieldName).join(' › ') : '';
         const msg = typeof d?.msg === 'string' ? d.msg : JSON.stringify(d);
         return loc ? `${loc}: ${msg}` : msg;
       })
@@ -72,7 +87,7 @@ export function errorOf(status: number, statusText: string, text: string): ApiEr
     const body = JSON.parse(text);
     return new ApiError(typeof body?.status_code === 'number' ? body.status_code : status, detailText(body?.detail ?? body));
   } catch {
-    if (status === 524 || status === 504 || status === 408) return new ApiError(status, `The server didn’t answer in time (proxy ${status}) — try again`);
+    if (status === 524 || status === 504 || status === 408) return new ApiError(status, 'The server didn’t answer in time — try again');
     if (/^\s*</.test(text) || !text.trim()) return new ApiError(status, status >= 500 ? `Server error (${status})` : `${status} ${statusText}`.trim());
     return new ApiError(status, text.slice(0, 300));
   }

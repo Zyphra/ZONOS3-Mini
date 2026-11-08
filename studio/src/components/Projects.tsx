@@ -5,8 +5,7 @@
  */
 import { createPortal } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { LANG_LABEL } from '../lib/languages';
-import { modalOpen, projectSettings } from '../state/app';
+import { modalOpen, settingsOpen } from '../state/app';
 import type { ProjectSummary } from '../state/projectSchema';
 import {
   browserProjects,
@@ -21,27 +20,29 @@ import {
   launcherOpen,
   moveBrowserProjects,
   moving,
+  movingProgress,
   newProject,
   openProject,
   projects,
   refreshList,
   reloadProject,
   renameProject,
-  restoreReport,
   retrySave,
   saveError,
   saveState,
-  setSettings,
   storage,
   storeKind,
   switching,
 } from '../state/projects';
 import type { ProjectMeta } from '../state/projectStore';
+import { confirm } from './ConfirmDialog';
 import { trapTab } from './focusTrap';
 import { Icon } from './Icon';
 import '../styles/projects.css';
 
-const SAVE_TEXT = { saved: 'All changes saved', saving: 'Saving…', error: 'Not saved', conflict: 'Changed elsewhere', off: 'Not saved' } as const;
+const SAVE_TEXT = { saved: 'All changes saved', saving: 'Saving…', error: 'Not saved', conflict: 'Changed elsewhere', off: 'Not saved — storage unavailable' } as const;
+/** Beside the project name (nothing while saved). */
+const SAVE_SHORT = { saved: '', saving: 'Saving…', error: 'Not saved', conflict: 'Changed elsewhere', off: 'Not saved — storage unavailable' } as const;
 
 function ago(t: number): string {
   const s = (Date.now() - t) / 1000;
@@ -70,7 +71,25 @@ function pickImport() {
 
 function SaveDot() {
   const s = saveState.value;
-  return <span class={`proj-dot is-${s}`} role="img" aria-label={SAVE_TEXT[s]} title={saveError.value ?? SAVE_TEXT[s]} />;
+  if (!current.value) return null;
+  return (
+    <span class={`proj-dot is-${s}`} role="img" aria-label={SAVE_TEXT[s]} title={saveError.value ?? SAVE_TEXT[s]}>
+      {s === 'conflict' ? '!' : ''}
+    </span>
+  );
+}
+
+/** The save state as text beside the name (nothing while saved), announced to screen readers when it changes. */
+function SaveText() {
+  const s = saveState.value;
+  return (
+    <>
+      {SAVE_SHORT[s] && <span class={`proj-state is-${s}`}>{SAVE_SHORT[s]}</span>}
+      <span class="sr-only" aria-live="polite">
+        {SAVE_TEXT[s]}
+      </span>
+    </>
+  );
 }
 
 /** A name being edited: Enter or leaving commits, Escape cancels. */
@@ -169,9 +188,10 @@ export function ProjectSwitcher() {
           }}
         />
       ) : (
-        <button ref={trigger} class="proj-trigger" aria-haspopup="menu" aria-expanded={open} disabled={!p} onClick={() => setOpen(!open)} title={`${p?.name ?? 'Project'} · ${saveError.value ?? SAVE_TEXT[saveState.value]}`}>
+        <button ref={trigger} class="proj-trigger" aria-haspopup="menu" aria-expanded={open} disabled={!p} onClick={() => setOpen(!open)} aria-label={`Project: ${p?.name ?? 'opening'}`} title={`${p?.name ?? 'Project'} · ${saveError.value ?? SAVE_TEXT[saveState.value]}`}>
           <SaveDot />
           <span class="proj-trigger-name">{p?.name ?? 'Opening…'}</span>
+          <SaveText />
           <Icon name="down" size={12} />
         </button>
       )}
@@ -204,17 +224,20 @@ export function ProjectSwitcher() {
                 {recent.map((r) => (
                   <button key={r.id} role="menuitem" class="proj-item" disabled={switching.value} onClick={run(() => void openProject(r.id))}>
                     <span class="proj-item-name">{r.name}</span>
-                    <span class="proj-item-meta">{ago(r.updatedAt)}</span>
+                    <span class="proj-item-meta">edited {ago(r.updatedAt)}</span>
                   </button>
                 ))}
               </div>
             )}
             <div role="separator" class="proj-sep" />
-            <button role="menuitem" class="proj-item" disabled={off || switching.value} onClick={run(() => void newProject())}>
+            <button role="menuitem" class="proj-item" disabled={off || switching.value} onClick={run(() => void newProject().then(() => setRenaming(true)))}>
               <Icon name="plus" size={14} /> New project
             </button>
-            <button role="menuitem" class="proj-item" onClick={run(() => setRenaming(true))}>
+            <button role="menuitem" class="proj-item" onClick={run(() => setRenaming(true))} disabled={off}>
               <Icon name="edit" size={14} /> Rename…
+            </button>
+            <button role="menuitem" class="proj-item" onClick={run(() => (settingsOpen.value = true))}>
+              <Icon name="gear" size={14} /> Project settings…
             </button>
             <button role="menuitem" class="proj-item" disabled={off} onClick={run(() => void duplicateProject(p.id))}>
               <Icon name="copy" size={14} /> Duplicate
@@ -319,7 +342,7 @@ function Launcher() {
           <button class="btn sm" disabled={saveState.value === 'off'} onClick={pickImport}>
             <Icon name="upload" size={14} /> Import…
           </button>
-          <button class="btn primary sm" disabled={saveState.value === 'off' || switching.value} onClick={() => void newProject()}>
+          <button class="btn primary sm" disabled={saveState.value === 'off' || switching.value} onClick={() => void newProject().then(() => setRenaming(current.value?.id ?? null))}>
             <Icon name="plus" size={14} /> New project
           </button>
         </div>
@@ -328,8 +351,16 @@ function Launcher() {
             <span>
               {browserProjects.value === 1 ? 'A project is' : `${browserProjects.value} projects are`} still saved in this browser only.
             </span>
-            <button class="btn sm primary" disabled={moving.value} onClick={() => void moveBrowserProjects()}>
-              <Icon name="upload" size={14} /> {moving.value ? 'Moving…' : `Move ${browserProjects.value === 1 ? 'it' : `all ${browserProjects.value}`} to the server`}
+            <button
+              class="btn sm primary"
+              disabled={moving.value}
+              onClick={async () => {
+                const n = browserProjects.value;
+                const ok = await confirm(`Move ${n === 1 ? 'this project' : `${n} projects`} to the shared server? Everyone with the studio link will see ${n === 1 ? 'it' : 'them'}; the browser ${n === 1 ? 'copy is' : 'copies are'} removed.`, { ok: 'Move' });
+                if (ok) void moveBrowserProjects();
+              }}
+            >
+              <Icon name="upload" size={14} /> {movingProgress.value ? `Moving ${movingProgress.value.done + 1} of ${movingProgress.value.total}…` : moving.value ? 'Moving…' : `Move ${browserProjects.value === 1 ? 'it' : `all ${browserProjects.value}`} to the server`}
             </button>
           </div>
         )}
@@ -344,9 +375,9 @@ function Launcher() {
           {s && s.quota ? (
             <>
               <span>
-                Browser storage: {fmtBytes(s.usage)} of {fmtBytes(s.quota)} used
+                Site storage (includes cached models): {fmtBytes(s.usage)} of {fmtBytes(s.quota)} used
               </span>
-              <span class="proj-meter" role="meter" aria-label="Browser storage used" aria-valuemin={0} aria-valuemax={s.quota} aria-valuenow={s.usage}>
+              <span class="proj-meter" role="meter" aria-label="Site storage used" aria-valuemin={0} aria-valuemax={s.quota} aria-valuenow={s.usage} aria-valuetext={`${fmtBytes(s.usage)} of ${fmtBytes(s.quota)}`}>
                 <span style={{ width: `${Math.min(100, (100 * s.usage) / s.quota)}%` }} />
               </span>
             </>
@@ -390,7 +421,7 @@ function Row({ p, renaming, confirming, onRename, onConfirm }: { p: ProjectMeta;
         </button>
       )}
       <div class="proj-row-actions">
-        <button class="icon-btn sm" onClick={() => onRename(p.id)} aria-label={`Rename ${p.name}`} title="Rename">
+        <button class="icon-btn sm" disabled={off} onClick={() => onRename(p.id)} aria-label={`Rename ${p.name}`} title="Rename">
           <Icon name="edit" size={14} />
         </button>
         <button class="icon-btn sm" disabled={off} onClick={() => void duplicateProject(p.id)} aria-label={`Duplicate ${p.name}`} title="Duplicate">
@@ -412,8 +443,8 @@ function Confirm({ p, onDone }: { p: ProjectMeta; onDone: () => void }) {
   const cancel = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => cancel.current!.focus(), []);
   return (
-    <div class="proj-confirm" role="alertdialog" aria-label={`Delete ${p.name}?`}>
-      <span>
+    <div class="proj-confirm" role="alertdialog" aria-label={`Delete ${p.name}?`} aria-describedby={`proj-confirm-${p.id}`}>
+      <span id={`proj-confirm-${p.id}`}>
         Delete “{p.name}”{storeKind.value === 'server' ? ' for everyone' : ' and its audio (unless another project shares it)'}? This can’t be undone{p.id === current.value?.id ? '; another project opens' : ''}.
       </span>
       <button ref={cancel} class="btn sm ghost" onClick={onDone}>
@@ -432,14 +463,12 @@ function Confirm({ p, onDone }: { p: ProjectMeta; onDone: () => void }) {
   );
 }
 
-/** The open project's settings, save problem and what happened to its voices on open. */
+/** The open project's save state and the ways out of a save problem; its settings open from the gear. */
 function CurrentProject() {
   const p = current.value;
   if (!p) return null;
-  const st = projectSettings.value;
-  const r = restoreReport.value;
   return (
-    <section class="proj-current" aria-label={`${p.name}: settings`}>
+    <section class="proj-current" aria-label={`${p.name}: save state`}>
       <div class="proj-current-head">
         <h3>{p.name}</h3>
         <span class="proj-current-state">
@@ -462,34 +491,10 @@ function CurrentProject() {
             </button>
           </>
         )}
+        <button class="btn sm" onClick={() => (settingsOpen.value = true)}>
+          <Icon name="gear" size={13} /> Project settings…
+        </button>
       </div>
-      <div class="proj-settings">
-        <label>
-          <span>Language</span>
-          <select class="input" value={st.language} onChange={(e) => setSettings({ language: e.currentTarget.value })} title="Direct lines render in this language; new Edit clips and pronunciation lookups start in it">
-            {Object.entries(LANG_LABEL).map(([code, label]) => (
-              <option key={code} value={code}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Voice mode</span>
-          <select class="input" value={st.voiceMode} onChange={(e) => setSettings({ voiceMode: e.currentTarget.value as 'embedding' | 'reference' })} title="How the Cast bench starts: designable (embedding) or an exact clone of the reference clip">
-            <option value="embedding">Designable</option>
-            <option value="reference">Exact clone</option>
-          </select>
-        </label>
-      </div>
-      {r.reRegistered.length > 0 && <p class="proj-note">Registered again with this server on open: {r.reRegistered.join(', ')}.</p>}
-      {r.issues.length > 0 && (
-        <ul class="proj-issues" aria-label="Voices that couldn’t be restored">
-          {r.issues.map((x) => (
-            <li key={x}>{x}</li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 }
