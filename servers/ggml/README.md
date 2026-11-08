@@ -143,7 +143,7 @@ Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.ba
   --speaker-embedding voice-emb.npy --cfg-scale 1.5 --seed 1
 ```
 
-Pass `--gpu` for GPU execution or `--cpu` to force CPU. `--zac`, `--spk-encoder`, `--zac-encoder`, and `--ssl-teacher` override companion discovery; the encoder overrides require `--clone`.
+`zonos3-cli` and `zonos3-server` run on the GPU (Metal) by default on Apple Silicon and on the CPU elsewhere; `--gpu` / `--cpu` pick the backend explicitly. `--zac`, `--spk-encoder`, `--zac-encoder`, and `--ssl-teacher` override companion discovery; the encoder overrides require `--clone`.
 
 | Flag | Meaning |
 |---|---|

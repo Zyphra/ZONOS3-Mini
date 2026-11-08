@@ -93,6 +93,9 @@ static void zac_lane_loop(ServerState & s, ZacLane & lane) {
             zac_stream partial;
             zac_stream_decode(lane.zac, partial, codes.data(), 1, 1, pcm);
         }
+        // The prefix-stream ramp's chunk shapes (windows 1, 2, 4, 8, 15).
+        zac_stream ramp;
+        for (int f : {1, 3, 7, 15, 30}) zac_stream_decode(lane.zac, ramp, codes.data(), H, f, pcm);
     }
     for (;;) {
         ZacTask t;
@@ -407,10 +410,6 @@ static void worker_loop(ServerState & s) {
                 if (job->laci) set_windows(job->slot, job->laci->probe_mask());
             }
             job->logits.assign((size_t) av * ncb, 0.0f);
-            if (!zonos3_batch_slot_prefill(bc, primary, job->idf.data(), job->n0, job->prompt.cond, job->logits.data())) {
-                job_finish(*job, /*failed=*/true);
-                continue;
-            }
             if (cfg) {
                 job->twin_slot = zonos3_slot{};
                 job->twin_slot.index = twin; job->twin_slot.active = true;
@@ -422,13 +421,18 @@ static void worker_loop(ServerState & s) {
                 job->twin_slot.accent_strength = job->gr.accent_strength;
                 job->twin_logits.assign((size_t) av * ncb, 0.0f);
                 job->guided.assign((size_t) av * ncb, 0.0f);
-                if (!zonos3_batch_slot_prefill(bc, twin, job->idf_twin.data(), job->twin.n_rows, job->twin.cond,
+                // The conditional prompt and its twin share one prefill graph per chunk.
+                if (!zonos3_batch_pair_prefill(bc, primary, job->idf.data(), job->n0, job->prompt.cond, job->logits.data(),
+                                               twin, job->idf_twin.data(), job->twin.n_rows, job->twin.cond,
                                                job->twin_logits.data())) {
                     job_finish(*job, /*failed=*/true);
                     continue;
                 }
                 job->twin_index = twin;
                 slot_job[twin] = job;   // reserves the slot; the loops below skip it (slot.index != i)
+            } else if (!zonos3_batch_slot_prefill(bc, primary, job->idf.data(), job->n0, job->prompt.cond, job->logits.data())) {
+                job_finish(*job, /*failed=*/true);
+                continue;
             }
             job->t_decode0 = std::chrono::steady_clock::now();
             slot_job[primary] = job;

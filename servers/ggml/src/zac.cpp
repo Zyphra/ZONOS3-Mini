@@ -15,6 +15,7 @@
 #include "gguf.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -359,6 +360,7 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
 }
 
 void zac_free(zac_model & m) {
+    m.graphs.clear();
     ggml_gallocr_free(m.galloc);
     if (m.sched) ggml_backend_sched_free(m.sched);
     if (m.owns_weights) {
@@ -383,6 +385,7 @@ bool zac_clone(zac_model & dst, const zac_model & src) {
     dst.accel = nullptr;
     dst.sched = nullptr;
     dst.galloc = nullptr;
+    dst.graphs.clear(); // a clone has its own backend: never share graphs
     dst.owns_weights = false;
     if (zac_init_backend(dst, ggml_backend_get_device(src.backend))) return true;
     zac_free(dst);
@@ -865,6 +868,8 @@ static int gpu_width(int n) {
 zac_stream::~zac_stream() {
     if (buf_kv) ggml_backend_buffer_free(buf_kv);
     if (ctx_kv) ggml_free(ctx_kv);
+    if (buf_hist) ggml_backend_buffer_free(buf_hist);
+    if (ctx_hist) ggml_free(ctx_hist);
 }
 
 zac_stream::zac_stream(zac_stream && o) noexcept {
@@ -875,6 +880,8 @@ zac_stream & zac_stream::operator=(zac_stream && o) noexcept {
     if (this == &o) return *this;
     if (buf_kv) ggml_backend_buffer_free(buf_kv);
     if (ctx_kv) ggml_free(ctx_kv);
+    if (buf_hist) ggml_backend_buffer_free(buf_hist);
+    if (ctx_hist) ggml_free(ctx_hist);
     n_done = o.n_done;
     conv = std::move(o.conv);
     ola = std::move(o.ola);
@@ -896,12 +903,20 @@ zac_stream & zac_stream::operator=(zac_stream && o) noexcept {
     kc = std::move(o.kc);
     vc = std::move(o.vc);
     cap = std::move(o.cap);
+    kv_id = o.kv_id;
+    ctx_hist = o.ctx_hist;
+    buf_hist = o.buf_hist;
+    hist = std::move(o.hist);
     o.owner = nullptr;
     o.ctx_kv = nullptr;
     o.buf_kv = nullptr;
     o.kc.clear();
     o.vc.clear();
     o.cap.clear();
+    o.kv_id = 0;
+    o.ctx_hist = nullptr;
+    o.buf_hist = nullptr;
+    o.hist.clear();
     return *this;
 }
 
@@ -936,6 +951,8 @@ static bool zac_stream_alloc(const zac_model & m, zac_stream & st) {
         return false;
     }
     ggml_backend_buffer_clear(st.buf_kv, 0); // masked slots are read too: no NaN garbage
+    static std::atomic<uint64_t> next_kv_id{0};
+    st.kv_id = ++next_kv_id;
     st.owner = &m;
     return true;
 }
@@ -1060,6 +1077,140 @@ static void head_flush(const zac_model & m, zac_stream & st, std::vector<float> 
     mix_emit(m, st, out);
 }
 
+// One decode graph: `gf` columns of which `n_valid` frames are real (the history export reads at n_valid).
+// GPU graphs of complete chunks are cached in zac_model::graphs and bind the K/V caches of the stream with id kv_id;
+// a chunk with missing residual cells (early partial-frame decode) builds its own graph.
+struct zac_model::zac_graph {
+    ggml_context * ctx = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t alloc = nullptr;
+    std::vector<ggml_tensor *> ids, hist_in, hist_out;
+    std::vector<ggml_tensor *> keep;      // partial graphs: [1, gf] 0/1 mask per residual codebook with missing cells
+    ggml_tensor * res_bias = nullptr;     // partial graphs: [latent, gf] per-frame residual bias
+    ggml_tensor * spec[2] = {nullptr, nullptr}; // [n_fft + 2, 16*gf]
+    struct stage {
+        ggml_tensor *pos, *slots, *mask;
+        int cpf, T, context, cap;
+    };
+    std::vector<stage> stages;
+    std::deque<conv_gemm_params> conv_params; // CPU fused convs: read during compute
+    uint64_t kv_id = 0;
+    // Host staging of the per-call inputs.
+    std::vector<int32_t> col, pos, slots;
+    std::vector<ggml_fp16_t> mask_host;
+    zac_graph() = default;
+    zac_graph(const zac_graph &) = delete;
+    zac_graph & operator=(const zac_graph &) = delete;
+    ~zac_graph() {
+        if (alloc) ggml_gallocr_free(alloc);
+        if (ctx) ggml_free(ctx);
+    }
+};
+
+// Builds and allocates (GPU: own allocator; CPU: m.sched or a fresh allocator) the decode graph. `cb_missing` (empty
+// for a complete chunk) marks the residual codebooks with a missing cell in the chunk.
+static std::shared_ptr<zac_model::zac_graph> build_decode_graph(const zac_model & m, zac_stream & st, int gf, int n_valid,
+                                                                const std::vector<bool> & cb_missing) {
+    const int ncb = m.n_codebooks;
+    auto g = std::make_shared<zac_model::zac_graph>();
+    g->ctx = ggml_init({(size_t) 64 * 1024 * 1024, nullptr, true});
+    ggml_context * ctx = g->ctx;
+    g->graph = ggml_new_graph_custom(ctx, 16384, false);
+    ggml_cgraph * graph = g->graph;
+    g->kv_id = st.kv_id;
+    render_ctx rc{ctx, m, n_valid, 1, {}, {}, {}, graph, &st, 0};
+
+    g->ids.resize(ncb);
+    g->keep.assign(ncb, nullptr);
+    for (int c = 0; c < ncb; ++c) {
+        g->ids[c] = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, gf);
+        ggml_set_input(g->ids[c]);
+    }
+    ggml_tensor * x = ggml_add(ctx, ggml_get_rows(ctx, m.get("sem.table"), g->ids[0]), m.get("sem.bias"));
+    for (int b = 0; b < m.sem_depth; ++b) x = convnext_block(rc, x, "sem_head." + std::to_string(b));
+    x = ggml_add(ctx, ggml_mul_mat(ctx, m.get("sem_head.out.weight"), x), m.get("sem_head.out.bias"));
+    for (int c = 1; c < ncb; ++c) {
+        ggml_tensor * part = ggml_get_rows(ctx, m.get("res." + std::to_string(c - 1) + ".table"), g->ids[c]);
+        if (!cb_missing.empty() && cb_missing[c]) {
+            g->keep[c] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, gf);
+            ggml_set_input(g->keep[c]);
+            part = ggml_mul(ctx, part, g->keep[c]);
+        }
+        x = ggml_add(ctx, x, part);
+    }
+    ggml_tensor * res_bias = m.get("res.bias");
+    if (!cb_missing.empty()) {
+        res_bias = g->res_bias = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, m.latent_dim, gf);
+        ggml_set_input(res_bias);
+    }
+    x = ggml_add(ctx, x, res_bias); // [latent, gf]
+
+    for (size_t s = 0; s < m.stages.size(); ++s) {
+        const zac_stage_hp & hp = m.stages[s];
+        const std::string p = "stage." + std::to_string(s);
+        x = ggml_mul_mat(ctx, m.get(p + ".in.weight"), x);
+        const int T = (int) x->ne[1], cap = st.cap[s];
+        zac_model::zac_graph::stage si{ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T), ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T),
+                                       ggml_new_tensor_2d(ctx, GGML_TYPE_F16, cap, T), rc.cpf, T, hp.context, cap};
+        ggml_set_input(si.pos);
+        ggml_set_input(si.slots);
+        ggml_set_input(si.mask);
+        g->stages.push_back(si);
+        for (int l = 0; l < hp.n_layer; ++l)
+            x = moss_layer(rc, x, p + ".l" + std::to_string(l), hp, si.pos, si.slots, si.mask);
+        if (hp.out_dim > 0) x = ggml_mul_mat(ctx, m.get(p + ".out.weight"), x);
+        if (hp.patch > 1) x = patch_up(rc, x, hp.patch);
+    }
+    for (int b = 0; b < m.head_depth; ++b) x = convnext_block(rc, x, "head." + std::to_string(b));
+    x = layer_norm(ctx, x, m.get("head.norm.weight"), m.get("head.norm.bias"), m.convnext_eps);
+    for (int i = 0; i < 2; ++i) {
+        const std::string p = "head.out." + std::to_string(i);
+        g->spec[i] = ggml_add(ctx, ggml_mul_mat(ctx, m.get(p + ".weight"), x), m.get(p + ".bias"));
+        ggml_set_output(g->spec[i]);
+        ggml_build_forward_expand(graph, g->spec[i]);
+    }
+    for (ggml_tensor * h : rc.hist_out) ggml_build_forward_expand(graph, h);
+    // Chunk width may select different CUDA GEMM kernels. Keep their operand/
+    // accumulation precision identical for buffered and streamed rendering.
+    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+        auto * node = ggml_graph_node(graph, i);
+        if (node->op == GGML_OP_MUL_MAT) ggml_prec_set_acc(node, GGML_PREC_F32);
+    }
+    g->hist_in = std::move(rc.hist_in);
+    g->hist_out = std::move(rc.hist_out);
+    g->conv_params = std::move(rc.conv_params); // deque move keeps the element addresses the custom ops hold
+
+    bool ok;
+    if (m.sched) {
+        ggml_backend_sched_reset(m.sched);
+        ok = ggml_backend_sched_alloc_graph(m.sched, graph);
+    } else {
+        g->alloc = ggml_gallocr_new(m.buft);
+        ok = g->alloc && ggml_gallocr_alloc_graph(g->alloc, graph);
+    }
+    if (!ok) {
+        fprintf(stderr, "zac: graph allocation failed\n");
+        return nullptr;
+    }
+    return g;
+}
+
+// GPU: device-resident conv histories of `st`, zeroed (= the first chunk's history), shaped like g's inputs.
+static bool alloc_stream_hist(const zac_model & m, zac_stream & st, const zac_model::zac_graph & g) {
+    st.ctx_hist = ggml_init({(g.hist_in.size() + 1) * ggml_tensor_overhead(), nullptr, true});
+    for (ggml_tensor * h : g.hist_in) st.hist.push_back(ggml_new_tensor(st.ctx_hist, h->type, GGML_MAX_DIMS, h->ne));
+    st.buf_hist = ggml_backend_alloc_ctx_tensors(st.ctx_hist, m.backend);
+    if (!st.buf_hist) {
+        fprintf(stderr, "zac: stream history allocation failed\n");
+        ggml_free(st.ctx_hist);
+        st.ctx_hist = nullptr;
+        st.hist.clear();
+        return false;
+    }
+    ggml_backend_buffer_clear(st.buf_hist, 0);
+    return true;
+}
+
 // Decode frames [f0, f0 + n_valid) through the trunk and head projections, advancing the conv/KV
 // history in `st`, and append the internal-rate samples that are final so far to `internal`.
 // A residual cell whose row is >= H or whose code is negative is missing (zac_stream_decode).
@@ -1089,112 +1240,47 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
                         "tools/convert_gguf.py codec-decoder)\n");
         return false;
     }
-    ggml_context * ctx = ggml_init({(size_t) 64 * 1024 * 1024, nullptr, true});
-    ggml_cgraph * graph = ggml_new_graph_custom(ctx, 16384, false);
-    render_ctx rc{ctx, m, n_valid, 1, {}, {}, {}, graph, &st, 0};
-
-    std::vector<ggml_tensor *> ids(ncb), keep(ncb, nullptr);
-    for (int c = 0; c < ncb; ++c) {
-        ids[c] = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, gf);
-        ggml_set_input(ids[c]);
-    }
-    ggml_tensor * x = ggml_add(ctx, ggml_get_rows(ctx, m.get("sem.table"), ids[0]), m.get("sem.bias"));
-    for (int b = 0; b < m.sem_depth; ++b) x = convnext_block(rc, x, "sem_head." + std::to_string(b));
-    x = ggml_add(ctx, ggml_mul_mat(ctx, m.get("sem_head.out.weight"), x), m.get("sem_head.out.bias"));
-    for (int c = 1; c < ncb; ++c) {
-        ggml_tensor * part = ggml_get_rows(ctx, m.get("res." + std::to_string(c - 1) + ".table"), ids[c]);
-        if (cb_missing[c]) {
-            keep[c] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, gf);
-            ggml_set_input(keep[c]);
-            part = ggml_mul(ctx, part, keep[c]);
+    if (!partial) cb_missing.clear();
+    std::shared_ptr<zac_model::zac_graph> g;
+    if (m.is_gpu && !partial) {
+        auto & slot = m.graphs[{gf, n_valid}];
+        if (!slot || slot->kv_id != st.kv_id) {
+            slot.reset(); // release the old graph's buffers before allocating the new one
+            slot = build_decode_graph(m, st, gf, n_valid, cb_missing);
+            if (!slot) return false;
         }
-        x = ggml_add(ctx, x, part);
-    }
-    ggml_tensor * res_bias = m.get("res.bias");
-    if (partial) {
-        res_bias = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, L, gf);
-        ggml_set_input(res_bias);
-    }
-    x = ggml_add(ctx, x, res_bias); // [latent, gf]
-
-    struct stage_in {
-        ggml_tensor *pos, *slots, *mask;
-        int cpf, T, context, cap;
-    };
-    std::vector<stage_in> sin;
-    for (size_t s = 0; s < m.stages.size(); ++s) {
-        const zac_stage_hp & hp = m.stages[s];
-        const std::string p = "stage." + std::to_string(s);
-        x = ggml_mul_mat(ctx, m.get(p + ".in.weight"), x);
-        const int T = (int) x->ne[1], cap = st.cap[s];
-        stage_in si{ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T), ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T),
-                    ggml_new_tensor_2d(ctx, GGML_TYPE_F16, cap, T), rc.cpf, T, hp.context, cap};
-        ggml_set_input(si.pos);
-        ggml_set_input(si.slots);
-        ggml_set_input(si.mask);
-        sin.push_back(si);
-        for (int l = 0; l < hp.n_layer; ++l)
-            x = moss_layer(rc, x, p + ".l" + std::to_string(l), hp, si.pos, si.slots, si.mask);
-        if (hp.out_dim > 0) x = ggml_mul_mat(ctx, m.get(p + ".out.weight"), x);
-        if (hp.patch > 1) x = patch_up(rc, x, hp.patch);
-    }
-    for (int b = 0; b < m.head_depth; ++b) x = convnext_block(rc, x, "head." + std::to_string(b));
-    x = layer_norm(ctx, x, m.get("head.norm.weight"), m.get("head.norm.bias"), m.convnext_eps);
-    ggml_tensor * spec[2]; // [n_fft + 2, 16*gf]
-    for (int i = 0; i < 2; ++i) {
-        const std::string p = "head.out." + std::to_string(i);
-        spec[i] = ggml_add(ctx, ggml_mul_mat(ctx, m.get(p + ".weight"), x), m.get(p + ".bias"));
-        ggml_set_output(spec[i]);
-        ggml_build_forward_expand(graph, spec[i]);
-    }
-    for (ggml_tensor * h : rc.hist_out) ggml_build_forward_expand(graph, h);
-    // Chunk width may select different CUDA GEMM kernels. Keep their operand/
-    // accumulation precision identical for buffered and streamed rendering.
-    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-        auto * node = ggml_graph_node(graph, i);
-        if (node->op == GGML_OP_MUL_MAT) ggml_prec_set_acc(node, GGML_PREC_F32);
-    }
-    if (!st.conv.empty() && st.conv.size() != rc.hist_in.size()) {
-        fprintf(stderr, "zac: stream state mismatch\n");
-        ggml_free(ctx);
-        return false;
-    }
-
-    ggml_gallocr_t alloc = nullptr;
-    bool ok;
-    if (m.sched) {
-        ggml_backend_sched_reset(m.sched);
-        ok = ggml_backend_sched_alloc_graph(m.sched, graph);
-    } else if (m.is_gpu) {
-        if (!m.galloc) m.galloc = ggml_gallocr_new(m.buft);
-        ok = ggml_gallocr_alloc_graph(m.galloc, graph);
+        g = slot;
     } else {
-        alloc = ggml_gallocr_new(m.buft);
-        ok = ggml_gallocr_alloc_graph(alloc, graph);
+        g = build_decode_graph(m, st, gf, n_valid, cb_missing);
+        if (!g) return false;
     }
-    if (!ok) {
-        fprintf(stderr, "zac: graph allocation failed\n");
-        ggml_gallocr_free(alloc);
-        ggml_free(ctx);
+    if (m.is_gpu) {
+        if (st.hist.empty() && !alloc_stream_hist(m, st, *g)) return false;
+        if (st.hist.size() != g->hist_in.size()) {
+            fprintf(stderr, "zac: stream state mismatch\n");
+            return false;
+        }
+    } else if (!st.conv.empty() && st.conv.size() != g->hist_in.size()) {
+        fprintf(stderr, "zac: stream state mismatch\n");
         return false;
     }
 
     // Un-shear: codebook c of frame t is row t + c; rows past H (right-padding columns, missing cells) are clamped
     // to a valid id, a missing cell's row then multiplied by 0.
-    std::vector<int32_t> col(gf);
+    g->col.resize(gf);
     for (int c = 0; c < ncb; ++c) {
         for (int i = 0; i < gf; ++i) {
             const int t = f0 + i + c;
-            col[i] = std::clamp(t < H ? codes[(size_t) t * ncb + c] : 4097, 0, m.codebook_size - 1);
+            g->col[i] = std::clamp(t < H ? codes[(size_t) t * ncb + c] : 4097, 0, m.codebook_size - 1);
         }
-        ggml_backend_tensor_set(ids[c], col.data(), 0, (size_t) gf * sizeof(int32_t));
+        ggml_backend_tensor_set(g->ids[c], g->col.data(), 0, (size_t) gf * sizeof(int32_t));
     }
     if (partial) {
         std::vector<float> kv(gf);
         for (int c = 1; c < ncb; ++c) {
-            if (!keep[c]) continue;
+            if (!g->keep[c]) continue;
             for (int i = 0; i < gf; ++i) kv[i] = i < n_valid && miss[(size_t) c * n_valid + i] ? 0.0f : 1.0f;
-            ggml_backend_tensor_set(keep[c], kv.data(), 0, (size_t) gf * sizeof(float));
+            ggml_backend_tensor_set(g->keep[c], kv.data(), 0, (size_t) gf * sizeof(float));
         }
         std::vector<float> bias((size_t) L * gf);
         std::vector<double> v(L);
@@ -1211,24 +1297,24 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
             }
             if (left_out) std::transform(v.begin(), v.end(), b, [](double d) { return (float) d; });
         }
-        ggml_backend_tensor_set(res_bias, bias.data(), 0, bias.size() * sizeof(float));
+        ggml_backend_tensor_set(g->res_bias, bias.data(), 0, bias.size() * sizeof(float));
     }
-    std::vector<int32_t> pos, slots;
-    std::vector<ggml_fp16_t> mask;
+
     const ggml_fp16_t M0 = ggml_fp32_to_fp16(0.0f), MINF = ggml_fp32_to_fp16(-INFINITY);
-    for (const stage_in & si : sin) {
+    for (const auto & si : g->stages) {
         const int64_t p0 = (int64_t) f0 * si.cpf, p_last = p0 + si.T - 1, cap = si.cap;
-        pos.resize(si.T);
-        slots.resize(si.T);
+        g->pos.resize(si.T);
+        g->slots.resize(si.T);
         for (int i = 0; i < si.T; ++i) {
-            pos[i] = (int32_t) (p0 + i);
-            slots[i] = (int32_t) ((p0 + i) % cap);
+            g->pos[i] = (int32_t) (p0 + i);
+            g->slots[i] = (int32_t) ((p0 + i) % cap);
         }
-        ggml_backend_tensor_set(si.pos, pos.data(), 0, pos.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(si.slots, slots.data(), 0, slots.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(si.pos, g->pos.data(), 0, g->pos.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(si.slots, g->slots.data(), 0, g->slots.size() * sizeof(int32_t));
         // Slot j holds the latest position written there: cap >= context - 1 + T, so this chunk's
         // window [p0 - context + 1, p_last] occupies distinct slots. Right-padding columns write
         // future positions that causality hides and the next chunk rewrites before use.
+        std::vector<ggml_fp16_t> & mask = g->mask_host;
         mask.resize((size_t) cap * si.T);
         for (int64_t j = 0; j < cap; ++j) {
             const int64_t kp = p_last - (((p_last - j) % cap) + cap) % cap;
@@ -1239,39 +1325,43 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
         }
         ggml_backend_tensor_set(si.mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
     }
-    std::vector<float> zeros;
-    auto set_hist = [&](ggml_tensor * h, const std::vector<float> * src) {
-        if (src) {
-            ggml_backend_tensor_set(h, src->data(), 0, ggml_nbytes(h));
-            return;
+    if (m.is_gpu) {
+        for (size_t i = 0; i < g->hist_in.size(); ++i) ggml_backend_tensor_copy(st.hist[i], g->hist_in[i]);
+    } else {
+        std::vector<float> zeros;
+        for (size_t i = 0; i < g->hist_in.size(); ++i) {
+            ggml_tensor * h = g->hist_in[i];
+            if (!st.conv.empty()) {
+                ggml_backend_tensor_set(h, st.conv[i].data(), 0, ggml_nbytes(h));
+                continue;
+            }
+            zeros.assign((size_t) ggml_nelements(h), 0.0f);
+            ggml_backend_tensor_set(h, zeros.data(), 0, ggml_nbytes(h));
         }
-        zeros.assign((size_t) ggml_nelements(h), 0.0f);
-        ggml_backend_tensor_set(h, zeros.data(), 0, ggml_nbytes(h));
-    };
-    for (size_t i = 0; i < rc.hist_in.size(); ++i) set_hist(rc.hist_in[i], st.conv.empty() ? nullptr : &st.conv[i]);
+    }
 
-    const ggml_status status = m.sched ? ggml_backend_sched_graph_compute(m.sched, graph)
-                                       : ggml_backend_graph_compute(m.backend, graph);
+    const ggml_status status = m.sched ? ggml_backend_sched_graph_compute(m.sched, g->graph)
+                                       : ggml_backend_graph_compute(m.backend, g->graph);
     if (status != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "zac: compute failed\n");
-        ggml_gallocr_free(alloc);
-        ggml_free(ctx);
         return false;
     }
     const int64_t n_cols = (int64_t) n_valid * (m.internal_hop / m.head_hop); // head frames in this chunk
     std::array<std::vector<float>, 2> spec_h;
     for (int i = 0; i < 2; ++i) {
         spec_h[i].resize((size_t) (m.n_fft[i] + 2) * n_cols);
-        ggml_backend_tensor_get(spec[i], spec_h[i].data(), 0, spec_h[i].size() * sizeof(float));
+        ggml_backend_tensor_get(g->spec[i], spec_h[i].data(), 0, spec_h[i].size() * sizeof(float));
     }
-    auto get_hist = [](ggml_tensor * h, std::vector<float> & dst) {
-        dst.resize((size_t) ggml_nelements(h));
-        ggml_backend_tensor_get(h, dst.data(), 0, ggml_nbytes(h));
-    };
-    st.conv.resize(rc.hist_out.size());
-    for (size_t i = 0; i < rc.hist_out.size(); ++i) get_hist(rc.hist_out[i], st.conv[i]);
-    ggml_gallocr_free(alloc);
-    ggml_free(ctx);
+    if (m.is_gpu) {
+        for (size_t i = 0; i < g->hist_out.size(); ++i) ggml_backend_tensor_copy(g->hist_out[i], st.hist[i]);
+    } else {
+        st.conv.resize(g->hist_out.size());
+        for (size_t i = 0; i < g->hist_out.size(); ++i) {
+            st.conv[i].resize((size_t) ggml_nelements(g->hist_out[i]));
+            ggml_backend_tensor_get(g->hist_out[i], st.conv[i].data(), 0, ggml_nbytes(g->hist_out[i]));
+        }
+    }
+    g.reset(); // CPU: frees the per-call graph before the host iSTFT
     head_push(m, st, spec_h[0].data(), spec_h[1].data(), n_cols, internal);
     return true;
 }

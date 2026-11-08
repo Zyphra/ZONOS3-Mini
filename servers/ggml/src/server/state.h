@@ -76,7 +76,7 @@ struct ServerState {
     int context_capacity = 0;                        // rows of a slot (configure_frame_budget)
     int batch_slots = 8;
     int zac_threads = 4;
-    bool use_gpu = false;
+    bool use_gpu = ZONOS3_DEFAULT_USE_GPU;
     bool prof = false;
     std::string stream_decode_default = "prefix";
     PrefixStreamSettings prefix;

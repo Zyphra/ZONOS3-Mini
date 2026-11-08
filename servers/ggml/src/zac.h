@@ -38,7 +38,11 @@ struct zac_model {
     // graphs then run through `sched` instead of a plain CPU allocator.
     ggml_backend_t accel = nullptr;
     ggml_backend_sched_t sched = nullptr;
-    // GPU only: allocator reused across calls (graphs have a fixed width). One thread per zac_model.
+    // GPU only: decode graphs cached per (width, valid frames), built on first use (decode_chunk); a graph binds
+    // one stream's K/V caches and is rebuilt for another stream. One thread per zac_model.
+    struct zac_graph;
+    mutable std::map<std::pair<int, int>, std::shared_ptr<zac_graph>> graphs;
+    // zac_encoder graphs: allocator reused across calls.
     mutable ggml_gallocr_t galloc = nullptr;
     bool owns_weights = true; // false for zac_clone copies sharing another model's weights
     std::map<std::string, ggml_tensor *> t;
@@ -65,7 +69,7 @@ struct zac_model {
 // Owns a per-stream MOSS K/V ring buffer on the codec backend (allocated on first decode).
 struct zac_stream {
     int n_done = 0;                       // 15 Hz frames decoded
-    std::vector<std::vector<float>> conv; // per history-consuming conv op, [C, R]
+    std::vector<std::vector<float>> conv; // CPU: per history-consuming conv op, [C, R]
     // Host iSTFT, per branch i: overlap-add / window-envelope of padded positions [ola_base[i], ..).
     std::array<std::vector<float>, 2> ola, env;
     std::array<int64_t, 2> ola_base{};
@@ -84,6 +88,10 @@ struct zac_stream {
     ggml_backend_buffer_t buf_kv = nullptr;
     std::vector<ggml_tensor *> kc, vc; // per MOSS layer, stage-major: [head_dim, cap_s, n_head], F16 GPU / F32 CPU
     std::vector<int> cap;              // per stage ring capacity (rows)
+    uint64_t kv_id = 0;                // unique per K/V allocation: identifies the caches a cached graph binds
+    ggml_context * ctx_hist = nullptr;
+    ggml_backend_buffer_t buf_hist = nullptr;
+    std::vector<ggml_tensor *> hist; // GPU: conv histories [C, R] per history op, device-resident
 
     zac_stream() = default;
     ~zac_stream();

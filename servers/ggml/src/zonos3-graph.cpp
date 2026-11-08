@@ -65,10 +65,21 @@ struct gctx {
     int n_slots = 1, slot_cap = 0, cache_slot = 0, position = 0;
     ggml_tensor * active = nullptr, * mask = nullptr, * mask_causal = nullptr;
     ggml_cgraph * gf = nullptr;
-    // Row replacement (speaker / condition rows): inputs exist only when the chunk contains such a row.
     const zonos3_conditioning * cond = nullptr;
-    ggml_tensor * ovr_keep = nullptr, * ovr_sel = nullptr, * ovr_spk = nullptr, * ovr_bkt = nullptr, * ovr_zero = nullptr;
-    bool ovr_speaker = false; // table has a speaker column (column 1; condition columns follow)
+    // Prefill rows of one or more sequences (a CFG pair): segment s owns graph rows [row0, row0 + n) at absolute rows
+    // [position, position + n) of cache slot cache_slot. Row-local ops run over all rows; attention and GDN per segment.
+    struct segment { int row0, n, cache_slot, position; const zonos3_conditioning * cond; };
+    std::vector<segment> segs; // prefill only; empty = the single segment (0, n, cache_slot, position, cond)
+    std::vector<segment> segments() const {
+        return segs.empty() ? std::vector<segment>{{0, n, cache_slot, position, cond}} : segs;
+    }
+    std::vector<ggml_tensor *> masks_causal; // per segment [position + n, n]; mask_causal = masks_causal[0]
+    // Row replacement (speaker / condition rows): inputs exist only when the chunk contains such a row. Table column 0
+    // is zero, then one speaker column per segment with its speaker row in the chunk, then n_cond bucket columns per
+    // segment with condition rows in the chunk.
+    ggml_tensor * ovr_keep = nullptr, * ovr_sel = nullptr, * ovr_zero = nullptr;
+    std::vector<ggml_tensor *> ovr_spks, ovr_bkts; // inputs in segment order
+    std::vector<int> ovr_spk_col, ovr_cond_col;    // per segment: first table column, -1 = none
     std::vector<int> steer_sources;           // decode only: bank sources that take a delta input
     std::vector<ggml_tensor *> steer;         // [D, n] input per entry of steer_sources
     std::shared_ptr<zonos3_feature_io> io;    // optional feature inputs (accent adapters, alignment probe)
@@ -287,18 +298,25 @@ static ggml_tensor * build_attention(gctx & g, ggml_tensor * cur, const zonos3_l
             if (hd_kv > hd) out = ggml_cont(ctx, ggml_view_3d(ctx, out, hd, nh, g.n_slots, out->nb[1], out->nb[2], 0));
             if (g.io && g.io->lmax) out = build_probe(g, q4, kc, vc, out, il);
         } else {
-            const int keys = g.position + n;
-            const size_t offset = (size_t) g.cache_slot * (g.slot_cap + 1) * kc->nb[1];
-            k = ggml_view_3d(ctx, kc, hd, keys, nkv, kc->nb[1], kc->nb[2], offset);
-            v = ggml_view_3d(ctx, vc, hd, keys, nkv, vc->nb[1], vc->nb[2], offset);
-            // Cached keys already have RoPE, head normalization and query scale.
-            ggml_tensor * qp = ggml_cont(ctx, ggml_permute(ctx, q, 0, 2, 1, 3));
-            ggml_tensor * kp = ggml_cont(ctx, k);
-            ggml_tensor * scores = matmul(ctx, kp, qp);
-            scores = ggml_soft_max_ext(ctx, scores, g.mask_causal, 1.0f / sqrtf((float) hd), 0);
-            ggml_tensor * vp = ggml_cont(ctx, ggml_permute(ctx, v, 1, 0, 2, 3));
-            out = matmul(ctx, vp, scores);
-            out = ggml_cont(ctx, ggml_permute(ctx, out, 0, 2, 1, 3));
+            // Per segment: its queries against its own band's cache rows [0, position + n_s).
+            const auto segs = g.segments();
+            for (size_t s = 0; s < segs.size(); ++s) {
+                const auto & sg = segs[s];
+                ggml_tensor * qs = segs.size() == 1 ? q
+                    : ggml_view_3d(ctx, q, hd, nh, sg.n, q->nb[1], q->nb[2], (size_t) sg.row0 * q->nb[2]);
+                const int keys = sg.position + sg.n;
+                const size_t offset = (size_t) sg.cache_slot * (g.slot_cap + 1) * kc->nb[1];
+                ggml_tensor * ks = ggml_view_3d(ctx, kc, hd, keys, nkv, kc->nb[1], kc->nb[2], offset);
+                ggml_tensor * vs = ggml_view_3d(ctx, vc, hd, keys, nkv, vc->nb[1], vc->nb[2], offset);
+                // Cached keys already have RoPE, head normalization and query scale.
+                ggml_tensor * qp = ggml_cont(ctx, ggml_permute(ctx, qs, 0, 2, 1, 3));
+                ggml_tensor * kp = ggml_cont(ctx, ks);
+                ggml_tensor * scores = matmul(ctx, kp, qp);
+                scores = ggml_soft_max_ext(ctx, scores, g.masks_causal[s], 1.0f / sqrtf((float) hd), 0);
+                ggml_tensor * vp = ggml_cont(ctx, ggml_permute(ctx, vs, 1, 0, 2, 3));
+                ggml_tensor * os = ggml_cont(ctx, ggml_permute(ctx, matmul(ctx, vp, scores), 0, 2, 1, 3));
+                out = out ? ggml_concat(ctx, out, os, 2) : os;
+            }
         }
     } else {
         ggml_tensor * qp = ggml_cont(ctx, ggml_permute(ctx, q, 0, 2, 1, 3));
@@ -316,81 +334,98 @@ static ggml_tensor * build_gdn(gctx & g, ggml_tensor * cur, const zonos3_layer &
     ggml_context * ctx = g.ctx;
     const auto & hp = g.m->hp;
     const int H = (int) hp.gdn_heads, S = (int) hp.gdn_head_dim, I = H * S;
-    const int R = (int) hp.gdn_conv_kernel - 1, T = g.decode ? 1 : g.n, B = g.decode ? g.n_slots : 1;
+    const int R = (int) hp.gdn_conv_kernel - 1, B = g.decode ? g.n_slots : 1;
     const std::string suffix = "_" + std::to_string(L);
     ggml_tensor * mixed = lin(g, ly.gdn_in, cur, "blk." + std::to_string(L) + ".gdn_in");
-    // Column slices of `mixed` are fed as strided views: every consumer (concat, rms_norm,
-    // add, sigmoid, silu) only needs contiguous rows on CPU and Metal, so no copies are made.
-    auto rows = [&](ggml_tensor * x, int first, int count) {
-        return ggml_view_2d(ctx, x, count, g.n, x->nb[1], (size_t) first * x->nb[0]);
-    };
-    ggml_tensor * raw = rows(mixed, 0, 3 * I);
     ggml_tensor * z = ggml_view_3d(ctx, mixed, S, H, g.n, (size_t) S * mixed->nb[0], mixed->nb[1],
                                    (size_t) 3 * I * mixed->nb[0]);
-    ggml_tensor * a = rows(mixed, 4 * I, H), * b = rows(mixed, 4 * I + H, H);
-    ggml_tensor * history, * state;
-    if (g.state) {
-        ggml_tensor * hs = (*g.history)[L], * ss = (*g.state)[L];
-        const size_t slot = g.decode ? 0 : (size_t) g.cache_slot;
-        history = ggml_view_3d(ctx, hs, R, 3 * I, B, hs->nb[1], hs->nb[2], slot * hs->nb[2]);
-        state = ggml_view_4d(ctx, ss, S, S, H, B, ss->nb[1], ss->nb[2], ss->nb[3], slot * ss->nb[3]);
+    // Short conv + gated delta rule over `nr` rows of `mx` (one sequence of a prefill, or the decode batch) with the
+    // state of cache slot `slot`; returns the recurrent output [I, nr].
+    auto recurrent = [&](ggml_tensor * mx, int nr, size_t slot) {
+        const int T = g.decode ? 1 : nr;
+        // Column slices of `mx` are fed as strided views: every consumer (concat, rms_norm,
+        // add, sigmoid, silu) only needs contiguous rows on CPU and Metal, so no copies are made.
+        auto rows = [&](ggml_tensor * x, int first, int count) {
+            return ggml_view_2d(ctx, x, count, nr, x->nb[1], (size_t) first * x->nb[0]);
+        };
+        ggml_tensor * raw = rows(mx, 0, 3 * I);
+        ggml_tensor * a = rows(mx, 4 * I, H), * b = rows(mx, 4 * I + H, H);
+        ggml_tensor * history, * state;
+        if (g.state) {
+            ggml_tensor * hs = (*g.history)[L], * ss = (*g.state)[L];
+            history = ggml_view_3d(ctx, hs, R, 3 * I, B, hs->nb[1], hs->nb[2], slot * hs->nb[2]);
+            state = ggml_view_4d(ctx, ss, S, S, H, B, ss->nb[1], ss->nb[2], ss->nb[3], slot * ss->nb[3]);
+        } else {
+            history = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, R, 3 * I, B);
+            state = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S, S, H, B);
+            ggml_set_input(history); ggml_set_input(state);
+            g.zero_inputs.push_back(history); g.zero_inputs.push_back(state);
+        }
+        ggml_tensor * time_major = g.decode ? ggml_view_3d(ctx, mx, 1, 3 * I, B, mx->nb[0], mx->nb[1], 0)
+                                           : ggml_reshape_3d(ctx, ggml_cont(ctx, ggml_transpose(ctx, raw)), T, 3 * I, 1);
+        ggml_tensor * window = ggml_concat(ctx, history, time_major, 0);
+        ggml_tensor * conv = ggml_silu(ctx, ggml_ssm_conv(ctx, window, ly.gdn_conv));
+        conv = ggml_reshape_2d(ctx, conv, 3 * I, nr);
+        g.cap("gdn_conv" + suffix, conv);
+        // GATED_DELTA_NET reads q/k/v through their strides (CPU needs only contiguous rows).
+        auto heads = [&](int first) {
+            return ggml_view_4d(ctx, conv, S, H, T, B, (size_t) S * conv->nb[0], conv->nb[1],
+                                (size_t) T * conv->nb[1], (size_t) first * conv->nb[0]);
+        };
+        ggml_tensor * q = heads(0), * k = heads(I), * v = heads(2 * I);
+        // FLA uses sqrt(sum(x*x)+eps), unlike ggml_l2_norm's max(norm,eps).
+        auto l2 = [&](ggml_tensor * x) {
+            return ggml_scale(ctx, ggml_rms_norm(ctx, x, 1e-6f / S), 1.0f / sqrtf((float) S));
+        };
+        q = l2(q); k = l2(k);
+        g.cap("gdn_q" + suffix, ggml_reshape_3d(ctx, q, S, H, nr));
+        g.cap("gdn_k" + suffix, ggml_reshape_3d(ctx, k, S, H, nr));
+        g.cap("gdn_v" + suffix, ggml_view_3d(ctx, conv, S, H, nr, (size_t) S * conv->nb[0], conv->nb[1],
+                                             (size_t) 2 * I * conv->nb[0]));
+        ggml_tensor * gate = ggml_neg(ctx, ggml_mul(ctx,
+            ggml_softplus(ctx, ggml_add(ctx, a, ly.gdn_dt_bias)), ggml_exp(ctx, ly.gdn_A_log)));
+        ggml_tensor * beta = ggml_sigmoid(ctx, b);
+        if (g.decode) {
+            ggml_tensor * active = ggml_reshape_2d(ctx, g.active, 1, B);
+            gate = ggml_mul(ctx, gate, active); beta = ggml_mul(ctx, beta, active);
+        }
+        g.cap("gdn_decay" + suffix, ggml_exp(ctx, gate));
+        g.cap("gdn_beta" + suffix, beta);
+        gate = ggml_reshape_4d(ctx, gate, 1, H, T, B);
+        beta = ggml_reshape_4d(ctx, beta, 1, H, T, B);
+        ggml_tensor * packed = ggml_gated_delta_net(ctx, q, k, v, gate, beta, state, 1);
+        ggml_tensor * output = ggml_view_2d(ctx, packed, I, nr, (size_t) I * sizeof(float), 0);
+        g.cap("gdn_recurrent" + suffix, ggml_reshape_3d(ctx, output, S, H, nr));
+        const size_t state_offset = (size_t) I * nr * sizeof(float);
+        ggml_tensor * next_state = ggml_view_4d(ctx, packed, S, S, H, B,
+                                               (size_t) S * sizeof(float), (size_t) S * S * sizeof(float),
+                                               (size_t) S * S * H * sizeof(float), state_offset);
+        ggml_tensor * next_history = ggml_cont(ctx, ggml_view_3d(ctx, window, R, 3 * I, B,
+                                                               window->nb[1], window->nb[2], (size_t) T * window->nb[0]));
+        if (g.decode) {
+            ggml_tensor * active = ggml_reshape_3d(ctx, g.active, 1, 1, B);
+            ggml_tensor * inactive = ggml_scale_bias(ctx, active, -1.0f, 1.0f);
+            next_history = ggml_add(ctx, ggml_mul(ctx, next_history, active), ggml_mul(ctx, history, inactive));
+        }
+        g.cap("gdn_state" + suffix, next_state);
+        g.cap("gdn_conv_state" + suffix, next_history);
+        if (g.state) {
+            g.updates.emplace_back(next_state, state);
+            g.updates.emplace_back(next_history, history);
+        }
+        return output;
+    };
+    ggml_tensor * output = nullptr;
+    if (g.decode) {
+        output = recurrent(mixed, g.n, 0);
     } else {
-        history = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, R, 3 * I, B);
-        state = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S, S, H, B);
-        ggml_set_input(history); ggml_set_input(state);
-        g.zero_inputs.push_back(history); g.zero_inputs.push_back(state);
-    }
-    ggml_tensor * time_major = g.decode ? ggml_view_3d(ctx, mixed, 1, 3 * I, B, mixed->nb[0], mixed->nb[1], 0)
-                                       : ggml_reshape_3d(ctx, ggml_cont(ctx, ggml_transpose(ctx, raw)), T, 3 * I, 1);
-    ggml_tensor * window = ggml_concat(ctx, history, time_major, 0);
-    ggml_tensor * conv = ggml_silu(ctx, ggml_ssm_conv(ctx, window, ly.gdn_conv));
-    conv = ggml_reshape_2d(ctx, conv, 3 * I, g.n);
-    g.cap("gdn_conv" + suffix, conv);
-    // GATED_DELTA_NET reads q/k/v through their strides (CPU needs only contiguous rows).
-    auto heads = [&](int first) {
-        return ggml_view_4d(ctx, conv, S, H, T, B, (size_t) S * conv->nb[0], conv->nb[1],
-                            (size_t) T * conv->nb[1], (size_t) first * conv->nb[0]);
-    };
-    ggml_tensor * q = heads(0), * k = heads(I), * v = heads(2 * I);
-    // FLA uses sqrt(sum(x*x)+eps), unlike ggml_l2_norm's max(norm,eps).
-    auto l2 = [&](ggml_tensor * x) {
-        return ggml_scale(ctx, ggml_rms_norm(ctx, x, 1e-6f / S), 1.0f / sqrtf((float) S));
-    };
-    q = l2(q); k = l2(k);
-    g.cap("gdn_q" + suffix, ggml_reshape_3d(ctx, q, S, H, g.n));
-    g.cap("gdn_k" + suffix, ggml_reshape_3d(ctx, k, S, H, g.n));
-    g.cap("gdn_v" + suffix, ggml_view_3d(ctx, conv, S, H, g.n, (size_t) S * conv->nb[0], conv->nb[1],
-                                         (size_t) 2 * I * conv->nb[0]));
-    ggml_tensor * gate = ggml_neg(ctx, ggml_mul(ctx,
-        ggml_softplus(ctx, ggml_add(ctx, a, ly.gdn_dt_bias)), ggml_exp(ctx, ly.gdn_A_log)));
-    ggml_tensor * beta = ggml_sigmoid(ctx, b);
-    if (g.decode) {
-        ggml_tensor * active = ggml_reshape_2d(ctx, g.active, 1, B);
-        gate = ggml_mul(ctx, gate, active); beta = ggml_mul(ctx, beta, active);
-    }
-    g.cap("gdn_decay" + suffix, ggml_exp(ctx, gate));
-    g.cap("gdn_beta" + suffix, beta);
-    gate = ggml_reshape_4d(ctx, gate, 1, H, T, B);
-    beta = ggml_reshape_4d(ctx, beta, 1, H, T, B);
-    ggml_tensor * packed = ggml_gated_delta_net(ctx, q, k, v, gate, beta, state, 1);
-    ggml_tensor * output = ggml_view_2d(ctx, packed, I, g.n, (size_t) I * sizeof(float), 0);
-    g.cap("gdn_recurrent" + suffix, ggml_reshape_3d(ctx, output, S, H, g.n));
-    const size_t state_offset = (size_t) I * g.n * sizeof(float);
-    ggml_tensor * next_state = ggml_view_4d(ctx, packed, S, S, H, B,
-                                           (size_t) S * sizeof(float), (size_t) S * S * sizeof(float),
-                                           (size_t) S * S * H * sizeof(float), state_offset);
-    ggml_tensor * next_history = ggml_cont(ctx, ggml_view_3d(ctx, window, R, 3 * I, B,
-                                                           window->nb[1], window->nb[2], (size_t) T * window->nb[0]));
-    if (g.decode) {
-        ggml_tensor * active = ggml_reshape_3d(ctx, g.active, 1, 1, B);
-        ggml_tensor * inactive = ggml_scale_bias(ctx, active, -1.0f, 1.0f);
-        next_history = ggml_add(ctx, ggml_mul(ctx, next_history, active), ggml_mul(ctx, history, inactive));
-    }
-    g.cap("gdn_state" + suffix, next_state);
-    g.cap("gdn_conv_state" + suffix, next_history);
-    if (g.state) {
-        g.updates.emplace_back(next_state, state);
-        g.updates.emplace_back(next_history, history);
+        const auto segs = g.segments();
+        for (const auto & sg : segs) {
+            ggml_tensor * mx = segs.size() == 1 ? mixed
+                : ggml_view_2d(ctx, mixed, mixed->ne[0], sg.n, mixed->nb[1], (size_t) sg.row0 * mixed->nb[1]);
+            ggml_tensor * os = recurrent(mx, sg.n, (size_t) sg.cache_slot);
+            output = output ? ggml_concat(ctx, output, os, 1) : os;
+        }
     }
     output = ggml_reshape_3d(ctx, output, S, H, g.n);
     output = ggml_mul(ctx, rms_w(ctx, output, ly.gdn_norm, 1e-5f), ggml_reshape_3d(ctx, ggml_silu(ctx, z), S, H, g.n));
@@ -470,14 +505,14 @@ static ggml_tensor * build_moe(gctx & g, ggml_tensor * cur, const zonos3_layer &
     return lin(g, ly.latent_up, ggml_cont(ctx, moe), blk + "ffn_latent_up"); // [n_embd, n]
 }
 
-// Which replaced rows fall inside the chunk [position, position+n)?
-static bool chunk_has_speaker(const gctx & g) {
-    return !g.decode && g.cond && g.cond->speaker_row >= g.position && g.cond->speaker_row < g.position + g.n;
+// Which replaced rows of segment `s` fall inside its chunk [position, position+n)?
+static bool chunk_has_speaker(const gctx & g, const gctx::segment & s) {
+    return !g.decode && s.cond && s.cond->speaker_row >= s.position && s.cond->speaker_row < s.position + s.n;
 }
-static bool chunk_has_condition(const gctx & g) {
-    if (g.decode || !g.cond || g.cond->condition_row < 0) return false;
-    return g.cond->condition_row < g.position + g.n &&
-           g.cond->condition_row + (int) g.m->hp.n_cond > g.position;
+static bool chunk_has_condition(const gctx & g, const gctx::segment & s) {
+    if (g.decode || !s.cond || s.cond->condition_row < 0) return false;
+    return s.cond->condition_row < s.position + s.n &&
+           s.cond->condition_row + (int) g.m->hp.n_cond > s.position;
 }
 
 // Build the prefill graph. Returns the final node. n_layer_limit < 0 => all layers.
@@ -498,7 +533,10 @@ ggml_tensor * build_graph(gctx & g, int n_layer_limit) {
         emb = emb ? ggml_add(ctx, emb, e) : e;
     }
     g.cap("emb_sum", emb);
-    if (chunk_has_speaker(g) || chunk_has_condition(g)) {
+    const auto segs = g.segments();
+    bool any_replaced = false;
+    for (const auto & s : segs) any_replaced = any_replaced || chunk_has_speaker(g, s) || chunk_has_condition(g, s);
+    if (any_replaced) {
         // Replace the summed rows (before emb_norm) with speaker_proj(speaker) / cond_embd[i][bucket_i]
         // through functional ops: emb = emb * keep + table[sel]. Column 0 of the table is zero.
         g.ovr_keep = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, g.n);
@@ -507,18 +545,29 @@ ggml_tensor * build_graph(gctx & g, int n_layer_limit) {
         for (ggml_tensor * t : {g.ovr_keep, g.ovr_sel, g.ovr_zero}) ggml_set_input(t);
         g.zero_inputs.push_back(g.ovr_zero);
         ggml_tensor * table = g.ovr_zero;
-        g.ovr_speaker = chunk_has_speaker(g);
-        if (g.ovr_speaker) {
-            g.ovr_spk = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t) hp.speaker_dim, 1);
-            ggml_set_input(g.ovr_spk);
-            ggml_tensor * projected = ggml_add(ctx, matmul(ctx, m.speaker_proj_w, g.ovr_spk), m.speaker_proj_b);
+        int columns = 1;
+        g.ovr_spk_col.assign(segs.size(), -1);
+        g.ovr_cond_col.assign(segs.size(), -1);
+        for (size_t s = 0; s < segs.size(); ++s) {
+            if (!chunk_has_speaker(g, segs[s])) continue;
+            ggml_tensor * spk = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t) hp.speaker_dim, 1);
+            ggml_set_input(spk);
+            g.ovr_spks.push_back(spk);
+            ggml_tensor * projected = ggml_add(ctx, matmul(ctx, m.speaker_proj_w, spk), m.speaker_proj_b);
             table = ggml_concat(ctx, table, projected, 1);
+            g.ovr_spk_col[s] = columns++;
         }
-        g.ovr_bkt = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t) hp.n_cond);
-        ggml_set_input(g.ovr_bkt);
-        for (uint32_t i = 0; i < hp.n_cond; ++i) {
-            ggml_tensor * bucket = ggml_view_1d(ctx, g.ovr_bkt, 1, (size_t) i * sizeof(int32_t));
-            table = ggml_concat(ctx, table, ggml_get_rows(ctx, m.cond_embd[i], bucket), 1);
+        for (size_t s = 0; s < segs.size(); ++s) {
+            if (!chunk_has_condition(g, segs[s])) continue;
+            ggml_tensor * bkt = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t) hp.n_cond);
+            ggml_set_input(bkt);
+            g.ovr_bkts.push_back(bkt);
+            for (uint32_t i = 0; i < hp.n_cond; ++i) {
+                ggml_tensor * bucket = ggml_view_1d(ctx, bkt, 1, (size_t) i * sizeof(int32_t));
+                table = ggml_concat(ctx, table, ggml_get_rows(ctx, m.cond_embd[i], bucket), 1);
+            }
+            g.ovr_cond_col[s] = columns;
+            columns += (int) hp.n_cond;
         }
         emb = ggml_add(ctx, ggml_mul(ctx, emb, g.ovr_keep), ggml_get_rows(ctx, table, g.ovr_sel));
     }
@@ -533,8 +582,11 @@ ggml_tensor * build_graph(gctx & g, int n_layer_limit) {
             ggml_set_input(g.pos_cache);
         }
         if (!g.decode && nl >= 4) {
-            g.mask_causal = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, g.position + g.n, g.n);
-            ggml_set_input(g.mask_causal);
+            for (const auto & s : segs) {
+                g.masks_causal.push_back(ggml_new_tensor_2d(ctx, GGML_TYPE_F16, s.position + s.n, s.n));
+                ggml_set_input(g.masks_causal.back());
+            }
+            g.mask_causal = g.masks_causal[0];
         }
     }
     if (g.decode) {
@@ -550,7 +602,9 @@ ggml_tensor * build_graph(gctx & g, int n_layer_limit) {
             g.steer.push_back(t);
         }
     }
-    if (!g.decode && g.cond && accent_on(m, g.cond->accent, g.cond->accent_strength)) {
+    bool any_accent = false;
+    for (const auto & s : segs) any_accent = any_accent || (s.cond && accent_on(m, s.cond->accent, s.cond->accent_strength));
+    if (!g.decode && any_accent) {
         if (!g.io) g.io = std::make_shared<zonos3_feature_io>();
         g.io->accent = true;
     }
@@ -710,38 +764,50 @@ static void set_graph_inputs(gctx & g, const float * ids) {
         for (int t = 0; t < g.n; ++t) column[t] = (int32_t) ids[(size_t) t * W + c];
         ggml_backend_tensor_set(g.ids[c], column.data(), 0, column.size() * sizeof(int32_t));
     }
+    const auto segs = g.segments();
     if (g.pos_rope) {
-        for (int t = 0; t < g.n; ++t) column[t] = g.position + t;
+        for (const auto & s : segs)
+            for (int t = 0; t < s.n; ++t) column[s.row0 + t] = s.position + t;
         ggml_backend_tensor_set(g.pos_rope, column.data(), 0, column.size() * sizeof(int32_t));
     }
     if (g.pos_cache) {
-        for (int t = 0; t < g.n; ++t) column[t] = g.cache_slot * (g.slot_cap + 1) + g.position + t;
+        for (const auto & s : segs)
+            for (int t = 0; t < s.n; ++t) column[s.row0 + t] = s.cache_slot * (g.slot_cap + 1) + s.position + t;
         ggml_backend_tensor_set(g.pos_cache, column.data(), 0, column.size() * sizeof(int32_t));
     }
-    if (g.mask_causal) set_causal_mask(g.mask_causal, g.n, g.position);
+    for (size_t s = 0; s < g.masks_causal.size(); ++s) set_causal_mask(g.masks_causal[s], segs[s].n, segs[s].position);
     for (ggml_tensor * zero : g.zero_inputs) ggml_backend_tensor_memset(zero, 0, 0, ggml_nbytes(zero));
     if (g.ovr_keep) {
-        // Local row t is absolute row position + t; table column 0 is zero (row keeps its sum).
-        const auto & c = *g.cond;
-        const int n_cond = (int) g.m->hp.n_cond, first_cond = g.ovr_speaker ? 2 : 1;
+        // Local row row0 + t is absolute row position + t of its segment; table column 0 is zero (row keeps its sum).
+        const int n_cond = (int) g.m->hp.n_cond;
         std::vector<float> keep(g.n, 1.0f);
         std::vector<int32_t> sel(g.n, 0);
-        for (int t = 0; t < g.n; ++t) {
-            const int row = g.position + t;
-            if (g.ovr_speaker && row == c.speaker_row) {
-                keep[t] = 0.0f; sel[t] = 1;
-            } else if (c.condition_row >= 0 && row >= c.condition_row && row < c.condition_row + n_cond) {
-                keep[t] = 0.0f; sel[t] = first_cond + (row - c.condition_row);
+        size_t spk = 0, bkt = 0;
+        for (size_t s = 0; s < segs.size(); ++s) {
+            const auto & sg = segs[s];
+            const auto & c = *sg.cond;
+            for (int t = 0; t < sg.n; ++t) {
+                const int row = sg.position + t;
+                if (g.ovr_spk_col[s] >= 0 && row == c.speaker_row) {
+                    keep[sg.row0 + t] = 0.0f; sel[sg.row0 + t] = g.ovr_spk_col[s];
+                } else if (g.ovr_cond_col[s] >= 0 && row >= c.condition_row && row < c.condition_row + n_cond) {
+                    keep[sg.row0 + t] = 0.0f; sel[sg.row0 + t] = g.ovr_cond_col[s] + (row - c.condition_row);
+                }
             }
+            if (g.ovr_spk_col[s] >= 0)
+                ggml_backend_tensor_set(g.ovr_spks[spk++], c.speaker.data(), 0, c.speaker.size() * sizeof(float));
+            if (g.ovr_cond_col[s] >= 0)
+                ggml_backend_tensor_set(g.ovr_bkts[bkt++], c.buckets.data(), 0, c.buckets.size() * sizeof(int32_t));
         }
         ggml_backend_tensor_set(g.ovr_keep, keep.data(), 0, keep.size() * sizeof(float));
         ggml_backend_tensor_set(g.ovr_sel, sel.data(), 0, sel.size() * sizeof(int32_t));
-        if (g.ovr_spk) ggml_backend_tensor_set(g.ovr_spk, c.speaker.data(), 0, c.speaker.size() * sizeof(float));
-        ggml_backend_tensor_set(g.ovr_bkt, c.buckets.data(), 0, c.buckets.size() * sizeof(int32_t));
     }
-    if (!g.decode && g.io && g.io->accent)
-        set_accent_inputs(*g.m, *g.io, g.n, std::vector<std::pair<int, float>>(
-            g.n, {g.cond->accent, g.cond->accent_strength}));
+    if (!g.decode && g.io && g.io->accent) {
+        std::vector<std::pair<int, float>> accent(g.n, {-1, 0.0f});
+        for (const auto & s : segs)
+            if (s.cond) std::fill_n(accent.begin() + s.row0, s.n, std::pair<int, float>{s.cond->accent, s.cond->accent_strength});
+        set_accent_inputs(*g.m, *g.io, g.n, accent);
+    }
 }
 
 // The optional conditioning feature (accent adapter).
@@ -1085,6 +1151,70 @@ bool zonos3_batch_slot_prefill(zonos3_batch_ctx & bc, int slot, const float * id
     return true;
 }
 
+bool zonos3_batch_pair_prefill(zonos3_batch_ctx & bc, int slot_a, const float * ids_a, int n_a, const zonos3_conditioning & cond_a,
+                               float * out_logits_a, int slot_b, const float * ids_b, int n_b,
+                               const zonos3_conditioning & cond_b, float * out_logits_b) {
+    if (!bc.model || slot_a == slot_b || !out_logits_a || !out_logits_b) return false;
+    const auto & m = *bc.model;
+    struct seq { int slot; const float * ids; int n; const zonos3_conditioning * cond; float * out; };
+    const seq seqs[2] = {{slot_a, ids_a, n_a, &cond_a, out_logits_a}, {slot_b, ids_b, n_b, &cond_b, out_logits_b}};
+    for (const seq & s : seqs)
+        if (s.slot < 0 || s.slot >= bc.n_slots || s.n <= 0 || s.n > bc.slot_cap || s.n > (int) m.hp.n_ctx_train ||
+            !valid_ids(m, s.ids, s.n) || !zonos3_check_conditioning(m, s.ids, s.n, *s.cond) || !features_ok(m, *s.cond))
+            return false;
+    reset_slot(bc, slot_a);
+    reset_slot(bc, slot_b);
+    constexpr int chunk = 256;
+    const size_t bytes = (size_t) bc.av * bc.ncb * sizeof(float);
+    std::vector<float> rows;
+    for (int position = 0; position < std::max(n_a, n_b); position += chunk) {
+        std::vector<gctx::segment> segs;
+        std::vector<const seq *> owners;
+        int total = 0;
+        for (const seq & s : seqs) {
+            const int count = std::clamp(s.n - position, 0, chunk);
+            if (count == 0) continue;   // this prompt finished in an earlier chunk
+            segs.push_back({total, count, s.slot, position, s.cond});
+            owners.push_back(&s);
+            total += count;
+        }
+        if (segs.size() == 1) {
+            const seq & s = *owners[0];
+            if (!zonos3_batch_slot_extend(bc, s.slot, s.ids + (size_t) position * bc.W, segs[0].n, position, *s.cond, s.out))
+                return false;
+            continue;
+        }
+        rows.resize((size_t) total * bc.W);
+        for (size_t i = 0; i < segs.size(); ++i)
+            std::copy_n(owners[i]->ids + (size_t) position * bc.W, (size_t) segs[i].n * bc.W, rows.begin() + (size_t) segs[i].row0 * bc.W);
+        ggml_context * ctx = ggml_init({(size_t) 128 * 1024 * 1024, nullptr, true});
+        if (!ctx) return false;
+        gctx g; g.m = &m; g.ctx = ctx; g.n = total; g.capture = false;
+        g.kc = &bc.k_cache; g.vc = &bc.v_cache; g.state = &bc.gdn_state; g.history = &bc.gdn_history;
+        g.slot_cap = bc.slot_cap; g.segs = segs;
+        g.gf = ggml_new_graph_custom(ctx, 32768, false);
+        ggml_tensor * logits = build_graph(g, -1);
+        g.finish(logits);
+        bool ok = ggml_gallocr_alloc_graph(bc.galloc_prefill, g.gf);
+        if (ok) {
+            set_graph_inputs(g, rows.data());
+            ok = ggml_backend_graph_compute(m.backend, g.gf) == GGML_STATUS_SUCCESS;
+        }
+        for (size_t i = 0; ok && i < segs.size(); ++i) {
+            const seq & s = *owners[i];
+            if (position + segs[i].n != s.n) continue;   // the prompt continues in the next chunk
+            ggml_backend_tensor_get(logits, s.out, (size_t) (segs[i].row0 + segs[i].n - 1) * bytes, bytes);
+            memcpy(bc.h_logits.data() + (size_t) s.slot * bc.av * bc.ncb, s.out, bytes);
+        }
+        ggml_free(ctx);
+        if (!ok) {
+            fprintf(stderr, "zonos3: pair prefill failed\n");
+            return false;
+        }
+    }
+    return true;
+}
+
 // clip_window (zonos3.tts.probe): an inclusive text window inside [0, text_len).
 static std::pair<int, int> clip_window(int lo, int hi, int text_len) {
     lo = std::max(0, std::min(lo, text_len - 1));
@@ -1380,20 +1510,20 @@ static int generate_kv(const zonos3_model & m, const std::vector<float> & prompt
     slot.accent = prompt.cond.accent; slot.accent_strength = prompt.cond.accent_strength;
     if (probed) slot.probe = features->probe;
     std::vector<float> logits((size_t) av * ncb), twin_logits, guided;
-    if (!zonos3_batch_slot_prefill(bc, 0, prompt_ids.data(), n0, prompt.cond, logits.data())) {
-        zonos3_batch_free(bc); return -1;
-    }
-    if (features && features->step_logits) features->step_logits->insert(features->step_logits->end(), logits.begin(), logits.end());
     std::vector<zonos3_slot *> active{&slot};
     if (twin) {
         slot_twin.index = 1; slot_twin.active = true; slot_twin.n_past = n_twin; slot_twin.prefill = prompt.prefill_frames;
         slot_twin.accent = twin->cond.accent; slot_twin.accent_strength = twin->cond.accent_strength;
         twin_logits.resize(logits.size()); guided.resize(logits.size());
-        if (!zonos3_batch_slot_prefill(bc, 1, twin_ids.data(), n_twin, twin->cond, twin_logits.data())) {
+        if (!zonos3_batch_pair_prefill(bc, 0, prompt_ids.data(), n0, prompt.cond, logits.data(),
+                                       1, twin_ids.data(), n_twin, twin->cond, twin_logits.data())) {
             zonos3_batch_free(bc); return -1;
         }
         active.push_back(&slot_twin);
+    } else if (!zonos3_batch_slot_prefill(bc, 0, prompt_ids.data(), n0, prompt.cond, logits.data())) {
+        zonos3_batch_free(bc); return -1;
     }
+    if (features && features->step_logits) features->step_logits->insert(features->step_logits->end(), logits.begin(), logits.end());
     int steps = 0;
     const auto start = std::chrono::steady_clock::now();
     while (!slot.done) {

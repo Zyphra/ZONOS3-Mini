@@ -149,7 +149,7 @@ args=("$ZONOS3_MODEL_DIR/$BACKBONE"
 [ -f "$ZONOS3_MODEL_DIR/zac-encoder.gguf" ] && args+=(--zac-encoder "$ZONOS3_MODEL_DIR/zac-encoder.gguf")
 [ -f "$ZONOS3_MODEL_DIR/ssl-teacher.gguf" ] && args+=(--ssl-teacher "$ZONOS3_MODEL_DIR/ssl-teacher.gguf")
 [ -f "$ZONOS3_MODEL_DIR/spk-encoder.gguf" ] && args+=(--spk-encoder "$ZONOS3_MODEL_DIR/spk-encoder.gguf")
-[ "$GPU_MODE" = gpu ] && args+=(--gpu)
+if [ "$GPU_MODE" = gpu ]; then args+=(--gpu); else args+=(--cpu); fi
 
 "$ZONOS3_SERVER_BIN" "${args[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} &
 SRV_PID=$!

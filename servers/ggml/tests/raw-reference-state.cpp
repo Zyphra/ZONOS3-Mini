@@ -213,6 +213,81 @@ static bool teacher_forced(zonos3_model & model) {
     return ok;
 }
 
+// zonos3_batch_pair_prefill (one graph per chunk for a CFG pair) == two isolated zonos3_batch_slot_prefill calls:
+// last-row logits and every slot's persistent state, in both segment orders, for an unequal pair (one prompt crosses
+// the 256-row chunk boundary, the other ends in the first chunk) and a pair that both cross it. The prompts carry
+// speaker / condition rows on both sides, so the replacement table holds columns of two segments.
+static bool pair_prefill(zonos3_model & model, const std::vector<float> & speaker) {
+    const int ncb = (int) model.hp.n_codebooks;
+    const size_t stride = (size_t) ncb * model.hp.audio_vocab;
+    auto build = [&](int frames, bool embedding, int salt, zonos3_prompt & p) {
+        std::vector<int32_t> codes((size_t) frames * ncb);
+        for (size_t i = 0; i < codes.size(); ++i) codes[i] = (int32_t) ((i * 13 + salt * 29) % model.hp.codebook_size);
+        zonos3_prompt_options options;
+        if (embedding) options.speaker_embedding = speaker.data();
+        else { options.reference_codes = codes.data(); options.reference_frames = frames; }
+        options.condition_buckets = {(int32_t) (1 + salt), 4, 9};
+        return zonos3_build_prompt(model, salt % 2 ? "pair prefill twin text" : "pair prefill conditional prompt", options, p);
+    };
+    zonos3_prompt long_ref, short_emb, long_ref2;
+    if (!build(300, false, 0, long_ref) || !build(0, true, 1, short_emb) || !build(270, false, 2, long_ref2)) return false;
+    if (long_ref.n_rows <= 256 || short_emb.n_rows >= 256 || long_ref2.n_rows <= 256) {
+        fprintf(stderr, "pair prefill: prompt lengths %d/%d/%d do not cover the chunk cases\n",
+                long_ref.n_rows, short_emb.n_rows, long_ref2.n_rows);
+        return false;
+    }
+    auto ids = [](const zonos3_prompt & p) { return std::vector<float>(p.ids.begin(), p.ids.end()); };
+    const zonos3_prompt * pairs[][2] = {{&long_ref, &short_emb}, {&short_emb, &long_ref}, {&long_ref, &long_ref2}};
+    bool ok = true;
+    for (const auto & pair : pairs) {
+        const zonos3_prompt & a = *pair[0], & b = *pair[1];
+        const std::vector<float> ia = ids(a), ib = ids(b);
+        const int capacity = std::max(a.n_rows, b.n_rows) + 8;
+        zonos3_batch_ctx batch, isolated;
+        ok = zonos3_batch_init(batch, model, 3, capacity) && zonos3_batch_init(isolated, model, 1, capacity);
+        std::vector<float> got_a(stride), got_b(stride), expected(stride);
+        // Slots 2 and 0: the pair need not be adjacent; slot 1 keeps a neighbour prefill that must stay untouched.
+        ok = ok && zonos3_batch_slot_prefill(batch, 1, ib.data(), b.n_rows, b.cond, expected.data());
+        const auto neighbour = ok ? snapshot(batch, 1, b.n_rows) : std::vector<state_lane>{};
+        ok = ok && zonos3_batch_pair_prefill(batch, 2, ia.data(), a.n_rows, a.cond, got_a.data(),
+                                             0, ib.data(), b.n_rows, b.cond, got_b.data());
+        const std::string label = "pair prefill " + std::to_string(a.n_rows) + "+" + std::to_string(b.n_rows);
+        // Rows are independent, so on the CPU the pair must match bit for bit (the dummy model's attention is too weak
+        // for the logits gate alone to catch a segment attending the other slot's band); GPU kernels may differ by row
+        // count, so there the usual gates apply.
+        auto same = [&](const std::vector<float> & got, const std::string & what) {
+            const bool exact = model.is_gpu || std::memcmp(got.data(), expected.data(), stride * sizeof(float)) == 0;
+            if (!exact) fprintf(stderr, "%s: CPU pair prefill not bit-identical to the isolated prefill\n", what.c_str());
+            return close_logits(got, expected, what.c_str()) && exact;
+        };
+        auto same_lanes = [&](const std::vector<state_lane> & x, const std::vector<state_lane> & y, const std::string & what) {
+            return same_state(x, y, what.c_str(), !model.is_gpu);
+        };
+        ok = ok && zonos3_batch_slot_prefill(isolated, 0, ia.data(), a.n_rows, a.cond, expected.data()) &&
+             same(got_a, label + " logits a") &&
+             same_lanes(snapshot(batch, 2, a.n_rows), snapshot(isolated, 0, a.n_rows), label + " state a");
+        ok = ok && zonos3_batch_slot_prefill(isolated, 0, ib.data(), b.n_rows, b.cond, expected.data()) &&
+             same(got_b, label + " logits b") &&
+             same_lanes(snapshot(batch, 0, b.n_rows), snapshot(isolated, 0, b.n_rows), label + " state b") &&
+             same_state(neighbour, snapshot(batch, 1, b.n_rows), (label + " neighbour").c_str(), true);
+        zonos3_batch_free(batch);
+        zonos3_batch_free(isolated);
+        if (!ok) break;
+    }
+    if (ok) {
+        zonos3_batch_ctx batch;
+        std::vector<float> la(stride), lb(stride);
+        const std::vector<float> ia = ids(long_ref);
+        ok = zonos3_batch_init(batch, model, 2, long_ref.n_rows + 8) &&
+             !zonos3_batch_pair_prefill(batch, 1, ia.data(), long_ref.n_rows, long_ref.cond, la.data(),
+                                        1, ia.data(), long_ref.n_rows, long_ref.cond, lb.data());
+        zonos3_batch_free(batch);
+        if (!ok) fprintf(stderr, "pair prefill must reject a pair on one slot\n");
+    }
+    if (ok) printf("pair prefill: PASS\n");
+    return ok;
+}
+
 static bool all_pad_row(const zonos3_model & model, const zonos3_prompt & p, int row) {
     const int ncb = (int) model.hp.n_codebooks, W = ncb + 1;
     for (int cb = 0; cb < ncb; ++cb) if (p.ids[(size_t) row * W + cb] != (int32_t) model.hp.audio_pad_id) return false;
@@ -588,12 +663,18 @@ static bool exercise(zonos3_model & model, const std::vector<float> & speaker) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc < 2 || argc > 3 || (argc == 3 && std::strcmp(argv[2], "--gpu") != 0)) {
-        fprintf(stderr, "usage: raw-reference-state MODEL.gguf [--gpu]\n"); return 2;
+    bool gpu = false, pair = false, bad = argc < 2;
+    for (int i = 2; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--gpu")) gpu = true;
+        else if (!std::strcmp(argv[i], "--pair-prefill")) pair = true;
+        else bad = true;
+    }
+    if (bad) {
+        fprintf(stderr, "usage: raw-reference-state MODEL.gguf [--gpu] [--pair-prefill]\n"); return 2;
     }
     zonos3_model model;
-    if (!zonos3_model_load(model, argv[1], argc == 3)) return 1;
-    if (argc == 3 && !model.is_gpu) {
+    if (!zonos3_model_load(model, argv[1], gpu)) return 1;
+    if (gpu && !model.is_gpu) {
         fprintf(stderr, "raw-reference-state: --gpu requested but no GPU backend loaded\n");
         zonos3_model_free(model); return 1;
     }
@@ -603,10 +684,15 @@ int main(int argc, char ** argv) {
         std::normal_distribution<float> normal(0.0f, 0.35f);
         for (float & v : speaker) v = normal(rng);
     }
-    const bool prompt_ok = exercise(model, speaker);
-    const bool state_ok = teacher_forced(model);
+    bool ok;
+    if (pair) {
+        ok = pair_prefill(model, speaker);
+    } else {
+        const bool prompt_ok = exercise(model, speaker);
+        const bool state_ok = teacher_forced(model);
+        ok = prompt_ok && state_ok;
+    }
     zonos3_model_free(model);
-    const bool ok = prompt_ok && state_ok;
     if (!ok) fprintf(stderr, "raw-reference/state contract failed\n");
     return ok ? 0 : 1;
 }

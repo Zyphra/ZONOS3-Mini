@@ -212,6 +212,9 @@ if (BUILD_TESTING)
     target_link_libraries(raw-reference-state PRIVATE zonos3)
     add_test(NAME raw-reference-state COMMAND raw-reference-state
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zonos3.gguf)
+    add_test(NAME pair-prefill COMMAND raw-reference-state
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zonos3.gguf --pair-prefill)
+    set_tests_properties(pair-prefill PROPERTIES PASS_REGULAR_EXPRESSION "pair prefill: PASS")
     add_executable(steering tests/steering.cpp)
     target_link_libraries(steering PRIVATE zonos3)
     add_test(NAME steering COMMAND steering

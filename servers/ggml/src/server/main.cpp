@@ -56,7 +56,7 @@ void usage(const char * a0) {
             "                      raw-reference cloning needs --zac-encoder + --ssl-teacher instead)\n"
             "  --host H            bind address (default 127.0.0.1)\n"
             "  --port P            port (default 1919; 0 picks a free ephemeral port)\n"
-            "  --gpu | --cpu       backend (default cpu)\n"
+            "  --gpu | --cpu       backend (default: gpu on Apple Silicon, cpu elsewhere)\n"
             "  --zac-cpu           run the ZAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
             "  --zac-gpu           run the ZAC decoder on the --gpu backend (default)\n"
             "  --max N             max frames per request (default %d, ~%ds; shrunk to the slot rows a prompt leaves)\n"
@@ -386,7 +386,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     fprintf(stderr, "zonos3-server: backbone=%s zac=%s spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d zac-threads=%d python-src=%s\n",
             model_path.c_str(), zac_path.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
             s.encoder_path.empty() ? "(none)" : s.encoder_path.c_str(), s.teacher_path.empty() ? "(none)" : s.teacher_path.c_str(),
-            s.steer_path.empty() ? "(none)" : s.steer_path.c_str(), s.use_gpu ? "GPU" : "CPU", s.batch_slots, s.zac_threads,
+            s.steer_path.empty() ? "(none)" : s.steer_path.c_str(), s.model.is_gpu ? "GPU" : "CPU", s.batch_slots, s.zac_threads,
             s.python_src.empty() ? "(none)" : s.python_src.c_str());
     // Bind before announcing (and before publishing to ctl): --port 0 asks the OS for a free ephemeral port, which the
     // embedding app reads back from ctl->port.

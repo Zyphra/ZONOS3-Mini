@@ -87,6 +87,14 @@ struct zonos3_model {
     const zonos3_accents * accents = nullptr;
 };
 
+// Backend when neither --gpu nor --cpu is given: Metal on Apple Silicon, CPU elsewhere
+// (the Linux/Windows GPU release archives stamp --gpu into their launchers).
+#if defined(__APPLE__) && defined(__aarch64__)
+inline constexpr bool ZONOS3_DEFAULT_USE_GPU = true;
+#else
+inline constexpr bool ZONOS3_DEFAULT_USE_GPU = false;
+#endif
+
 bool zonos3_model_load(zonos3_model & model, const char * path, bool use_gpu);
 void zonos3_model_free(zonos3_model & model);
 bool zonos3_set_expert_mask(zonos3_model & model, const std::map<int, std::vector<int>> & keep);
@@ -261,6 +269,12 @@ bool zonos3_batch_slot_prefill(zonos3_batch_ctx & bc, int slot, const float * pr
 bool zonos3_batch_slot_extend(zonos3_batch_ctx & bc, int slot, const float * ids,
                               int n_tokens, int position, const zonos3_conditioning & cond,
                               float * out_logits);
+// Prefill two slots in one graph per 256-row chunk (a CFG pair: the conditional prompt and its twin). Each slot is
+// reset first; rows of both prompts share every per-row op, attention and GDN run per slot. Equivalent to two
+// zonos3_batch_slot_prefill calls (same per-slot state and last-row logits).
+bool zonos3_batch_pair_prefill(zonos3_batch_ctx & bc, int slot_a, const float * ids_a, int n_a, const zonos3_conditioning & cond_a,
+                               float * out_logits_a, int slot_b, const float * ids_b, int n_b,
+                               const zonos3_conditioning & cond_b, float * out_logits_b);
 bool zonos3_batch_step(zonos3_batch_ctx & bc, const std::vector<zonos3_slot *> & active);
 const float * zonos3_batch_slot_logits(const zonos3_batch_ctx & bc, int index);
 bool zonos3_slot_sample(const zonos3_model & model, zonos3_slot & slot, zonos3_sampler & smp,

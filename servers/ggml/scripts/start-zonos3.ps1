@@ -148,7 +148,7 @@ foreach ($companion in @('spk-encoder', 'zac-encoder', 'ssl-teacher')) {
         $srvArgs += @("--$companion", (Join-Path $ModelDir "$companion.gguf"))
     }
 }
-if ($GpuMode -eq 'gpu') { $srvArgs += '--gpu' }
+if ($GpuMode -eq 'gpu') { $srvArgs += '--gpu' } else { $srvArgs += '--cpu' }
 if ($ExtraArgs) { $srvArgs += $ExtraArgs }
 
 # PS 5.1 joins -ArgumentList elements with spaces without quoting; quote them ourselves

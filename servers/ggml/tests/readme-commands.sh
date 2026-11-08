@@ -5,7 +5,7 @@
 #
 # Audio is gibberish by design; we only assert each command runs and emits the right
 # kind of artifact (codes .npy, RIFF WAV, float32 PCM). Everything runs on the CPU
-# backend (no --gpu) for determinism, matching the existing smoke test.
+# backend (explicit --cpu: the binaries default to Metal on Apple Silicon) for determinism.
 #
 # Usage:  bash tests/readme-commands.sh [cli-bin] [server-bin]
 #   binaries default to auto-discovery under build/.  Run from anywhere.
@@ -48,45 +48,45 @@ is_riff() { [ "$(head -c4 "$1" 2>/dev/null)" = "RIFF" ]; }
 echo "== CLI ($CLI) =="
 
 # build the prompt id matrix (docs/INTERNALS.md "Standalone components")
-"$CLI" "$MODEL" --build-prompt "hello prompt" "$WORK/ids.npy" >/dev/null 2>&1 \
+"$CLI" "$MODEL" --cpu --build-prompt "hello prompt" "$WORK/ids.npy" >/dev/null 2>&1 \
   || fail "--build-prompt exited nonzero"
 [ -s "$WORK/ids.npy" ] || fail "--build-prompt wrote no ids.npy"
 pass "--build-prompt -> ids.npy"
 
 # generate codes from the prompt (16 rows: zac-cli below decodes them, past the 9-row shear)
-"$CLI" "$MODEL" --generate "$WORK/ids.npy" "$WORK/codes.npy" --max 16 --greedy >/dev/null 2>&1 \
+"$CLI" "$MODEL" --cpu --generate "$WORK/ids.npy" "$WORK/codes.npy" --max 16 --greedy >/dev/null 2>&1 \
   || fail "--generate exited nonzero"
 [ -s "$WORK/codes.npy" ] || fail "--generate wrote no codes.npy"
 pass "--generate -> codes.npy"
 
 # one-command text -> codes (.npy output, no ZAC)
-out="$("$CLI" "$MODEL" --tts "ci tts to codes" "$WORK/t.npy" --max 8 --greedy 2>&1)" \
+out="$("$CLI" "$MODEL" --cpu --tts "ci tts to codes" "$WORK/t.npy" --max 8 --greedy 2>&1)" \
   || { echo "$out"; fail "--tts (codes) exited nonzero"; }
 [ -s "$WORK/t.npy" ] || fail "--tts (codes) wrote no .npy"
 pass "--tts -> codes .npy"
 
 # one-command text -> WAV, decoding through the ZAC (README Quick Start / CLI section). A WAV needs
 # more rows than the 9-row codebook shear, so the decode tests generate 16 frames.
-"$CLI" "$MODEL" --tts "ci tts to wav" "$WORK/t.wav" --zac "$ZAC" --max 16 --greedy >/dev/null 2>&1 \
+"$CLI" "$MODEL" --cpu --tts "ci tts to wav" "$WORK/t.wav" --zac "$ZAC" --max 16 --greedy >/dev/null 2>&1 \
   || fail "--tts --zac (wav) exited nonzero"
 is_riff "$WORK/t.wav" || fail "--tts --zac did not write a RIFF WAV"
 pass "--tts --zac -> WAV"
 
 # speaker-embedding conditioning: speaker row + condition buckets + speaker CFG (two-slot twin) + silence prefill
-out="$("$CLI" "$MODEL" --tts "ci speaker" "$WORK/s.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
+out="$("$CLI" "$MODEL" --cpu --tts "ci speaker" "$WORK/s.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
   --condition-buckets 4,3,29 --cfg-scale 1.5 --silence-prefill 3 --max 16 --greedy --zac "$ZAC" 2>&1)" \
   || { echo "$out"; fail "--tts --speaker-embedding (cfg) exited nonzero"; }
 is_riff "$WORK/s.wav" || fail "--tts --speaker-embedding did not write a RIFF WAV"
 pass "--tts --speaker-embedding --cfg-scale -> WAV"
 
 # steering: raw controls move the embedding, hidden controls + a span add to AttnRes bank sources
-out="$("$CLI" "$MODEL" --tts "ci steer" "$WORK/steer.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
+out="$("$CLI" "$MODEL" --cpu --tts "ci steer" "$WORK/steer.wav" --speaker-embedding tests/fixtures/speaker-embedding.npy \
   --steer tests/fixtures/dummy-steer.gguf --control who.gender=1.5 --control style.tempo=-1 \
   --control-span 0:2:mood.valence=2 --cfg-scale 1.5 --max 16 --greedy --zac "$ZAC" 2>&1)" \
   || { echo "$out"; fail "--tts --steer --control exited nonzero"; }
 is_riff "$WORK/steer.wav" || fail "--tts --steer did not write a RIFF WAV"
 pass "--tts --steer --control --control-span -> WAV"
-if out="$("$CLI" "$MODEL" --tts "ci steer" "$WORK/steer-bad.wav" --steer tests/fixtures/dummy-steer.gguf \
+if out="$("$CLI" "$MODEL" --cpu --tts "ci steer" "$WORK/steer-bad.wav" --steer tests/fixtures/dummy-steer.gguf \
     --control who.gender=1 --max 4 --zac "$ZAC" 2>&1)"; then fail "raw control without a speaker embedding must fail"; fi
 pass "--control (raw) without --speaker-embedding -> error"
 
@@ -95,7 +95,7 @@ pass "--control (raw) without --speaker-embedding -> error"
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-q6_k.gguf"
 cp "$ZAC"   "$WORK/models/zac-keep2.gguf"
-out=$("$CLI" "$WORK/models/zonos3-q6_k.gguf" --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
+out=$("$CLI" "$WORK/models/zonos3-q6_k.gguf" --cpu --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
   || { echo "$out"; fail "--tts with sibling zac-keep2.gguf exited nonzero"; }
 is_riff "$WORK/auto.wav" || fail "--tts with sibling zac-keep2.gguf did not write a RIFF WAV"
 pass "--tts (sibling zac-keep2.gguf auto-detected) -> WAV"
@@ -121,7 +121,7 @@ if [ -x "$QCLI" ]; then
   "$QCLI" "$MODEL" "$WORK/q4exp.gguf" q4_0 --experts-only --spine-f16 >"$WORK/q4.log" 2>&1 \
     || { cat "$WORK/q4.log"; fail "quantize-cli q4_0 expert-only"; }
   for q in q8 q4exp; do
-    "$CLI" "$WORK/$q.gguf" --tts "ci quantized" "$WORK/$q.npy" --max 8 --greedy >"$WORK/$q.tts.log" 2>&1 \
+    "$CLI" "$WORK/$q.gguf" --cpu --tts "ci quantized" "$WORK/$q.npy" --max 8 --greedy >"$WORK/$q.tts.log" 2>&1 \
       || { cat "$WORK/$q.tts.log"; fail "$q backbone loading"; }
     [ -s "$WORK/$q.npy" ] || fail "$q generation wrote no codes"
   done
@@ -147,7 +147,7 @@ PORT="${ZONOS3_TEST_PORT:-19187}"
 BASE="http://127.0.0.1:$PORT"
 # default voice ci.npy = the speaker embedding fixture; dummy-steer.gguf's set calibrations disable two controls for it
 mkdir -p "$WORK/voices" && cp tests/fixtures/speaker-embedding.npy "$WORK/voices/ci.npy"
-"$SRV" "$MODEL" --zac "$ZAC" --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
+"$SRV" "$MODEL" --cpu --zac "$ZAC" --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
   --studio-projects-dir "$WORK/projects" --tts-default-voices-dir "$WORK/voices" >"$WORK/srv.log" 2>&1 &
 SRV_PID=$!
 

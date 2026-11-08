@@ -40,7 +40,7 @@
 
 static void usage(const char * a0) {
     fprintf(stderr,
-            "usage: %s <model.gguf> [--cpu|--gpu] [mode]\n"
+            "usage: %s <model.gguf> [--cpu|--gpu] [mode]  (default --gpu on Apple Silicon, --cpu elsewhere)\n"
             "  --validate <input_ids.npy> <out_dir> [--layers N]\n"
             "  --generate <input_ids.npy> <out.{npy,wav}>\n"
             "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
@@ -657,7 +657,7 @@ int main(int argc, char ** argv) {
     for (int i = 2; i < argc; ++i)
         if (!strcmp(argv[i], "--request")) return request_prompt_main(argc, argv);
     const std::string path = argv[1];
-    bool use_gpu = false;
+    bool use_gpu = ZONOS3_DEFAULT_USE_GPU;
     bool validate = false, generate = false, do_tts = false, do_build_prompt = false, do_batch_test = false, do_decode_bench = false;
     std::string ids_path, out_dir, out_codes, reference_path, text, prompt_out, zac_path, dump_ids_path;
     std::string clone_path, encoder_path, teacher_path, save_reference_path;
