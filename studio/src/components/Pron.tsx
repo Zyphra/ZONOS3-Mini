@@ -282,8 +282,8 @@ export function PronHelp() {
         {phonemizeOn.value ? ' Or select words and press /ə/ to look them up.' : ''}
       </p>
       {phonemizeOn.value && languages.value.length > 1 && (
-        <label class="pron-lang">
-          lexicon
+        <label class="pron-lang" title="Where /ə/ looks words up. It follows the project language until you pick another here (for this session)">
+          lexicon (for /ə/ lookups) · {lookupLanguage.value === projectSettings.value.language ? 'follows language' : 'overridden'}
           <select class="input" value={lookupLanguage.value} onChange={(e) => (pronLanguage.value = (e.currentTarget as HTMLSelectElement).value)} aria-label="Pronunciation lexicon language">
             {languages.value.map((l) => (
               <option value={l}>{langLabel(l)}</option>

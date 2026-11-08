@@ -50,6 +50,8 @@ export const act = signal<Act>(ACT_IDS.includes(initialAct) ? initialAct : 'cast
 export const activeHistory = signal<History<unknown> | null>(null);
 /** A dialog is open: act switching by number keys is off. */
 export const modalOpen = signal(false);
+/** The project settings dialog (language, voice mode, tag strength). */
+export const settingsOpen = signal(false);
 /** The current act's own keys (called first; return true when handled). */
 export const screenKeys = signal<((e: KeyboardEvent) => boolean) | null>(null);
 /** What space does on the current act. */
