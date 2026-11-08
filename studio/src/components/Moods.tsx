@@ -10,10 +10,11 @@ import type { Binding } from '../screens/cast/QuickControls';
 import { drag } from './drag';
 
 const fmt = (v: number) => `×${+v.toFixed(v % 1 ? 1 : 0)}`;
+const strength = (v: number) => `strength ${+v.toFixed(v % 1 ? 1 : 0)}`;
 
-/** Hover text of a mood: what it does, as measured, and its default dose. */
+/** Hover text of a mood: what it does, as measured, and its default strength. */
 export function moodTitle(m: Mood, v: number): string {
-  return `${m.label}${m.effect ? `: ${m.effect}` : ''} · default ${fmt(m.dose)}${v > 0 ? ` · now ${fmt(v)} (click to remove)` : ' (click to add)'}`;
+  return `${m.label}${m.effect ? `: ${m.effect}` : ''} · default ${strength(m.dose)}${v > 0 ? ` · now ${strength(v)} (click to remove)` : ' (click to add)'}`;
 }
 
 /** Toggle a mood at its default dose, leaving the others (moods combine: their doses add up). */

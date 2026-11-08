@@ -15,7 +15,8 @@ persist('rails', folded);
 const drawer = signal<string | null>(null);
 let opener: HTMLElement | null = null;
 
-function closeDrawer() {
+/** Phone: close the open drawer (focus goes back to what opened it). Nothing on desktop. */
+export function closeRail() {
   drawer.value = null;
   opener?.focus({ preventScroll: true });
   opener = null;
@@ -26,7 +27,7 @@ export function openRail(id: string) {
   if (phone.peek()) {
     opener = document.activeElement as HTMLElement | null;
     drawer.value = id;
-  } else if (folded.peek()[id]) folded.value = { ...folded.peek(), [id]: false };
+  } else if (folded.peek()[id] !== false) folded.value = { ...folded.peek(), [id]: false };
 }
 
 interface Props {
@@ -36,6 +37,8 @@ interface Props {
   title: string;
   /** The column itself (`aside.rail`, `aside.monitor` …). */
   children: ComponentChildren;
+  /** Desktop: folded until the reader toggles it (while nothing was remembered for this rail). */
+  defaultFolded?: boolean;
 }
 
 /**
@@ -43,9 +46,9 @@ interface Props {
  * that unfolds it; remembered per rail). Phone: an overlay drawer opened by its `RailToggle`, closed by the backdrop,
  * the close button or Esc. The column stays mounted either way (its effects and file drops keep working).
  */
-export function Rail({ id, side, title, children }: Props) {
+export function Rail({ id, side, title, children, defaultFolded = false }: Props) {
   const box = useRef<HTMLDivElement>(null);
-  const isFolded = !!folded.value[id];
+  const isFolded = folded.value[id] ?? defaultFolded;
   const onPhone = phone.value;
   const open = onPhone && drawer.value === id;
   // A screen that goes away takes its open drawer with it.
@@ -62,7 +65,7 @@ export function Rail({ id, side, title, children }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || modalOpen.peek()) return;
       e.preventDefault();
-      closeDrawer();
+      closeRail();
     };
     window.addEventListener('keydown', onKey);
     // The page behind the drawer is inert: Tab stays in the drawer, screen readers see only it.
@@ -75,7 +78,7 @@ export function Rail({ id, side, title, children }: Props) {
     };
   }, [open]);
   // Keys inside an open drawer: Tab stays in, Esc closes (the dialog pattern); on desktop the column is plain.
-  const drawerKeys = open ? dialogKeys(() => box.current, closeDrawer) : undefined;
+  const drawerKeys = open ? dialogKeys(() => box.current, closeRail) : undefined;
   const chevron = side === 'left' ? (isFolded ? 'right' : 'left') : isFolded ? 'left' : 'right';
   return (
     <>
@@ -91,7 +94,7 @@ export function Rail({ id, side, title, children }: Props) {
       >
         <div class="rail-drawer-head">
           <h3>{title}</h3>
-          <button class="icon-btn" onClick={closeDrawer} aria-label={`Close ${title}`} title="Close (Esc)">
+          <button class="icon-btn" onClick={closeRail} aria-label={`Close ${title}`} title="Close (Esc)">
             <Icon name="x" />
           </button>
         </div>
@@ -107,7 +110,7 @@ export function Rail({ id, side, title, children }: Props) {
         </button>
         {children}
       </div>
-      {open && <div class="rail-scrim" onClick={closeDrawer} />}
+      {open && <div class="rail-scrim" onClick={closeRail} />}
     </>
   );
 }

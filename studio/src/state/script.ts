@@ -1,14 +1,14 @@
 /** Direct: a script split into lines, each with its own voice, delivery painted onto character spans, takes per line. */
-import { computed, signal } from '@preact/signals';
+import { computed, effect, signal, untracked } from '@preact/signals';
 import { parseTags } from '../lib/tags';
 import type { GenerateRequest, Rendered } from '../api';
 import { sequence } from '../audio/mix';
 import { errorText, isAbort, render } from '../audio/render';
 import { uid } from '../lib/math';
-import { projectSettings, pronTokens, requestContext, spec } from './app';
+import { backend, notify, projectSettings, pronTokens, requestContext, spec } from './app';
 import { pronProblem } from '../lib/pron';
 import { design, type Design } from './design';
-import { durationFactor, type Values } from './engine';
+import { durationFactor, toDoses, type Values } from './engine';
 import { History } from './history';
 import { cast } from './library';
 import { matchLines, newLine, staleReason, type Line } from './lines';
@@ -27,6 +27,8 @@ export interface Script {
   voice: string | null;
   /** Silence between lines when the script plays / exports (s). */
   gap: number;
+  /** Display hue per cast voice id, pinned on first appearance (new optional field; older documents lack it). */
+  voiceColors?: Record<string, string>;
 }
 
 export interface Take {
@@ -41,15 +43,8 @@ export interface Take {
   edited?: boolean;
 }
 
-const DEMO = [
-  'Welcome back to the late show.',
-  "Tonight's story starts somewhere quiet, a little after midnight.",
-  "Honestly? I wasn't sure we'd ever get here.",
-  "But here we are, and I couldn't be happier about it.",
-];
-
-/** A new project's script: the demo lines. */
-export const newScript = (): Script => ({ lines: DEMO.map((t) => newLine(t)), baseline: {}, voice: null, gap: 0.35 });
+/** A new project's script: no lines yet (the empty state offers Paste a script / Add a line). */
+export const newScript = (): Script => ({ lines: [], baseline: {}, voice: null, gap: 0.35 });
 
 export const scripts = new History<Script>(newScript());
 export const script = scripts.state;
@@ -58,6 +53,13 @@ export const script = scripts.state;
 export const takes = signal<Record<string, Take[]>>({});
 export const lineBusy = signal<Record<string, boolean>>({});
 export const lineError = signal<Record<string, string | null>>({});
+/** Lines whose last render failed, in failure order; a line leaves on its next successful render. */
+export const failedLines = signal<string[]>([]);
+/** Edit-as-text draft, kept across act and project switches until saved or discarded (null: none). */
+export const scriptDraft = signal<string | null>(null);
+export const scriptTextDirty = computed(() => scriptDraft.value !== null);
+/** The line the script is playing right now (changes only at line boundaries). */
+export const playingLineId = signal<string | null>(null);
 
 /** The script's default voice. */
 export const voiceDesign = computed<Design>(() => {
@@ -128,8 +130,24 @@ export function addLine(afterId: string | null, text = '', voice?: string | null
   return line.id;
 }
 
-export function removeLine(id: string) {
+/** Delete a line (its takes go with it); returns the line, its index and its takes so Undo can put it back. */
+export function removeLine(id: string): { line: Line; index: number; takes: Take[] } | null {
+  const index = script.value.lines.findIndex((l) => l.id === id);
+  if (index < 0) return null;
+  const line = script.value.lines[index];
+  const kept = takes.value[id] ?? [];
   commit((s) => ({ ...s, lines: s.lines.filter((l) => l.id !== id) }));
+  return { line, index, takes: kept };
+}
+
+/** Put a deleted line back at `index`, with its takes (Undo of `removeLine`). */
+export function restoreLine(line: Line, index: number, lineTakes: Take[]) {
+  commit((s) => {
+    const lines = s.lines.filter((l) => l.id !== line.id);
+    const at = Math.min(index, lines.length);
+    return { ...s, lines: [...lines.slice(0, at), line, ...lines.slice(at)] };
+  });
+  if (lineTakes.length) takes.value = { ...takes.value, [line.id]: lineTakes };
 }
 
 export function moveLine(id: string, delta: number) {
@@ -152,8 +170,12 @@ export function setLineVoice(id: string, voice: string | null) {
   commit((s) => ({ ...s, lines: s.lines.map((l) => (l.id === id ? { ...l, voice } : l)) }));
 }
 
-export function setGap(gap: number) {
-  commit((s) => ({ ...s, gap: Math.max(0, Math.round(gap * 100) / 100) }));
+/** The gap slider's range (s); the gesture is one undo step through `scripts.begin / set / end`. */
+export const GAP_RANGE: [number, number] = [0, 1.5];
+
+/** Pin a cast voice's display colour in the script (not an undo step: a presentation fact, not an edit). */
+export function setVoiceColor(voice: string, color: string) {
+  scripts.patch({ ...script.value, voiceColors: { ...script.value.voiceColors, [voice]: color } });
 }
 
 export function setBaseline(id: string, v: number) {
@@ -285,15 +307,17 @@ export async function renderLine(lineId: string, signal?: AbortSignal): Promise<
     const request = lineRequest(line, seed);
     const audio = await render(request, { signal: ctrl.signal });
     const prior = takes.value[lineId] ?? [];
-    const keeper = prior.find((t) => t.starred) ?? prior[prior.length - 1];
-    // The new take becomes the keeper when there is none or the keeper no longer matches the line (Regenerate).
-    const starred = !keeper || takeIsStale(line, keeper);
-    const take: Take = { id: uid(), text: line.text, seed, request, audio, createdAt: Date.now(), starred };
-    const list = [...prior.map((t) => (starred && t.starred ? { ...t, starred: false } : t)), take];
+    // The newest take is always the keeper: what you just heard is what the script plays.
+    const take: Take = { id: uid(), text: line.text, seed, request, audio, createdAt: Date.now(), starred: true };
+    const list = [...prior.map((t) => (t.starred ? { ...t, starred: false } : t)), take];
     takes.value = { ...takes.value, [lineId]: list };
+    if (failedLines.value.includes(lineId)) failedLines.value = failedLines.value.filter((id) => id !== lineId);
     return true;
   } catch (e) {
-    if (!isAbort(e)) lineError.value = { ...lineError.value, [lineId]: errorText(e) };
+    if (!isAbort(e)) {
+      lineError.value = { ...lineError.value, [lineId]: errorText(e) };
+      if (!failedLines.value.includes(lineId)) failedLines.value = [...failedLines.value, lineId];
+    }
     return false;
   } finally {
     if (lineCtrl.get(lineId) === ctrl) lineCtrl.delete(lineId);
@@ -373,18 +397,61 @@ export function takeIsStale(line: Line, t: Take): boolean {
   return takeStaleReason(line, t) !== null;
 }
 
+/**
+ * Everything `lineRequest` reads besides the line and the take: bumps when any of it changes, so a take's staleness
+ * is computed once per (line object, take, context) instead of on every render of every row.
+ */
+const staleContext = signal(0);
+effect(() => {
+  // `backend` (not `spec`): before boot there is no spec to read.
+  void [backend.value, requestContext.value, projectSettings.value.language, design.value, cast.value, script.value.baseline, script.value.voice];
+  untracked(() => staleContext.value++);
+});
+const staleMemo = new WeakMap<Take, { line: Line; context: number; reason: string | null }>();
+
 /** Why a take no longer matches its line ("text changed", "voice changed", …), or null when it still does. */
 export function takeStaleReason(line: Line, t: Take): string | null {
-  if (t.edited) return t.text !== line.text ? 'text changed' : null;
-  const req = lineRequest(line, t.seed);
-  const strip = (r: GenerateRequest): GenerateRequest => ({ ...r, control_span_rate: undefined, control_span_follow: undefined });
-  const stored = strip(t.request);
-  const fresh = strip(req);
-  return staleReason(stored, fresh) ?? (JSON.stringify(stored) !== JSON.stringify(fresh) ? 'settings changed' : null);
+  const context = staleContext.value;
+  const hit = staleMemo.get(t);
+  if (hit && hit.line === line && hit.context === context) return hit.reason;
+  let reason: string | null;
+  if (t.edited) reason = t.text !== line.text ? 'text changed' : null;
+  else {
+    const req = lineRequest(line, t.seed);
+    const strip = (r: GenerateRequest): GenerateRequest => ({ ...r, control_span_rate: undefined, control_span_follow: undefined });
+    const stored = strip(t.request);
+    const fresh = strip(req);
+    // Which whole-line controls moved: all of them inside the baseline's own doses → the baseline; otherwise the voice's design.
+    const a = stored.controls ?? {};
+    const b = fresh.controls ?? {};
+    const moved = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]);
+    const baselineKeys = new Set(Object.keys(toDoses(spec.value, script.value.baseline, {}, lineDesign(line).mode)));
+    const voiceEdited = moved.length > 0 && moved.some((k) => !baselineKeys.has(k));
+    reason = staleReason(stored, fresh, { voiceEdited }) ?? (JSON.stringify(stored) !== JSON.stringify(fresh) ? 'settings changed' : null);
+  }
+  staleMemo.set(t, { line, context, reason });
+  return reason;
 }
 
 /** Lines whose keeper take no longer matches them (a changed voice, text, painting or baseline). */
 export const staleLines = computed(() => keepers.value.flatMap(({ line, take }) => (take && takeIsStale(line, take) ? [line] : [])));
+
+/** Many lines went stale at once (a voice, baseline or settings change): say so, with Regenerate at hand. */
+let staleBefore = 0;
+let staleHeld = false;
+/** The next staleness change comes from a load, not an edit: no toast. */
+export function holdStaleToast() {
+  staleHeld = true;
+  queueMicrotask(() => (staleHeld = false));
+}
+effect(() => {
+  const n = staleLines.value.length;
+  untracked(() => {
+    const grew = n > staleBefore && n - staleBefore >= 2;
+    staleBefore = n;
+    if (grew && !staleHeld) notify(`${n} lines now differ from their keepers`, 'info', { label: 'Regenerate', run: () => void regenerateStale() });
+  });
+});
 
 /** A new take of every stale line (render.ts limits how many run at once). */
 export function regenerateStale(): Promise<void> {

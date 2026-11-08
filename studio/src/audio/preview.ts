@@ -24,9 +24,14 @@ persist('autoplay', autoplay);
 export const autoRender = signal(load('autoRender', true));
 persist('autoRender', autoRender);
 
-/** The project's preview line ('' = the bundle's). */
+/** The project's preview line ('' = the bundle's until the reader typed; once touched, '' means empty). */
 export const previewText = signal('');
-export const phrase = computed(() => previewText.value.trim() || spec.value.ui.preview_text);
+/** The reader edited the preview line in this session: an empty field stays empty (no fallback to the bundle's text). */
+export const previewTouched = signal(false);
+export const phrase = computed(() => {
+  const typed = previewText.value.trim();
+  return previewTouched.value ? typed : typed || spec.value.ui.preview_text;
+});
 
 export interface PreviewState {
   status: 'idle' | 'waiting' | 'rendering' | 'ready' | 'error';
@@ -185,6 +190,8 @@ export function startPreview() {
       wasAuto = auto;
       // Same request: nothing to do, unless auto-generate was just turned on over a take that is out of date or failed.
       if (key === p.key && !(live && switchedOn && (p.status === 'idle' || p.status === 'error'))) return;
+      // A genuinely new request shows (and, with auto-play, plays) the design again: B is a comparison, not a mode.
+      if (key !== p.key && !holding) side.value = 'A';
       if (live) schedule(key);
       else markStale(key);
     });

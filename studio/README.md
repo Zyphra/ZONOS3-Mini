@@ -6,24 +6,37 @@ words of recorded speech; only the changed stretch is regenerated). Vite + Preac
 plus world-atlas + topojson-client for the
 accent map and fflate for project files; hand-written CSS, SVG and canvas.
 
-Cast opens on **Speak**: type a line, pick a voice in the left rail, press Speak (or Enter; Shift+Enter is a newline). The line is
-also what every bench move re-renders, so the same bar is the A/B monitor while shaping the voice below. Nothing
-renders on load (boot or opening a project); **auto-generate** (on by default, kept in the browser) re-renders
-after each change, off leaves the take marked out of date until Speak / A / Space. The small cards open large from
-their header; the Texture card opens from anywhere on it and the Mood card from its pad too (its mood chips and the
-Room / Delivery sliders work in place). Drop an audio file anywhere on Cast to clone it.
+Cast opens on **Speak**: a voice chip names the voice (click it to open the left rail), type a line, press Speak (or Enter;
+Shift+Enter is a newline). The line is also what every bench move re-renders, so the same bar is the A/B monitor while
+shaping the voice below (a new render always shows A again, even after listening to B). Nothing renders on load (boot
+or opening a project); **Auto** (on by default, kept in the browser) re-renders after each change, off leaves the take
+until the button reads **Speak again**; **Play** auto-plays new takes. The text field keeps whatever was typed (empty
+stays empty; the bundle's sentence is only the placeholder); loading a cast member offers its signature line in a toast
+rather than replacing typed text. The identity meter reads **Same person / Close / New person** (the estimate is in its
+tooltip); the mode switch is **Shape it** (the embedding is steered) or **Keep as is** (the recording itself; delivery
+and mood only). The right rail (**Starting points**, **Voices near this one**, **Save this voice**) starts folded until
+the project has a take or a cast member. The small cards open large from their header; the Texture card opens from
+anywhere on it and the Mood card from its pad too (its mood chips and the Room / Delivery sliders work in place). Drop
+an audio file anywhere on Cast to clone it; a recording is reviewed (waveform, Use / Discard) before it becomes a voice.
+Destructive and replacing actions (reset, presets, loading a cast member, deleting a line or take) toast an **Undo**.
 
-**Direct** is one script whose every line has its own voice. The left rail sets the **default voice** (a cast
-persona, or the voice on the Cast bench) that lines follow, with a “{name} says…” button per cast persona that adds a
-line in that voice (an empty cast offers to add the bench voice), plus the language, tag strength, baseline
-performance, pronunciation help and the brushes legend. Each line has a voice select (“Script voice”, or any cast
-persona; one undo step) and a colored edge in its voice's color; select words to paint delivery onto them; each line
-keeps its takes and a starred keeper. Under the lines the **timeline** lays the keepers end to end with one lane per
-voice (lines without a take get an estimated slot; click a clip to hear it; a playhead follows the script). The
-right **Script** sidebar counts the lines with a take, renders the missing ones, plays and exports the script (the
-keepers in order, the gap between lines set by its slider) and, when a line's keeper no longer matches its text,
-painting, baseline or voice (changing the default voice or a line's voice does this), offers **Regenerate N changed
-lines**; such a line's own render button reads **Regenerate**. A regenerated take becomes the keeper.
+**Direct** is one script whose every line has its own voice. A new project starts with no lines (**Paste a script** /
+**Add a line**). The left rail sets the **default voice** (a cast member, or the voice from Cast) that lines follow,
+with a “{name} says…” button per cast member that adds a line in that voice (an empty cast offers to add the Cast
+voice), plus the language and tag strength (in Project settings), baseline performance, pronunciation help and the
+brushes legend. Each line has a voice select (“Default · {name}”, or any cast member; one undo step) and a colored edge
+in its voice's color (pinned per voice in the script document); select words, or focus the line and use ⇧← / ⇧→ then
+Enter, to paint delivery onto them (the paint bar opens under the line); each line keeps its takes and a **keeper**:
+the newest take is always the keeper (★ picks another; `S` while a take plays), and a single-line render auto-plays
+when Play is on. Under the lines the **timeline** lays the keepers end to end with one lane per voice (lines without a
+take get an estimated slot that renders on click; a playhead follows the script). The right **Script** sidebar
+counts the lines with a take, renders the missing ones (`R` renders the focused line), plays and exports the script
+(the keepers in order, the gap between lines set by its slider: one undo step per drag) and, when a line's keeper no
+longer matches its text, painting, baseline or voice (changing the default voice or a line's voice does this; a
+reshaped cast voice reads **voice edited**), offers **Regenerate N changed**; when several lines go stale at once a
+toast says so with Regenerate at hand. Failed renders stay listed (**N failed · Show**) until the line renders again.
+Edit-as-text keeps its draft across act and project switches (asked before it is discarded). On phones the transport
+(render, regenerate, play) is a sticky bar under the lines and the right drawer is **Export**.
 
 ## Design system
 
@@ -113,26 +126,32 @@ the studio's theme toggle (`localStorage['zvs.theme']`, so the two pages switch 
 only the generated `src/api/schema.ts` types, `openapi-fetch`,
 `src/lib/files.ts` and `src/lib/web-engine.ts`. It runs on an HTTP server or on the in-browser server exactly as the
 studio does (`src/lib/web-engine.ts` is the studio's own engine loader and transport): `?api=web` forces the
-in-browser server, `?api=live` the HTTP server, and `auto` (the default) takes the in-browser server when no ZONOS
-server answers `GET /v2/capabilities` and the browser has WebGPU and the site serves the engine (`?engine=URL`,
-default `/web-engine/engine.js`, loaded at run time and never bundled; `?models=URL` is the engine's own). Every
+in-browser server, `?api=live` the HTTP server, and `auto` (the default) offers the in-browser server when no ZONOS
+server answers `GET /v2/capabilities` and the browser has WebGPU and the site serves the engine: a consent card
+(**Run in this browser** / **Retry the server**, the ≈1.9 GB download named) is asked once per page load before
+anything downloads, like the studio's (`?engine=URL`, default `/web-engine/engine.js`, loaded at run time and never
+bundled; `?models=URL` is the engine's own). Every
 request, the raw preview and generate ones included, goes through that one transport. While the engine loads its
 models the page shows a download bar (`components/DownloadBar.tsx` in the studio, the same `.dl` markup in
 `lite.html`; `lib/web-engine.ts` turns the engine's readouts into it): "Downloading backbone + zac" (or "Loading …"
 from this browser's cache), the percent, and `420 MB of 1.9 GB · 18 MB/s · about 1 min 20 s left`. The rate counts
 network bytes only, over the last 8 s, so cached shards don't skew the estimate. The form stays inert meanwhile;
-the top bar's pill then says **Live** or **In-browser**. The encoder models a clip voice's first use downloads
+the top bar's pill then says **Server** or **In this browser** (**Demo audio** / **Server · controls off** on the offline and fixture backends, with a dismissable banner under the top bar). The encoder models a clip voice's first use downloads
 (generate or embedding download) get the same bar (in the studio, in the corner).
 On load it reads `GET /v2/capabilities` and, when `speaker_modes` lacks `embedding`, says the server cannot clone
-from an embedding and disables the form.
-A voice comes from a default voice of `GET /v2/speakers` (those whose `speaker_modes` include `embedding`), an
-uploaded or recorded clip (a recording is sent as a 16-bit WAV) or a saved `.npy`/`.npz` embedding (both
-`POST /v2/speakers`); the chosen voice offers its preview (`has_preview`) and **Download embedding**
-(`GET /v2/speakers/{id}/embedding` saved as a float32 `.npy`, which loads back as an embedding file). Generate posts
-`/v2/generate` with `speaker_mode: "embedding"`, `stream: true`, `format: "pcm"`, plays the float32 PCM through
-WebAudio as it streams and draws it live as the studio's preview waveform (`src/lib/wave.ts`, shared with
-`components/Waveform.tsx`) with a playhead; click the waveform to play from there. Then it offers the WAV (built in
-the browser) and shows `X-Seed`; errors show the server's
+from a voice file and disables the form; a failed connection offers **Try again** and, when this browser could,
+**Run in this browser**.
+A voice comes from the **Library** (`GET /v2/speakers`, those whose `speaker_modes` include `embedding`), **Your
+clip** (uploaded or recorded, decoded for a 2–30 s length check and sent as a 16-bit WAV; a level bar shows the
+microphone while recording) or a **Voice file** (`.npy`/`.npz`; both `POST /v2/speakers`); the chosen voice offers
+its preview (`has_preview`) and **Voice file (.npy)** (`GET /v2/speakers/{id}/embedding` saved as a float32 `.npy`,
+which opens back as a voice file). Generate speaks only with a voice of the source shown: in Clip mode with a clip
+not yet cloned it clones first, then generates; without a clip it is disabled (**Record or upload a clip first**).
+It posts `/v2/generate` with `speaker_mode: "embedding"`, `stream: true`, `format: "pcm"`, plays the float32 PCM
+through WebAudio as it streams and draws it live as the studio's preview waveform (`src/lib/wave.ts`, shared with
+`components/Waveform.tsx`) with a playhead; click the waveform to play from there (focused: Space plays / stops,
+← / → seek 1 s; ⌘↵ in the text generates). The last five takes stay under the waveform with play and Download each;
+the seed lives under **Advanced** and in the take's tooltip. Errors show the server's
 `detail` (the 422 list as `field: message`). `?server=https://…` points it at another server; `X-TTS-Session-ID` is
 random per tab (sessionStorage), so the voices a tab adds are its own.
 
@@ -197,7 +216,7 @@ dose, effect}`) gives each one's MEASURED place on the valence / arousal pad (�
 pad (Cast card and dialog, Direct's paint bar) draws every measured mood as a landmark: click one to add it at its
 default dose (one undo step; click again to remove), and the active ones glow, with a handle on the ray from neutral
 through the landmark. Drag the landmark or the handle along that ray to set strength; the ray turns dashed past the
-control's tested-safe dose. Moods combine (their doses add up, each with its slider in the dialog), and dragging
+control's natural dose. Moods combine (their doses add up, each with its slider in the dialog), and dragging
 the free pad still moves the valence / arousal axes. Keyboard: landmarks are focusable, arrow keys go to the
 nearest landmark in that direction, Enter toggles, + / − change the dose, Delete removes. Every mood also has a
 chip (Cast, Direct, Edit regions), most aroused first; hovering a chip or landmark shows its measured effect.
@@ -282,9 +301,12 @@ half a minute): the status says so rather than looking stuck. An unsupported lan
 
 Transcript-first editing:
 - Open a Direct take, a voice's reference clip (its `transcript` from `/v2/speakers` when present),
-  an upload or a recording. Known text → `POST /v2/edit/align`, otherwise `POST /v2/edit/transcribe`; an
-  automatic transcript can be corrected ("Fix the transcript") and is re-aligned. Clips up to
-  `edit_align_max_seconds`.
+  an upload or a recording (a too-long clip's toast offers to open its first `max` seconds). Known text →
+  `POST /v2/edit/align`, otherwise `POST /v2/edit/transcribe`; an automatic transcript is an explicit step first
+  (**Transcribed automatically — check it**: *Looks right* clears the flag, *Fix it* opens the correction, **Use this
+  transcript** re-aligns; edited words survive the fix). Clips up to `edit_align_max_seconds`. Opening another clip,
+  switching projects or leaving the page asks first when a draft, regions or unkept takes would be lost; ⌘Z / ⇧⌘Z on
+  Edit go through the same guard.
 - Without speech recognition (`edit_transcribe: false`, e.g. the in-browser engine) a clip with no known text opens
   on "Type what the clip says": type it, Align (`POST /v2/edit/align`), then edit. Voice clips without a transcript
   are tagged "needs text"; takes are not checked (`verify: false`), so listen and keep the best.
@@ -298,15 +320,19 @@ Transcript-first editing:
   burst of nudges is one undo step; "Reset timings" restores the alignment. Corrected timings drive the planning,
   margins, re-say snapping and the model-context estimate, and go to the server as `original_words` (with
   `original_text`) once any word was adjusted.
-- Each region can be directed with the spannable controls of `/v2/controls` (`region_controls`), the whole edit
-  too (`controls`). `POST /v2/edit` always gets explicit `spans` (frame-exact seconds), `original_text` (the
-  transcript the word timings belong to), `num_takes` 1–4 and `verify: edit_transcribe`; "context per side"
-  (advanced, 2–8 s) sets `context_seconds`. Long clips are edited on windows around the regions; the response's
-  `contexts` show as a faint "model context" band on the waveform.
-- Takes show WER vs the target (best preselected), ASR words that differ (both only with speech recognition), fill
-  length vs the original region and a warning when a region did not stop. A/B maps the playhead between version and
-  take; a region of the selected take can be regenerated on its own. Keeping a take makes a new version (one undo
-  step each); export a WAV, or send the version back to the Direct take it came from.
+- Each region can be directed with the spannable controls of `/v2/controls` (`region_controls`): a summary row
+  (**How it sounds: …**) opens one region's chips at a time; the whole edit too (**All changes sound:**,
+  `controls`). `POST /v2/edit` always gets explicit `spans` (frame-exact seconds), `original_text` (the transcript
+  the word timings belong to), `num_takes` 1–4 and `verify: edit_transcribe`; **Advanced** holds the seed, the blend
+  around the change (`margin_seconds`) and, for clips over 16 s, the audio the model listens to per side
+  (`context_seconds`, 2–8 s). Long clips are edited on windows around the regions; the response's `contexts` show
+  as a faint "model context" band on the waveform.
+- Each take card leads with a verdict (**All words heard** / **Missing: …** / **Not checked** without speech
+  recognition; **best match** preselected); word error rate, seed and fill lengths sit under *Details*. After
+  Generate the view compares the selected take (B) with the version (**Back to …** strip); the version's regions show
+  faintly on it. A region of the selected take can be regenerated on its own (**Redo change N**). Keeping a take
+  makes a new version (one undo step each; the toast offers Undo); export a WAV, or send the version back to the
+  Direct take it came from. Takes aren't saved until one is kept.
 
 ## Architecture
 

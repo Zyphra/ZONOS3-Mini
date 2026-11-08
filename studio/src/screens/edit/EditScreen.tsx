@@ -4,8 +4,9 @@ import * as api from '../../api';
 import { exportWav } from '../../audio/mix';
 import * as player from '../../audio/player';
 import { nowPlaying } from '../../audio/player';
+import { FileDrop } from '../../components/FileDrop';
 import { Icon } from '../../components/Icon';
-import { Rail, RailBar, RailToggle } from '../../components/Rail';
+import { closeRail, openRail, Rail, RailBar, RailToggle } from '../../components/Rail';
 import { Waveform } from '../../components/Waveform';
 import { isTagToken, normalizeTokens, planRegions, wordDiff } from '../../edit/regions';
 import { isTyping } from '../../lib/dom';
@@ -43,8 +44,8 @@ function editKeys(e: KeyboardEvent): boolean {
   }
   const target = e.target as HTMLElement | null;
   const role = target?.getAttribute?.('role');
-  // Tab cycles words only from the transcript or a word label; elsewhere it is the browser's.
-  const inWords = !!target?.closest?.('.ed-area, .ew-wlabel');
+  // Tab cycles words only from a word label; in the transcript and elsewhere it is the browser's.
+  const inWords = !!target?.closest?.('.ew-wlabel');
   if (mod || e.altKey || (isTyping(e.target) && !(e.key === 'Tab' && inWords)) || !E.version.value) return false;
   const d = E.displayed.value;
   // A selected word: the keys edit its timing.
@@ -138,12 +139,19 @@ async function openVoice(id: string) {
   loadingVoice.value = id;
   try {
     const { pcm, sr } = await player.decode(await api.getPreview(s));
-    await E.openClip({ kind: 'voice', label: s.label }, pcm, sr, s.transcript);
+    if (await E.openClip({ kind: 'voice', label: s.label }, pcm, sr, s.transcript)) closeRail();
   } catch (e) {
     notify(`Couldn’t load ${s.label}: ${e instanceof Error ? e.message : e}`, 'error');
   } finally {
     loadingVoice.value = null;
   }
+}
+
+/** A Direct take into the editor; on a phone the sources drawer closes once it is open. */
+async function openTake(lineId: string, lineIndex: number, takeIndex: number) {
+  const t = scriptTakes.value[lineId]?.[takeIndex];
+  if (!t) return;
+  if (await E.openClip({ kind: 'take', label: `Line ${lineIndex + 1} · take ${takeIndex + 1}`, lineId, takeId: t.id }, t.audio.pcm, t.audio.sr, t.text)) closeRail();
 }
 
 function Sources() {
@@ -168,7 +176,10 @@ function Sources() {
         <button class={`btn sm btn-rec${rec ? ' is-recording' : ''}`} disabled={busy && !rec} onClick={() => void E.recordClip()}>
           {rec ? (
             <>
-              <span class="rec-dot" /> Stop · {Math.floor((Date.now() - rec.started) / 1000)} / {Math.round(E.maxSeconds.value)} s
+              <span class="rec-dot" /> Stop · {Math.floor((Date.now() - rec.started) / 1000)} / {Math.round(Math.min(120, E.maxSeconds.value))} s
+              <span class="rec-level" aria-hidden="true">
+                <span style={{ width: `${Math.round(E.recordLevel.value * 100)}%` }} />
+              </span>
             </>
           ) : (
             <>
@@ -195,7 +206,7 @@ function Sources() {
           <ul class="src-list">
             {lineTakes.map(({ l, i, t, k }) => (
               <li>
-                <button class="src-item" disabled={busy} title={t.text} onClick={() => void E.openClip({ kind: 'take', label: `Line ${i + 1} · take ${k + 1}`, lineId: l.id, takeId: t.id }, t.audio.pcm, t.audio.sr, t.text)}>
+                <button class="src-item" disabled={busy} title={t.text} onClick={() => void openTake(l.id, i, k)}>
                   <span class="src-n">
                     {i + 1}.{k + 1}
                   </span>
@@ -215,17 +226,17 @@ function Sources() {
         </summary>
         <ul class="src-list">
           {clips.map((s) => (
-              <li>
-                <button
-                  class={`src-item${loadingVoice.value === s.id ? ' is-busy' : ''}`}
-                  disabled={busy}
-                  onClick={() => void openVoice(s.id)}
-                  title={s.transcript ? `Transcript: ${s.transcript}` : E.canTranscribe.value ? 'No transcript: it will be transcribed' : 'No transcript: this server can’t transcribe, so you type what the clip says'}
-                >
-                  <span class="src-text">{s.label}</span>
-                  <span class="tag">{s.transcript ? 'text' : E.canTranscribe.value ? 'asr' : 'needs text'}</span>
-                </button>
-              </li>
+            <li>
+              <button
+                class={`src-item${loadingVoice.value === s.id ? ' is-busy' : ''}`}
+                disabled={busy}
+                onClick={() => void openVoice(s.id)}
+                title={s.transcript ? `Transcript: ${s.transcript}` : E.canTranscribe.value ? 'No transcript: it will be transcribed' : 'No transcript: this server can’t transcribe, so you type what the clip says'}
+              >
+                <span class="src-text">{s.label}</span>
+                <span class="tag">{s.transcript ? 'text' : E.canTranscribe.value ? 'auto' : 'needs text'}</span>
+              </button>
+            </li>
           ))}
         </ul>
       </details>
@@ -331,16 +342,35 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
   return (
     <section class="ed-text-card" aria-label="Transcript">
       <header class="ed-text-head">
-        <div class="segctl" role="tablist" aria-label="Transcript mode">
-          <button role="tab" aria-selected={!fix} class={`seg-btn${!fix ? ' is-on' : ''}`} onClick={() => E.setFix(false)} disabled={first} title={first ? 'Type what the clip says first: edits are planned against it' : undefined}>
-            Edit the words
-          </button>
-          <button role="tab" aria-selected={fix} class={`seg-btn${fix ? ' is-on' : ''}`} onClick={() => E.setFix(true)} disabled={busy} title={first ? 'Type what is said in the clip; the audio is aligned to it' : 'Correct what was actually said; the audio is re-aligned to it'}>
-            {first ? 'Type what the clip says' : 'Fix the transcript'}
-          </button>
-        </div>
+        {first || fix ? (
+          <div class="segctl" role="tablist" aria-label="Transcript mode">
+            <button role="tab" aria-selected={!fix} class={`seg-btn${!fix ? ' is-on' : ''}`} onClick={() => void E.setFix(false)} disabled={first} title={first ? 'Type what the clip says first: edits are planned against it' : undefined}>
+              Edit the words
+            </button>
+            <button role="tab" aria-selected={fix} class={`seg-btn${fix ? ' is-on' : ''}`} onClick={() => void E.setFix(true)} disabled={busy} title={first ? 'Type what is said in the clip; the audio is aligned to it' : 'Correct what was actually said; the audio is re-aligned to it'}>
+              {first ? 'Type what the clip says' : 'Fix the transcript'}
+            </button>
+          </div>
+        ) : (
+          <>
+            <h3 class="ed-text-title">Edit the words</h3>
+            {!v.automatic && (
+              <button class="link" onClick={() => void E.setFix(true)} disabled={busy} title="Correct what was actually said; the audio is re-aligned to it">
+                Fix the transcript
+              </button>
+            )}
+          </>
+        )}
         {!fix && E.text.value !== v.transcript && (
-          <button class="link" onClick={() => E.setText(v.transcript)} title="Back to the transcript of this version">
+          <button
+            class="link"
+            onClick={() => {
+              const before = E.text.value;
+              E.setText(v.transcript);
+              notify('Text reverted to the transcript', 'info', { label: 'Undo', run: () => E.setText(before) });
+            }}
+            title="Back to the transcript of this version"
+          >
             <Icon name="undo" size={13} /> revert text
           </button>
         )}
@@ -349,17 +379,20 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
         <div class="ed-banner" role="note">
           <span>
             {E.canTranscribe.value ? 'No words were recognized in this clip. ' : 'This server can’t transcribe speech. '}
-            <b>Type exactly what the clip says</b> (play it to check), then align: edits are planned against it.
+            <b>Type exactly what the clip says</b> (play it to check), then use it: edits are planned against it.
           </span>
         </div>
       )}
       {!fix && v.automatic && (
-        <div class="ed-banner" role="note">
+        <div class="ed-banner ed-check" role="note">
           <span>
-            This transcript was <b>transcribed automatically</b>. If it misheard something, fix it first: edits are planned against it.
+            <b>Transcribed automatically</b> — check it: play the clip and read along.
           </span>
-          <button class="btn sm" onClick={() => E.setFix(true)}>
-            Fix the transcript
+          <button class="btn sm primary" onClick={E.confirmTranscript} disabled={busy}>
+            Looks right
+          </button>
+          <button class="btn sm" onClick={() => void E.setFix(true)} disabled={busy}>
+            Fix it
           </button>
         </div>
       )}
@@ -394,15 +427,15 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
       {fix && (
         <div class="ed-fix-bar">
           <span class="hint">
-            {first ? 'Type what is said in the audio, word for word, then align it.' : 'Type what is actually said in the audio, then re-align. Low-confidence words are underlined in the waveform’s word lane.'}
+            {first ? 'Type what is said in the audio, word for word.' : 'Type what is actually said in the audio. Low-confidence words are underlined in the waveform’s word lane.'}
           </span>
           {!first && (
-            <button class="btn sm ghost" onClick={() => E.setFix(false)}>
+            <button class="btn sm ghost" onClick={() => void E.setFix(false)}>
               Cancel
             </button>
           )}
           <button class="btn sm primary" disabled={busy || !draft.trim() || draft.trim() === v.transcript} onClick={() => void E.saveFix(draft)}>
-            {first ? 'Align' : 'Re-align'}
+            Use this transcript
           </button>
         </div>
       )}
@@ -411,6 +444,9 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
 }
 
 // ── Regions ───────────────────────────────────────────────────────────────────────────────────────
+
+/** The one region whose direction chips are open (the others show a summary row). */
+const expandedRegion = signal<string | null>(null);
 
 function Regions() {
   const rs = E.regions.value;
@@ -473,7 +509,7 @@ function Regions() {
                 </div>
                 {(r.edited || r.mergedFrom) && (
                   <p class="region-note">
-                    {r.edited ? 'edges adjusted · text edits reset them' : ''}
+                    {r.edited ? 'edges moved by hand' : ''}
                     {r.edited && r.mergedFrom ? ' · ' : ''}
                     {r.mergedFrom ? `merged from ${r.mergedFrom} regions` : ''}
                   </p>
@@ -484,7 +520,24 @@ function Regions() {
                   </p>
                 ) : null}
                 <div class="region-dir">
-                  <Direction name={`region ${k + 1}`} values={r.values} set={(c, v) => E.setRegionValue(r.id, c, v)} clear={() => E.clearRegionValues(r.id)} />
+                  {expandedRegion.value === r.id ? (
+                    <>
+                      <div class="region-dir-head">
+                        <span class="muted small">How region {k + 1} sounds</span>
+                        <button class="link" onClick={() => (expandedRegion.value = null)}>
+                          Done
+                        </button>
+                      </div>
+                      <Direction name={`region ${k + 1}`} values={r.values} set={(c, v) => E.setRegionValue(r.id, c, v)} clear={() => E.clearRegionValues(r.id)} />
+                    </>
+                  ) : (
+                    <div class="region-dir-sum">
+                      <span class="muted small">How it sounds: {E.describeValues(r.values) || (E.directed.value && Object.keys(E.wholeValues.value).length ? 'as all changes' : 'as the voice says it')}</span>
+                      <button class="link" onClick={() => (expandedRegion.value = r.id)}>
+                        Edit
+                      </button>
+                    </div>
+                  )}
                 </div>
               </li>
             );
@@ -523,21 +576,31 @@ function GenerateBar() {
   const b = E.busy.value;
   const n = E.takeCount.value;
   const generating = !!b && /Generating|Regenerating/.test(b.label);
+  const long = (E.version.value?.duration ?? 0) > 16;
   return (
     <section class="ed-generate" aria-label="Generate">
       <div class="ed-all">
-        <span class="ed-all-label">
-          Direction <span class="muted">· all regions</span>
-        </span>
-        <Direction name="all regions" values={E.wholeValues.value} set={E.setWholeValue} clear={() => (E.wholeValues.value = {})} />
+        <span class="ed-all-label">All changes sound:</span>
+        <Direction name="all changes" values={E.wholeValues.value} set={E.setWholeValue} clear={() => (E.wholeValues.value = {})} />
       </div>
       <details class="pro ed-advanced">
-        <summary>
-          Advanced <span class="muted">· margin {E.margin.value.toFixed(2)} s · context {E.contextSeconds.value} s</span>
-        </summary>
+        <summary>Advanced</summary>
         <div class="ed-pro-row">
-          <label>
-            margin
+          <label class="ed-seed" title="A fixed seed repeats a take's randomness; empty picks one each time">
+            Seed
+            <input
+              type="number"
+              class="input"
+              placeholder="random"
+              value={E.seedPin.value ?? ''}
+              onChange={(e) => {
+                const x = (e.currentTarget as HTMLInputElement).value;
+                E.seedPin.value = x === '' ? null : Math.max(0, Math.floor(Number(x)));
+              }}
+            />
+          </label>
+          <label title="Each change is widened by this much on both sides so the join sounds smooth">
+            Blend around the change
             <input
               type="number"
               class="input"
@@ -552,19 +615,21 @@ function GenerateBar() {
             />
             s
           </label>
-          <label title="Long clips are edited on a window around the regions; this is how much audio the model hears on each side">
-            context per side
-            <input
-              type="number"
-              class="input"
-              min={2}
-              max={8}
-              step={0.5}
-              value={E.contextSeconds.value}
-              onChange={(e) => (E.contextSeconds.value = clamp(Number((e.currentTarget as HTMLInputElement).value) || E.DEFAULT_CONTEXT, 2, 8))}
-            />
-            s
-          </label>
+          {long && (
+            <label title="Long clips are edited on a window around the changes; this is how much audio the model listens to on each side">
+              Audio the model listens to
+              <input
+                type="number"
+                class="input"
+                min={2}
+                max={8}
+                step={0.5}
+                value={E.contextSeconds.value}
+                onChange={(e) => (E.contextSeconds.value = clamp(Number((e.currentTarget as HTMLInputElement).value) || E.DEFAULT_CONTEXT, 2, 8))}
+              />
+              s per side
+            </label>
+          )}
         </div>
       </details>
       <div class="ed-gen-row">
@@ -576,36 +641,15 @@ function GenerateBar() {
           ))}
         </div>
         <span class="muted small">take{n > 1 ? 's' : ''}</span>
-        <label class="ed-seed" title="A fixed seed repeats a take's randomness; empty picks one each time">
-          seed
-          <input
-            type="number"
-            class="input"
-            placeholder="random"
-            value={E.seedPin.value ?? ''}
-            onChange={(e) => {
-              const x = (e.currentTarget as HTMLInputElement).value;
-              E.seedPin.value = x === '' ? null : Math.max(0, Math.floor(Number(x)));
-            }}
-          />
-        </label>
         <span class="grow" />
         <button
           class={`btn primary${generating ? ' is-busy' : ''}`}
-          disabled={!generating && !E.canGenerate.value}
+          disabled={generating || !E.canGenerate.value}
           onClick={() => void E.generate()}
-          title={!generating && E.pronError.value ? `Fix the pronunciation first: ${E.pronError.value.replace(/^Pronunciation: /, '')}` : 'Generate (⌘↵ / Ctrl+Enter)'}
+          title={E.pronError.value ? `Fix the pronunciation first: ${E.pronError.value.replace(/^Pronunciation: /, '')}` : 'Generate (⌘↵ / Ctrl+Enter)'}
         >
-          {generating ? (
-            <>
-              <Icon name="x" size={14} /> Cancel
-            </>
-          ) : (
-            <>
-              <Icon name="wand" size={14} /> Generate {n} take{n > 1 ? 's' : ''}
-              {E.directed.value && <span class="gen-directed"> · directed</span>}
-            </>
-          )}
+          <Icon name="wand" size={14} /> {generating ? 'Generating…' : `Generate ${n} take${n > 1 ? 's' : ''}`}
+          {!generating && E.directed.value && <span class="gen-directed"> · directed</span>}
         </button>
       </div>
       {E.genError.value && (
@@ -646,13 +690,17 @@ function Takes() {
         const hypTok = t.verify ? normalizeTokens(t.verify.asr_text) : [];
         const wrong = hyp.length === hypTok.length ? wordDiff(target, hypTok) : null;
         const warns = E.takeWarnings(t, g);
+        // One verdict per take: every word heard, some missing, or not checked (no speech recognition).
+        const unheard = t.verify ? E.takeUnheard(t, g).flat() : null;
+        const verdict = !t.verify ? (['Not checked', 'muted', 'No speech recognition on this server: listen to it'] as const) : unheard!.length ? ([`Missing: ${unheard!.join(', ')}`, 'warn', 'Words of your text speech recognition did not hear in this take'] as const) : (['All words heard', 'ok', 'Speech recognition heard every word of your text'] as const);
         return (
           <li class={`take-card${sel ? ' is-selected' : ''}`}>
             <button class="take-card-head" onClick={() => E.selectTake(i)} aria-pressed={sel} title="Select (A/B compares it with the version)">
               <b>{t.label}</b>
-              <span class="mono muted">seed {t.seed}</span>
-              {i === best && (wer !== null ? <span class="badge badge-best">best match</span> : <span class="badge badge-best" title="No speech recognition on this server: the first take without length warnings">preselected: no warnings</span>)}
-              {wer !== null && <span class={`badge wer ${wer === 0 ? 'ok' : wer <= 0.2 ? 'warn' : 'bad'}`}>WER {Math.round(wer * 100)}%</span>}
+              <span class={`badge verdict is-${verdict[1]}`} title={verdict[2]}>
+                {verdict[0]}
+              </span>
+              {i === best && wer !== null && <span class="badge badge-best">best match</span>}
             </button>
             <div class="take-wave" onClick={() => E.selectTake(i)}>
               <Waveform pcm={t.pcm} color={sel ? 'var(--o)' : 'var(--text-2)'} playId={id} height={34} />
@@ -683,13 +731,6 @@ function Takes() {
             <p class={`take-dir${t.direction ? '' : ' is-none'}`} title="How this take was directed">
               {t.direction || 'no direction: as the voice says it'}
             </p>
-            <div class="take-fills">
-              {g.spans.map(([s, e], k) => (
-                <span class={`fill${warns.some((w) => w.region === k) ? ' is-bad' : ''}`} title={warns.find((w) => w.region === k)?.text ?? 'Fill length vs the original region'}>
-                  r{k + 1} {(e - s).toFixed(2)} → {(t.fill[k] ?? 0).toFixed(2)} s
-                </span>
-              ))}
-            </div>
             {warns.map((w) => (
               <p class="warn-line">{w.text}</p>
             ))}
@@ -698,20 +739,17 @@ function Takes() {
                 <Icon name={playing ? 'stop' : 'play'} size={11} />
               </button>
               {g.spans.map((_, k) => (
-                <button class="btn sm ghost" onClick={() => (E.selectTake(i), E.toggleAB('take'), E.playRegion(k))} title={`Play region ${k + 1} of this take with pre-roll`}>
-                  ▸ r{k + 1}
+                <button class="btn sm ghost" onClick={() => (E.selectTake(i), E.toggleAB('take'), E.playRegion(k))} title={`Play change ${k + 1} of this take with pre-roll`}>
+                  <Icon name="play" size={11} /> Play change {k + 1}
                 </button>
               ))}
               <span class="grow" />
               {sel &&
                 g.spans.map((_, k) => (
-                  <button class="btn sm ghost" disabled={!!E.busy.value} onClick={() => void E.retryRegion(k)} title={`Regenerate only region ${k + 1} of this take`}>
-                    <Icon name="refresh" size={12} /> r{k + 1}
+                  <button class="btn sm ghost" disabled={!!E.busy.value} onClick={() => void E.retryRegion(k)} title={`Regenerate only change ${k + 1} of this take`}>
+                    <Icon name="refresh" size={12} /> Redo change {k + 1}
                   </button>
                 ))}
-              <button class="link take-seed" onClick={() => (E.seedPin.value = t.seed)} title="Generate again with this take's seed">
-                seed {t.seed} · use
-              </button>
               <button class="icon-btn sm" onClick={() => exportWav(t.pcm, t.sr, `${slug(E.doc.value?.name ?? 'edit')}-${slug(t.label)}`)} aria-label={`Export ${t.label} as WAV`} title={`Export ${t.label.replace('Take ', 'take ')}`}>
                 <Icon name="download" size={13} />
               </button>
@@ -719,6 +757,16 @@ function Takes() {
                 Keep
               </button>
             </div>
+            <details class="pro take-details">
+              <summary>Details</summary>
+              <p class="mono small">
+                {wer !== null ? `Word error ${Math.round(wer * 100)}% · ` : ''}seed {t.seed}
+                {g.spans.map(([s, e], k) => ` · change ${k + 1}: ${(e - s).toFixed(2)} → ${(t.fill[k] ?? 0).toFixed(2)} s`).join('')}
+              </p>
+              <button class="link" onClick={() => (E.seedPin.value = t.seed)} title="Generate again with this take's seed (Advanced → Seed)">
+                Reuse seed
+              </button>
+            </details>
           </li>
         );
       })}
@@ -732,17 +780,59 @@ function Unavailable() {
   const b = backend.value!;
   return (
     <div class="empty">
-      <Icon name="edit" size={28} />
+      <Icon name="edit-speech" size={28} />
       <h2>This server can’t edit speech</h2>
       <p>Changing words in a recording needs a server with the speech-editing model. Cast and Direct work as usual.</p>
       <details class="pro">
         <summary>For whoever runs the server</summary>
         <p>
-          Speech editing needs the speech-editing checkpoint (the one it serves may have no span-end token, so it can only speak whole utterances), the FuseAlign forced aligner and the reference encoder. Speech recognition is optional: without it you type each clip’s transcript. Serve the speech-editing checkpoint to edit words in recordings:
+          {b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false. ` : 'Fixture mode: started with ?edit=0. '}
+          The studio README (“Edit”) lists what the server needs to edit speech.
         </p>
-        <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=assets/steering/studio_bundle_mect60k_x10.json</pre>
-        <p class="muted small">{b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
+
       </details>
+    </div>
+  );
+}
+
+/** The empty workspace: ways to get a clip in (the drawer on phones; the rail on desktop). */
+function EmptyWorkspace() {
+  const file = useRef<HTMLInputElement>(null);
+  const busy = E.busy.value;
+  if (busy) {
+    return (
+      <div class="empty">
+        <BusyRow />
+      </div>
+    );
+  }
+  return (
+    <div class="empty">
+      <Icon name="edit-speech" size={26} />
+      <h3>Open a clip to edit</h3>
+      <p>Change the words of a recording; only the changed stretch is regenerated.</p>
+      <div class="row gap-s">
+        <button class="btn primary" onClick={() => file.current?.click()}>
+          <Icon name="upload" size={14} /> Upload
+        </button>
+        <button class="btn" onClick={() => void E.recordClip()}>
+          <Icon name="mic" size={14} /> Record
+        </button>
+        <button class="btn" onClick={() => openRail('edit-sources')}>
+          <Icon name="film" size={14} /> Choose a take or voice
+        </button>
+        <input
+          ref={file}
+          type="file"
+          accept="audio/*,video/*"
+          hidden
+          onChange={(e) => {
+            const f = (e.currentTarget as HTMLInputElement).files?.[0];
+            (e.currentTarget as HTMLInputElement).value = '';
+            if (f) void E.openFile(f);
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -752,26 +842,15 @@ function Workspace() {
   const d = E.doc.value;
   const disp = E.displayed.value;
   const area = useRef<HTMLTextAreaElement>(null);
-  if (!v || !d || !disp) {
-    return (
-      <div class="empty">
-        {E.busy.value ? (
-          <>
-            <div class="loader" />
-            <p>{E.busy.value.label}</p>
-          </>
-        ) : (
-          <>
-            <Icon name="edit" size={26} />
-            <h3>Open a clip to edit</h3>
-            <p>Pick a Direct take or a voice clip on the left, upload a file or record yourself. Then change the words; only the changed stretch is regenerated.</p>
-          </>
-        )}
-      </div>
-    );
-  }
+  const isTake = disp?.kind === 'take';
+  // After Generate the view switches to the take: bring the selected card into view.
+  useEffect(() => {
+    if (!isTake) return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('.take-card.is-selected')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  }, [isTake, E.gen.value?.selected]);
+  if (!v || !d || !disp) return <EmptyWorkspace />;
   const t = E.selectedTake.value;
-  const isTake = disp.kind === 'take';
+  const shownLabel = isTake ? disp.label : d.current === 0 ? 'Original' : `v${d.current}`;
   const playing = nowPlaying.value?.id === disp.id;
   const timingEditable = !isTake && !E.fixMode.value;
   const onWord = (i: number) => {
@@ -797,37 +876,37 @@ function Workspace() {
   };
   return (
     <div class="ed-work">
-      <header class="ed-head">
+      <header class="screen-head ed-head">
         <div class="ed-title">
           <span class="eyebrow">{({ take: 'Direct take', voice: 'Voice clip', upload: 'Upload', recording: 'Recording' } as const)[d.source.kind]}</span>
           <h2 title={d.name}>{d.name}</h2>
         </div>
         <label class="ed-lang-wrap">
           <span class="muted small">clip language</span>
-        <select
-          class="input ed-lang"
-          value={d.language}
-          disabled={!!E.busy.value}
-          onChange={(e) => {
-            const el = e.currentTarget as HTMLSelectElement;
-            const next = el.value;
-            el.value = d.language;
-            void E.setLanguage(next);
-          }}
-          aria-label="Language of the clip"
-          title={E.canTranscribe.value ? "The clip's language: transcription, alignment and the take check use its speech model (the first use of a language loads it, about half a minute)" : "The clip's language: alignment uses it (switching aligns the transcript again)"}
-        >
-          {EDIT_LANGUAGES.map((l) => (
-            <option value={l}>{langLabel(l)}</option>
-          ))}
-        </select>
+          <select
+            class="input ed-lang"
+            value={d.language}
+            disabled={!!E.busy.value}
+            onChange={(e) => {
+              const el = e.currentTarget as HTMLSelectElement;
+              const next = el.value;
+              el.value = d.language;
+              void E.setLanguage(next);
+            }}
+            aria-label="Language of the clip"
+            title={E.canTranscribe.value ? "The clip's language: transcription, alignment and the take check use its speech model (the first use of a language loads it, about half a minute)" : "The clip's language: alignment uses it (switching aligns the transcript again)"}
+          >
+            {EDIT_LANGUAGES.map((l) => (
+              <option value={l}>{langLabel(l)}</option>
+            ))}
+          </select>
         </label>
         <div class="ab" role="group" aria-label="Compare">
           <button class={`ab-btn${!isTake ? ' is-on' : ''}`} onClick={() => E.toggleAB('version')} title="The current version (A)">
-            <b>v{d.current}</b> version
+            <b>A</b> {d.current === 0 ? 'Original' : `v${d.current}`}
           </button>
           <button class={`ab-btn${isTake ? ' is-on' : ''}`} disabled={!t} onClick={() => E.toggleAB('take')} title="The selected take (B)">
-            <b>{t ? t.label.replace('Take ', 'T') : 'T'}</b> take
+            <b>B</b> {t ? t.label : 'Take'}
           </button>
         </div>
         <button class="btn sm" onClick={E.togglePlay} title="Play / pause (Space)">
@@ -853,10 +932,20 @@ function Workspace() {
             <Icon name="undo" size={13} /> Send back to Direct
           </button>
         )}
-        <button class="icon-btn" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label={`Export ${isTake ? disp.label.replace('Take ', 'T') : `v${d.current}`} as WAV`} title={`Export ${isTake ? disp.label.replace('Take ', 'T') : `v${d.current}`}`}>
-          <Icon name="download" />
+        <button class="btn sm" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label={`Export ${shownLabel} as WAV`} title={`Save ${shownLabel} as a WAV file`}>
+          <Icon name="download" size={13} /> Export {shownLabel}
         </button>
       </header>
+      {isTake && t && (
+        <div class="ed-compare-strip" role="status">
+          <span>
+            Comparing <b>{t.label}</b> with {d.current === 0 ? 'the original' : `v${d.current}`}
+          </span>
+          <button class="link" onClick={() => E.toggleAB('version')}>
+            Back to {d.current === 0 ? 'the original' : `v${d.current}`}
+          </button>
+        </div>
+      )}
       <BusyRow />
       <div class={`ed-wave-card${isTake ? ' is-take' : ''}`}>
         <div class="ed-wave-label">
@@ -866,15 +955,19 @@ function Workspace() {
             </span>
           ) : (
             <span>
-              <b>v{d.current} {v.label}</b> · amber = will be regenerated · drag on the waveform to add a region
+              <b>{d.current === 0 ? 'Original' : `v${d.current} ${v.label}`}</b> · orange = will be regenerated
             </span>
           )}
           <span class="ed-timing-tools">
             {!isTake && !E.fixMode.value && (
               <>
-                <span class="muted" title="With a word selected: ←/→ nudge the edge 10 ms (⇧ 50 ms), , / . pick the start / end edge, Tab next word, Enter play, Esc done.">
-                  {E.adjustedCount.value ? `${E.adjustedCount.value} timing${E.adjustedCount.value === 1 ? '' : 's'} adjusted` : ''}
-                </span>
+                {E.selectedWord.value !== null && disp.words[E.selectedWord.value] ? (
+                  <span class="ed-readout" role="status">
+                    Editing “{disp.words[E.selectedWord.value].word}” · ←/→ nudge · Esc done
+                  </span>
+                ) : (
+                  <span class="muted">{E.adjustedCount.value ? `${E.adjustedCount.value} timing${E.adjustedCount.value === 1 ? '' : 's'} adjusted` : ''}</span>
+                )}
                 <label class="toggle" title="Start word playback 0.3 s early">
                   <input type="checkbox" checked={E.preRoll.value} onChange={(e) => (E.preRoll.value = (e.currentTarget as HTMLInputElement).checked)} />
                   <span>pre-roll</span>
@@ -889,12 +982,12 @@ function Workspace() {
             <span class="muted">{v.duration.toFixed(1)} s original</span>
           </span>
         </div>
-        <p class="hint ed-word-hint">{timingEditable ? 'Drag a word’s edge to fix its timing · click to hear it · ⌥-drag opens a gap' : isTake ? 'Word timings: switch to the version (A) to edit' : 'Word timings: finish the transcript first'}</p>
+        <p class="hint ed-word-hint">{timingEditable ? 'Drag on the waveform to re-say a stretch · drag a word’s edge to fix its timing' : isTake ? 'Word timings: switch to A to edit' : 'Word timings: finish the transcript first'}</p>
         <EditWave
           pcm={disp.pcm}
           sr={disp.sr}
           words={disp.words}
-          regions={isTake ? [] : E.regions.value.map((r, k) => ({ id: r.id, start: E.seconds(r.start), end: E.seconds(r.end), n: k + 1, manual: r.manual, directed: Object.keys(r.values).length > 0 }))}
+          regions={E.regions.value.map((r, k) => ({ id: r.id, start: E.seconds(r.start), end: E.seconds(r.end), n: k + 1, manual: r.manual, directed: Object.keys(r.values).length > 0, ghost: isTake }))}
           overlays={isTake && t ? t.edited : []}
           contexts={isTake && t ? t.contexts : E.gen.value?.versionId === v.id && E.gen.value.contexts.length ? E.gen.value.contexts : E.contextPreview.value}
           contextsEstimated={!isTake && !(E.gen.value?.versionId === v.id && E.gen.value.contexts.length)}
@@ -956,12 +1049,9 @@ function Workspace() {
         <aside class="ed-takes" aria-label="Takes">
           <header class="ed-sub-head">
             <h3>Takes</h3>
-            {t && (
-              <span class="muted small">
-                {E.ab.value === 'take' ? 'comparing' : 'press A to compare'}
-              </span>
-            )}
+            {t && <span class="muted small">{E.ab.value === 'take' ? 'comparing (B)' : 'press B to compare'}</span>}
           </header>
+          {E.gen.value && E.gen.value.versionId === v.id && <p class="hint">Takes aren’t saved until you keep one.</p>}
           <Takes />
         </aside>
       </div>
@@ -975,7 +1065,18 @@ export function EditScreen() {
     activeHistory.value = E.docs as History<unknown>;
     primaryAction.value = E.togglePlay;
     screenKeys.value = enabled ? editKeys : null;
+    // A selected word is a keyboard mode: a click outside the word lane, or typing in the transcript, leaves it.
+    const outside = (e: PointerEvent) => {
+      if (E.selectedWord.peek() !== null && !(e.target as HTMLElement).closest?.('.ew-words, .ed-timing-tools')) E.selectedWord.value = null;
+    };
+    const typing = (e: FocusEvent) => {
+      if (E.selectedWord.peek() !== null && (e.target as HTMLElement).matches?.('textarea')) E.selectedWord.value = null;
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('focusin', typing);
     return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('focusin', typing);
       activeHistory.value = null;
       primaryAction.value = null;
       screenKeys.value = null;
@@ -995,6 +1096,7 @@ export function EditScreen() {
         <RailToggle id="edit-sources" title="Sources" icon="film" />
       </RailBar>
       <Workspace />
+      <FileDrop label="Drop to edit this clip" hint="An audio or video file; only the words you change are regenerated" busy={E.busy.value ? 'Wait for the current step…' : null} onFile={(f) => void E.openFile(f)} />
     </div>
   );
 }

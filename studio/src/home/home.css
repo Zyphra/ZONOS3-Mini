@@ -19,16 +19,7 @@ body {
   padding: 72px 18px 56px;
 }
 .home-head {
-  display: grid;
-  gap: 4px;
   margin-bottom: 28px;
-}
-.home-head h1 {
-  margin: 0;
-  font-weight: 300;
-  font-size: 32px;
-  letter-spacing: -0.64px;
-  line-height: 1.15;
 }
 
 .choices {
@@ -60,7 +51,7 @@ body {
   margin-bottom: 6px;
   border-radius: 999px;
   border: 1px solid var(--line-2);
-  color: var(--o);
+  color: var(--o-text);
 }
 .choice-name {
   font-size: 19px;
@@ -72,14 +63,14 @@ body {
 }
 .choice-acts {
   margin-top: 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-3);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 760px) {
   .home {
     padding-top: 36px;
   }
@@ -91,4 +82,9 @@ body {
 .home-server {
   margin: 18px 0 0;
   text-align: center;
+}
+/* The chooser found no engine: the lite page cannot run here. */
+.choice[aria-disabled='true'] {
+  opacity: 0.5;
+  pointer-events: none;
 }

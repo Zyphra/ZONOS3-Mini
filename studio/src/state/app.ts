@@ -69,11 +69,34 @@ export interface Toast {
 export const toasts = signal<Toast[]>([]);
 let toastId = 0;
 const timers = new Map<number, number>();
+/** When each toast goes away by itself (ms since epoch); the pointer over the stack pauses the clock. */
+const expiresAt = new Map<number, number>();
+let paused = false;
+
+function arm(id: number, ms: number) {
+  clearTimeout(timers.get(id));
+  expiresAt.set(id, Date.now() + ms);
+  if (!paused) timers.set(id, window.setTimeout(() => dismissToast(id), ms));
+}
 
 export function dismissToast(id: number) {
   clearTimeout(timers.get(id));
   timers.delete(id);
+  expiresAt.delete(id);
   toasts.value = toasts.value.filter((t) => t.id !== id);
+}
+
+/** The pointer is over the toasts: nothing goes away until it leaves (each toast then gets its remaining time, at least 1 s). */
+export function pauseToasts(on: boolean) {
+  if (on === paused) return;
+  paused = on;
+  if (on) {
+    for (const t of timers.values()) clearTimeout(t);
+    timers.clear();
+    return;
+  }
+  const now = Date.now();
+  for (const [id, at] of expiresAt) timers.set(id, window.setTimeout(() => dismissToast(id), Math.max(1000, at - now)));
 }
 
 /** Show a toast; returns its id. Errors stay 15 s, toasts with an action 8 s, the rest 3.5 s. Repeating the last text restarts its timer instead of stacking. */
@@ -81,13 +104,18 @@ export function notify(text: string, kind: Toast['kind'] = 'info', action?: Toas
   const ms = kind === 'error' ? 15000 : action ? 8000 : 3500;
   const same = toasts.value.find((t) => t.text === text && t.kind === kind);
   if (same) {
-    clearTimeout(timers.get(same.id));
     toasts.value = toasts.value.map((t) => (t === same ? { ...t, action } : t));
-    timers.set(same.id, window.setTimeout(() => dismissToast(same.id), ms));
+    arm(same.id, ms);
     return same.id;
   }
   const id = ++toastId;
-  toasts.value = [...toasts.value.slice(-3), { id, text, kind, action }];
-  timers.set(id, window.setTimeout(() => dismissToast(id), ms));
+  const dropped = toasts.value.slice(0, -2);
+  for (const t of dropped) {
+    clearTimeout(timers.get(t.id));
+    timers.delete(t.id);
+    expiresAt.delete(t.id);
+  }
+  toasts.value = [...toasts.value.slice(-2), { id, text, kind, action }];
+  arm(id, ms);
   return id;
 }

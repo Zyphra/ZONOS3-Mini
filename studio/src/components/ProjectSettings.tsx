@@ -16,7 +16,7 @@ export function ProjectSettings() {
     box.current?.querySelector<HTMLElement>('select')?.focus({ preventScroll: true });
     return () => {
       modalOpen.value = false;
-      (back?.isConnected ? back : document.querySelector<HTMLElement>('#settings-btn'))?.focus({ preventScroll: true });
+      (back?.isConnected ? back : document.querySelector<HTMLElement>('.proj-trigger'))?.focus({ preventScroll: true });
     };
   }, [open]);
   const p = current.value;

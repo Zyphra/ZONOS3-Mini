@@ -23,9 +23,11 @@ interface Props extends Gesture {
   compact?: boolean;
   /** Roomy: value always shown, the measured effect and the tested ranges under the track. */
   detailed?: boolean;
+  /** How the value reads (default: signed, one decimal). */
+  format?: (v: number) => string;
 }
 
-export const ZONE_TEXT: Record<string, string> = { strong: 'strong', collapse: 'may break' };
+export const ZONE_TEXT: Record<string, string> = { strong: 'strong', collapse: 'may glitch' };
 
 /** Percent position of v along a range (bottom→top when vertical). */
 const pos = (lo: number, hi: number, v: number) => ((clamp(v, lo, hi) - lo) / (hi - lo || 1)) * 100;
@@ -35,7 +37,7 @@ export function step(c: Pick<ControlSpec, 'range'>) {
   return span > 12 ? 0.5 : span > 5 ? 0.1 : 0.05;
 }
 
-export function Slider({ control: c, value, color, disabled, vertical, bare, label, compact, detailed, onStart, onChange, onEnd }: Props) {
+export function Slider({ control: c, value, color, disabled, vertical, bare, label, compact, detailed, format = fmt, onStart, onChange, onEnd }: Props) {
   const [lo, hi] = c.range;
   const zone = zoneOf(c, value);
   const st = step(c);
@@ -66,7 +68,7 @@ export function Slider({ control: c, value, color, disabled, vertical, bare, lab
   };
 
   const poles = c.type === 'bipolar' && c.poles ? `${c.poles[0]} ↔ ${c.poles[1]}` : null;
-  const title = [compact ? poles : null, c.effect, `range ${lo}…${hi}, tested-safe ${c.safe[0]}…${c.safe[1]}`].filter(Boolean).join(' · ');
+  const title = [compact ? poles : null, c.effect, `range ${lo}…${hi} · natural ${c.safe[0]}…${c.safe[1]}`].filter(Boolean).join(' · ');
 
   return (
     <div class={`slider${vertical ? ' is-vertical' : ''}${compact ? ' is-compact' : ''}${detailed ? ' is-detailed' : ''}${disabled ? ' is-disabled' : ''} zone-${zone}`} style={{ '--fam': color }} title={title}>
@@ -76,7 +78,7 @@ export function Slider({ control: c, value, color, disabled, vertical, bare, lab
           <span class="slider-label">{label ?? c.label}</span>
           <span class="slider-value">
             {ZONE_TEXT[zone] && <span class={`zone-tag zone-${zone}`}>{ZONE_TEXT[zone]}</span>}
-            {fmt(value)}
+            {format(value)}
           </span>
         </div>
       )}
@@ -88,7 +90,7 @@ export function Slider({ control: c, value, color, disabled, vertical, bare, lab
         aria-valuemin={lo}
         aria-valuemax={hi}
         aria-valuenow={value}
-        aria-valuetext={`${fmt(value)}${ZONE_TEXT[zone] ? ` (${ZONE_TEXT[zone]})` : ''}`}
+        aria-valuetext={`${format(value)}${ZONE_TEXT[zone] ? ` (${ZONE_TEXT[zone]})` : ''}`}
         aria-orientation={vertical ? 'vertical' : 'horizontal'}
         aria-disabled={disabled}
         onKeyDown={disabled ? undefined : key}
@@ -112,8 +114,8 @@ export function Slider({ control: c, value, color, disabled, vertical, bare, lab
       </div>
       {compact && (
         <span class="slider-value">
-          {ZONE_TEXT[zone] && <span class={`zone-tag zone-${zone}`}>{zone === 'collapse' ? '!' : '•'}</span>}
-          {fmt(value)}
+          {ZONE_TEXT[zone] && <span class={`zone-tag zone-${zone}`}>{ZONE_TEXT[zone]}</span>}
+          {format(value)}
         </span>
       )}
       {!bare && !compact && c.type === 'bipolar' && c.poles && (
@@ -126,9 +128,10 @@ export function Slider({ control: c, value, color, disabled, vertical, bare, lab
         <p class="slider-effect">
           {c.effect && <span>{c.effect}</span>}
           <span class="slider-ranges">
-            tested-safe {fmt(c.safe[0])}…{fmt(c.safe[1])}
+            natural {fmt(c.safe[0])}…{fmt(c.safe[1])}
+            {(c.safe[0] > lo || c.safe[1] < hi) && <> · strong past that</>}
             {c.collapse && (c.collapse[0] != null || c.collapse[1] != null) && (
-              <> · may break {c.collapse[0] != null ? `≤ ${fmt(c.collapse[0])}` : ''}{c.collapse[0] != null && c.collapse[1] != null ? ', ' : ''}{c.collapse[1] != null ? `≥ ${fmt(c.collapse[1])}` : ''}</>
+              <> · may glitch {c.collapse[0] != null ? `below ${fmt(c.collapse[0])}` : ''}{c.collapse[0] != null && c.collapse[1] != null ? ', ' : ''}{c.collapse[1] != null ? `past ${fmt(c.collapse[1])}` : ''}</>
             )}
           </span>
         </p>

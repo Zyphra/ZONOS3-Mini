@@ -8,12 +8,14 @@ import '@fontsource/jetbrains-mono/latin-500.css';
 import './lite.css';
 import { mountChrome, setLabel } from '../lib/chrome';
 import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
+import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
 import { langLabel } from '../lib/languages';
 import { drawWave } from '../lib/wave';
-import { onEncoderProgress, usingWebEngine, type Download } from '../lib/web-engine';
+import { onEncoderProgress, selectWebEngine, usingWebEngine, type Download } from '../lib/web-engine';
 import { ApiError } from '../lib/http';
 import {
+  canRunWeb,
   connect,
   createSpeaker,
   generateStream,
@@ -27,6 +29,7 @@ import {
   type Speaker,
 } from './api';
 import { StreamPlayer } from './player';
+import { CLIP_MAX_S, clipLengthProblem, readiness, selectedVoice, type Clip, type Source, type VoiceState } from './voice';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -36,7 +39,10 @@ const ui = {
   studioLink: $<HTMLAnchorElement>('studio-link'),
   notice: $<HTMLParagraphElement>('notice'),
   download: $<HTMLDivElement>('download'),
-  sections: document.querySelectorAll<HTMLElement>('main section'),
+  consent: $<HTMLElement>('consent'),
+  consentYes: $<HTMLButtonElement>('consent-yes'),
+  consentRetry: $<HTMLButtonElement>('consent-retry'),
+  sections: document.querySelectorAll<HTMLElement>('main section:not(#consent)'),
   sources: document.querySelectorAll<HTMLInputElement>('input[name="source"]'),
   panels: { default: $('panel-default'), clip: $('panel-clip'), embedding: $('panel-embedding') },
   voiceSelect: $<HTMLSelectElement>('voice-select'),
@@ -44,6 +50,7 @@ const ui = {
   clipPlay: $<HTMLButtonElement>('clip-play'),
   clipFile: $<HTMLInputElement>('clip-file'),
   record: $<HTMLButtonElement>('record'),
+  recordLevel: $<HTMLSpanElement>('record-level'),
   clipState: $<HTMLSpanElement>('clip-state'),
   clipLabel: $<HTMLInputElement>('clip-label'),
   clipUpload: $<HTMLButtonElement>('clip-upload'),
@@ -73,6 +80,7 @@ const ui = {
   play: $<HTMLButtonElement>('play'),
   resultDownload: $<HTMLAnchorElement>('result-download'),
   resultMeta: $<HTMLSpanElement>('result-meta'),
+  takes: $<HTMLOListElement>('takes'),
 };
 
 mountChrome(() => {
@@ -80,14 +88,20 @@ mountChrome(() => {
   animate();
 });
 let voices: Speaker[] = [];
-let voice: Speaker | null = null;
+/** The library voice picked in the select. */
+let library: Speaker | null = null;
+/** Which source the reader is on; Generate speaks only with a voice of that source. */
+let source: Source = 'default';
 /** The clip to clone: a chosen file or a finished recording. */
-let clip: { blob: Blob; name: string } | null = null;
+let clip: Clip | null = null;
+/** The voice the embedding file was opened into. */
+let fileVoice: Speaker | null = null;
 let generation: AbortController | null = null;
 const player = new StreamPlayer(SAMPLE_RATE);
 const preview = new Audio();
 let previewUrl = '';
-let resultUrl = '';
+
+const state = (): VoiceState => ({ source, library, clip, fileVoice, text: ui.text.value, generating: !!generation });
 
 // ── Waveform ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -121,7 +135,12 @@ function redraw() {
   const at = player.position();
   const playing = at !== null && at * SAMPLE_RATE < samples;
   waveHead.hidden = !playing;
-  if (playing) waveHead.style.left = `${Math.min(100, ((at * SAMPLE_RATE) / samples) * 100)}%`;
+  if (playing) {
+    const pct = Math.min(100, ((at * SAMPLE_RATE) / samples) * 100);
+    waveHead.style.left = `${pct}%`;
+    ui.wave.setAttribute('aria-valuenow', String(Math.round(pct)));
+    ui.wave.setAttribute('aria-valuetext', `${at.toFixed(1)} of ${(samples / SAMPLE_RATE).toFixed(1)} s`);
+  }
   if (ui.play.dataset.icon !== (playing ? 'stop' : 'play')) {
     ui.play.dataset.icon = playing ? 'stop' : 'play';
     setLabel(ui.play, '');
@@ -147,7 +166,7 @@ function show(el: HTMLElement, text: string | null) {
   el.hidden = !text;
 }
 
-const seconds = (samples: number) => `${(samples / SAMPLE_RATE).toFixed(2)} s`;
+const seconds = (samples: number) => `${(samples / SAMPLE_RATE).toFixed(1)} s`;
 
 /** The in-browser server's model download as a bar (`.dl` in styles/base.css); null hides it. */
 function showDownload(d: Download | null) {
@@ -155,6 +174,7 @@ function showDownload(d: Download | null) {
   if (!d) return;
   const pct = Math.round(d.fraction * 100);
   ui.download.setAttribute('aria-valuenow', String(pct));
+  ui.download.setAttribute('aria-valuetext', `${d.label}: ${pct}%, ${d.detail}`);
   ui.download.setAttribute('aria-label', d.label);
   ui.download.querySelector('.dl-label')!.textContent = d.label;
   ui.download.querySelector('.dl-pct')!.textContent = `${pct}%`;
@@ -167,7 +187,7 @@ function disableAll(text: string) {
   show(ui.notice, text);
   ui.notice.classList.add('bad');
   for (const el of document.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>(
-    'main input, main button, main select, main textarea',
+    'main section:not(#consent) input, main section:not(#consent) button, main section:not(#consent) select, main section:not(#consent) textarea',
   )) {
     el.disabled = true;
   }
@@ -178,14 +198,14 @@ function disableAll(text: string) {
 function renderVoiceSelect() {
   ui.voiceSelect.replaceChildren();
   const groups: [string, Speaker[]][] = [
-    ['Default voices', voices.filter((s) => s.scope === 'default')],
+    ['Library', voices.filter((s) => s.scope === 'default')],
     ['Your voices (this tab)', voices.filter((s) => s.scope === 'session')],
   ];
   for (const [label, list] of groups) {
     if (!list.length) continue;
     const group = document.createElement('optgroup');
     group.label = label;
-    for (const s of list) group.append(new Option(s.label, s.id, false, s.id === voice?.id));
+    for (const s of list) group.append(new Option(s.label, s.id, false, s.id === library?.id));
     ui.voiceSelect.append(group);
   }
   if (!voices.length) ui.voiceSelect.append(new Option('No voice can be used from an embedding', '', true, true));
@@ -195,33 +215,34 @@ function renderVoiceSelect() {
 async function refreshVoices(select?: Speaker) {
   voices = (await listSpeakers()).filter((s) => s.speaker_modes.includes('embedding'));
   if (select && !voices.some((s) => s.id === select.id)) voices.push(select);
+  library = (select?.scope === 'default' ? select : null) ?? voices.find((s) => s.id === library?.id) ?? voices.find((s) => s.scope === 'default') ?? voices[0] ?? null;
   renderVoiceSelect();
-  setVoice(select ?? voices.find((s) => s.id === voice?.id) ?? voices[0] ?? null);
+  showVoice();
 }
 
-function setVoice(s: Speaker | null) {
-  voice = s;
+/** The Selected box: the voice of the chosen source, or nothing until that source has one. */
+function showVoice() {
+  const s = selectedVoice(state());
   preview.pause();
   ui.voice.hidden = !s;
   if (s) {
-    ui.voiceSelect.value = s.id;
+    if (source === 'default') ui.voiceSelect.value = s.id;
     ui.voiceLabel.textContent = s.label;
-    const scope = s.scope === 'default' ? 'default voice' : 'this tab';
-    const from = s.source_type === 'audio' ? 'from a clip' : 'from an embedding';
-    ui.voiceMeta.textContent = `(${scope}, ${from}${s.embedding_dim ? `, ${s.embedding_dim}-d` : ''})`;
+    const scope = s.scope === 'default' ? 'library voice' : 'this tab';
+    const from = s.source_type === 'audio' ? 'from a clip' : 'from a voice file';
+    ui.voiceMeta.textContent = `(${scope}, ${from})`;
+    ui.voiceMeta.title = s.embedding_dim ? `${s.embedding_dim}-dimensional voice embedding` : '';
     ui.preview.hidden = !s.has_preview;
     setLabel(ui.preview, 'Play preview', 'play');
   }
   updateGenerate();
 }
 
-function showSource(source: string) {
-  for (const [name, panel] of Object.entries(ui.panels)) panel.hidden = name !== source;
+function showSource(next: Source) {
+  source = next;
+  for (const [name, panel] of Object.entries(ui.panels)) panel.hidden = name !== next;
   show(ui.voiceError, null);
-  if (source === 'default') {
-    const s = voices.find((v) => v.id === ui.voiceSelect.value);
-    if (s) setVoice(s);
-  }
+  showVoice();
 }
 
 /** Runs a voice action with its button busy; failures show inline under the voice section. */
@@ -248,18 +269,21 @@ const stem = (name: string) => name.replace(/\.[^.]+$/, '');
 let clipUrl = '';
 const clipAudio = new Audio();
 
-function setClip(next: typeof clip, state: string, samples = 0) {
+function setClip(next: Clip | null, text: string) {
   clip = next;
-  const short = samples > 0 && samples < SAMPLE_RATE * 5;
-  ui.clipState.textContent = short ? `${state} · under 5 s: a longer clip clones better` : state;
-  ui.clipState.classList.toggle('is-warn', short);
-  ui.clipUpload.disabled = !clip;
+  const problem = next ? clipLengthProblem(next.samples, SAMPLE_RATE) : null;
+  const short = !!next && next.samples > 0 && next.samples < SAMPLE_RATE * 5 && !problem;
+  ui.clipState.textContent = problem ?? (short ? `${text} · under 5 s: a longer clip clones better` : text);
+  ui.clipState.classList.toggle('is-warn', short || !!problem);
+  if (problem) clip = null;
+  ui.clipUpload.disabled = !clip || !!clip.speaker;
   if (clip && !ui.clipLabel.value.trim()) ui.clipLabel.placeholder = stem(clip.name);
   clipAudio.pause();
   if (clipUrl) URL.revokeObjectURL(clipUrl);
-  clipUrl = clip ? URL.createObjectURL(clip.blob) : '';
-  ui.clipPlay.hidden = !clip;
+  clipUrl = next ? URL.createObjectURL(next.blob) : '';
+  ui.clipPlay.hidden = !next;
   setLabel(ui.clipPlay, 'Play', 'play');
+  showVoice();
 }
 
 ui.clipPlay.addEventListener('click', () => {
@@ -271,8 +295,8 @@ clipAudio.addEventListener('play', () => setLabel(ui.clipPlay, 'Stop', 'stop'));
 clipAudio.addEventListener('pause', () => setLabel(ui.clipPlay, 'Play', 'play'));
 clipAudio.addEventListener('ended', () => setLabel(ui.clipPlay, 'Play', 'play'));
 
-/** A recording as a 16-bit WAV (every server reads WAV; not every one reads the browser's webm/ogg). */
-async function recordingAsWav(blob: Blob): Promise<{ blob: Blob; name: string; samples: number }> {
+/** A clip as a 16-bit WAV with its length (every server reads WAV; not every one reads the browser's webm/ogg). */
+async function asWav(blob: Blob, name: string): Promise<{ blob: Blob; name: string; samples: number }> {
   try {
     const decoded = await new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(await blob.arrayBuffer());
     const mono = new Float32Array(decoded.length);
@@ -280,10 +304,26 @@ async function recordingAsWav(blob: Blob): Promise<{ blob: Blob; name: string; s
       const data = decoded.getChannelData(c);
       for (let i = 0; i < mono.length; i++) mono[i] += data[i] / decoded.numberOfChannels;
     }
-    return { blob: new Blob([wavBytes(mono, decoded.sampleRate)], { type: 'audio/wav' }), name: 'recording.wav', samples: mono.length };
+    return { blob: new Blob([wavBytes(mono, decoded.sampleRate)], { type: 'audio/wav' }), name: `${stem(name)}.wav`, samples: mono.length };
   } catch {
-    return { blob, name: `recording.${blob.type.includes('ogg') ? 'ogg' : 'webm'}`, samples: 0 };
+    return { blob, name, samples: 0 };
   }
+}
+
+/** Clone the current clip into a voice of this tab (Generate does this by itself when needed). */
+async function cloneClip(): Promise<Speaker> {
+  if (!clip) throw new Error('Record or upload a clip first');
+  const s = await createSpeaker({
+    label: ui.clipLabel.value.trim() || stem(clip.name),
+    speaker_audio_base64: bytesToBase64(await clip.blob.arrayBuffer()),
+    speaker_audio_name: clip.name,
+  });
+  clip = { ...clip, speaker: s };
+  await refreshVoices(s);
+  ui.clipUpload.disabled = true;
+  ui.clipState.textContent = `Cloned “${s.label}”`;
+  ui.clipState.classList.remove('is-warn');
+  return s;
 }
 
 let recorder: { stop: () => void } | null = null;
@@ -298,49 +338,124 @@ async function toggleRecording() {
     const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
     return show(ui.voiceError, denied ? 'Allow the microphone in the browser’s site settings' : `Microphone unavailable: ${message(e)}`);
   }
+  const level = ui.recordLevel.firstElementChild as HTMLElement;
+  const meter = levelMeter(stream, (v) => (level.style.width = `${Math.round(v * 100)}%`));
+  ui.recordLevel.hidden = false;
   const rec = new MediaRecorder(stream);
   const parts: Blob[] = [];
   const started = performance.now();
   const clock = () => {
     const s = Math.floor((performance.now() - started) / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} / 0:30`;
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} / 0:${CLIP_MAX_S}`;
   };
   const tick = setInterval(() => (ui.clipState.textContent = `Recording… ${clock()}`), 250);
-  const limit = setTimeout(() => recorder?.stop(), 30_000);
+  const limit = setTimeout(() => recorder?.stop(), CLIP_MAX_S * 1000);
   rec.ondataavailable = (ev) => parts.push(ev.data);
   rec.onstop = async () => {
     clearInterval(tick);
     clearTimeout(limit);
+    meter.stop();
+    ui.recordLevel.hidden = true;
     stream.getTracks().forEach((t) => t.stop());
     recorder = null;
     ui.record.classList.remove('is-recording');
     setLabel(ui.record, 'Record');
     ui.record.setAttribute('aria-pressed', 'false');
-    const wav = await recordingAsWav(new Blob(parts, { type: rec.mimeType }));
+    const wav = await asWav(new Blob(parts, { type: rec.mimeType }), 'recording');
     ui.clipFile.value = '';
-    setClip(wav, `Recording ready${wav.samples ? ` (${seconds(wav.samples)})` : ''}`, wav.samples);
+    setClip({ ...wav, speaker: null }, `Recording ready${wav.samples ? ` (${seconds(wav.samples)})` : ''}`);
   };
   recorder = { stop: () => rec.state === 'recording' && rec.stop() };
   rec.start();
   ui.record.classList.add('is-recording');
   ui.record.replaceChildren(Object.assign(document.createElement('span'), { className: 'rec-dot' }), 'Stop recording');
   ui.record.setAttribute('aria-pressed', 'true');
-  ui.clipState.textContent = 'Recording… 0:00 / 0:30';
+  ui.clipState.textContent = `Recording… 0:00 / 0:${CLIP_MAX_S}`;
 }
 
 // ── Generation ────────────────────────────────────────────────────────────────────────────────────
 
 function updateGenerate() {
-  const empty = !ui.text.value.trim();
-  ui.generate.disabled = !voice || !!generation || empty;
-  show(ui.why, generation ? null : !voice ? 'Pick a voice first' : empty ? 'Type something to say' : null);
+  const r = readiness(state());
+  ui.generate.disabled = !r.ok;
+  show(ui.why, r.ok ? null : r.why || null);
 }
 ui.text.addEventListener('input', updateGenerate);
+ui.text.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    void generate();
+  }
+});
+
+/** Earlier takes, newest first (the newest is the one in the waveform). */
+interface TakeRecord {
+  pcm: Float32Array;
+  seed: string | null;
+  text: string;
+  url: string;
+  label: string;
+}
+const MAX_TAKES = 5;
+const takes: TakeRecord[] = [];
+
+function renderTakes() {
+  const older = takes.slice(1);
+  ui.takes.hidden = !older.length;
+  ui.takes.replaceChildren(
+    ...older.map((t, i) => {
+      const li = document.createElement('li');
+      li.className = 'take-row';
+      const play = Object.assign(document.createElement('button'), { type: 'button', className: 'icon-btn sm', title: 'Play this take' });
+      play.dataset.icon = 'play';
+      setLabel(play, '', 'play', 14);
+      play.setAttribute('aria-label', `Play take ${takes.length - 1 - i}`);
+      play.addEventListener('click', () => {
+        preview.pause();
+        void player.play(t.pcm, 0).then(animate);
+      });
+      const meta = Object.assign(document.createElement('span'), { className: 'meta', textContent: `${t.label} · ${seconds(t.pcm.length)} · ${t.text.length > 48 ? `${t.text.slice(0, 48)}…` : t.text}` });
+      meta.title = t.seed ? `seed ${t.seed}` : '';
+      const dl = Object.assign(document.createElement('a'), { className: 'btn sm ghost', href: t.url, download: `${slug(t.label)}${t.seed ? `-seed${t.seed}` : ''}.wav`, textContent: 'Download' });
+      li.append(play, meta, dl);
+      return li;
+    }),
+  );
+}
+
+function keepTake(pcm: Float32Array, seed: string | null, text: string, label: string) {
+  const url = URL.createObjectURL(new Blob([wavBytes(pcm, SAMPLE_RATE)], { type: 'audio/wav' }));
+  takes.unshift({ pcm, seed, text, url, label });
+  for (const gone of takes.splice(MAX_TAKES)) URL.revokeObjectURL(gone.url);
+  renderTakes();
+  return url;
+}
 
 async function generate() {
-  if (!voice || generation) return;
+  const r = readiness(state());
+  if (!r.ok) return updateGenerate();
   const text = ui.text.value.trim();
-  if (!text) return show(ui.why, 'Type something to say');
+  const ctrl = new AbortController();
+  generation = ctrl;
+  updateGenerate();
+  ui.stop.hidden = false;
+  show(ui.error, null);
+  preview.pause();
+  let voice = selectedVoice(state());
+  try {
+    if (!voice) {
+      // Clip mode with a clip not yet cloned: Generate clones it first (the server does the embedding).
+      ui.status.textContent = 'Cloning the clip…';
+      voice = await cloneClip();
+    }
+  } catch (e) {
+    generation = null;
+    ui.stop.hidden = true;
+    ui.status.textContent = '';
+    show(ui.error, message(e));
+    updateGenerate();
+    return;
+  }
   const body: GenerateRequest = {
     text,
     language: ui.language.value,
@@ -350,13 +465,6 @@ async function generate() {
     format: 'pcm',
   };
   if (ui.seed.value !== '') body.seed = Number(ui.seed.value);
-
-  const ctrl = new AbortController();
-  generation = ctrl;
-  updateGenerate();
-  ui.stop.hidden = false;
-  show(ui.error, null);
-  preview.pause();
   ui.status.textContent = 'Generating…';
   samples = 0;
   drawn = -1;
@@ -381,12 +489,12 @@ async function generate() {
     );
     player.flush();
     if (!samples) throw new ApiError(200, 'The server returned no audio.');
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
-    resultUrl = URL.createObjectURL(new Blob([wavBytes(audio.subarray(0, samples), SAMPLE_RATE)], { type: 'audio/wav' }));
-    ui.resultDownload.href = resultUrl;
+    const url = keepTake(audio.slice(0, samples), seed, text, voice.label);
+    ui.resultDownload.href = url;
     ui.resultDownload.download = `${slug(voice.label)}${seed ? `-seed${seed}` : ''}.wav`;
     ui.resultDownload.hidden = false;
-    ui.resultMeta.textContent = `${seconds(samples)} · seed ${seed ?? 'unknown'} · first audio after ${((firstAudio - t0) / 1000).toFixed(2)} s`;
+    ui.resultMeta.textContent = seconds(samples);
+    ui.resultMeta.title = `seed ${seed ?? 'unknown'} · first audio after ${((firstAudio - t0) / 1000).toFixed(2)} s`;
     ui.seedUse.hidden = seed == null;
     ui.result.dataset.samples = String(samples);
     ui.result.dataset.seed = seed ?? '';
@@ -409,7 +517,7 @@ async function generate() {
   }
 }
 
-/** Plays the take from `fraction` of its length; while it plays (or streams), the play button stops it. */
+/** Plays the take from `fraction` of its length; while it plays, the play button stops it (generation goes on). */
 async function playTake(fraction: number) {
   if (!samples || generation) return;
   preview.pause();
@@ -417,41 +525,52 @@ async function playTake(fraction: number) {
   animate();
 }
 
-ui.play.addEventListener('click', () => {
+function togglePlayback() {
   if (player.position() === null) return void playTake(0);
-  generation?.abort();
   player.stop();
   animate();
-});
+}
+
+ui.play.addEventListener('click', togglePlayback);
 ui.wave.addEventListener('pointerdown', (e) => {
   const r = ui.wave.getBoundingClientRect();
   void playTake(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)));
 });
+ui.wave.addEventListener('keydown', (e) => {
+  if (!samples) return;
+  if (e.key === ' ') {
+    e.preventDefault();
+    togglePlayback();
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const length = samples / SAMPLE_RATE;
+    const at = Math.max(0, Math.min(length, (player.position() ?? 0) + (e.key === 'ArrowLeft' ? -1 : 1)));
+    void playTake(at / length);
+  }
+});
 
 // ── Wiring ────────────────────────────────────────────────────────────────────────────────────────
 
-for (const input of ui.sources) input.addEventListener('change', () => input.checked && showSource(input.value));
+for (const input of ui.sources) input.addEventListener('change', () => input.checked && showSource(input.value as Source));
 
-ui.voiceSelect.addEventListener('change', () => setVoice(voices.find((s) => s.id === ui.voiceSelect.value) ?? null));
+ui.voiceSelect.addEventListener('change', () => {
+  library = voices.find((s) => s.id === ui.voiceSelect.value) ?? null;
+  showVoice();
+});
 
 ui.clipPick.addEventListener('click', () => ui.clipFile.click());
-ui.clipFile.addEventListener('change', () => {
+ui.clipFile.addEventListener('change', async () => {
   const file = ui.clipFile.files?.[0];
-  setClip(file ? { blob: file, name: file.name } : null, file?.name ?? '');
+  if (!file) return setClip(null, '');
+  ui.clipState.textContent = 'Reading…';
+  const wav = await asWav(file, file.name);
+  setClip({ ...wav, speaker: null }, `${file.name}${wav.samples ? ` (${seconds(wav.samples)})` : ''}`);
 });
 ui.record.addEventListener('click', () => void toggleRecording());
 ui.clipUpload.addEventListener('click', () =>
   voiceAction(ui.clipUpload, 'Cloning…', async () => {
-    if (!clip) return;
-    const s = await createSpeaker({
-      label: ui.clipLabel.value.trim() || stem(clip.name),
-      speaker_audio_base64: bytesToBase64(await clip.blob.arrayBuffer()),
-      speaker_audio_name: clip.name,
-    });
-    await refreshVoices(s);
-    ui.clipFile.value = '';
+    await cloneClip();
     ui.clipLabel.value = '';
-    setClip(null, `Cloned “${s.label}” — now selected`);
   }),
 );
 
@@ -460,7 +579,7 @@ const EMBEDDING_MAX_BYTES = 2e6;
 ui.embeddingFile.addEventListener('change', () => {
   const file = ui.embeddingFile.files?.[0];
   show(ui.voiceError, null);
-  const bad = file && (!/\.np[yz]$/i.test(file.name) || file.size > EMBEDDING_MAX_BYTES) ? 'Couldn’t read this embedding file: it must be a .npy or .npz under 2 MB' : null;
+  const bad = file && (!/\.np[yz]$/i.test(file.name) || file.size > EMBEDDING_MAX_BYTES) ? 'Couldn’t read this voice file: it must be a .npy or .npz under 2 MB' : null;
   if (bad) {
     ui.embeddingFile.value = '';
     show(ui.voiceError, bad);
@@ -471,7 +590,7 @@ ui.embeddingFile.addEventListener('change', () => {
   if (ok) ui.embeddingLabel.placeholder = stem(file.name);
 });
 ui.embeddingUpload.addEventListener('click', () =>
-  voiceAction(ui.embeddingUpload, 'Loading…', async () => {
+  voiceAction(ui.embeddingUpload, 'Opening…', async () => {
     const file = ui.embeddingFile.files?.[0];
     if (!file) return;
     let s: Speaker;
@@ -482,20 +601,22 @@ ui.embeddingUpload.addEventListener('click', () =>
         speaker_embedding_name: file.name,
       });
     } catch (e) {
-      throw e instanceof ApiError && e.status === 400 ? new Error(`Couldn’t read this embedding file: ${e.detail}`) : e;
+      throw e instanceof ApiError && e.status === 400 ? new Error(`Couldn’t read this voice file: ${e.detail}`) : e;
     }
+    fileVoice = s;
     await refreshVoices(s);
     ui.embeddingFile.value = '';
     ui.embeddingLabel.value = '';
-    ui.embeddingState.textContent = `Loaded “${s.label}” — now selected`;
+    ui.embeddingState.textContent = `Opened “${s.label}”`;
     ui.embeddingUpload.disabled = true;
   }),
 );
 
 ui.preview.addEventListener('click', () => {
-  if (!voice) return;
+  const s = selectedVoice(state());
+  if (!s) return;
   if (!preview.paused) return preview.pause();
-  const id = voice.id;
+  const id = s.id;
   // voiceAction restores the idle label when it settles; the playback state names the button after that.
   void voiceAction(ui.preview, 'Loading…', async () => {
     if (preview.dataset.id !== id) {
@@ -516,7 +637,7 @@ preview.addEventListener('play', () => playing(true));
 preview.addEventListener('pause', () => playing(false));
 
 ui.downloadEmbedding.addEventListener('click', () => {
-  const s = voice;
+  const s = selectedVoice(state());
   if (!s) return;
   void voiceAction(ui.downloadEmbedding, 'Downloading…', async () => {
     download(encodeNpy(await speakerEmbedding(s.id)), `${slug(s.label)}.npy`, 'application/octet-stream');
@@ -527,12 +648,14 @@ ui.form.addEventListener('submit', (ev) => {
   ev.preventDefault();
   void generate();
 });
+// Stop aborts the generation (what was heard so far stays); the play button only affects playback.
 ui.stop.addEventListener('click', () => {
   generation?.abort();
   player.stop();
 });
 ui.seedUse.addEventListener('click', () => {
   ui.seed.value = ui.result.dataset.seed ?? '';
+  ui.seed.closest('details')?.setAttribute('open', '');
   ui.seed.focus();
 });
 
@@ -545,28 +668,61 @@ function booting(on: boolean) {
   for (const section of ui.sections) section.inert = on;
 }
 
+/** No server: ask before the in-browser engine downloads (once per page load, like the studio). */
+function askWeb(): Promise<boolean> {
+  show(ui.notice, null);
+  ui.consent.hidden = false;
+  ui.consentYes.focus();
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  ui.consentYes.addEventListener('click', () => resolve(true), { once: true });
+  ui.consentRetry.addEventListener('click', () => location.reload(), { once: true });
+  return promise.finally(() => {
+    ui.consent.hidden = true;
+    show(ui.notice, 'Starting the in-browser engine…');
+  });
+}
+
+/** The connection failed: the reason, Try again, and Run in this browser when this browser could. */
+async function failed(e: unknown) {
+  booting(false);
+  const web = usingWebEngine();
+  disableAll(web ? `The in-browser engine couldn’t start: ${message(e)}` : `Can’t reach the server at ${server || location.origin}: ${message(e)}`);
+  const retry = Object.assign(document.createElement('button'), { type: 'button', className: 'btn sm', textContent: 'Try again' });
+  retry.addEventListener('click', () => location.reload());
+  ui.notice.append(' ', retry);
+  if (!web && (await canRunWeb())) {
+    const run = Object.assign(document.createElement('button'), { type: 'button', className: 'btn sm primary', textContent: 'Run in this browser' });
+    run.addEventListener('click', () => {
+      selectWebEngine();
+      const u = new URL(location.href);
+      u.searchParams.set('api', 'web');
+      location.href = u.toString();
+    });
+    ui.notice.append(' ', run);
+  }
+}
+
 async function start() {
   if (server) ui.studioLink.search = `?server=${encodeURIComponent(server)}`;
   updateGenerate();
   booting(true);
   let backend: Backend;
   try {
-    backend = await connect((d) => {
-      show(ui.notice, null);
-      showDownload(d);
+    backend = await connect({
+      download: (d) => {
+        show(ui.notice, null);
+        showDownload(d);
+      },
+      confirmWeb: askWeb,
     });
   } catch (e) {
-    booting(false);
-    disableAll(usingWebEngine() ? `The in-browser engine couldn’t start: ${message(e)}` : `Can’t reach the server at ${server || location.origin}: ${message(e)}`);
-    const retry = Object.assign(document.createElement('button'), { type: 'button', className: 'btn sm', textContent: 'Try again' });
-    retry.addEventListener('click', () => location.reload());
-    ui.notice.append(' ', retry);
+    await failed(e);
     return;
   }
   booting(false);
   const { kind, caps } = backend;
   ui.backend.hidden = false;
-  ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In this browser' : 'Live';
+  ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In this browser' : 'Server';
   const explanation = kind === 'web' ? 'The voice engine runs in this tab on your graphics card; its models are cached in the browser.' : `Connected to ${server || location.origin}: that server renders every voice.`;
   ui.backend.title = explanation;
   ui.backend.classList.add(`pill-${kind}`);
@@ -580,7 +736,7 @@ async function start() {
     void onEncoderProgress((d) => showDownload(d.fraction >= 1 ? null : d));
   }
   if (!caps.speaker_modes.includes('embedding')) {
-    return disableAll('This server can’t clone voices from a saved voice file: its model has no voice-embedding input. Use a server whose model has one.');
+    return disableAll('This server can’t clone from a voice file: its model has no voice-embedding input.');
   }
   const languages = caps.text_norm_languages.length ? caps.text_norm_languages : ['en_us'];
   for (const code of languages) ui.language.append(new Option(langLabel(code), code, false, code === 'en_us'));

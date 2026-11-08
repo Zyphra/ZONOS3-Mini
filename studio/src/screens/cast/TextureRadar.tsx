@@ -59,7 +59,8 @@ export function TextureRadar({ large }: { large?: boolean }) {
   };
 
   const rings = [0.25, 0.5, 0.75, 1];
-  const safeF = controls[0].safe[1] / controls[0].range[1];
+  // The natural range's edge, per spoke (controls differ): a polygon, not a circle.
+  const safeRing = controls.map((c, i) => point(i, clamp(c.safe[1] / c.range[1], 0, 1)).join(',')).join(' ');
 
   return (
     <div class={`radar${large ? ' is-large' : ''}`} style={{ '--fam': color }}>
@@ -67,12 +68,12 @@ export function TextureRadar({ large }: { large?: boolean }) {
         {rings.map((f) => (
           <circle class="radar-ring" cx={C} cy={C} r={R * f} />
         ))}
-        <circle class="radar-safe" cx={C} cy={C} r={R * safeF} />
+        <polygon class="radar-safe" points={safeRing} />
         {controls.map((c, i) => {
           const [x, y] = point(i, 1);
           const [lx, ly] = point(i, 1.2);
           const v = values[c.id] ?? 0;
-          // Tested-safe span of the spoke, then the strong zone, then where renders may break.
+          // Natural span of the spoke, then the strong zone, then where renders may glitch.
           const safeEnd = clamp(c.safe[1] / c.range[1], 0, 1);
           const breakAt = c.collapse?.[1] != null ? clamp(c.collapse[1] / c.range[1], 0, 1) : 1;
           const [sx, sy] = point(i, safeEnd);

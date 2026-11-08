@@ -5,7 +5,7 @@ import { Slider } from '../../components/Slider';
 import { clamp } from '../../lib/math';
 import { hue, spec } from '../../state/app';
 import type { Values } from '../../state/engine';
-import { zoneOf } from '../../state/engine';
+import { roomScenes, zoneOf } from '../../state/engine';
 import { MoodChips, MoodLandmarks, toggleMood, useWidth } from '../../components/Moods';
 import { moods, padAxes, type Mood } from '../../state/moods';
 
@@ -29,11 +29,7 @@ export function RoomAxis({ b, large }: { b: Binding; large?: boolean }) {
   const color = hue('room');
   const v = b.values[c.id] ?? 0;
   const [lo, hi] = c.range;
-  const scenes = [
-    { id: 'phone', label: c.poles?.[0] ?? 'phone', at: c.safe[0] },
-    { id: 'podcast', label: 'podcast', at: Math.round((c.safe[1] / 4) * 10) / 10 },
-    { id: 'studio', label: c.poles?.[1] ?? 'studio', at: c.safe[1] },
-  ];
+  const scenes = roomScenes(c);
   const near = scenes.reduce((a, s) => (Math.abs(s.at - v) < Math.abs(a.at - v) ? s : a), scenes[0]);
   return (
     <div class={`room${large ? ' is-large' : ''}`} style={{ '--fam': color }}>
@@ -107,7 +103,7 @@ export function MoodControls({ b, compact, large, padOpens }: { b: Binding; comp
   const marked = all.some((m) => m.at);
   // Corner words stay on the large pad (landmark labels keep off them); small pads give the room to landmarks.
   const corners = large || !marked;
-  const font = large ? 12 : 9;
+  const font = large ? 12 : 11;
   const cornerBoxes = corners && width ? [0, 1].flatMap((i) => [0, 1].map((j) => ({ x: i ? width - 64 : 0, y: j ? width - 20 : 0, w: 64, h: 20 }))) : [];
   // The large pad's pole words sit just above the middle of each side.
   if (large && width) cornerBoxes.push({ x: 0, y: width / 2 - 24, w: 70, h: 20 }, { x: width - 70, y: width / 2 - 24, w: 70, h: 20 });
@@ -201,7 +197,7 @@ export function MoodControls({ b, compact, large, padOpens }: { b: Binding; comp
       ) : (
         <>
           <MoodChips values={b.values} onPick={pick} />
-          {compact && <p class="hint mood-hint">Dot = overall tone · chips add named moods</p>}
+          {compact && <p class="hint mood-hint">{padOpens ? 'Click the pad to open the mood controls' : 'Dot = overall tone · chips add named moods'}</p>}
         </>
       )}
       {!compact && !large && cx && cy && (

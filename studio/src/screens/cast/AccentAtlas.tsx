@@ -8,7 +8,7 @@ import { accentMix, design, designs, setPin } from '../../state/design';
 import { zoneOf } from '../../state/engine';
 import { ATLAS_H, ATLAS_W } from '../../state/geo';
 
-const TAB_LABEL: Record<string, string> = { english: 'English accents', world: 'L1 accents' };
+const TAB_LABEL: Record<string, string> = { english: 'English accents', world: 'Other languages' };
 
 /** `large`: the phone dialog's atlas, as tall as its width allows instead of the bench's `--map-h`. */
 export function AccentAtlas({ large }: { large?: boolean }) {

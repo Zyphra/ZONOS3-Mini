@@ -1,14 +1,17 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { CardModal } from '../../components/CardModal';
-import { togglePreview } from '../../audio/preview';
+import { preview, togglePreview } from '../../audio/preview';
 import { Icon } from '../../components/Icon';
 import { Panel } from '../../components/Panel';
-import { Rail, RailBar, RailToggle } from '../../components/Rail';
+import { focusFirst } from '../../components/focusTrap';
+import { openRail, Rail, RailBar, RailToggle } from '../../components/Rail';
 import { phone } from '../../lib/media';
 import { activeHistory, primaryAction, spec } from '../../state/app';
-import { baseSpeaker, benchMoved, canClone, design, designs, identity, resetDesign, roll, setMode, setValue } from '../../state/design';
+import { baseSpeaker, canClone, design, designs, identity, resetDesign, roll, setMode, setValue } from '../../state/design';
+import { identityWord } from '../../state/engine';
 import type { History } from '../../state/history';
+import { cast } from '../../state/library';
 import { AccentAtlas } from './AccentAtlas';
 import { LibraryRail } from './LibraryRail';
 import { Personas, PreviewStrip, SavePanel, SpeakPanel, Variations } from './Monitor';
@@ -29,22 +32,27 @@ function IdentityMeter() {
   const thr = spec.value.ui.identity_threshold ?? 0.8;
   if (design.value.mode === 'reference') {
     return (
-      <div class="identity-meter" title="Exact clone sends the recording itself: the identity is the recording's">
+      <div class="identity-meter" title="Keep as is sends the recording itself: the identity is the recording's">
         <span class="eyebrow">identity</span>
-        <span class="identity-caption">clone: identity kept</span>
+        <span class="identity-caption">Same person (the recording)</span>
       </div>
     );
   }
-  const isNew = id < thr;
+  const word = identityWord(id, thr);
+  const isNew = word === 'New person';
   return (
-    <div class={`identity-meter${isNew ? ' is-new' : ''}`} title="Estimated identity kept vs the base voice: product of each control’s measured identity curve. An estimate, not a measurement.">
-      <span class="eyebrow">identity · est.</span>
+    <div
+      class={`identity-meter${isNew ? ' is-new' : ''}`}
+      title={`Identity estimate ${id.toFixed(2)} · below ${thr.toFixed(2)} reads as a different person. Product of each control’s measured identity curve: an estimate, not a measurement.`}
+    >
+      <span class="eyebrow">identity</span>
       <div class="meter">
         <div class="meter-fill" style={{ width: `${id * 100}%` }} />
         <div class="meter-mark" style={{ left: `${thr * 100}%` }} />
       </div>
-      <b>{id.toFixed(2)}</b>
-      <span class="identity-caption">{isNew ? 'new person: below the threshold' : benchMoved() ? 'still the base voice' : `≈ ${id.toFixed(2)} unchanged`}</span>
+      <span class="identity-caption">
+        <b>{word}</b>
+      </span>
     </div>
   );
 }
@@ -61,6 +69,27 @@ function modeKeys(e: KeyboardEvent) {
   next.click();
 }
 
+/** Phone: the right rail holds Save; this button opens it on the name field. */
+function SaveShortcut() {
+  if (!phone.value) return null;
+  return (
+    <button
+      class="icon-btn"
+      aria-label="Save this voice"
+      title="Save this voice"
+      onClick={() => {
+        openRail('cast-monitor');
+        requestAnimationFrame(() => {
+          const rail = document.getElementById('rail-cast-monitor');
+          if (rail) focusFirst(rail, '.save-panel');
+        });
+      }}
+    >
+      <Icon name="save" size={16} />
+    </button>
+  );
+}
+
 function BenchHeader() {
   const d = design.value;
   const clone = d.mode === 'reference';
@@ -72,8 +101,8 @@ function BenchHeader() {
       </div>
       <div class="mode-wrap">
         <div class="mode" role="radiogroup" aria-label="Voice mode" onKeyDown={modeKeys}>
-          <button role="radio" aria-checked={!clone} class={`mode-btn${!clone ? ' is-on' : ''}`} onClick={() => setMode('embedding')} title="Steer identity, accent, texture and room through the speaker embedding">
-            Designable
+          <button role="radio" aria-checked={!clone} class={`mode-btn${!clone ? ' is-on' : ''}`} onClick={() => setMode('embedding')} title="Shape it: who, accent and texture change the person">
+            Shape it
           </button>
           <button
             role="radio"
@@ -81,21 +110,22 @@ function BenchHeader() {
             class={`mode-btn${clone ? ' is-on' : ''}`}
             disabled={!canClone.value}
             onClick={() => setMode('reference')}
-            title={canClone.value ? 'Clone the reference recording exactly; only delivery and mood can be steered' : 'This voice was saved from an embedding and has no recording to clone'}
+            title={canClone.value ? 'Keep as is: the recording itself; only delivery and mood change' : 'This voice was saved without a recording, so there is nothing to keep as is'}
           >
-            Exact clone
+            Keep as is
           </button>
         </div>
-        {!canClone.value && <span class="hint">Exact clone needs a recording; this voice was saved from an embedding.</span>}
+        <span class="hint">{canClone.value ? 'Shape it: who, accent and texture change the person. Keep as is: only delivery and mood change.' : 'Keep as is needs a recording; this voice was saved without one.'}</span>
       </div>
       <IdentityMeter />
       <div class="row gap-s">
-        <button class="btn" onClick={roll} title="A random voice inside every control’s tested-safe range">
+        <button class="btn" onClick={roll} title="A random voice inside every control’s natural range">
           <Icon name="dice" size={14} /> Roll a voice
         </button>
-        <button class="icon-btn" onClick={resetDesign} title={clone ? 'Reset delivery and mood (Who, Accent, Texture and Room are kept for Designable)' : 'Reset: back to the plain base voice'} aria-label="Reset the controls">
+        <button class="icon-btn" onClick={resetDesign} title={clone ? 'Reset delivery and mood (Who, Accent, Texture and Room are kept for Shape it)' : 'Reset: back to the plain base voice'} aria-label="Reset the controls">
           <Icon name="refresh" size={16} />
         </button>
+        <SaveShortcut />
       </div>
     </div>
   );
@@ -108,21 +138,36 @@ const EMBEDDING_CARDS: CardId[] = ['who', 'accent', 'texture', 'room'];
 
 const CLONE_LOCK = (
   <>
-    <b>Exact clone copies the recording as is.</b>
-    <span>Delivery and mood still work; Who, Accent, Texture and Room don’t. Switch to Designable to steer them; your moves here are kept.</span>
+    <b>Keep as is copies the recording.</b>
+    <span>Delivery and mood still work; Who, Accent, Texture and Room don’t. Switch to Shape it to change them; your moves here are kept.</span>
     <button class="btn sm" onClick={() => setMode('embedding')}>
-      Switch to Designable
+      Switch to Shape it
     </button>
   </>
 );
 /** A phone tile has no room for the explanation: tapping the lock scrolls to the mode switch below the tiles. */
 const TILE_LOCK = (
   <button class="link" onClick={() => document.getElementById('bench-head')?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
-    <b>Exact clone</b> · change
+    <b>Keep as is</b> · change
   </button>
 );
 
+/**
+ * First run: the right rail (starting points, variations, save) starts folded; it unfolds by itself the moment the
+ * project gets its first take or cast member, and after that the reader's fold choice stands.
+ */
+function useFirstRunRail() {
+  const hasWork = !!preview.value.a || cast.value.length > 0;
+  const was = useRef(hasWork);
+  useEffect(() => {
+    if (hasWork && !was.current) openRail('cast-monitor');
+    was.current = hasWork;
+  }, [hasWork]);
+  return hasWork;
+}
+
 export function CastScreen() {
+  const hasWork = useFirstRunRail();
   useEffect(() => {
     activeHistory.value = designs as History<unknown>;
     primaryAction.value = togglePreview;
@@ -176,7 +221,7 @@ export function CastScreen() {
           <>
             <BenchHeader />
             <div class="hero">
-              <Panel family="who" title="Who" locked={locked} onExpand={locked ? undefined : expand('who')} aside={<span class="hint" title="Drag the dot to move gender / age; scroll while the map has focus (or with ⌘ / Ctrl) for pitch; click a voice to start from it">drag the dot</span>}>
+              <Panel family="who" title="Who" locked={locked} onExpand={locked ? undefined : expand('who')} aside={<span class="hint" title="Drag the dot to move gender / age; scroll while the map has focus (or with ⌘ / Ctrl) for pitch; click a voice to start from it">drag the dot · scroll for pitch</span>}>
                 <WhoMap />
               </Panel>
               <Panel family="accent" title="Accent" locked={locked} onExpand={locked ? undefined : expand('accent')} aside={<span class="hint">drag into a region · deeper = stronger</span>}>
@@ -200,7 +245,7 @@ export function CastScreen() {
           </>
         )}
       </section>
-      <Rail id="cast-monitor" side="right" title="More">
+      <Rail id="cast-monitor" side="right" title="More" defaultFolded={!hasWork}>
         <aside class="monitor" aria-label="Monitor">
           <div class="monitor-scroll">
             <Personas />

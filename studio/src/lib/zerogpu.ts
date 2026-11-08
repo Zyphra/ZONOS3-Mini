@@ -24,6 +24,9 @@ if (parentOrigin) {
   window.parent.postMessage(HANDSHAKE, parentOrigin);
 }
 
+/** Renders here count against the visitor's ZeroGPU quota (the Space's parent page answered the handshake). */
+export const onZeroGpu = () => supported;
+
 /** The parent's headers for one GPU request; null when it has none (or doesn't answer within 5 s). */
 function zeroGpuHeaders(): Promise<Record<string, string> | null> {
   if (!parentOrigin || !supported) return Promise.resolve(null);

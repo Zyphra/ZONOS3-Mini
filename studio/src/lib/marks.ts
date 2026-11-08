@@ -41,6 +41,8 @@ export const ICONS: Record<string, string> = {
   up: 'M6 15l6-6 6 6',
   down: 'M6 9l6 6 6-6',
   edit: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
+  /** Edit speech: scissors over a waveform (Direct → Edit, Edit sources). */
+  'edit-speech': 'M6 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM6 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM20 5 8.5 13M20 19 8.5 11M12 12h2',
   home: 'M4 11 12 4l8 7v9h-5v-6H9v6H4z',
   copy: 'M9 9h10v11H9zM5 15V4h10',
   wand: 'M5 19 15 9m2-5v3m0 0v3m0-3h3m-3 0h-3M6 5v2m0 0v2m0-2h2m-2 0H4',

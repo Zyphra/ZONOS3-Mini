@@ -4,7 +4,7 @@ import { Slider } from '../../components/Slider';
 import { clamp } from '../../lib/math';
 import { controlById, hue, spec } from '../../state/app';
 import { accentMix, baseSpeaker, design, designs, identity, setValue, switchBase } from '../../state/design';
-import { identityEstimate } from '../../state/engine';
+import { genderWord, identityEstimate, identityWord } from '../../state/engine';
 import { speakers } from '../../state/library';
 import { extent, femaleAt, spotOf, who, yAtYears, yearsAt } from '../../state/who';
 
@@ -116,7 +116,8 @@ export function WhoMap({ large }: { large?: boolean }) {
   const offMap = dotX < x0 || dotX > x1 || dotY < y0 || dotY > y1;
   const threshold = spec.value.ui.identity_threshold ?? 0.8;
   const ring = identityRing(cx.id, cy.id, threshold);
-  const outside = identity.value < threshold;
+  const word = identityWord(identity.value, threshold);
+  const outside = word === 'New person';
 
   const marks = speakers.value
     .filter((s) => s.id !== d.baseId)
@@ -257,14 +258,12 @@ export function WhoMap({ large }: { large?: boolean }) {
           </div>
         )}
       </div>
-      <div class={`who-status${outside ? ' is-outside' : ''}`} aria-live="polite">
-        {outside ? <b>New person</b> : <span>Still {baseText}</span>}
+      <div class={`who-status${outside ? ' is-outside' : ''}`} aria-live="polite" title={`Identity estimate ${identity.value.toFixed(2)} · P(female) ${pf.toFixed(2)}${w.note ? ` · ${w.note}` : ''}`}>
+        {outside ? <b>New person</b> : word === 'Close' ? <b>Close to {baseText}</b> : <span>Still {baseText}</span>}
         <span>
-          identity ≈ {identity.value.toFixed(2)} · ≈{years} y · P(female) {pf.toFixed(2)}
+          ≈{years} years · {genderWord(pf)}
         </span>
-        <span class="muted" title={w.note}>
-          {base.from ? `placed from ${base.from} + its saved moves` : base.measured ? 'calibrated estimates' : 'position not measured: starts at the centre'}
-        </span>
+        {(base.from || !base.measured) && <span class="muted">{base.from ? `placed from ${base.from} + its saved moves` : 'position not measured: starts at the centre'}</span>}
       </div>
       {spec.value.ui.controls
         .filter((c) => c.group === 'who' && ![cx.id, cy.id, WHO_RAIL].includes(c.id))

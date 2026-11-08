@@ -19,28 +19,7 @@
   padding: 36px 18px 56px;
 }
 .lite-head {
-  display: grid;
-  gap: 4px;
   margin-bottom: 8px;
-}
-.lite-head h1 {
-  margin: 0;
-  font-weight: 300;
-  font-size: 32px;
-  letter-spacing: -0.64px;
-  line-height: 1.15;
-}
-.lite-head p {
-  margin: 4px 0 0;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 /* Cards */
@@ -97,11 +76,64 @@ fieldset.mode {
   cursor: not-allowed;
 }
 
+/* The consent card (no server: the in-browser engine asks before its download). */
+.consent {
+  display: grid;
+  gap: 8px;
+}
+.consent h3 {
+  margin: 0;
+}
+.consent p {
+  margin: 0;
+}
+/* Microphone level beside Record. */
+.rec-level-inline {
+  position: static;
+  display: inline-block;
+  width: 56px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-3) 25%, transparent);
+}
+.rec-level-inline > span {
+  display: block;
+  height: 100%;
+  background: var(--o);
+  transition: width 80ms linear;
+}
+/* Earlier takes under the waveform. */
+.takes {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.take-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.take-row .meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lite .wave:focus-visible {
+  outline: 2px solid var(--o);
+  outline-offset: 2px;
+}
+
 /* Fields */
 .field {
   display: block;
   margin: 14px 0 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -173,7 +205,7 @@ a.btn {
 }
 .btn.is-playing {
   border-color: var(--o);
-  color: var(--o);
+  color: var(--o-text);
 }
 
 /* Messages */
@@ -232,16 +264,10 @@ p.error-box {
   color: var(--text-3);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 760px) {
   .brand .z-word,
   .brand-sep {
     display: none;
-  }
-  .pill-text {
-    display: none;
-  }
-  .pill {
-    padding: 6px;
   }
   .lite {
     padding-top: 24px;
@@ -264,7 +290,7 @@ p.error-box {
   cursor: pointer;
   background: none;
 }
-@media (max-width: 560px) {
+@media (max-width: 760px) {
   /* Phones: no zoom on focus (16 px inputs), 40 px targets, a short pill. */
   .lite .input,
   .lite textarea.input,

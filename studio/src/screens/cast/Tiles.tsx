@@ -1,7 +1,7 @@
 /** Phone Cast: the read-only summaries on the six control tiles (each tile opens its full control in a dialog). */
 import { controlById, spec } from '../../state/app';
 import { accentMix, baseSpeaker, design, identity } from '../../state/design';
-import { zoneOf } from '../../state/engine';
+import { genderWord, identityWord, roomScenes, zoneOf } from '../../state/engine';
 import { moods, padAxes } from '../../state/moods';
 import { femaleAt, spotOf, who, yearsAt } from '../../state/who';
 import { WHO_RAIL } from './WhoMap';
@@ -19,17 +19,18 @@ export function WhoTile() {
   const x = base.x + (cx ? (d.values[cx.id] ?? 0) : 0);
   const y = base.y + (cy ? (d.values[cy.id] ?? 0) : 0);
   const pitch = d.values[WHO_RAIL] ?? 0;
-  const outside = identity.value < (spec.value.ui.identity_threshold ?? 0.8);
+  const word = identityWord(identity.value, spec.value.ui.identity_threshold ?? 0.8);
+  const outside = word === 'New person';
   return (
-    <div class="tile-sum">
+    <div class="tile-sum" title={`Identity estimate ${identity.value.toFixed(2)}${cx && cy ? ` · P(female) ${femaleAt(x).toFixed(2)}` : ''}`}>
       <b class="tile-main">{label}</b>
       {cx && cy && (
         <>
           <span>≈{Math.round(yearsAt(y))} years</span>
-          <span>P(female) {femaleAt(x).toFixed(2)}</span>
+          <span>{genderWord(femaleAt(x))}</span>
         </>
       )}
-      <span class={outside ? 'tile-warn' : 'muted'}>{outside ? 'New person' : moved(pitch) ? `pitch ${signed(pitch)}` : `identity ≈ ${identity.value.toFixed(2)}`}</span>
+      <span class={outside ? 'tile-warn' : 'muted'}>{outside ? word : moved(pitch) ? `pitch ${signed(pitch)}` : word}</span>
     </div>
   );
 }
@@ -68,11 +69,7 @@ export function RoomTile() {
   const v = design.value.values[c.id] ?? 0;
   const [lo, hi] = c.range;
   // The same scenes as RoomAxis: the nearest one names the room.
-  const scenes = [
-    { label: c.poles?.[0] ?? 'phone', at: c.safe[0] },
-    { label: 'podcast', at: Math.round((c.safe[1] / 4) * 10) / 10 },
-    { label: c.poles?.[1] ?? 'studio', at: c.safe[1] },
-  ];
+  const scenes = roomScenes(c);
   const near = scenes.reduce((a, s) => (Math.abs(s.at - v) < Math.abs(a.at - v) ? s : a), scenes[0]);
   return (
     <div class="tile-sum">

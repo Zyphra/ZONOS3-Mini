@@ -14,7 +14,7 @@ interface Chip {
 
 const half = (x: number) => Math.max(0.5, Math.round(x * 2) / 2);
 
-/** One quick chip per pole of every spannable control, at a moderate dose inside its tested-safe range. */
+/** One quick chip per pole of every spannable control, at a moderate dose inside its natural range. */
 function chipsOf(cs: ControlSpec[], taken: Set<string>): Chip[] {
   // A pole named like a mood ("calm" arousal vs the Calm mood) says which it is.
   const pole = (c: ControlSpec, p: string) => (taken.has(p.toLowerCase()) ? `${p} · ${c.label.toLowerCase()}` : p);
@@ -56,7 +56,7 @@ export function Direction({ values, set, clear, name }: Props) {
               class={`chip dchip${on ? ' is-on' : ''}`}
               style={{ '--fam': hue(ch.control.group) }}
               aria-pressed={on}
-              title={`${ch.control.label} ${ch.value > 0 ? '+' : ''}${ch.value}${ch.control.effect ? ` · ${ch.control.effect}` : ''}`}
+              title={`${ch.control.label} · strength ${Math.abs(ch.value)}${ch.control.effect ? ` · ${ch.control.effect}` : ''}`}
               onClick={() => set(ch.control.id, on ? 0 : ch.value)}
             >
               {ch.label}
@@ -72,7 +72,7 @@ export function Direction({ values, set, clear, name }: Props) {
         )}
       </div>
       <details class="pro direction-fine">
-        <summary>{active.length ? `Fine-tune ${active.map((c) => c.label.toLowerCase()).join(', ')}` : 'Fine-tune doses'}</summary>
+        <summary>{active.length ? `Fine-tune ${active.map((c) => c.label.toLowerCase()).join(', ')}` : 'Fine-tune strength'}</summary>
         <div class="direction-sliders">
           {fine.map((c) => (
             <Slider key={c.id} control={c} value={values[c.id] ?? 0} color={hue(c.group)} detailed onChange={(v) => set(c.id, v)} />

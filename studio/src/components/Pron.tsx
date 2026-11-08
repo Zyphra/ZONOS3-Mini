@@ -12,8 +12,6 @@ import { ipaToXsampa, parsePron, xsampaToIpa } from '../lib/pron';
 import { backend, notify, projectSettings, pronTokens } from '../state/app';
 import { Icon } from './Icon';
 
-export const SERVE_HINT = 'SERVE_MODEL=<phoneme checkpoint> PHONEME_LEXICON=<pronunciation lexicon dir>';
-
 /** A render refused locally for its pronunciation groups (the input's marks already list the problems). */
 export const isPronError = (e: string | null | undefined) => !!e?.startsWith('Pronunciation:');
 
@@ -151,9 +149,11 @@ function GroupEditor({ st }: { st: EditState }) {
   const [value, setValue] = useState(st.body);
   const box = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
+  /** The latest save / flash, for the one-time outside-click listener. */
+  const onOutside = useRef<() => void>(() => {});
   useEffect(() => {
     requestAnimationFrame(() => field.current?.select());
-    const outside = (e: PointerEvent) => !box.current?.contains(e.target as Node) && close();
+    const outside = (e: PointerEvent) => !box.current?.contains(e.target as Node) && onOutside.current();
     window.addEventListener('pointerdown', outside);
     return () => window.removeEventListener('pointerdown', outside);
   }, []);
@@ -175,6 +175,15 @@ function GroupEditor({ st }: { st: EditState }) {
       guessed.value = rest;
     }
     close();
+  };
+  // Clicking elsewhere keeps valid input (saves it); invalid input stays open and the problem flashes.
+  onOutside.current = () => {
+    if (value.trim() === st.body) return close();
+    if (ipa && !bad.length) return save();
+    const el = box.current?.querySelector<HTMLElement>('.pron-warn, .pron-ipa');
+    el?.classList.add('is-flash');
+    setTimeout(() => el?.classList.remove('is-flash'), 900);
+    field.current?.focus();
   };
   const left = clamp(st.x, 12, window.innerWidth - 352);
   const top = st.y + 220 > window.innerHeight ? Math.max(12, st.y - 250) : st.y;
@@ -271,12 +280,7 @@ export function PronHelp() {
   if (!pronOn.value) {
     return (
       <div class="hint pron-help">
-        <p>This server has no pronunciation input: parentheses are read as text.</p>
-        <details class="pro">
-          <summary>For whoever runs the server</summary>
-          <p>Pronunciation input (X-SAMPA in parentheses) needs the phoneme-token checkpoint and a lexicon:</p>
-          <pre class="mono">{SERVE_HINT}</pre>
-        </details>
+        <p>This server has no pronunciation lexicon: parentheses are read as text.</p>
       </div>
     );
   }

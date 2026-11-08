@@ -13,6 +13,7 @@ import { ApiError } from '../lib/http';
 import { MIN_GAP_FRAMES, contextWindows, isTagToken, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
 import { bytesToBase64, base64ToBytes } from '../lib/files';
 import { parseWav, wavBytes } from '../lib/wav';
+import { levelMeter } from '../lib/level';
 import { clamp, uid } from '../lib/math';
 import { parsePron, pronProblem, spokenText, toSent } from '../lib/pron';
 import { EDIT_LANGUAGES, langLabel } from '../lib/languages';
@@ -130,7 +131,7 @@ let touched = false;
 export const fixMode = signal(false);
 export const wholeValues = signal<Values>({});
 /** Generations by version id: stepping back to a version shows its takes again. */
-const gens = signal<Map<string, Generation>>(new Map());
+export const gens = signal<Map<string, Generation>>(new Map());
 export const gen = computed<Generation | null>(() => (versionId.value && gens.value.get(versionId.value)) || null);
 function setGen(g: Generation | null) {
   const next = new Map(gens.value);
@@ -231,7 +232,10 @@ export async function openClip(source: Source, pcm: Float32Array, sr: number, kn
   const max = maxSeconds.value;
   const dur = pcm.length / sr;
   if (dur > max) {
-    notify(`Editing opens clips up to ${Math.round(max)} s (this one is ${dur.toFixed(1)} s): trim it or open a shorter part.`, 'error');
+    notify(`Editing opens clips up to ${Math.round(max)} s (this one is ${dur.toFixed(1)} s).`, 'error', {
+      label: `Open the first ${Math.round(max)} s`,
+      run: () => void openClip(source, pcm.slice(0, Math.floor((max - 0.05) * sr)), sr, knownText, language),
+    });
     return false;
   }
   if (dur < 0.3) {
@@ -240,8 +244,8 @@ export async function openClip(source: Source, pcm: Float32Array, sr: number, kn
   }
   if (busy.value) return false;
   const had = doc.value;
-  if (had && had.versions.length > 1) {
-    const ok = await confirm(`Opening another clip closes v1–v${had.versions.length} of “${had.name}”. Continue?`, { ok: 'Open', danger: true });
+  if (had && (had.versions.length > 1 || draftDirty.value || gens.value.size > 0)) {
+    const ok = await confirm(`Opening another clip closes “${had.name}” — unsaved text, regions and takes are lost. Continue?`, { ok: 'Open', danger: true });
     if (!ok) return false;
   }
   suggestedTranscript.value = grouped ? spokenText(knownText!) : '';
@@ -632,7 +636,7 @@ export function takeWarnings(t: Take, g: GenFacts): TakeWarning[] {
     // A region that only adds nonverbal tags has no words to time: a laugh is as long as it is.
     const cs = changes[k] ?? [];
     const tagsOnly = cs.length > 0 && cs.every((c) => c.i1 === c.i2 && Array.from({ length: c.j2 - c.j1 }, (_, i) => g.targetTokens[c.j1 + i]).every(isTagToken));
-    if (t.stopped[k] === false) out.push({ region: k, text: `Region ${n} never stopped (it hit the length cap); this take is probably broken.` });
+    if (t.stopped[k] === false) out.push({ region: k, text: `Region ${n} never stopped (it ran out of room); this take is probably broken.` });
     else if (tagsOnly) return;
     // The server's expectation (from the alignment and the word diff) when it sent one, else the heuristics below.
     else if (exp != null && exp > 0) {
@@ -895,9 +899,16 @@ export async function keep() {
     const label = summarizeChanges(changes, v.words, g.target, g.groups) || (g.manual.some(Boolean) ? 'regenerated' : 'edit');
     const nv: Version = { id: uid(), label, pcm: t.pcm, sr: t.sr, b64: t.b64, duration: t.duration, transcript: spoken, words, alignedWords: words, automatic: false, ...(spoken !== g.target ? { display: g.target } : {}) };
     player.stop();
+    // One `apply`: Undo of the keep is one `docs.undo()` (the previous version becomes current again, the new one is dropped).
     docs.apply({ ...d, versions: [...d.versions.slice(0, d.current + 1), nv], current: d.current + 1 });
     const heard = (t.verify?.groups ?? []).map((x) => x.heard ?? '?');
-    notify(spoken !== g.target ? `Kept ${t.label.toLowerCase()} as v${d.current + 1}; its transcript spells the pronunciations as heard (${heard.join(', ') || 'guessed'})` : `Kept ${t.label.toLowerCase()} as v${d.current + 1}`, 'ok');
+    notify(spoken !== g.target ? `Kept ${t.label.toLowerCase()} as v${d.current + 1}; its transcript spells the pronunciations as heard (${heard.join(', ') || 'guessed'})` : `Kept ${t.label.toLowerCase()} as v${d.current + 1}`, 'ok', {
+      label: 'Undo',
+      run: () => {
+        player.stop();
+        docs.undo();
+      },
+    });
   } catch (e) {
     if (isAbort(e)) notify('Cancelled');
     else notify(`Couldn’t keep the take: ${errorText(e)}`, 'error');
@@ -920,12 +931,47 @@ export async function jumpTo(index: number) {
   docs.apply({ ...d, current: index });
 }
 
+/** ⌘Z on Edit: a step back through the document history, asking first when the draft would be lost. */
+export async function undoVersion() {
+  if (!docs.canUndo.value || !(await leaveVersionOk())) return;
+  player.stop();
+  docs.undo();
+}
+
+/** ⇧⌘Z on Edit. */
+export async function redoVersion() {
+  if (!docs.canRedo.value || !(await leaveVersionOk())) return;
+  player.stop();
+  docs.redo();
+}
+
 // ── Fixing the transcript ─────────────────────────────────────────────────────────────────────────
 
-export function setFix(on: boolean) {
+/** The edited words as they were before Fix the transcript opened: restored on Cancel and after a re-align. */
+let draftBeforeFix: string | null = null;
+
+export async function setFix(on: boolean) {
   if (busy.value || (!on && needsTranscript.value)) return;
-  fixMode.value = on;
-  if (!on) text.value = version.value?.transcript ?? '';
+  if (on) {
+    draftBeforeFix = text.value;
+    fixMode.value = true;
+    return;
+  }
+  const v = version.value;
+  const edited = draftBeforeFix !== null && draftBeforeFix !== (v?.transcript ?? '');
+  if (edited && !(await confirm('Leave the transcript fix? Your edited words are kept.', { ok: 'Leave' }))) return;
+  fixMode.value = false;
+  text.value = edited ? draftBeforeFix! : (v?.transcript ?? '');
+  draftBeforeFix = null;
+  replan();
+}
+
+/** The reader checked an automatic transcript and found it right: it is no longer flagged. */
+export function confirmTranscript() {
+  const d = doc.value;
+  const v = version.value;
+  if (!d || !v || !v.automatic) return;
+  docs.apply({ ...d, versions: d.versions.map((x, i) => (i === d.current ? { ...x, automatic: false } : x)) });
 }
 
 /**
@@ -963,18 +1009,25 @@ export async function setLanguage(language: string) {
   }
 }
 
-/** Align the corrected (or first typed) transcript: replaces the current version's words (undoable). */
+/** Align the corrected (or first typed) transcript: replaces the current version's words (undoable). The edited words come back on top. */
 export async function saveFix(corrected: string) {
   const d = doc.value;
   const v = version.value;
   if (!d || !v || !corrected.trim()) return;
   const first = !v.transcript;
+  const edited = draftBeforeFix !== null && draftBeforeFix !== (v.transcript ?? '') ? draftBeforeFix : null;
   ctrl = new AbortController();
   busy.value = { label: first ? 'Aligning the transcript…' : 'Re-aligning…', started: performance.now() };
   try {
     const a = await api.align(v.b64, corrected.trim(), d.language, ctrl.signal);
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words, automatic: false };
+    // The version effect resets the draft to the new transcript; the edited words go back on top of it after.
     docs.apply({ ...d, versions: d.versions.map((x, i) => (i === d.current ? nv : x)) });
+    draftBeforeFix = null;
+    if (edited) {
+      text.value = edited;
+      replan();
+    }
     notify(first ? 'Transcript aligned: edit the words to change the speech' : 'Transcript corrected and re-aligned', 'ok');
   } catch (e) {
     if (isAbort(e)) notify('Cancelled');
@@ -1019,6 +1072,8 @@ export async function sendBack() {
 // ── Recording ─────────────────────────────────────────────────────────────────────────────────────
 
 export const recording = signal<{ started: number; stop: () => void } | null>(null);
+/** Microphone level while recording (0…1). */
+export const recordLevel = signal(0);
 
 export async function recordClip() {
   if (recording.value) return recording.value.stop();
@@ -1028,10 +1083,12 @@ export async function recordClip() {
   } catch (e) {
     return notify(`Microphone unavailable: ${errorText(e)}`, 'error');
   }
+  const meter = levelMeter(stream, (v) => (recordLevel.value = v));
   const rec = new MediaRecorder(stream);
   const parts: Blob[] = [];
   rec.ondataavailable = (ev) => parts.push(ev.data);
   rec.onstop = async () => {
+    meter.stop();
     stream.getTracks().forEach((t) => t.stop());
     recording.value = null;
     try {

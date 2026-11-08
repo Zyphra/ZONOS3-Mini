@@ -46,14 +46,18 @@ export function matchLines(old: Line[], rows: string[]): { lines: Line[]; droppe
   return { lines, dropped: old.filter((l) => !used.has(l.id)) };
 }
 
-/** Why a take no longer matches its line (the first difference found), or null when it still does. */
-export function staleReason(stored: GenerateRequest, fresh: GenerateRequest): string | null {
+/**
+ * Why a take no longer matches its line (the first difference found), or null when it still does.
+ * `voiceEdited`: the line's cast voice was reshaped in Cast since (the whole-line controls differ because of the
+ * voice's own design, not the script baseline).
+ */
+export function staleReason(stored: GenerateRequest, fresh: GenerateRequest, opts: { voiceEdited?: boolean } = {}): string | null {
   if (stored.text !== fresh.text) return 'text changed';
   if (stored.speaker_embedding_id !== fresh.speaker_embedding_id || stored.speaker_mode !== fresh.speaker_mode) return 'voice changed';
   if ((stored.language ?? 'en_us') !== (fresh.language ?? 'en_us')) return 'language changed';
   if (JSON.stringify(stored.control_spans ?? []) !== JSON.stringify(fresh.control_spans ?? [])) return 'painting changed';
-  // The whole-line controls: the script baseline, or the persona's design edited since.
-  if (JSON.stringify(stored.controls ?? {}) !== JSON.stringify(fresh.controls ?? {})) return 'baseline changed';
+  // The whole-line controls: the voice's design edited since, or the script baseline.
+  if (JSON.stringify(stored.controls ?? {}) !== JSON.stringify(fresh.controls ?? {})) return opts.voiceEdited ? 'voice edited' : 'baseline changed';
   if (stored.tag_cfg_scale !== fresh.tag_cfg_scale) return 'tag strength changed';
   return null;
 }

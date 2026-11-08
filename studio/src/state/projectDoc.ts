@@ -8,7 +8,7 @@
 import { batch } from '@preact/signals';
 import type { Rendered } from '../api';
 import * as player from '../audio/player';
-import { holdPreview, previewText } from '../audio/preview';
+import { holdPreview, previewText, previewTouched } from '../audio/preview';
 import { base64ToBytes, bytesToBase64 } from '../lib/files';
 import { parseWav } from '../lib/wav';
 import { uid } from '../lib/math';
@@ -18,7 +18,7 @@ import * as edit from './edit';
 import { cast, ownVoices, type OwnVoice } from './library';
 import { MediaSink, prime } from './media';
 import { load } from './persist';
-import { lineBusy, lineError, lineRequest, newScript, script, scripts, takes, type Script, type Take } from './script';
+import { failedLines, holdStaleToast, lineBusy, lineError, lineRequest, newScript, script, scripts, takes, type Script, type Take } from './script';
 import { voiceOrigins } from './who';
 import { DEFAULT_SETTINGS, SCHEMA, summaryOf, type ProjectDoc, type ProjectHead, type ProjectSettings, type StoredAudio, type StoredEditDoc } from './projectSchema';
 
@@ -154,12 +154,15 @@ export async function restore(doc: ProjectDoc, read: (hash: string) => Promise<B
       player.stop();
       // Opening a project shows its Cast line without rendering it (pickBase, right after, is part of the load too).
       holdPreview();
+      holdStaleToast();
+      failedLines.value = [];
       projectSettings.value = { ...DEFAULT_SETTINGS, ...doc.settings };
       ownVoices.value = voices;
       designs.reset(doc.cast.design);
       cast.value = doc.cast.personas;
       voiceOrigins.value = doc.cast.origins;
       previewText.value = doc.cast.previewText;
+      previewTouched.value = false;
       scripts.reset(scriptIn);
       // After the cast, settings and backend are in (a migrated take's request is its line's).
       const migrated = sceneRenders.flatMap(([id, audio]): [string, Take[]][] => {

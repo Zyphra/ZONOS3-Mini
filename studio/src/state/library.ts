@@ -3,6 +3,7 @@ import { signal } from '@preact/signals';
 import * as api from '../api';
 import type { Speaker } from '../api';
 import * as player from '../audio/player';
+import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
 import { notify } from './app';
 import type { Design } from './design';
@@ -105,6 +106,8 @@ export const uploading = signal(false);
 export const REFERENCE_MAX_S = 60;
 /** A recording stops itself here. */
 export const RECORD_MAX_S = 30;
+/** Shorter clips are refused (the server would, too). */
+export const RECORD_MIN_S = 2;
 
 /** A clip (dropped, chosen or recorded) becomes a voice; `makeBase` says the toast should mention it became the base. */
 export async function uploadClip(blob: Blob, label: string, fileName: string, makeBase = false): Promise<Speaker | null> {
@@ -120,8 +123,8 @@ export async function uploadClip(blob: Blob, label: string, fileName: string, ma
       return null;
     }
     const seconds = pcm.length / sr;
-    if (seconds < 2) {
-      notify('Too short: record at least 5 s', 'error');
+    if (seconds < RECORD_MIN_S) {
+      notify(`Too short: record at least ${RECORD_MIN_S} s`, 'error');
       return null;
     }
     if (seconds > REFERENCE_MAX_S) {
@@ -173,8 +176,13 @@ export async function saveEmbeddingVoice(label: string, embedding: Float32Array)
 }
 
 export const recording = signal<{ started: number; stop: () => void } | null>(null);
+/** Microphone level while recording (0…1, ~10 fps). */
+export const recordLevel = signal(0);
+/** A finished recording waiting for the reader's decision: use it as a voice, or discard it. */
+export const pendingClip = signal<{ blob: Blob; pcm: Float32Array; sr: number; seconds: number } | null>(null);
 
-export async function startRecording(onDone: (s: Speaker | null) => void) {
+/** Record from the microphone; the clip lands in `pendingClip` for review (`usePendingClip` makes it a voice). */
+export async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
     notify('Recording needs HTTPS (or localhost)', 'error');
     return;
@@ -187,15 +195,26 @@ export async function startRecording(onDone: (s: Speaker | null) => void) {
     notify(denied ? 'Allow the microphone in the browser’s site settings' : `Microphone unavailable: ${errorText(e)}`, 'error');
     return;
   }
+  const meter = levelMeter(stream, (v) => (recordLevel.value = v));
   const rec = new MediaRecorder(stream);
   const parts: Blob[] = [];
   rec.ondataavailable = (ev) => parts.push(ev.data);
   rec.onstop = async () => {
+    meter.stop();
     stream.getTracks().forEach((t) => t.stop());
     recording.value = null;
     const blob = new Blob(parts, { type: rec.mimeType });
-    const when = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    onDone(await uploadClip(blob, `Recording ${when}`, 'recording.webm', true));
+    try {
+      const { pcm, sr } = await player.decode(await blob.arrayBuffer());
+      const seconds = pcm.length / sr;
+      if (seconds < RECORD_MIN_S) {
+        notify(`Too short: record at least ${RECORD_MIN_S} s`, 'error');
+        return;
+      }
+      pendingClip.value = { blob, pcm, sr, seconds };
+    } catch (e) {
+      notify(`Couldn’t read the recording: ${errorText(e)}`, 'error');
+    }
   };
   rec.start();
   const auto = setTimeout(() => rec.state === 'recording' && rec.stop(), RECORD_MAX_S * 1000);
@@ -205,6 +224,38 @@ export async function startRecording(onDone: (s: Speaker | null) => void) {
       clearTimeout(auto);
       if (rec.state === 'recording') rec.stop();
     },
+  };
+}
+
+/** The reviewed recording becomes a voice (and the base). */
+export async function usePendingClip(): Promise<Speaker | null> {
+  const clip = pendingClip.value;
+  if (!clip) return null;
+  pendingClip.value = null;
+  const when = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return uploadClip(clip.blob, `Recording ${when}`, 'recording.webm', true);
+}
+
+/** Rename one of the project's voices (project-local: the label the server has is the one it was created with). */
+export function renameVoice(id: string, label: string) {
+  const n = label.trim();
+  if (!n) return;
+  ownVoices.value = ownVoices.value.map((v) => (v.id === id ? { ...v, label: n } : v));
+  speakers.value = speakers.value.map((s) => (s.id === id ? { ...s, label: n } : s));
+}
+
+/** Drop a voice from the project (the server keeps it for this session); returns what puts it back. */
+export function removeVoice(id: string): (() => void) | null {
+  const own = ownVoices.value.find((v) => v.id === id);
+  const speaker = speakers.value.find((s) => s.id === id);
+  if (!speaker) return null;
+  const ownIndex = ownVoices.value.indexOf(own!);
+  const speakerIndex = speakers.value.indexOf(speaker);
+  ownVoices.value = ownVoices.value.filter((v) => v.id !== id);
+  speakers.value = speakers.value.filter((s) => s.id !== id);
+  return () => {
+    if (own && !ownVoices.value.some((v) => v.id === id)) ownVoices.value = [...ownVoices.value.slice(0, ownIndex), own, ...ownVoices.value.slice(ownIndex)];
+    if (!speakers.value.some((s) => s.id === id)) speakers.value = [...speakers.value.slice(0, speakerIndex), speaker, ...speakers.value.slice(speakerIndex)];
   };
 }
 

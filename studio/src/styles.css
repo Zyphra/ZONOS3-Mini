@@ -167,7 +167,7 @@ body,
 }
 .act.is-on .act-n {
   border-color: var(--o);
-  color: var(--o);
+  color: var(--o-text);
 }
 .stage {
   min-height: 0;
@@ -197,7 +197,7 @@ body,
   flex: 1;
 }
 .rail-section h4 {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -279,7 +279,7 @@ body,
   margin-left: 0;
 }
 .voice.is-on .voice-name {
-  color: var(--o);
+  color: var(--o-text);
 }
 .play-mini {
   display: grid;
@@ -673,7 +673,7 @@ body,
 .slider-rail {
   left: 0;
   right: 0;
-  background: var(--surface-3);
+  background: var(--line-3);
 }
 .band-strong {
   background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--warn) 35%, transparent) 0 3px, transparent 3px 6px);
@@ -717,7 +717,7 @@ body,
 .slider-poles {
   display: flex;
   justify-content: space-between;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-3);
   margin-top: -2px;
 }
@@ -1030,7 +1030,7 @@ body,
   color: var(--text);
 }
 .room-scene-label {
-  font-size: 10.5px;
+  font-size: 11px;
   opacity: 0.8;
   transition: opacity var(--t);
 }
@@ -1088,7 +1088,7 @@ body,
 }
 .q {
   position: absolute;
-  font-size: 9.5px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-3);
@@ -1284,7 +1284,7 @@ body,
   text-align: right;
 }
 .preview-strip .metrics.is-busy {
-  color: var(--o);
+  color: var(--o-text);
 }
 .card-modal-body {
   min-height: 0;
@@ -1463,12 +1463,12 @@ body,
 }
 /* The Cast card is narrow: chips keep their strength readout at a smaller size. */
 .strip .mood.is-compact .mood-chip b {
-  font-size: 10px;
+  font-size: 11px;
 }
 .mood-hint {
   grid-column: 1 / -1;
   margin: 0;
-  font-size: 10.5px;
+  font-size: 11px;
 }
 .strip .mood.is-compact .mood-chips .chip {
   padding: 2px 8px;
@@ -1647,7 +1647,7 @@ body,
   position: absolute;
   left: 11px;
   top: -12px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: var(--mono);
   color: var(--text);
   white-space: nowrap;
@@ -1767,17 +1767,62 @@ body,
 .speak-bar .metrics {
   flex: 0 1 auto;
 }
-.speak-hint {
-  flex: 1 1 160px;
-  min-width: 100px;
+.voice-chip {
+  flex: 0 1 auto;
+  max-width: 200px;
+  gap: 6px;
 }
-.preview-toggles {
+.voice-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.speak-first {
+  margin: 6px 0 0;
+  color: var(--text-3);
+}
+.preview-toggles .mode-btn {
   display: inline-flex;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
 }
-.preview-toggles .icon-btn.is-on {
-  color: var(--o);
-  background: color-mix(in srgb, var(--o) 14%, transparent);
+.preview-toggles .mode-btn.is-on {
+  color: var(--o-text);
+}
+/* Microphone level while recording: a thin bar under the Stop label. */
+.btn-rec {
+  position: relative;
+  overflow: hidden;
+}
+.rec-level {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: color-mix(in srgb, var(--text-3) 25%, transparent);
+}
+.rec-level > span {
+  display: block;
+  height: 100%;
+  background: var(--o);
+  transition: width 80ms linear;
+}
+.pending-clip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  margin: 6px 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-s);
+  background: var(--surface-2);
+}
+.pending-clip .wave {
+  flex: 1;
+  min-width: 60px;
 }
 .speak.is-stale .speak-bar .wave {
   opacity: 0.4;
@@ -1810,7 +1855,7 @@ body,
   color: var(--text);
 }
 .ab-btn.is-on b {
-  color: var(--o);
+  color: var(--o-text);
 }
 .ab-btn.is-playing {
   box-shadow: inset 0 -2px 0 var(--o);
@@ -2007,6 +2052,7 @@ body,
   padding-top: 5px;
 }
 .line-main {
+  position: relative;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -2104,7 +2150,7 @@ textarea.line-edit[aria-invalid='true'] {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--o) 40%, transparent);
 }
 .take-stale {
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 5px;
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 50%, transparent);
@@ -2140,7 +2186,7 @@ textarea.line-edit[aria-invalid='true'] {
 }
 .take-follow {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 3px;
   border-radius: var(--r-s);
   color: var(--text-3);
@@ -2150,7 +2196,7 @@ textarea.line-edit[aria-invalid='true'] {
   color: var(--warn-text);
 }
 .star.is-on {
-  color: var(--o);
+  color: var(--o-text);
 }
 .add-line {
   margin: 10px 0 20px;
@@ -2171,8 +2217,26 @@ textarea.line-edit[aria-invalid='true'] {
   padding: 10px 14px 12px;
   animation: rise 140ms var(--ease);
 }
-.brushbar.is-above {
-  transform: translateY(-100%);
+.brushbar.is-anchored {
+  position: relative;
+  z-index: 5;
+  width: auto;
+  max-width: 600px;
+  margin-top: 4px;
+  box-shadow: none;
+}
+/* Phone / desktop transport (Direct): the render, regenerate and play buttons as one row. */
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.transport-failed {
+  margin: 0;
+}
+.hint.is-bad {
+  color: var(--bad-text);
 }
 .brushbar header {
   display: flex;
@@ -2242,7 +2306,7 @@ textarea.line-edit[aria-invalid='true'] {
   display: grid;
   justify-items: center;
   gap: 8px;
-  color: var(--o);
+  color: var(--o-text);
   text-align: center;
 }
 .file-drop-card b {
@@ -2277,24 +2341,6 @@ textarea.line-edit[aria-invalid='true'] {
   align-items: center;
   gap: 12px;
   margin-bottom: 10px;
-}
-.gap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 4px 8px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-.gap input {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  width: 100%;
-  accent-color: var(--o);
-}
-.gap b {
-  grid-column: 2;
-  grid-row: 1;
 }
 .lanes {
   position: relative;
@@ -2344,7 +2390,7 @@ textarea.line-edit[aria-invalid='true'] {
 }
 .clip-est {
   font-style: normal;
-  font-size: 9.5px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-3);
@@ -2427,7 +2473,7 @@ textarea.line-edit[aria-invalid='true'] {
   border-color: color-mix(in srgb, var(--warn) 60%, transparent);
 }
 .pron-chip-check {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--warn);
@@ -2518,7 +2564,7 @@ textarea.line-edit[aria-invalid='true'] {
   color: var(--text-2);
 }
 .tag-weak {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
   letter-spacing: 0.02em;
 }
@@ -2749,7 +2795,7 @@ textarea.line-edit[aria-invalid='true'] {
 }
 .src-group summary b {
   font-weight: 500;
-  font-size: 10.5px;
+  font-size: 11px;
   padding: 0 6px;
   border-radius: 999px;
   background: var(--surface-3);
@@ -2760,15 +2806,21 @@ textarea.line-edit[aria-invalid='true'] {
   margin: 2px 0 6px;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
   max-height: 210px;
   overflow-y: auto;
+  overflow-x: hidden;
+}
+.src-list > li {
+  min-width: 0;
 }
 .src-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   border: 0;
   background: none;
   padding: 5px 6px;
@@ -2786,11 +2838,11 @@ textarea.line-edit[aria-invalid='true'] {
   cursor: default;
 }
 .src-item.is-busy {
-  color: var(--o);
+  color: var(--o-text);
 }
 .src-n {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-3);
   flex: none;
 }
@@ -2848,7 +2900,7 @@ textarea.line-edit[aria-invalid='true'] {
   min-width: 22px;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-family: var(--mono);
   background: var(--surface-3);
   color: var(--text);
@@ -2873,6 +2925,68 @@ textarea.line-edit[aria-invalid='true'] {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+.ed-text-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+/* After Generate: what is being compared, and the way back. */
+.ed-compare-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--r-s);
+  background: color-mix(in srgb, var(--ok) 12%, var(--surface-2));
+  font-size: 12.5px;
+}
+.ed-check {
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+.ed-readout {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--o-text);
+}
+/* Per-region direction: a summary row until opened. */
+.region-dir-sum,
+.region-dir-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.region-dir-head {
+  margin-bottom: 4px;
+}
+/* One verdict per take. */
+.badge.verdict {
+  font-family: var(--font);
+  letter-spacing: 0;
+}
+.badge.verdict.is-ok {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: var(--ok-text);
+}
+.badge.verdict.is-warn {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn-text);
+}
+.badge.verdict.is-muted {
+  color: var(--text-3);
+}
+.take-details {
+  margin-top: 4px;
+}
+.take-details p {
+  margin: 4px 0;
+  color: var(--text-3);
+}
+/* The version's regions, faint, on the take view (orientation only). */
+.ew-region.is-ghost {
+  opacity: 0.35;
+  pointer-events: none;
 }
 .ed-title {
   display: grid;
@@ -2964,7 +3078,7 @@ textarea.line-edit[aria-invalid='true'] {
   position: absolute;
   right: 4px;
   bottom: 2px;
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--c4) 70%, transparent);
@@ -3003,7 +3117,7 @@ textarea.line-edit[aria-invalid='true'] {
   top: 3px;
   left: 4px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text);
   background: color-mix(in srgb, var(--bg) 75%, transparent);
   border-radius: 999px;
@@ -3016,6 +3130,7 @@ textarea.line-edit[aria-invalid='true'] {
   width: 10px;
   cursor: ew-resize;
   pointer-events: auto;
+  touch-action: none;
 }
 .ew-edge::after {
   content: '';
@@ -3091,7 +3206,7 @@ textarea.line-edit[aria-invalid='true'] {
   z-index: 2;
 }
 .ew-wblock.is-now .ew-wlabel {
-  color: var(--o);
+  color: var(--o-text);
 }
 .ew-wblock.is-adjusted::after {
   content: '';
@@ -3133,6 +3248,7 @@ textarea.line-edit[aria-invalid='true'] {
   width: 16px;
   cursor: ew-resize;
   z-index: 3;
+  touch-action: none;
 }
 .ew-wedge-s {
   left: -8px;
@@ -3241,7 +3357,7 @@ textarea.line-edit[aria-invalid='true'] {
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   border: 1px solid var(--o);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text);
   white-space: nowrap;
   pointer-events: none;
@@ -3269,7 +3385,7 @@ textarea.line-edit[aria-invalid='true'] {
   text-underline-offset: 3px;
 }
 .ew-word.is-now {
-  color: var(--o);
+  color: var(--o-text);
 }
 .ed-columns {
   display: grid;
@@ -3575,7 +3691,7 @@ textarea.line-edit[aria-invalid='true'] {
   font-variant-numeric: tabular-nums;
 }
 .ed-status.is-busy {
-  color: var(--o);
+  color: var(--o-text);
 }
 .ed-takes {
   position: sticky;
@@ -3633,7 +3749,7 @@ textarea.line-edit[aria-invalid='true'] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 10.5px;
+  font-size: 11px;
 }
 .badge.wer.ok {
   background: color-mix(in srgb, var(--ok) 20%, transparent);
@@ -3650,7 +3766,7 @@ textarea.line-edit[aria-invalid='true'] {
 .badge-best {
   margin-left: auto;
   background: color-mix(in srgb, var(--o) 20%, transparent);
-  color: var(--o);
+  color: var(--o-text);
   font-family: var(--font);
 }
 .take-wave {

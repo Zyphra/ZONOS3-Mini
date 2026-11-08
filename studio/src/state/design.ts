@@ -96,12 +96,14 @@ export function setMode(mode: SpeakerMode) {
   if (mode !== design.value.mode) designs.apply({ ...design.value, mode });
 }
 
+/** Apply a named starting point (replaces the bench moves; the toast offers Undo). */
 export function applyPreset(name: string) {
   const preset = spec.value.ui.presets[name];
   if (!preset) return;
   const { values, accents } = presetToValues(preset);
   const d = design.value;
   designs.apply({ ...d, mode: 'embedding', values, pin: pinForMix(accents, spec.value.ui.accents, d.pin.tab) });
+  if (benchMoved(d)) notify(`Applied ${name}; your moves were replaced`, 'info', { label: 'Undo', run: () => designs.undo() });
   noteModeChange(d.mode, 'embedding');
 }
 
@@ -115,7 +117,7 @@ export function roll() {
   noteModeChange(before.mode, next.mode);
 }
 
-/** Back to the plain base voice: in Exact clone only the usable controls (delivery, mood) reset; the rest wait for Designable. */
+/** Back to the plain base voice: in Exact clone only the usable controls (delivery, mood) reset; the rest wait for Designable. The toast offers Undo. */
 export function resetDesign() {
   const d = design.value;
   const s = spec.value;
@@ -125,7 +127,9 @@ export function resetDesign() {
     if (c && !controlUsable(s, c, d.mode)) values[id] = v;
   }
   const accentUsable = s.ui.accents.some((a) => controlUsable(s, a, d.mode));
+  if (!benchMoved(d)) return;
   designs.apply({ ...d, values, pin: accentUsable ? homePin(d.pin.tab) : d.pin });
+  notify('Controls reset', 'info', { label: 'Undo', run: () => designs.undo() });
 }
 
 // ── Randomness: roll and neighbours ───────────────────────────────────────────────────────────────
@@ -137,7 +141,7 @@ function randomSafe(c: ControlSpec, r: () => number, scale: number): number {
   return Math.round((lo + (hi - lo) * r()) * scale * 10) / 10;
 }
 
-/** A random point inside the tested-safe range of every control (and a random accent half the time). */
+/** A random point inside the natural range of every control (and a random accent half the time). */
 export function rollDesign(r: () => number = Math.random): Design {
   const s = spec.value;
   const defaults = speakers.value.filter((x) => x.is_default);

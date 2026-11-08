@@ -10,12 +10,16 @@
   --surface-3: #222222;
   --line: #ffffff1a;
   --line-2: #ffffff33;
+  /* Input borders and slider tracks: ≥ 3:1 on --bg and --surface (hairlines stay decorative). */
+  --line-3: #ffffff61;
   --text: #f5f3ee;
   --text-2: #f5f3ee9e;
   --text-3: #f5f3ee7a;
   --inv: #f5f3ee;
   --inv-text: #0a0a0a;
   --o: #e7620f;
+  /* Orange as text or an icon on a flat surface (≥ 4.5:1 in both themes). */
+  --o-text: #e7620f;
   --o-hi: #fdba74;
   --glass: #0c0c0ce6;
   --backdrop: #000000a6;
@@ -51,12 +55,14 @@
   --surface-3: #e6e6e3;
   --line: #14141424;
   --line-2: #1414144d;
+  --line-3: #14141480;
   --text: #111111;
   --text-2: #111111db;
   --text-3: #111111b3;
   --inv: #161616;
   --inv-text: #f4f4f2;
   --o: #e7620f;
+  --o-text: #b84a07;
   --o-hi: #c2410c;
   --glass: #fafaf9eb;
   --backdrop: #11111159;
@@ -67,8 +73,8 @@
   --c4: #5d7584;
   --c5: #6f7f22;
   --c6: #b84d66;
-  --ok: #2f8a4f;
-  --warn: #b5650f;
+  --ok: #25753f;
+  --warn: #9a5208;
   --bad: #c43d2c;
   --info: #4e6fae;
   color-scheme: light;
@@ -195,7 +201,7 @@ svg:focus-visible {
   gap: 7px;
   padding: 7px 15px;
   border-radius: 999px;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--line-3);
   background: transparent;
   color: var(--text);
   font-size: 13px;
@@ -337,7 +343,7 @@ svg:focus-visible {
 .input {
   width: 100%;
   background: var(--bg-2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-3);
   border-radius: var(--r-s);
   padding: 7px 10px;
   transition: border-color var(--t);
@@ -386,7 +392,7 @@ select.input {
   margin: 8px 0 0;
 }
 .eyebrow {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -394,7 +400,7 @@ select.input {
 }
 .tag {
   margin-left: 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   padding: 1px 6px;
   border-radius: 4px;
@@ -531,7 +537,7 @@ select.input {
   background: var(--fam, var(--o));
 }
 .zone-tag {
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   padding: 0 6px;
   border-radius: 999px;
@@ -605,6 +611,22 @@ select.input {
   color: var(--text-2);
   font-size: 14px;
 }
+/* The lite page's and the chooser's title block. */
+.page-head {
+  display: grid;
+  gap: 4px;
+}
+.page-head h1 {
+  margin: 0;
+  font-weight: 300;
+  font-size: 32px;
+  letter-spacing: -0.64px;
+  line-height: 1.15;
+}
+.page-head p {
+  margin: 4px 0 0;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

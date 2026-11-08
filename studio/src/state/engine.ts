@@ -102,6 +102,34 @@ export function identityEstimate(spec: ControlsSpec, values: Values, accents: Ac
   return clamp(k, 0, 1);
 }
 
+export type IdentityWord = 'Same person' | 'Close' | 'New person';
+
+/** The identity estimate in words: comfortably above the threshold, near it, or below (a different person). */
+export function identityWord(estimate: number, threshold: number): IdentityWord {
+  if (estimate < threshold) return 'New person';
+  return estimate >= threshold + 0.1 ? 'Same person' : 'Close';
+}
+
+/** P(female) in words. */
+export function genderWord(pFemale: number): string {
+  return pFemale >= 0.65 ? 'leans feminine' : pFemale <= 0.35 ? 'leans masculine' : 'neutral';
+}
+
+export interface RoomScene {
+  id: 'phone' | 'podcast' | 'studio';
+  label: string;
+  at: number;
+}
+
+/** The three named points of the room axis (its poles at the natural range's ends, a podcast room between). */
+export function roomScenes(c: ControlSpec): RoomScene[] {
+  return [
+    { id: 'phone', label: c.poles?.[0] ?? 'phone', at: c.safe[0] },
+    { id: 'podcast', label: 'podcast', at: Math.round((c.safe[1] / 4) * 10) / 10 },
+    { id: 'studio', label: c.poles?.[1] ?? 'studio', at: c.safe[1] },
+  ];
+}
+
 /** Expected duration multiplier of a set of doses: Π timing[id](dose), as the server computes it. */
 export function durationFactor(spec: ControlsSpec, doses: Dose): number {
   let f = 1;

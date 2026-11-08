@@ -55,20 +55,30 @@ async function startWeb(download: (d: Download) => void): Promise<Backend> {
   return { kind: 'web', caps: await capabilities() };
 }
 
+export interface ConnectOptions {
+  download: (d: Download) => void;
+  /** `auto` with no server: asked before the in-browser engine's download starts (false: give up with the server's error). */
+  confirmWeb?: () => Promise<boolean>;
+}
+
 /**
  * Picks the backend: the HTTP server when its `/v2/capabilities` answers (or `?api=live`), else the in-browser
- * server in `auto` when this browser has WebGPU and the site serves the engine. A 403 is a ZONOS server's access gate,
- * not a missing server: it stays the error.
+ * server in `auto` when this browser has WebGPU and the site serves the engine (asked first). A 403 is a ZONOS
+ * server's access gate, not a missing server: it stays the error.
  */
-export async function connect(download: (d: Download) => void): Promise<Backend> {
+export async function connect({ download, confirmWeb }: ConnectOptions): Promise<Backend> {
   if (mode === 'web') return startWeb(download);
   try {
     return { kind: 'live', caps: await capabilities() };
   } catch (err) {
     if (mode === 'live' || (err instanceof ApiError && err.status === 403) || !(await webEngineAvailable())) throw err;
+    if (confirmWeb && !(await confirmWeb())) throw err;
     return startWeb(download);
   }
 }
+
+/** This browser and site could run the in-browser engine (for the error path's "Run in this browser"). */
+export const canRunWeb = webEngineAvailable;
 
 export const listSpeakers = async (): Promise<Speaker[]> =>
   (await ok<Schemas['SpeakerList']>(client.GET('/v2/speakers'))).speakers;

@@ -4,9 +4,10 @@ import { startPreview, playSide } from './audio/preview';
 import * as player from './audio/player';
 import { DownloadBar } from './components/DownloadBar';
 import { Icon } from './components/Icon';
-import { act, activeHistory, backend, bootError, bootStage, dismissToast, encoderDownload, modalOpen, notify, primaryAction, screenKeys, settingsOpen, toasts, type Act } from './state/app';
+import { act, activeHistory, backend, bootError, bootStage, dismissToast, encoderDownload, modalOpen, notify, pauseToasts, primaryAction, screenKeys, settingsOpen, toasts, type Act, type Toast } from './state/app';
 import { loadAllEmbeddings, refreshSpeakers } from './state/library';
 import { openLastProject } from './state/projects';
+import { redoVersion, undoVersion } from './state/edit';
 import { CastScreen } from './screens/cast/CastScreen';
 import { DirectScreen } from './screens/direct/DirectScreen';
 import { EditScreen } from './screens/edit/EditScreen';
@@ -57,13 +58,16 @@ function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z' && !isTyping(e.target)) {
     e.preventDefault();
-    if (e.shiftKey) activeHistory.value?.redo();
+    // Edit asks before a version step drops the draft.
+    if (act.value === 'edit') void (e.shiftKey ? redoVersion() : undoVersion());
+    else if (e.shiftKey) activeHistory.value?.redo();
     else activeHistory.value?.undo();
     return;
   }
   if (mod && e.key.toLowerCase() === 'y' && !isTyping(e.target)) {
     e.preventDefault();
-    activeHistory.value?.redo();
+    if (act.value === 'edit') void redoVersion();
+    else activeHistory.value?.redo();
     return;
   }
   if (mod || e.altKey || isTyping(e.target)) return;
@@ -105,6 +109,28 @@ function watchUpdates() {
   });
 }
 
+function ToastRow({ t }: { t: Toast }) {
+  return (
+    <div class={`toast toast-${t.kind}`} role={t.kind === 'error' ? 'alert' : undefined}>
+      <span class="toast-text">{t.text}</span>
+      {t.action && (
+        <button
+          class="link toast-action"
+          onClick={() => {
+            dismissToast(t.id);
+            t.action!.run();
+          }}
+        >
+          {t.action.label}
+        </button>
+      )}
+      <button class="icon-btn sm toast-x" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
+        <Icon name="x" size={12} />
+      </button>
+    </div>
+  );
+}
+
 export function App() {
   useEffect(() => {
     void boot();
@@ -140,11 +166,6 @@ export function App() {
           <span class="brand-product">Voice Studio</span>
         </div>
         <ProjectSwitcher />
-        {!phone.value && (
-          <button id="settings-btn" class="icon-btn" disabled={!backend.value} onClick={() => (settingsOpen.value = true)} title="Project settings (language, voice mode, tag strength)" aria-label="Project settings" aria-haspopup="dialog">
-            <Icon name="gear" />
-          </button>
-        )}
         <nav class="acts" role="tablist" aria-label="Acts" onKeyDown={actKeys}>
           {ACTS.map((a, i) => (
             <button
@@ -196,32 +217,17 @@ export function App() {
           <EditScreen />
         )}
       </main>
-      <div class="toasts">
+      <div class="toasts" onPointerEnter={() => pauseToasts(true)} onPointerLeave={() => pauseToasts(false)}>
         {encoderDownload.value && (
           <div class="toast toast-dl">
             <DownloadBar d={encoderDownload.value} />
           </div>
         )}
         <div class="toasts-live" aria-live="polite">
-          {toasts.value.map((t) => (
-          <div key={t.id} class={`toast toast-${t.kind}`} role={t.kind === 'error' ? 'alert' : undefined}>
-            <span class="toast-text">{t.text}</span>
-            {t.action && (
-              <button
-                class="link toast-action"
-                onClick={() => {
-                  dismissToast(t.id);
-                  t.action!.run();
-                }}
-              >
-                {t.action.label}
-              </button>
-            )}
-            <button class="icon-btn sm toast-x" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
-              <Icon name="x" size={12} />
-            </button>
-          </div>
-          ))}
+          {toasts.value.filter((t) => t.kind !== 'error').map((t) => <ToastRow key={t.id} t={t} />)}
+        </div>
+        <div class="toasts-live" aria-live="assertive">
+          {toasts.value.filter((t) => t.kind === 'error').map((t) => <ToastRow key={t.id} t={t} />)}
         </div>
       </div>
       <Keys />

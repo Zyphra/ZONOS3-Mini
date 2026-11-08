@@ -70,6 +70,12 @@ export class History<T> {
     this.sync();
   }
 
+  /** Replace the state and keep the undo stacks (a presentation fact that is not an edit). Not inside a gesture. */
+  patch(next: T) {
+    if (this.gesture !== null) return;
+    this.state.value = next;
+  }
+
   private sync() {
     this.canUndo.value = this.past.length > 0;
     this.canRedo.value = this.future.length > 0;

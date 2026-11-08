@@ -1,24 +1,27 @@
-import { signal } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { exportWav, sequence } from '../../audio/mix';
 import * as player from '../../audio/player';
 import { nowPlaying, playhead } from '../../audio/player';
+import { autoplay } from '../../audio/preview';
 import { Icon } from '../../components/Icon';
 import { dialogKeys, focusFirst } from '../../components/focusTrap';
 import { Rail, RailBar, RailToggle } from '../../components/Rail';
 import { slug } from '../../lib/files';
 import { phone } from '../../lib/media';
+import { isTyping } from '../../lib/dom';
 import { langLabel } from '../../lib/languages';
 import { guessed, isPronError, lookupLanguage, openPronEditor, phonemizeOn, phonemizeRange, phonemizing, PronHelp, PronMarks, PronounceButton } from '../../components/Pron';
 import { parsePron } from '../../lib/pron';
 import { Slider } from '../../components/Slider';
 import { Waveform } from '../../components/Waveform';
 import { clamp, uid } from '../../lib/math';
-import { activeHistory, backend, controlById, hue, modalOpen, notify, primaryAction, projectSettings, pronTokens, settingsOpen, spec } from '../../state/app';
+import { activeHistory, backend, controlById, hue, modalOpen, notify, primaryAction, projectSettings, pronTokens, screenKeys, settingsOpen, spec } from '../../state/app';
 import { design } from '../../state/design';
 import type { History } from '../../state/history';
 import { cast, savePersona, speakers, type Persona } from '../../state/library';
 import { current } from '../../state/projects';
+import { failedLines, GAP_RANGE, playingLineId, restoreLine, scriptDraft, scriptTextDirty, setVoiceColor } from '../../state/script';
 import {
   addLine,
   cancelLine,
@@ -42,7 +45,6 @@ import {
   script,
   scripts,
   setBaseline,
-  setGap,
   setLineText,
   setLineVoice,
   setVoice,
@@ -70,28 +72,37 @@ const SCRIPT_ID = 'script';
 const BASELINE = ['chatty', 'arousal', 'pace'];
 const BASELINE_LABEL: Record<string, string> = { chatty: 'Read ↔ chatty', arousal: 'Energy', pace: 'Pace' };
 
-/** Cast voices tell apart by the data hues (theme-aware tokens); the bench voice is neutral. */
-const VOICE_COLORS = ['var(--c1)', 'var(--c2)', 'var(--c6)', 'var(--c3)', 'var(--c5)', 'var(--c4)', 'var(--o-hi)', 'var(--o)'];
+/** Cast voices tell apart by the data hues (theme-aware tokens), assigned on first appearance and kept in the script; the bench voice is neutral. */
+const VOICE_COLORS = ['var(--c1)', 'var(--c2)', 'var(--c6)', 'var(--c3)', 'var(--c5)', 'var(--c4)'];
 function voiceColor(id: string | null): string {
-  const i = id ? cast.value.findIndex((p) => p.id === id) : -1;
-  return i < 0 ? 'var(--text-3)' : VOICE_COLORS[i % VOICE_COLORS.length];
+  if (!id) return 'var(--text-3)';
+  const have = script.value.voiceColors?.[id];
+  if (have) return have;
+  // Unassigned (an older project, or a new cast member): the next hue not yet taken.
+  const taken = new Set(Object.values(script.value.voiceColors ?? {}));
+  return VOICE_COLORS.find((c) => !taken.has(c)) ?? VOICE_COLORS[Object.keys(script.value.voiceColors ?? {}).length % VOICE_COLORS.length];
 }
+/** Every cast voice the script mentions gets its colour pinned (so it never shifts when the cast is reordered). */
+effect(() => {
+  const s = script.value;
+  const ids = new Set<string>();
+  if (s.voice) ids.add(s.voice);
+  for (const l of s.lines) if (l.voice) ids.add(l.voice);
+  for (const id of ids) if (!s.voiceColors?.[id]) setVoiceColor(id, voiceColor(id));
+});
 /** A voice's display name: the cast persona, or the voice on the Cast bench (null). */
-const voiceName = (id: string | null) =>
-  id ? (cast.value.find((p) => p.id === id)?.name ?? '(removed voice)') : `${speakers.value.find((s) => s.id === design.value.baseId)?.label ?? 'Voice'} (bench)`;
+const voiceName = (id: string | null) => (id ? (cast.value.find((p) => p.id === id)?.name ?? '(removed voice)') : (speakers.value.find((s) => s.id === design.value.baseId)?.label ?? 'Voice'));
 
 interface Brush {
   lineId: string;
   start: number;
   end: number;
-  x: number;
-  y: number;
 }
 const brush = signal<Brush | null>(null);
 
 function playScript() {
   const mix = mixdown();
-  if (!mix) return notify('Render some lines first: each line’s starred take plays in order.');
+  if (!mix) return notify('Render some lines first: each line’s keeper plays in order.');
   const missing = keepers.value.filter((k) => !k.take).length;
   if (missing) notify(`${missing} line${missing === 1 ? '' : 's'} without a take ${missing === 1 ? 'is' : 'are'} skipped`);
   player.play(SCRIPT_ID, mix.pcm, mix.sr);
@@ -130,6 +141,11 @@ function playPosition(): { lineId: string; t: number } | null {
   }
   return null;
 }
+/** The playing line as a signal: rows subscribe to this one boolean instead of the playhead. */
+effect(() => {
+  const id = playPosition()?.lineId ?? null;
+  if (playingLineId.peek() !== id) playingLineId.value = id;
+});
 
 function addBench() {
   const p: Persona = { id: uid(), name: voiceName(null), design: structuredClone(design.value), signature: '', createdAt: Date.now() };
@@ -155,6 +171,13 @@ function snapToWords(text: string, start: number, end: number): [number, number]
   while (s > 0 && isWord(text[s - 1]) && isWord(text[s] ?? '')) s--;
   while (e < text.length && isWord(text[e]) && isWord(text[e - 1] ?? '')) e++;
   return [s, e];
+}
+
+/** [start, end) of every word of `text`, in order (the keyboard selection steps through these). */
+function wordRanges(text: string): [number, number][] {
+  const out: [number, number][] = [];
+  for (const m of text.matchAll(/[\p{L}\p{N}'’]+/gu)) out.push([m.index, m.index + m[0].length]);
+  return out;
 }
 
 function selectionIn(el: HTMLElement): { start: number; end: number; rect: DOMRect } | null {
@@ -196,13 +219,13 @@ function LineText({ line }: { line: Line }) {
   const replaceGroup = (s: number, e: number, t: string) => setLineText(line.id, line.text.slice(0, s) + t + line.text.slice(e));
   const marks = [...cuts].sort((a, b) => a - b);
   const sel = brush.value?.lineId === line.id ? brush.value : null;
-  const open = (start: number, end: number, rect: DOMRect) => {
+  const open = (start: number, end: number) => {
     const [s, e] = snapToWords(line.text, start, Math.min(end, line.text.length));
-    brush.value = { lineId: line.id, start: s, end: e, x: rect.left + rect.width / 2, y: rect.top };
+    brush.value = { lineId: line.id, start: s, end: e };
   };
   const pick = (touch?: boolean) => {
     const s = selectionIn(el.current!);
-    if (s && s.end > s.start) open(s.start, s.end, s.rect);
+    if (s && s.end > s.start) open(s.start, s.end);
     else if (!touch) brush.value = null;
   };
   // While the bar is open, a changed selection in this line moves the painted range with it.
@@ -218,10 +241,75 @@ function LineText({ line }: { line: Line }) {
     document.addEventListener('selectionchange', onSel);
     return () => document.removeEventListener('selectionchange', onSel);
   }, [sel?.lineId, sel?.start, sel?.end, line.text]);
+  // Keyboard: ⇧← / ⇧→ grow a word selection (mirrored into the document selection), Enter paints it, Esc drops it.
+  const [kbd, setKbd] = useState<[number, number] | null>(null);
+  useEffect(() => setKbd(null), [line.text]);
+  const words = wordRanges(line.text);
+  const mirror = (range: [number, number] | null) => {
+    setKbd(range);
+    const root = el.current;
+    const s = window.getSelection();
+    if (!root || !s) return;
+    if (!range) return s.removeAllRanges();
+    const segs = [...root.querySelectorAll<HTMLElement>('.seg[data-start]')].filter((x) => !x.dataset.end);
+    const at = (pos: number) => {
+      // The text node holding `pos`, and the offset inside it.
+      for (const seg of segs) {
+        const start = Number(seg.dataset.start);
+        const node = seg.firstChild;
+        if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+        const len = node.textContent?.length ?? 0;
+        if (pos >= start && pos <= start + len) return { node, offset: pos - start };
+      }
+      return null;
+    };
+    const a = at(range[0]);
+    const b = at(range[1]);
+    if (!a || !b) return;
+    const r = document.createRange();
+    r.setStart(a.node, a.offset);
+    r.setEnd(b.node, b.offset);
+    s.removeAllRanges();
+    s.addRange(r);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.target !== el.current || !words.length) return;
+    if (e.key === 'Escape' && kbd) {
+      e.preventDefault();
+      mirror(null);
+      return;
+    }
+    if (e.key === 'Enter' && kbd) {
+      e.preventDefault();
+      open(kbd[0], kbd[1]);
+      return;
+    }
+    if (!e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    const first = words.findIndex((w) => kbd && w[0] >= kbd[0]);
+    const last = kbd ? words.findLastIndex((w) => w[1] <= kbd[1]) : -1;
+    let lo = kbd ? first : e.key === 'ArrowRight' ? 0 : words.length - 1;
+    let hi = kbd ? last : lo;
+    if (kbd) {
+      if (e.key === 'ArrowRight') hi = Math.min(words.length - 1, hi + 1);
+      else lo = Math.max(0, lo - 1);
+    }
+    mirror([words[lo][0], words[hi][1]]);
+  };
   return (
     // Touch: a long-press selection fires no mouseup; read it once the finger lifts and the selection has settled
     // (only to open: a tap on painted words opens the brushes through its click).
-    <div ref={el} class="line-text" data-line={line.id} tabIndex={-1} onMouseUp={() => pick()} onTouchEnd={() => setTimeout(() => pick(true), 50)}>
+    <div
+      ref={el}
+      class="line-text"
+      data-line={line.id}
+      tabIndex={0}
+      aria-label={`Line text: ${line.text}. Shift with the arrow keys selects words; Enter paints them.`}
+      onMouseUp={() => pick()}
+      onTouchEnd={() => setTimeout(() => pick(true), 50)}
+      onKeyDown={onKey}
+      onBlur={() => kbd && setKbd(null)}
+    >
       {marks.slice(0, -1).map((from, i) => {
         const to = marks[i + 1];
         const tag = tagged?.tokens.find((t) => t.start === from);
@@ -255,8 +343,8 @@ function LineText({ line }: { line: Line }) {
                     }
                   }
                 : span
-                  ? (e) => {
-                      if (window.getSelection()?.isCollapsed) open(span.start, span.end, (e.currentTarget as HTMLElement).getBoundingClientRect());
+                  ? () => {
+                      if (window.getSelection()?.isCollapsed) open(span.start, span.end);
                     }
                   : undefined
             }
@@ -271,10 +359,8 @@ function LineText({ line }: { line: Line }) {
 }
 
 /** Open the brush bar over a whole line (the keyboard path: the brush button in the line tools). */
-function paintWholeLine(line: Line, from: HTMLElement) {
-  const el = from.closest('.line')?.querySelector<HTMLElement>('.line-text');
-  const rect = (el ?? from).getBoundingClientRect();
-  brush.value = { lineId: line.id, start: 0, end: line.text.length, x: rect.left + rect.width / 2, y: rect.top };
+function paintWholeLine(line: Line) {
+  brush.value = { lineId: line.id, start: 0, end: line.text.length };
 }
 
 function BrushBar() {
@@ -323,14 +409,11 @@ function BrushBar() {
   const brushes = spec.value.ui.controls.filter((c) => c.spannable && c.group !== 'mood');
   const hasMood = spec.value.ui.controls.some((c) => c.spannable && c.group === 'mood');
   const families = spec.value.ui.groups.filter((g) => spec.value.ui.controls.some((c) => c.group === g.id && c.spannable));
-  const w = 560;
-  const left = clamp(b.x - w / 2, 12, window.innerWidth - w - 12);
-  const top = b.y > 420 ? b.y - 12 : b.y + 40;
+  // Desktop: the bar sits inside its line (`.line-main`, position: relative), under the text; phone: a bottom sheet.
   return (
     <div
       ref={bar}
-      class={`brushbar${b.y > 420 ? ' is-above' : ''}`}
-      style={phone.value ? undefined : { left: `${left}px`, top: `${top}px`, width: `${w}px` }}
+      class={`brushbar${phone.value ? '' : ' is-anchored'}`}
       role="dialog"
       aria-modal="true"
       aria-label="Delivery brushes"
@@ -396,19 +479,18 @@ function BrushBar() {
   );
 }
 
-/** Takes seen by this session's strips: a take not yet seen is new (flashes; the first one toasts how to keep it). */
+/** Takes seen by this session's strips: a take not yet seen is new (flashes; with auto-play on, a single-line render plays it). */
 const seenTakes = new Set<string>();
-let keeperHintShown = false;
 
 function TakeStrip({ line }: { line: Line }) {
   const list = takes.value[line.id] ?? [];
   const fresh = list.filter((t) => !seenTakes.has(t.id) && Date.now() - t.createdAt < 3000).map((t) => t.id);
   useEffect(() => {
+    const newest = list[list.length - 1];
+    const isNew = newest && !seenTakes.has(newest.id) && fresh.includes(newest.id);
     for (const t of list) seenTakes.add(t.id);
-    if (fresh.length && !keeperHintShown && list.length > 1 && !list.find((t) => fresh.includes(t.id))?.starred) {
-      keeperHintShown = true;
-      notify(`Take ${list.length} added — ★ to make it the keeper`);
-    }
+    // One line rendered by hand (no batch running) and auto-play on: hear it right away.
+    if (isNew && autoplay.value && !renderQueue.peek() && !nowPlaying.peek()) player.play(`take:${newest.id}`, newest.audio.pcm, newest.audio.sr);
   }, [list.length]);
   const cmp = nowPlaying.value?.id === `cmp:${line.id}` ? comparePlaying(line.id) : null;
   if (!list.length) return null;
@@ -420,7 +502,12 @@ function TakeStrip({ line }: { line: Line }) {
         const why = takeStaleReason(line, t);
         return (
           <li class={`take${t.starred ? ' is-starred' : ''}${why ? ' is-stale' : ''}${fresh.includes(t.id) ? ' is-flash' : ''}${playing ? ' is-playing' : ''}`}>
-            <button class="take-play" onClick={() => player.toggle(id, t.audio.pcm, t.audio.sr)} aria-label={`${playing ? 'Stop' : 'Play'} take ${i + 1}`} title={why ? `Rendered before the ${why.replace(' changed', '')} changed` : `seed ${t.seed}`}>
+            <button
+              class="take-play"
+              onClick={() => player.toggle(id, t.audio.pcm, t.audio.sr)}
+              aria-label={`${playing ? 'Stop' : 'Play'} take ${i + 1}`}
+              title={[why ? `Rendered before the ${why.replace(' changed', '')} changed` : `Seed ${t.seed}`, t.audio.spanFollow ? FOLLOW_TEXT[t.audio.spanFollow] : null].filter(Boolean).join(' · ')}
+            >
               <span class="take-n">{i + 1}</span>
               <Waveform pcm={t.audio.pcm} color={t.starred ? 'var(--o)' : 'var(--text-2)'} playId={id} height={22} />
             </button>
@@ -429,13 +516,12 @@ function TakeStrip({ line }: { line: Line }) {
                 {why}
               </span>
             )}
-            {t.audio.spanFollow && <SpanFollowMark follow={t.audio.spanFollow} />}
             {guidanceNote(t.request) && (
               <span class="take-follow is-tags" title={`${guidanceNote(t.request)}: the server takes one guidance per render`} aria-label={guidanceNote(t.request)!}>
                 tags
               </span>
             )}
-            <button class={`icon-btn sm star${t.starred ? ' is-on' : ''}`} onClick={() => starTake(line.id, t.id)} aria-label={`Star take ${i + 1}`} aria-pressed={t.starred} title="Keeper: the script plays this take">
+            <button class={`icon-btn sm star${t.starred ? ' is-on' : ''}`} onClick={() => starTake(line.id, t.id)} aria-label={`Make take ${i + 1} the keeper`} aria-pressed={t.starred} title="Script plays this one">
               <Icon name="star" size={13} filled={t.starred} />
             </button>
             {canEdit.value && (
@@ -445,7 +531,7 @@ function TakeStrip({ line }: { line: Line }) {
                 aria-label={`Edit the words of take ${i + 1}`}
                 title="Edit the words of this take (Edit screen)"
               >
-                <Icon name="edit" size={12} />
+                <Icon name="edit-speech" size={12} />
               </button>
             )}
             <button
@@ -485,20 +571,11 @@ function comparePlaying(lineId: string): string | null {
   return playhead.value < keeper.audio.pcm.length / keeper.audio.sr + COMPARE_GAP ? keeper.id : other.id;
 }
 
-const FOLLOW_TEXT: Record<SpanFollow, [string, string]> = {
-  reading: ['read', 'Spans follow the reading: the painted words were steered where the model was reading them'],
-  rate: ['est.', 'Spans placed by estimate: the server can’t follow the reading here (no alignment heads for this language), so the painting was timed by characters per frame'],
+/** How the take's painted spans were placed (X-Control-Span-Follow), for the take's hover text. */
+const FOLLOW_TEXT: Record<SpanFollow, string> = {
+  reading: 'Delivery painted by reading position',
+  rate: 'Delivery painted by estimate (no alignment heads for this language)',
 };
-
-/** How the take's painted spans were placed (X-Control-Span-Follow). */
-function SpanFollowMark({ follow }: { follow: SpanFollow }) {
-  const [text, title] = FOLLOW_TEXT[follow];
-  return (
-    <span class={`take-follow is-${follow}`} title={title} aria-label={title}>
-      {text}
-    </span>
-  );
-}
 
 /** Keeper, then the newest other take, back to back. */
 function CompareButton({ lineId }: { lineId: string }) {
@@ -531,7 +608,8 @@ function autoGrow(el: HTMLTextAreaElement) {
   el.style.height = `${el.scrollHeight}px`;
 }
 
-function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean }) {
+function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
+  const playing = playingLineId.value === line.id;
   const editEl = useRef<HTMLTextAreaElement>(null);
   const isNew = editNew.peek() === line.id;
   const [editing, setEditing] = useState(isNew);
@@ -596,7 +674,7 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
                   autoGrow(el);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  if (e.key === 'Enter' && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
                     finish((e.currentTarget as HTMLTextAreaElement).value);
                   } else if (e.key === 'Escape') {
@@ -629,6 +707,7 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
           </div>
         )}
         <TakeStrip line={line} />
+        {brush.value?.lineId === line.id && !phone.value && <BrushBar />}
         {err && (
           <div class="error-line" role="alert">
             {isPronError(err) ? (
@@ -652,7 +731,7 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
           aria-label={`Voice for line ${n}`}
           title={`Speaks as ${voiceName(voice)}`}
         >
-          <option value="">Script voice ({voiceName(script.value.voice)})</option>
+          <option value="">Default · {voiceName(script.value.voice)}</option>
           {line.voice && !cast.value.some((p) => p.id === line.voice) && <option value={line.voice}>(voice unavailable)</option>}
           {cast.value.map((p) => (
             <option value={p.id}>{p.name}</option>
@@ -674,19 +753,27 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
           <button class="icon-btn sm" onClick={startEdit} aria-label={`Edit line ${n}`} title="Edit text (paint stays on its words) · double-click the line">
             <Icon name="edit" size={13} />
           </button>
-          <button class="icon-btn sm" disabled={!line.text.trim()} onClick={(e) => paintWholeLine(line, e.currentTarget as HTMLElement)} aria-label={`Paint delivery onto line ${n}`} title="Paint delivery onto this line (or select words in it)">
+          <button class="icon-btn sm" disabled={!line.text.trim()} onClick={() => paintWholeLine(line)} aria-label={`Paint delivery onto line ${n}`} title="Paint delivery onto this line (or select words in it)">
             <Icon name="brush" size={13} />
           </button>
           <button class="icon-btn sm" onClick={() => (editNew.value = addLine(line.id, '', line.voice))} aria-label={`Add a line below line ${n}`} title="Add a line below">
             <Icon name="plus" size={13} />
           </button>
-          <button class="icon-btn sm" onClick={() => moveLine(line.id, -1)} aria-label={`Move line ${n} up`} title="Move up">
+          <button class="icon-btn sm" disabled={n === 1} onClick={() => moveLine(line.id, -1)} aria-label={`Move line ${n} up`} title="Move up">
             <Icon name="up" size={13} />
           </button>
-          <button class="icon-btn sm" onClick={() => moveLine(line.id, 1)} aria-label={`Move line ${n} down`} title="Move down">
+          <button class="icon-btn sm" disabled={n === count} onClick={() => moveLine(line.id, 1)} aria-label={`Move line ${n} down`} title="Move down">
             <Icon name="down" size={13} />
           </button>
-          <button class="icon-btn sm" onClick={() => removeLine(line.id)} aria-label={`Delete line ${n}`} title="Delete line">
+          <button
+            class="icon-btn sm"
+            onClick={() => {
+              const r = removeLine(line.id);
+              if (r) notify(`Line ${n} deleted`, 'info', { label: 'Undo', run: () => restoreLine(r.line, r.index, r.takes) });
+            }}
+            aria-label={`Delete line ${n}`}
+            title="Delete line"
+          >
             <Icon name="trash" size={13} />
           </button>
         </div>
@@ -695,20 +782,18 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
   );
 }
 
-/** The textarea's text differs from the lines (Cancel asks before discarding it). */
-const scriptTextDirty = signal(false);
 const linesAsText = () => script.value.lines.map((l) => l.text).join('\n');
 
 async function closeScriptText() {
-  if (scriptTextDirty.value && !(await confirm('Discard your text changes?', { ok: 'Discard', danger: true }))) return;
-  scriptTextDirty.value = false;
+  if (scriptTextDirty.value && !(await confirm('Discard your script text changes?', { ok: 'Discard', danger: true }))) return;
+  scriptDraft.value = null;
   editAll.value = false;
 }
 
+/** The whole script as text. The draft is module state (`scriptDraft`): leaving Direct and coming back finds it again. */
 function ScriptText() {
   const pasting = script.value.lines.length === 0;
-  const [text, setText] = useState(linesAsText);
-  useEffect(() => () => void (scriptTextDirty.value = false), []);
+  const text = scriptDraft.value ?? linesAsText();
   const apply = async () => {
     const rows = splitScript(text, { sentences: pasting });
     const { dropped } = matchLines(script.value.lines, rows);
@@ -718,7 +803,7 @@ function ScriptText() {
       if (!ok) return;
     }
     replaceScript(rows);
-    scriptTextDirty.value = false;
+    scriptDraft.value = null;
     editAll.value = false;
   };
   return (
@@ -730,13 +815,18 @@ function ScriptText() {
         data-tags
         onInput={(e) => {
           const v = (e.currentTarget as HTMLTextAreaElement).value;
-          setText(v);
-          scriptTextDirty.value = v !== linesAsText();
+          scriptDraft.value = v === linesAsText() ? null : v;
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void apply();
+          }
         }}
         aria-label="Script text"
         placeholder={pasting ? 'Paste or type the script' : undefined}
       />
-      <p class="hint">{pasting ? 'The script is split at line breaks and sentence ends.' : 'One line per row. Rows you leave unchanged keep their paint, voice and takes.'}</p>
+      <p class="hint">{pasting ? 'The script is split at line breaks and sentence ends.' : 'One line per row. Rows you leave unchanged keep their paint, voice and takes.'} ⌘↵ applies.</p>
       <button class="btn primary" onClick={() => void apply()}>
         Apply script
       </button>
@@ -744,7 +834,8 @@ function ScriptText() {
   );
 }
 
-const editAll = signal(false);
+/** Edit-as-text open; a kept draft (`scriptDraft`) opens it again on return. */
+const editAll = signal(scriptDraft.peek() !== null);
 /** A line added from a "says…" button opens with its text field. */
 const editNew = signal<string | null>(null);
 
@@ -767,13 +858,13 @@ function Sidebar() {
       <div class="rail-section">
         <h4>Default voice</h4>
         <select class="input" value={s.voice ?? ''} onChange={(e) => setVoice((e.currentTarget as HTMLSelectElement).value || null)} aria-label="Default voice for this script">
-          <option value="">Bench: {speakers.value.find((x) => x.id === design.value.baseId)?.label ?? '—'} (as designed in Cast)</option>
+          <option value="">{speakers.value.find((x) => x.id === design.value.baseId)?.label ?? '—'} (from Cast)</option>
           {people.map((p) => (
             <option value={p.id}>{p.name}</option>
           ))}
         </select>
         <p class="hint">
-          {base?.label ?? 'No voice'} · {d.mode === 'reference' ? 'exact clone' : 'designable'}. Lines speak in this voice unless they pick their own; identity is set per voice in Cast, only delivery and mood paint onto words.
+          {base?.label ?? 'No voice'} · {d.mode === 'reference' ? 'kept as is' : 'shaped'}. Lines use the default voice unless they pick their own. Change a voice’s identity in Cast; here only delivery and mood paint onto words.
         </p>
         <div class="voice-adds">
           {people.map((p) => (
@@ -783,12 +874,13 @@ function Sidebar() {
           ))}
           {!people.length && (
             <>
-              <button class="btn ghost sm" style={{ '--voice': voiceColor(null) }} disabled={!design.value.baseId} onClick={() => (editNew.value = addLine(s.lines[s.lines.length - 1]?.id ?? null, ''))} title="Add a line spoken by the Cast bench voice">
-                <span class="voice-dot" /> Bench says…
+              <button class="btn ghost sm" style={{ '--voice': voiceColor(null) }} disabled={!design.value.baseId} onClick={() => (editNew.value = addLine(s.lines[s.lines.length - 1]?.id ?? null, ''))} title={design.value.baseId ? 'Add a line spoken by the default voice' : 'Pick a voice in Cast first'}>
+                <span class="voice-dot" /> {voiceName(null)} says…
               </button>
-              <button class="btn sm voice-bench" onClick={addBench} disabled={!design.value.baseId} title="Save the Cast bench voice as a cast member, so lines can pick it">
-                <Icon name="plus" size={13} /> Add the bench voice to the cast
+              <button class="btn sm voice-bench" onClick={addBench} disabled={!design.value.baseId} title={design.value.baseId ? 'Save the Cast voice as a cast member, so lines can pick it' : 'Pick a voice in Cast first'}>
+                <Icon name="plus" size={13} /> Add this voice to the cast
               </button>
+              {!design.value.baseId && <p class="hint">Pick a voice in Cast first.</p>}
             </>
           )}
         </div>
@@ -829,69 +921,106 @@ function Sidebar() {
   );
 }
 
-/** The right sidebar: the script as a whole (renders, playback, export, the gap between lines). */
-function ScriptSide() {
+/** Scroll the first failed line into view and flash it. */
+function showFailed() {
+  const id = failedLines.value[0];
+  const el = id && document.querySelector<HTMLElement>(`.line-text[data-line="${id}"]`)?.closest<HTMLElement>('.line');
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('is-flash');
+  setTimeout(() => el.classList.remove('is-flash'), 1200);
+}
+
+/** Render / Regenerate / Play / progress: the rail on desktop, the sticky bottom bar on phones. */
+function Transport({ bar }: { bar?: boolean }) {
   const s = script.value;
   const ready = keepers.value.filter((k) => k.take).length;
   const missing = s.lines.filter((l) => l.text.trim() && !(takes.value[l.id] ?? []).length);
   const stale = staleLines.value.length;
+  const failed = failedLines.value.filter((id) => s.lines.some((l) => l.id === id)).length;
   const q = renderQueue.value;
   const rendering = !!q || Object.values(lineBusy.value).some(Boolean);
   const playing = nowPlaying.value?.id === SCRIPT_ID;
+  if (!s.lines.length) return null;
   return (
-    <aside class="rail direct-side" aria-label="Script">
-      <div class="rail-section">
-        <h4>Script</h4>
-        <p class="hint">
-          {ready}/{s.lines.length} lines have a take. Play and export use each line’s starred take.
-        </p>
-        <div class="col gap-s">
-          {q ? (
-            <div class="render-progress" aria-live="polite">
-              <span>
-                Rendering {q.done}/{q.total}
-                {q.failed ? ` · ${q.failed} failed` : ''}
-              </span>
-              <button class="btn sm" onClick={cancelRenders}>
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <>
-              {stale > 0 && (
-                <button class="btn primary" disabled={rendering} onClick={() => void regenerateStale()} title="Settings or voice changed since these lines’ starred takes: render a new take of each">
-                  <Icon name="refresh" size={14} /> Regenerate {stale} changed line{stale === 1 ? '' : 's'}
-                </button>
-              )}
-              <button class="btn" disabled={rendering || !missing.length} onClick={() => void renderLines(missing.map((l) => l.id))} title={missing.length ? 'Render every line that has no take yet' : 'Every line has a take'}>
-                <Icon name="wand" size={14} /> Render {missing.length} missing
-              </button>
-            </>
-          )}
-          <button class={`btn${stale ? '' : ' primary'}`} disabled={!ready} onClick={() => (playing ? player.stop() : playScript())} title={ready ? undefined : 'Render a line first'}>
-            <Icon name={playing ? 'stop' : 'play'} size={14} /> {playing ? 'Stop' : 'Play script'}
-          </button>
-          <button class="btn" disabled={!ready} onClick={exportScript} title={ready ? `Save the script as ${slug(current.value?.name ?? 'script')}.wav` : 'Render a line first'}>
-            <Icon name="download" size={14} /> Export WAV
+    <div class={bar ? 'transport' : 'col gap-s'}>
+      {q ? (
+        <div class="render-progress" aria-live="polite">
+          <span>
+            Rendering {q.done}/{q.total}
+            {q.failed ? ` · ${q.failed} failed` : ''}
+          </span>
+          <button class="btn sm" onClick={cancelRenders}>
+            Cancel
           </button>
         </div>
+      ) : (
+        <>
+          {stale > 0 && (
+            <button class="btn primary" disabled={rendering} onClick={() => void regenerateStale()} title="Settings or a voice changed since these lines’ keepers: render a new take of each">
+              <Icon name="refresh" size={14} /> Regenerate {stale} changed
+            </button>
+          )}
+          {missing.length > 0 && (
+            <button class="btn" disabled={rendering} onClick={() => void renderLines(missing.map((l) => l.id))} title="Render every line that has no take yet">
+              <Icon name="wand" size={14} /> Render {missing.length} missing
+            </button>
+          )}
+        </>
+      )}
+      <button class={`btn${stale || missing.length ? '' : ' primary'}`} disabled={!ready} onClick={() => (playing ? player.stop() : playScript())} title={ready ? undefined : 'Render a line first'}>
+        <Icon name={playing ? 'stop' : 'play'} size={14} /> {playing ? 'Stop' : 'Play script'}
+      </button>
+      {failed > 0 && !q && (
+        <p class="hint is-bad transport-failed">
+          {failed} failed ·{' '}
+          <button class="link" onClick={showFailed}>
+            Show
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The right sidebar: the script as a whole (renders, playback, export, the gap between lines). On phones the transport sits under the lines instead. */
+function ScriptSide() {
+  const s = script.value;
+  const ready = keepers.value.filter((k) => k.take).length;
+  const gapSpec = { id: 'gap', group: 'timing', label: 'Gap between lines', type: 'unipolar' as const, map: { '+': {} }, range: GAP_RANGE, safe: GAP_RANGE, collapse: null, spannable: false, identity: null };
+  return (
+    <aside class="rail direct-side" aria-label={phone.value ? 'Export' : 'Script'}>
+      {!phone.value && (
+        <div class="rail-section">
+          <h4>Script</h4>
+          {s.lines.length > 0 && (
+            <p class="hint">
+              {ready}/{s.lines.length} lines have a take. Play and export use each line’s keeper.
+            </p>
+          )}
+          <Transport />
+        </div>
+      )}
+      <div class="rail-section">
+        <h4>Export</h4>
+        <button class="btn" disabled={!ready} onClick={exportScript} title={ready ? `Save the script as ${slug(current.value?.name ?? 'script')}.wav` : 'Render a line first'}>
+          <Icon name="download" size={14} /> Export WAV
+        </button>
       </div>
       <div class="rail-section">
         <h4>Timing</h4>
-        <label class="gap">
-          Gap between lines
-          <input type="range" min={0} max={1.5} step={0.05} value={s.gap} aria-valuetext={`${s.gap.toFixed(2)} seconds`} onInput={(e) => setGap(Number((e.currentTarget as HTMLInputElement).value))} aria-label="Gap between lines (s)" />
-          <b>{s.gap.toFixed(2)} s</b>
-        </label>
+        <Slider control={gapSpec} value={s.gap} color="var(--text-2)" compact format={(v) => `${v.toFixed(2)} s`} onStart={() => scripts.begin()} onChange={(v) => scripts.set({ ...script.value, gap: Math.round(v * 100) / 100 })} onEnd={() => scripts.end()} />
+        <p class="hint">Silence between lines when the script plays or exports.</p>
       </div>
     </aside>
   );
 }
 
-/** One lane per voice; each line's keeper take placed where the script plays it. */
-function Timeline({ at }: { at: number | null }) {
+/** One lane per voice; each line's keeper take placed where the script plays it. Reads the playhead itself (the rows don't). */
+function Timeline() {
   const { clips, total } = timeline.value;
   if (!clips.length) return null;
+  const at = playPosition()?.t ?? null;
   const lanes = [...new Set(clips.map((c) => lineVoiceId(c.line)))];
   const pct = (t: number) => `${(t / (total || 1)) * 100}%`;
   return (
@@ -918,10 +1047,10 @@ function Timeline({ at }: { at: number | null }) {
                       key={c.line.id}
                       class={`clip${c.take ? '' : ' is-pending'}${!c.take && at !== null ? ' is-skipped' : ''}`}
                       style={{ left: pct(c.start), width: pct(c.duration) }}
-                      title={c.take ? c.line.text : `${c.line.text} (not rendered: estimated length)`}
-                      aria-label={`Line ${script.value.lines.indexOf(c.line) + 1}: ${c.line.text}${c.take ? '' : ' (not rendered)'}`}
+                      title={c.take ? c.line.text : `Not rendered · ${c.line.text} (click to render)`}
+                      aria-label={`Line ${script.value.lines.indexOf(c.line) + 1}: ${c.line.text}${c.take ? '' : ' (not rendered: click to render)'}`}
                       onClick={() => {
-                        if (!c.take) return;
+                        if (!c.take) return void renderLine(c.line.id);
                         if (nowPlaying.value?.id === SCRIPT_ID) {
                           const mix = mixdown();
                           const off = mixOffset(c.line.id);
@@ -933,7 +1062,7 @@ function Timeline({ at }: { at: number | null }) {
                         <Waveform pcm={c.take.audio.pcm} color={color} height={28} />
                       ) : (
                         <span>
-                          <i class="clip-est">est.</i> {c.line.text}
+                          <i class="clip-est">Not rendered</i> · {c.line.text}
                         </span>
                       )}
                     </button>
@@ -948,18 +1077,46 @@ function Timeline({ at }: { at: number | null }) {
   );
 }
 
+/** Direct's own keys (the shell asks first): R renders the focused line, S stars the take that is playing. */
+function directKeys(e: KeyboardEvent): boolean {
+  if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || modalOpen.value) return false;
+  if (e.key === 'r' || e.key === 'R') {
+    const id = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('.line')?.querySelector<HTMLElement>('.line-text')?.dataset.line;
+    if (!id) return false;
+    e.preventDefault();
+    void renderLine(id);
+    return true;
+  }
+  if (e.key === 's' || e.key === 'S') {
+    const np = nowPlaying.value;
+    const takeId = np?.id.startsWith('take:') ? np.id.slice(5) : null;
+    if (!takeId) return false;
+    const lineId = Object.keys(takes.value).find((lid) => takes.value[lid].some((t) => t.id === takeId));
+    if (!lineId) return false;
+    e.preventDefault();
+    starTake(lineId, takeId);
+    notify('Keeper: the script plays this take');
+    return true;
+  }
+  return false;
+}
+
 export function DirectScreen() {
   useEffect(() => {
     activeHistory.value = scripts as History<unknown>;
     primaryAction.value = playScript;
+    screenKeys.value = directKeys;
+    // A kept edit-as-text draft reopens where it was left.
+    if (scriptDraft.peek() !== null) editAll.value = true;
     return () => {
       activeHistory.value = null;
       primaryAction.value = null;
+      screenKeys.value = null;
       brush.value = null;
     };
   }, []);
   const lines = script.value.lines;
-  const now = playPosition();
+  const onPhone = phone.value;
   return (
     <div class="direct">
       <Rail id="direct-voices" side="left" title="Voices">
@@ -968,7 +1125,7 @@ export function DirectScreen() {
       <section class="script" aria-label="Lines">
         <RailBar>
           <RailToggle id="direct-voices" title="Voices" icon="mic" />
-          <RailToggle id="direct-script" title="Script" icon="play" />
+          <RailToggle id="direct-script" title="Export" icon="download" />
         </RailBar>
         <header class="screen-head">
           <div>
@@ -984,7 +1141,7 @@ export function DirectScreen() {
         ) : lines.length ? (
           <ol class="lines">
             {lines.map((l, i) => (
-              <LineRow key={l.id} line={l} n={i + 1} playing={now?.lineId === l.id} />
+              <LineRow key={l.id} line={l} n={i + 1} count={lines.length} />
             ))}
           </ol>
         ) : (
@@ -992,24 +1149,30 @@ export function DirectScreen() {
             <Icon name="edit" size={26} />
             <h3>No lines yet</h3>
             <p>Paste a script, or add lines one by one; each line is rendered and directed on its own, in its own voice.</p>
-            <button class="btn" onClick={() => (editAll.value = true)}>
-              Paste a script
-            </button>
+            <div class="row gap-s">
+              <button class="btn primary" onClick={() => (editAll.value = true)}>
+                <Icon name="edit" size={14} /> Paste a script
+              </button>
+              <button class="btn" onClick={() => (editNew.value = addLine(null, ''))}>
+                <Icon name="plus" size={14} /> Add a line
+              </button>
+            </div>
           </div>
         )}
-        {!editAll.value && (
+        {!editAll.value && lines.length > 0 && (
           <>
             <button class="btn ghost add-line" onClick={() => (editNew.value = addLine(null, ''))}>
               <Icon name="plus" size={14} /> Add line
             </button>
-            <Timeline at={now?.t ?? null} />
+            <Timeline />
+            {onPhone && <Transport bar />}
           </>
         )}
       </section>
-      <Rail id="direct-script" side="right" title="Script">
+      <Rail id="direct-script" side="right" title={onPhone ? 'Export' : 'Script'}>
         <ScriptSide />
       </Rail>
-      <BrushBar />
+      {onPhone && <BrushBar />}
     </div>
   );
 }

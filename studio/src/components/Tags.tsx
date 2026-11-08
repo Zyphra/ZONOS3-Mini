@@ -9,8 +9,7 @@ import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { clamp } from '../lib/math';
 import { insertPoint, parseTags, pointToSpan, removeTag, SPAN_TAG_NAMES, spanToPoint, TAG_INFO, TAG_NAMES, wrapSpan, type Edit, type TagName, type TagSpan, type TagToken } from '../lib/tags';
-import { backend, projectSettings } from '../state/app';
-import { setSettings } from '../state/projects';
+import { backend } from '../state/app';
 import { Icon } from './Icon';
 import { replaceInInput } from './Pron';
 
@@ -278,23 +277,6 @@ export function TaggedText({ text }: { text: string }) {
   }
   if (pos < text.length) out.push(text.slice(pos));
   return <>{out}</>;
-}
-
-// ── Tag strength ──────────────────────────────────────────────────────────────────────────────────
-
-/** The project's tag strength: tag guidance for lines with tags (1 = off, then voice guidance as usual). */
-export function TagStrength() {
-  const t = backend.value?.tags;
-  if (!t) return null;
-  const v = projectSettings.value.tagStrength;
-  const lo = Math.max(1, t.min_scale);
-  return (
-    <label class="lang-row tag-strength" title="Tag guidance for lines with nonverbal tags: stronger tags (laugh most). It replaces voice guidance on those lines (the server allows one at a time); 1 turns it off">
-      tag strength
-      <input type="range" min={lo} max={t.max_scale} step={0.1} value={v} onInput={(e) => setSettings({ tagStrength: Number(e.currentTarget.value) })} aria-label="Tag strength" aria-valuetext={v > 1 ? `${v.toFixed(1)}, tag guidance on` : '1, off'} />
-      <span class="mono">{v > 1 ? v.toFixed(1) : 'off'}</span>
-    </label>
-  );
 }
 
 /** What a request did about guidance, for takes: tag guidance replaces voice guidance. */

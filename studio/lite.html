@@ -22,11 +22,20 @@
     </header>
 
     <main class="lite">
-      <header class="lite-head">
-        <span class="eyebrow">Saved voice file</span>
+      <header class="page-head lite-head">
+        <span class="eyebrow">Lite</span>
         <h1>Voice cloning</h1>
-        <p class="muted">Pick or clone a voice, then type what it should say. Voices cloned here stay on this page; the full studio has its own.</p>
+        <p class="muted">Pick, upload or record a voice, then type what it should say. Voices cloned here stay on this page; the full studio has its own.</p>
       </header>
+
+      <section id="consent" class="panel consent" hidden aria-labelledby="consent-title">
+        <h3 id="consent-title">No server answered</h3>
+        <p>Run the voice engine in this browser? Download ≈ 1.9 GB once; cached in this browser.</p>
+        <div class="row gap-s">
+          <button type="button" id="consent-yes" class="btn primary">Run in this browser</button>
+          <button type="button" id="consent-retry" class="btn">Retry the server</button>
+        </div>
+      </section>
 
       <p id="backend-note" class="notice" hidden></p>
       <p id="notice" class="notice" role="status" hidden></p>
@@ -44,11 +53,11 @@
           <fieldset class="mode">
             <legend class="sr-only">Voice source</legend>
             <input type="radio" name="source" id="source-default" value="default" checked />
-            <label class="mode-btn" for="source-default">Default</label>
+            <label class="mode-btn" for="source-default">Library</label>
             <input type="radio" name="source" id="source-clip" value="clip" />
-            <label class="mode-btn" for="source-clip">Clip</label>
+            <label class="mode-btn" for="source-clip">Your clip</label>
             <input type="radio" name="source" id="source-embedding" value="embedding" />
-            <label class="mode-btn" for="source-embedding">Embedding</label>
+            <label class="mode-btn" for="source-embedding">Voice file</label>
           </fieldset>
         </div>
 
@@ -62,6 +71,7 @@
           <div class="row gap-s">
             <button type="button" id="clip-pick" class="btn" data-icon="upload">Upload</button>
             <button type="button" id="record" class="btn btn-rec" aria-pressed="false" data-icon="mic">Record</button>
+            <span id="record-level" class="rec-level rec-level-inline" aria-hidden="true" hidden><span></span></span>
             <button type="button" id="clip-play" class="btn" data-icon="play" hidden>Play</button>
             <span id="clip-state" class="hint-inline" aria-live="polite"></span>
             <input type="file" id="clip-file" accept="audio/*" hidden />
@@ -69,12 +79,12 @@
           <label class="field" for="clip-label">Name</label>
           <div class="row gap-s nowrap">
             <input type="text" id="clip-label" class="input" autocomplete="off" placeholder="My voice" />
-            <button type="button" id="clip-upload" class="btn primary" disabled>Clone voice</button>
+            <button type="button" id="clip-upload" class="btn" disabled title="Generate clones the clip by itself; this keeps the voice for later too">Clone voice</button>
           </div>
         </div>
 
         <div id="panel-embedding" class="source" hidden>
-          <span class="field">Saved voice file <span class="hint-inline">.npy or .npz, up to 2 MB</span></span>
+          <span class="field">Voice file <span class="hint-inline">.npy or .npz, up to 2 MB</span></span>
           <div class="row gap-s">
             <button type="button" id="embedding-pick" class="btn" data-icon="upload">Choose file</button>
             <span id="embedding-state" class="hint-inline" aria-live="polite"></span>
@@ -83,7 +93,7 @@
           <label class="field" for="embedding-label">Name</label>
           <div class="row gap-s nowrap">
             <input type="text" id="embedding-label" class="input" autocomplete="off" placeholder="My voice" />
-            <button type="button" id="embedding-upload" class="btn primary" disabled>Load embedding</button>
+            <button type="button" id="embedding-upload" class="btn primary" disabled>Open a voice file</button>
           </div>
         </div>
 
@@ -97,7 +107,7 @@
           </div>
           <div class="row gap-s">
             <button type="button" id="preview" class="btn sm" data-icon="play">Play preview</button>
-            <button type="button" id="download-embedding" class="btn ghost sm" data-icon="download">Embedding (.npy)</button>
+            <button type="button" id="download-embedding" class="btn ghost sm" data-icon="download">Voice file (.npy)</button>
           </div>
         </div>
       </section>
@@ -106,17 +116,18 @@
           <h3 id="speak-heading"><span class="step">2</span>Speak</h3>
         </div>
         <form id="generate-form">
-          <label class="field" for="text">Text</label>
-          <textarea id="text" class="input" rows="4" required>Hello! This is a cloned voice, speaking from its speaker embedding.</textarea>
+          <label class="field" for="text">Text <span class="hint-inline">⌘↵ / Ctrl+Enter generates</span></label>
+          <textarea id="text" class="input" rows="4" required>Hello! This is my cloned voice.</textarea>
           <div class="grid">
             <div>
               <label class="field" for="language">Language</label>
               <select id="language" class="input"></select>
             </div>
-            <div>
-              <label class="field" for="seed">Seed <span class="hint-inline">optional</span></label>
+            <details class="pro">
+              <summary>Advanced</summary>
+              <label class="field" for="seed">Seed <span class="hint-inline">a fixed seed repeats a take's randomness</span></label>
               <input type="number" id="seed" class="input" min="0" max="4294967295" step="1" inputmode="numeric" placeholder="random" />
-            </div>
+            </details>
           </div>
           <div class="row gap-s actions">
             <button type="submit" id="generate" class="btn primary">Generate</button>
@@ -127,16 +138,17 @@
         </form>
         <p id="generate-error" class="error-box" role="alert" hidden></p>
         <div id="result" class="result" hidden>
-          <div id="wave" class="wave is-seekable" role="img" aria-label="Generated speech waveform" title="Click to play from here">
+          <div id="wave" class="wave is-seekable" role="slider" tabindex="0" aria-label="Generated speech: Space plays or stops, ← / → seek 1 s" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Click to play from here · Space play/stop · ← → seek">
             <canvas></canvas>
             <div class="wave-head" hidden></div>
           </div>
           <div id="transport" class="row gap-s">
             <button type="button" id="play" class="icon-btn" aria-label="Play" title="Play"></button>
             <span id="result-meta" class="meta"></span>
-            <button type="button" id="seed-use" class="link" hidden title="Put this seed in the Seed field, for the same randomness again">use</button>
+            <button type="button" id="seed-use" class="link" hidden title="Put this seed in Advanced → Seed, for the same randomness again">reuse seed</button>
             <a id="result-download" class="btn sm" download data-icon="download">Download WAV</a>
           </div>
+          <ol id="takes" class="takes" aria-label="Earlier takes" hidden></ol>
         </div>
       </section>
 

@@ -3,7 +3,7 @@ import { useRef, useState } from 'preact/hooks';
 import type { Rendered } from '../../api';
 import { nowPlaying } from '../../audio/player';
 import * as player from '../../audio/player';
-import { autoplay, autoRender, ID_A, ID_B, phrase, playSide, preview, previewText, reference, retry, retryReference, side, speak } from '../../audio/preview';
+import { autoplay, autoRender, ID_A, ID_B, phrase, playSide, preview, previewText, previewTouched, reference, retry, retryReference, side, speak } from '../../audio/preview';
 import { errorText, isAbort, render } from '../../audio/render';
 import { exportWav } from '../../audio/mix';
 import { Icon } from '../../components/Icon';
@@ -12,7 +12,9 @@ import { openRail } from '../../components/Rail';
 import { TagButton, TagField, TagMarks } from '../../components/Tags';
 import { Waveform } from '../../components/Waveform';
 import { uid } from '../../lib/math';
-import { backend, notify, projectSettings, requestContext, spec } from '../../state/app';
+import { onZeroGpu } from '../../lib/zerogpu';
+import { phone } from '../../lib/media';
+import { backend, controlById, notify, projectSettings, requestContext, spec } from '../../state/app';
 import { applyPreset, baseSpeaker, design, designs, neighbours, steered, type Design, type Variation } from '../../state/design';
 import { presetToValues } from '../../state/engine';
 import { pinForMix } from '../../state/atlas';
@@ -48,14 +50,21 @@ function ABButtons() {
   );
 }
 
+/** Length of the take shown (the button says whether it is out of date). */
 function statusText(): string {
   const p = preview.value;
   const a = p.a;
   if (p.status === 'waiting') return 'waiting…';
   if (p.status === 'rendering') return 'rendering…';
-  if (p.status === 'idle') return a ? 'out of date' : design.value.baseId ? 'Press Speak to hear it' : '';
+  if (p.status === 'idle') return a ? `${(a.pcm.length / a.sr).toFixed(1)} s` : design.value.baseId ? 'Press Speak to hear it' : '';
   if (p.status === 'error') return '';
-  return a ? `${(a.pcm.length / a.sr).toFixed(1)} s · first audio ${Math.round(a.ttfbMs)} ms` : '';
+  return a ? `${(a.pcm.length / a.sr).toFixed(1)} s` : '';
+}
+
+/** Hover text of the metrics: the numbers behind the status. */
+function statusTitle(): string {
+  const a = preview.value.a;
+  return a ? `Clip length ${(a.pcm.length / a.sr).toFixed(1)} s · first audio after ${Math.round(a.ttfbMs)} ms` : 'Clip length';
 }
 
 /** The B side failed: the same error box as A, with its own Retry. */
@@ -73,21 +82,25 @@ function ReferenceError() {
   );
 }
 
-/** Auto-generate / auto-play, as two toggles beside A/B. */
+/** Auto-generate / auto-play, as two labelled toggles beside A/B. */
 function PreviewToggles() {
   return (
-    <div class="preview-toggles" role="group" aria-label="Preview settings">
+    <div class="mode preview-toggles" role="group" aria-label="Preview settings">
       <button
-        class={`icon-btn sm${autoRender.value ? ' is-on' : ''}`}
+        class={`mode-btn${autoRender.value ? ' is-on' : ''}`}
         aria-pressed={autoRender.value}
         onClick={() => (autoRender.value = !autoRender.value)}
-        title="Auto-generate on every change (off: only on Speak)"
-        aria-label="Auto-generate on every change"
+        title={autoRender.value ? 'Auto: renders on every change (click to render only on Speak)' : 'Renders only on Speak (click to render on every change)'}
       >
-        <Icon name="wand" size={14} />
+        <Icon name="wand" size={12} /> Auto
       </button>
-      <button class={`icon-btn sm${autoplay.value ? ' is-on' : ''}`} aria-pressed={autoplay.value} onClick={() => (autoplay.value = !autoplay.value)} title="Auto-play new takes" aria-label="Auto-play new takes">
-        <Icon name="speaker" size={14} />
+      <button
+        class={`mode-btn${autoplay.value ? ' is-on' : ''}`}
+        aria-pressed={autoplay.value}
+        onClick={() => (autoplay.value = !autoplay.value)}
+        title={autoplay.value ? 'Play: new takes play by themselves (click to keep them quiet)' : 'New takes wait for Speak (click to play them by themselves)'}
+      >
+        <Icon name="speaker" size={12} /> Play
       </button>
     </div>
   );
@@ -127,9 +140,26 @@ export function PreviewStrip() {
   );
 }
 
-/** The project's preview line from what was typed ('' when it is the bundle's own). */
+/** The project's preview line from what was typed; from now on an empty field means empty (the bundle's line is only the placeholder). */
 export function setPhrase(text: string) {
-  previewText.value = text.trim() === spec.value.ui.preview_text ? '' : text;
+  previewTouched.value = true;
+  previewText.value = text;
+}
+/** Open the voice list and point at the current voice (desktop: focus its row). */
+function pickVoice() {
+  openRail('cast-library');
+  if (phone.peek()) return;
+  requestAnimationFrame(() => document.querySelector<HTMLElement>('.voice.is-on .voice-name, .voices .voice-name')?.focus({ preventScroll: false }));
+}
+
+/** The Speak bar names the voice it speaks with; clicking it opens the voice list. */
+function VoiceChip() {
+  const label = baseSpeaker.value?.label;
+  return (
+    <button class={`btn sm voice-chip${label ? '' : ' primary'}`} onClick={pickVoice} title={label ? 'Change the voice' : 'Pick a voice to start'} aria-haspopup="true">
+      <Icon name="mic" size={12} /> <span class="voice-chip-label">{label ?? 'Pick a voice'}</span> <Icon name="down" size={10} />
+    </button>
+  );
 }
 
 /**
@@ -139,6 +169,8 @@ export function setPhrase(text: string) {
 export function SpeakPanel() {
   const p = preview.value;
   const a = p.a;
+  /** The take Export saves: the side being shown. */
+  const shown = side.value === 'A' ? a : reference.value.take;
   const [draft, setDraft] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const noSteer = backend.value?.kind === 'fixture';
@@ -164,7 +196,7 @@ export function SpeakPanel() {
             class="speak-area"
             rows={2}
             value={text}
-            placeholder="Type what the voice should say"
+            placeholder={spec.value.ui.preview_text}
             aria-label="Text to speak"
             data-tags
             onInput={(e) => setDraft((e.currentTarget as HTMLTextAreaElement).value)}
@@ -202,33 +234,32 @@ export function SpeakPanel() {
         }}
       />
       <div class="speak-bar">
+        <VoiceChip />
         <button
           class={`btn primary speak-go${pending ? ' is-busy' : ''}`}
           disabled={noVoice || !text.trim()}
           onClick={() => (playingA ? player.stop() : go())}
-          title={noVoice ? 'Pick a voice in Voices first' : 'Speak this text (Enter in the text box)'}
+          title={noVoice ? 'Pick a voice first' : stale ? 'The voice changed since this take: render it again (Enter in the text box)' : 'Speak this text (Enter in the text box)'}
         >
-          <Icon name={playingA ? 'stop' : 'play'} size={14} /> {playingA ? 'Stop' : pending ? 'Rendering…' : stale && !autoRender.value ? 'Speak · out of date' : 'Speak'}
+          <Icon name={playingA ? 'stop' : 'play'} size={14} /> {playingA ? 'Stop' : pending ? 'Rendering…' : stale ? 'Speak again' : 'Speak'}
         </button>
-        {noVoice ? (
-          <span class="hint speak-hint">
-            <button class="link" onClick={() => openRail('cast-library')}>
-              Pick a voice in Voices
-            </button>{' '}
-            to start
-          </span>
-        ) : (
-          <PreviewWave />
-        )}
+        {!noVoice && <PreviewWave />}
         <ABButtons />
         <PreviewToggles />
-        <span class="metrics" title="clip length · time to first audio">
+        <span class="metrics" title={statusTitle()}>
           {statusText()}
         </span>
-        <button class="icon-btn" disabled={!a} onClick={() => a && exportWav(a.pcm, a.sr, `${baseSpeaker.value?.label ?? 'voice'}-preview`)} title="Export this take as WAV" aria-label="Export WAV">
+        <button
+          class="icon-btn"
+          disabled={!shown}
+          onClick={() => shown && exportWav(shown.pcm, shown.sr, `${baseSpeaker.value?.label ?? 'voice'}-${side.value === 'A' ? 'design' : 'original'}`)}
+          title={`Export ${side.value} as WAV`}
+          aria-label={`Export ${side.value} as WAV`}
+        >
           <Icon name="download" />
         </button>
       </div>
+      {!a && !pending && !isErr && !phone.value && <p class="hint speak-first">Pick a voice · type a line · Speak · then shape it below</p>}
       {isErr && isPronError(p.error) && (
         <div class="error-box" role="alert">
           <b>Fix the pronunciation marked above</b>
@@ -250,6 +281,25 @@ export function SpeakPanel() {
   );
 }
 
+/** "British accent, more authority, slower": a preset's moves in the controls' own words. */
+function presetSummary(preset: Record<string, number>): string {
+  const s = spec.value;
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(preset)) {
+    if (!v) continue;
+    if (k.startsWith('accent:')) {
+      const a = s.ui.accents.find((x) => x.id === k.slice(7));
+      parts.push(`${a?.label ?? k.slice(7)} accent`);
+      continue;
+    }
+    const c = controlById.value.get(k);
+    if (!c) continue;
+    if (c.type === 'bipolar' && c.poles) parts.push(c.poles[v < 0 ? 0 : 1].toLowerCase());
+    else parts.push(`more ${c.label.toLowerCase()}`);
+  }
+  return parts.join(', ') || 'the plain voice';
+}
+
 export function Personas() {
   const presets = Object.keys(spec.value.ui.presets);
   const d = design.value;
@@ -261,13 +311,13 @@ export function Personas() {
   };
   if (!presets.length) return null;
   return (
-    <section class="monitor-card" aria-label="Personas">
+    <section class="monitor-card" aria-label="Starting points">
       <header class="monitor-head">
-        <h3>Personas</h3>
+        <h3>Starting points</h3>
       </header>
       <div class="persona-chips">
         {presets.map((name) => (
-          <button class={`persona-chip${isOn(name) ? ' is-on' : ''}`} onClick={() => applyPreset(name)} title={Object.entries(spec.value.ui.presets[name]).map(([k, v]) => `${k.replace('accent:', '')} ${v}`).join(' · ')}>
+          <button class={`persona-chip${isOn(name) ? ' is-on' : ''}`} aria-pressed={isOn(name)} onClick={() => applyPreset(name)} title={presetSummary(spec.value.ui.presets[name])}>
             {name}
           </button>
         ))}
@@ -313,10 +363,11 @@ export function Variations() {
     <section class="monitor-card" aria-label="Variations">
       <header class="monitor-head">
         <h3>Voices near this one</h3>
-        <button class="btn sm" onClick={findVariations} disabled={!d.baseId || rendering > 0}>
+        <button class="btn sm" onClick={findVariations} disabled={!d.baseId || rendering > 0} title="Renders five takes">
           <Icon name="dice" size={14} /> {rendering ? `Rendering ${list.length - rendering}/${list.length}…` : list.length ? 'Five more' : 'Find five'}
         </button>
       </header>
+      {onZeroGpu() && <p class="hint">Counts against your GPU quota</p>}
       {!list.length ? (
         <p class="muted small">Five small, safe moves around this voice, rendered side by side. Click one to step there.</p>
       ) : allFailed ? (
@@ -376,15 +427,15 @@ export function SavePanel() {
   const embErr = embeddingErrors.value[d.baseId];
   const canServer = d.mode === 'embedding' && !!steered.value && (b.kind === 'offline' || !embeddingsSynthetic.value) && b.steering;
   const why = d.mode !== 'embedding'
-    ? 'Exact clones are already library voices.'
+    ? 'Exact clones are already in Your voices.'
     : !b.steering
-      ? 'This server can’t apply controls yet, so there is no designed voice to save.'
+      ? 'This server can’t apply controls yet, so there is no shaped voice to save.'
       : embeddingsSynthetic.value
-        ? 'Needs the server’s real embedding for this voice.'
+        ? 'Not available with this server’s placeholder voices.'
         : embErr
           ? `Couldn't fetch this voice's embedding: ${embErr}`
           : !steered.value
-            ? 'Waiting for the base voice’s embedding…'
+            ? 'Waiting for the base voice…'
             : null;
   const label = name.trim() || `${baseSpeaker.value?.label ?? 'Voice'} variant`;
 
@@ -415,9 +466,9 @@ export function SavePanel() {
   };
 
   return (
-    <section class="monitor-card save" aria-label="Save">
+    <section class="monitor-card save save-panel" aria-label="Save this voice">
       <header class="monitor-head">
-        <h3>Keep it</h3>
+        <h3>Save this voice</h3>
       </header>
       <form
         class="col gap-s"
@@ -429,11 +480,11 @@ export function SavePanel() {
         <input class="input" placeholder={label} value={name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="Name" />
         <input class="input" placeholder="Signature line: what this voice says when loaded (optional)" value={signature} onInput={(e) => setSignature((e.currentTarget as HTMLInputElement).value)} aria-label="Signature line" />
         <div class="row gap-s">
-          <button type="submit" class="btn primary" disabled={!d.baseId} title="Save the whole design (voice, accent, delivery, mood) to this project's cast">
-            <Icon name="plus" size={14} /> Save to cast
+          <button type="submit" class="btn primary" disabled={!d.baseId} title="Keeps the whole design (voice, accent, delivery, mood) in this project's cast, for Direct's lines">
+            <Icon name="plus" size={14} /> Add to cast <span class="muted">(use in Direct)</span>
           </button>
-          <button type="button" class="btn" onClick={() => void toServer()} disabled={!canServer || busy} title={why ?? 'Caches the steered embedding on the server as a new library voice (delivery and mood stay in the persona)'}>
-            <Icon name="save" size={14} /> {busy ? 'Saving…' : 'Save as voice'}
+          <button type="button" class="btn" onClick={() => void toServer()} disabled={!canServer || busy} title={why ?? 'Keeps the identity you shaped as a new voice in Your voices (delivery and mood stay in the cast member)'}>
+            <Icon name="save" size={14} /> {busy ? 'Saving…' : 'Save to Your voices'}
           </button>
         </div>
       </form>

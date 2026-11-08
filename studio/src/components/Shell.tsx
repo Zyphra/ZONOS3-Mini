@@ -21,7 +21,7 @@ export const webConsent = signal<((yes: boolean) => void) | null>(null);
 
 // ── Backend pill and panel ────────────────────────────────────────────────────────────────────────
 
-const KIND_LABEL: Record<api.BackendKind, string> = { live: 'Live', web: 'In this browser', fixture: 'Controls not applied', offline: 'Placeholder audio' };
+const KIND_LABEL: Record<api.BackendKind, string> = { live: 'Server', web: 'In this browser', fixture: 'Server · controls off', offline: 'Demo audio' };
 
 function kindExplanation(b: api.Backend): string {
   switch (b.kind) {
@@ -30,9 +30,9 @@ function kindExplanation(b: api.Backend): string {
     case 'live':
       return 'A ZONOS server renders every voice; controls and painted words are applied there.';
     case 'fixture':
-      return `This server can’t apply controls yet: renders are sent without them, so you hear the base voice as it is.${embeddingsSynthetic.value ? ' Its voice embeddings are stand-ins, so saving designed voices is off.' : ''}`;
+      return `This server can’t apply controls: renders are sent without them, so you hear each base voice as is.${embeddingsSynthetic.value ? ' Its voice embeddings are stand-ins, so saving shaped voices is off.' : ''}`;
     default:
-      return 'No ZONOS server answered: voices and audio are placeholders made in this browser (a babbling synthesizer that follows every control).';
+      return 'Demo audio: no ZONOS server answered. Voices and takes are placeholders made in this browser (a babbling synthesizer that follows every control).';
   }
 }
 
@@ -113,16 +113,28 @@ export function BackendPanel() {
   );
 }
 
-/** Offline and fixture backends: a line under the top bar so nobody mistakes placeholder audio for the real thing. */
+const BANNER_KEY = 'zvs.bannerDismissed';
+const bannerDismissed = signal(sessionStorage.getItem(BANNER_KEY) === '1');
+
+/** Offline and fixture backends: a line under the top bar so nobody mistakes demo audio for the real thing (dismissable for the session; the pill stays). */
 export function BackendBanner() {
   const b = backend.value;
-  if (!b || (b.kind !== 'offline' && b.kind !== 'fixture')) return null;
+  if (!b || (b.kind !== 'offline' && b.kind !== 'fixture') || bannerDismissed.value) return null;
   return (
     <div class="backend-banner" role="status">
       <Icon name="alert" size={14} />
-      <span>{b.kind === 'offline' ? 'Placeholder audio: no ZONOS server answered.' : 'This server can’t apply controls yet: you hear the base voice as it is.'}</span>
+      <span>{b.kind === 'offline' ? 'Demo audio: no ZONOS server answered — voices and takes are placeholders.' : 'This server can’t apply controls: you hear each base voice as is.'}</span>
       <button class="link" onClick={() => (backendPanelOpen.value = true)}>
         details
+      </button>
+      <button
+        class="link"
+        onClick={() => {
+          sessionStorage.setItem(BANNER_KEY, '1');
+          bannerDismissed.value = true;
+        }}
+      >
+        Dismiss for this session
       </button>
     </div>
   );
@@ -209,6 +221,13 @@ const ROWS: [string, string][] = [
   ['‹› Tag', 'Direct: tag the selected words from the paint bar'],
   ['?', 'this sheet'],
 ];
+const DIRECT_ROWS: [string, string][] = [
+  ['Space', 'play / stop the script'],
+  ['R', 'render the focused line'],
+  ['S', 'star the playing take (the script plays it)'],
+  ['⌘↵ / Ctrl+Enter', 'save the line text while editing'],
+  ['↵ (line text focused)', 'paint the selected words · ⇧← / ⇧→ extend the selection'],
+];
 const EDIT_ROWS: [string, string][] = [
   ['Space', 'play / pause from the cursor'],
   ['A / B', 'the version / the selected take'],
@@ -252,6 +271,17 @@ export function Keys() {
         </header>
         <dl>
           {ROWS.map(([k, v]) => (
+            <Fragment key={k}>
+              <dt>
+                <kbd>{k}</kbd>
+              </dt>
+              <dd>{v}</dd>
+            </Fragment>
+          ))}
+        </dl>
+        <h3 class="sheet-sub">Direct</h3>
+        <dl>
+          {DIRECT_ROWS.map(([k, v]) => (
             <Fragment key={k}>
               <dt>
                 <kbd>{k}</kbd>
@@ -304,16 +334,16 @@ export function BootPanel() {
     return (
       <div class="empty boot-consent" role="dialog" aria-labelledby="boot-consent-title">
         <h2 id="boot-consent-title">No server answered</h2>
-        <p>Run the voice engine in this browser? One-time download ≈ 1.9 GB, kept in the browser’s cache.</p>
+        <p>Run the voice engine in this browser? Download ≈ 1.9 GB once; cached in this browser.</p>
         <div class="row gap-s">
           <button class="btn primary" onClick={() => consent(true)}>
-            Run here
+            Run in this browser
           </button>
           <button class="btn" onClick={() => location.reload()}>
-            Retry server
+            Retry the server
           </button>
           <button class="btn ghost" onClick={() => consent(false)}>
-            Work offline (placeholder audio)
+            Try it with demo audio
           </button>
         </div>
       </div>

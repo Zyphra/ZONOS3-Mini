@@ -23,7 +23,8 @@ import { EMBEDDING_TYPE, MediaSink } from './media';
 import { emptyDoc, LEGACY_KEYS, legacyDoc, restore, snapshot, speakerUses } from './projectDoc';
 import { remapIds, SCHEMA, summaryOf, type ProjectDoc, type ProjectSettings } from './projectSchema';
 import { BrowserStore, matchesHash, metaOf, readdress, ServerStore, type ProjectMeta, type Store } from './projectStore';
-import { script, takes } from './script';
+import { script, scriptDraft, scriptTextDirty, takes } from './script';
+import { confirm } from '../components/ConfirmDialog';
 import { voiceOrigins } from './who';
 
 export type SaveState = 'saved' | 'saving' | 'error' | 'conflict' | 'off';
@@ -216,7 +217,7 @@ addEventListener('pagehide', () => timer && void save());
 // Leaving with work not yet (or not able to be) written: the browser asks first.
 addEventListener('beforeunload', (e) => {
   const s = saveState.value;
-  if (timer || s === 'saving' || s === 'error' || s === 'conflict' || (s === 'off' && current.value)) e.preventDefault();
+  if (timer || s === 'saving' || s === 'error' || s === 'conflict' || (s === 'off' && current.value) || unsavedWork()) e.preventDefault();
 });
 
 // ── Voices ────────────────────────────────────────────────────────────────────────────────────────
@@ -391,6 +392,13 @@ function busyWith(): string | null {
   return null;
 }
 
+/** Work that lives outside the saved document (an Edit draft, unkept takes, a script text draft): asked about before it is dropped. */
+export function unsavedWork(): string | null {
+  if (edit.draftDirty.value || edit.gens.value.size > 0) return 'unsaved text, regions or takes in Edit';
+  if (scriptTextDirty.value) return 'script text changes in Direct';
+  return null;
+}
+
 /** Leaving the open project: it must be idle and saved (a failed save keeps you in it, so nothing is lost). */
 async function canLeave(): Promise<boolean> {
   if (!store) {
@@ -402,6 +410,9 @@ async function canLeave(): Promise<boolean> {
     notify(`Wait for ${why} to finish (or cancel it) before switching projects.`, 'error');
     return false;
   }
+  const loose = unsavedWork();
+  if (loose && !(await confirm(`Switching projects discards your ${loose}. Continue?`, { ok: 'Discard', danger: true }))) return false;
+  scriptDraft.value = null;
   await save();
   if (saveState.value === 'conflict') {
     notify('This project changed elsewhere: reload it or keep yours as a copy before switching.', 'error');

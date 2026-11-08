@@ -11,6 +11,8 @@ export interface WaveRegion {
   n: number;
   manual: boolean;
   directed: boolean;
+  /** Faint: shown for orientation on the take view, where the regions belong to the version. */
+  ghost?: boolean;
 }
 
 interface Props {
@@ -169,7 +171,7 @@ export function EditWave(p: Props) {
     const c = colors;
     const t0 = scroll / pps;
     const step = TICKS.find((s) => s * pps >= 70) ?? 120;
-    g.font = '10px "JetBrains Mono", ui-monospace, Menlo, monospace';
+    g.font = '11px "JetBrains Mono", ui-monospace, Menlo, monospace';
     g.fillStyle = c.dim;
     g.strokeStyle = c.line;
     g.lineWidth = 1;
@@ -355,7 +357,7 @@ export function EditWave(p: Props) {
             const s = d ? d.a : r.start;
             const e = d ? d.b : r.end;
             return (
-              <div class={`ew-region${r.manual ? ' is-manual' : ''}${r.directed ? ' is-directed' : ''}${p.focusRegion === r.id ? ' is-focus' : ''}`} style={{ left: `${s * pps}px`, width: `${Math.max(3, (e - s) * pps)}px` }}>
+              <div class={`ew-region${r.manual ? ' is-manual' : ''}${r.directed ? ' is-directed' : ''}${r.ghost ? ' is-ghost' : ''}${p.focusRegion === r.id ? ' is-focus' : ''}`} style={{ left: `${s * pps}px`, width: `${Math.max(3, (e - s) * pps)}px` }}>
                 <span class="ew-n">{r.n}</span>
                 {p.editable && (
                   <>
@@ -423,7 +425,7 @@ export function EditWave(p: Props) {
                     style={{ left: `${left}px`, maxWidth: quiet.has(w) ? undefined : `${Math.max(wpx, 14, w.word.length * 6.4 + 4)}px` }}
                     title={`${w.word} · ${fmtTime(w.start)}${confText(w)}`}
                     onClick={() => p.onWord(i)}
-                    tabIndex={-1}
+                    tabIndex={0}
                   >
                     {w.word}
                   </button>
