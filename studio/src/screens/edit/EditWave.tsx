@@ -242,17 +242,23 @@ export function EditWave(p: Props) {
       moved = true;
       if (p.editable) setDrag({ kind: 'new', a, b: timeAt(ev.clientX) });
     };
-    const up = (ev: PointerEvent) => {
+    const done = () => {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', cancel);
       setDrag(null);
+    };
+    const up = (ev: PointerEvent) => {
+      done();
       if (moved && p.editable) {
         const b = timeAt(ev.clientX);
         if (Math.abs(b - a) * pps >= DRAG_PX) p.onCreate(Math.min(a, b), Math.max(a, b));
       } else if (!moved) p.onSeek(a);
     };
+    const cancel = () => done();
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', cancel);
   };
 
   const onEdge = (e: PointerEvent, r: WaveRegion, which: 'start' | 'end') => {
@@ -266,14 +272,20 @@ export function EditWave(p: Props) {
       cur = which === 'start' ? { ...cur, a: Math.min(t, r.end - 0.07) } : { ...cur, b: Math.max(t, r.start + 0.07) };
       setDrag(cur);
     };
-    const up = () => {
+    const done = () => {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', cancel);
       setDrag(null);
+    };
+    const up = () => {
+      done();
       if (cur.a !== r.start || cur.b !== r.end) p.onEdges(r.id, cur.a, cur.b);
     };
+    const cancel = () => done();
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', cancel);
   };
 
   const onWordEdge = (e: PointerEvent, i: number, edge: 'start' | 'end') => {
@@ -286,15 +298,29 @@ export function EditWave(p: Props) {
     const w0 = p.words[i];
     tm.onEdge(i, edge, edge === 'start' ? w0.start : w0.end, 'begin', e.altKey);
     setWdrag({ i, edge });
-    const move = (ev: PointerEvent) => tm.onEdge(i, edge, timeAt(ev.clientX), 'move', ev.altKey);
-    const up = (ev: PointerEvent) => {
+    let last = edge === 'start' ? w0.start : w0.end;
+    const move = (ev: PointerEvent) => {
+      last = timeAt(ev.clientX);
+      tm.onEdge(i, edge, last, 'move', ev.altKey);
+    };
+    const done = () => {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
-      tm.onEdge(i, edge, timeAt(ev.clientX), 'end', ev.altKey);
+      el.removeEventListener('pointercancel', cancel);
       setWdrag(null);
+    };
+    const up = (ev: PointerEvent) => {
+      done();
+      tm.onEdge(i, edge, timeAt(ev.clientX), 'end', ev.altKey);
+    };
+    // A cancelled pointer (scroll took over, the finger left the screen) ends the gesture where it was.
+    const cancel = () => {
+      done();
+      tm.onEdge(i, edge, last, 'end', false);
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', cancel);
   };
 
   const view0 = scroll / pps - 1;
@@ -357,14 +383,14 @@ export function EditWave(p: Props) {
                     style={{ left: `${w.start * pps}px`, width: `${width}px` }}
                   >
                     <button
-                      class="ew-wlabel"
-                      tabIndex={sel ? 0 : -1}
+                      class={`ew-wlabel${width <= 14 ? ' is-crowded' : ''}`}
+                      tabIndex={sel || (tm.selected === null && i === 0) ? 0 : -1}
                       aria-pressed={sel}
                       aria-label={`${w.word}, ${w.start.toFixed(2)} to ${w.end.toFixed(2)} seconds${tm.adjusted(i) ? ', adjusted' : ''}${isLow(w) ? ', low confidence' : ''}`}
                       title={`${w.word} · ${fmtTime(w.start)}–${fmtTime(w.end)}${confText(w)}${tm.adjusted(i) ? ' · adjusted' : ''}`}
                       onClick={() => p.onWord(i)}
                     >
-                      {width > 14 ? w.word : ''}
+                      {width > 14 || sel ? w.word : ''}
                     </button>
                     <span class={`ew-wedge ew-wedge-s${active === 'start' ? ' is-active' : ''}`} onPointerDown={(ev) => onWordEdge(ev, i, 'start')} aria-hidden="true" />
                     <span class={`ew-wedge ew-wedge-e${active === 'end' ? ' is-active' : ''}`} onPointerDown={(ev) => onWordEdge(ev, i, 'end')} aria-hidden="true" />

@@ -9,6 +9,7 @@ import * as api from '../api';
 import type { ControlSpec, Dose, EditRequest, EditTake } from '../api';
 import * as player from '../audio/player';
 import { errorText, isAbort } from '../audio/render';
+import { ApiError } from '../lib/http';
 import { MIN_GAP_FRAMES, contextWindows, isTagToken, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
 import { bytesToBase64, base64ToBytes } from '../lib/files';
 import { parseWav, wavBytes } from '../lib/wav';
@@ -70,6 +71,10 @@ export interface Region {
   manual: boolean;
   /** Direction for this region: UI values of spannable controls. */
   values: Values;
+  /** Its edges were dragged (a text edit re-plans and resets them). */
+  edited?: boolean;
+  /** How many regions (text changes or manual stretches) closer than the minimum gap this one absorbed. */
+  mergedFrom?: number;
 }
 
 export interface Take {
@@ -138,6 +143,8 @@ function setGen(g: Generation | null) {
 export const ab = signal<'version' | 'take'>('version');
 export const busy = signal<{ label: string; started: number } | null>(null);
 export const genError = signal<string | null>(null);
+/** The error was the server's refusal (4xx), not a failure. */
+export const genRefused = signal(false);
 /** Where playback starts, seconds in the displayed audio. */
 export const cursor = signal(0);
 /** The word whose timing the keyboard edits, and which of its edges. */
@@ -411,12 +418,34 @@ function merged(list: Region[]): Region[] {
         ...prev,
         end: Math.max(prev.end, r.end),
         changes: [...prev.changes, ...r.changes],
-        manual: prev.manual && r.manual,
+        // One manual part keeps the region removable (and its edges the user's).
+        manual: prev.manual || r.manual,
         values: keepPrev ? prev.values : r.values,
+        edited: prev.edited || r.edited,
+        mergedFrom: (prev.mergedFrom ?? 1) + (r.mergedFrom ?? 1),
       };
-    } else out.push({ ...r });
+    } else out.push({ ...r, mergedFrom: undefined });
   }
   return out;
+}
+
+/** Put the original words of a planned region back into the text (its changes are undone, the region disappears). */
+export function revertRegion(id: string) {
+  const v = version.value;
+  const r = regions.value.find((x) => x.id === id);
+  if (!v || !r || !r.changes.length) return;
+  const plan = planRegions(v.words, text.value, { duration: v.duration, frameRate: fps.value, marginSeconds: margin.value, groups: pronEdit.value });
+  const expanded = v.words.flatMap((w) => w.tokens.map(() => w));
+  let t = text.value;
+  // Later changes first, so earlier character offsets stay valid.
+  for (const c of [...r.changes].sort((a, b) => b.j1 - a.j1)) {
+    const from = c.j1 < plan.owners.length ? plan.owners[c.j1][0] : t.length;
+    const to = c.j2 > c.j1 ? plan.owners[c.j2 - 1][1] : from;
+    const words = [...new Set(expanded.slice(c.i1, c.i2))].map((w) => w.word);
+    const sep = c.j1 === c.j2 && from > 0 && from < t.length && !/\s/.test(t[from - 1]) ? ' ' : '';
+    t = t.slice(0, from) + sep + words.join(' ') + (c.j1 === c.j2 && words.length && from < t.length && !/\s/.test(t[from]) ? ' ' : '') + t.slice(to);
+  }
+  setText(t.replace(/[ \t]{2,}/g, ' '));
 }
 
 /** Regions from the text diff, plus the manual ones; direction carries over to the region it overlaps most. */
@@ -469,7 +498,7 @@ export function moveEdges(id: string, startSec: number, endSec: number) {
       if (r.id !== id) return r;
       if (!r.manual) touched = true;
       const start = clamp(Math.round(startSec * fps.value), 0, total - 1);
-      return { ...r, start, end: clamp(Math.round(endSec * fps.value), start + 1, total) };
+      return { ...r, start, end: clamp(Math.round(endSec * fps.value), start + 1, total), edited: true };
     }),
   );
 }
@@ -709,7 +738,10 @@ export async function generate() {
     ab.value = 'take';
     cursor.value = 0;
   } catch (e) {
-    if (!isAbort(e)) genError.value = errorText(e);
+    if (!isAbort(e)) {
+      genError.value = errorText(e);
+      genRefused.value = e instanceof ApiError && e.status < 500;
+    }
   } finally {
     busy.value = null;
     ctrl = null;
@@ -762,7 +794,10 @@ export async function retryRegion(k: number) {
     setGen({ ...g, takes, selected: bestOf(takes, g, g.takes.length) });
     ab.value = 'take';
   } catch (e) {
-    if (!isAbort(e)) genError.value = errorText(e);
+    if (!isAbort(e)) {
+      genError.value = errorText(e);
+      genRefused.value = e instanceof ApiError && e.status < 500;
+    }
   } finally {
     busy.value = null;
     ctrl = null;
