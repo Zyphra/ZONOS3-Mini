@@ -115,7 +115,7 @@ function BenchHeader() {
             Keep as is
           </button>
         </div>
-        <span class="hint">{canClone.value ? 'Shape it: who, accent and texture change the person. Keep as is: only delivery and mood change.' : 'Keep as is needs a recording; this voice was saved without one.'}</span>
+        {!canClone.value && <span class="hint">Keep as is needs a recording; this voice was saved without one.</span>}
       </div>
       <IdentityMeter />
       <div class="row gap-s">
