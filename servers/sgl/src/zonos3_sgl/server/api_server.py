@@ -456,6 +456,18 @@ async def _get_default_speaker(
     config: ServerArgs,
     speaker_id: str,
 ) -> DefaultVoice | None:
+    """The default voice ``speaker_id``. One already scanned whose file is unchanged is returned as is (a stat of its
+    file instead of a rescan of every voice and transcript, on every request that names it); an unknown id or a
+    changed file rescans the directory."""
+    root = _default_voice_root(config)
+    if root is not None:
+        cached = _DEFAULT_SPEAKER_CACHE.get((str(root.resolve()), _model_speaker_dim(config)), {}).get(speaker_id)
+        if cached is not None:
+            try:
+                if cached.path.stat().st_mtime == cached.mtime:
+                    return cached
+            except OSError:
+                pass
     speakers = await _list_default_speakers(config)
     return next((entry for entry in speakers if entry.speaker_id == speaker_id), None)
 
