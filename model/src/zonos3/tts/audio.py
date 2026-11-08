@@ -1,4 +1,5 @@
-"""Reference-audio decoding (ffmpeg -> PCM WAV -> mono float tensor) and the one PCM16 WAV encoder.
+"""Reference-audio decoding (ffmpeg -> PCM WAV -> mono float tensor), the served PCM's output stage (gain + soft
+limiter) and the one PCM16 WAV encoder.
 
 Shared by the HTTP server and the offline :class:`~zonos3_sgl.tts.llm.TTSLLM`; has no
 FastAPI / server dependency.
@@ -15,7 +16,30 @@ import wave
 import numpy as np
 import torch
 
+from zonos3.generation import OUTPUT_LIMIT_DBFS
+
 logger = logging.getLogger(__name__)
+
+# The soft limiter's knee (generation registry output_limit_dbfs) as a linear amplitude.
+OUTPUT_LIMIT_KNEE = np.float32(10.0 ** (OUTPUT_LIMIT_DBFS / 20.0))
+
+
+def output_pcm(samples: np.ndarray, gain: float) -> np.ndarray:
+    """Decoder audio -> the served float32 PCM: times the output ``gain`` (the decoder's headroom), then the soft
+    limiter. Samples at or below the knee k (OUTPUT_LIMIT_KNEE) pass unchanged; louder ones become
+    ``sign(x) * (k + (1 - k) * tanh((|x| - k) / (1 - k)))``: slope 1 at the knee, bounded by full scale (float32 tanh
+    reaches it only past |x| ~ 1.9). Per sample, so streamed chunks equal the whole audio."""
+    x = np.asarray(samples, dtype=np.float32)
+    if gain != 1.0:
+        x = x * np.float32(gain)
+    over = np.abs(x) > OUTPUT_LIMIT_KNEE
+    if not over.any():
+        return x
+    width = np.float32(1.0) - OUTPUT_LIMIT_KNEE
+    y = x.copy()
+    peak = x[over]
+    y[over] = np.sign(peak) * (OUTPUT_LIMIT_KNEE + width * np.tanh((np.abs(peak) - OUTPUT_LIMIT_KNEE) / width))
+    return y
 
 
 def pcm16_samples(pcm: np.ndarray) -> np.ndarray:

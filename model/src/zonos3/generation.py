@@ -30,4 +30,6 @@ EDIT_MAX_SECONDS: float = float(_data["audio_max_seconds"]["edit"])
 # prefix streams: decode a frame once its first STREAM_CODEBOOKS codebooks arrived, for the "first" chunk or "all"
 STREAM_CODEBOOKS: int = int(_data["stream_codebooks"]["default"])
 STREAM_CODEBOOKS_SCOPE: str = str(_data["stream_codebooks"]["scope"])
+# the soft limiter's knee after the decoder's output gain (zonos3.tts.audio.output_pcm)
+OUTPUT_LIMIT_DBFS: float = float(_data["output_limit_dbfs"])
 del _data

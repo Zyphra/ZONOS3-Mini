@@ -692,7 +692,7 @@ components:
         condition_buckets: {$ref: "#/components/schemas/ConditionBuckets"}
         condition_values: {$ref: "#/components/schemas/ConditionValues"}
         headroom_db:
-          description: Output gain -headroom_db (null = the decoder's registry value).
+          description: Output gain -headroom_db (null = the decoder's registry value), followed by the soft limiter above the generation registry's output_limit_dbfs (-1 dBFS).
           type: [number, "null"]
           minimum: 0
           maximum: 24

@@ -33,3 +33,5 @@ export const ALIGN_PROBE_MAX_TEXT = 2048;
 export const REFERENCE_AUDIO_MAX_SECONDS = registry.audio_max_seconds.reference;
 /** The longest speech-edit source (seconds) the capabilities advertise. */
 export const EDIT_MAX_SECONDS = registry.audio_max_seconds.edit;
+/** The knee (dBFS) of the soft limiter after the decoder's output gain (output.ts outputPcm). */
+export const OUTPUT_LIMIT_DBFS = registry.output_limit_dbfs;

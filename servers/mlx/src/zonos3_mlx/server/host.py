@@ -16,6 +16,7 @@ import numpy as np
 import soundfile as sf
 from zonos3.server.host import host_facts, laci_slots, rate_scale
 from zonos3.server.plugins import HostFacts, LaciTakeRequest, TakeResult
+from zonos3.tts.audio import output_pcm
 from zonos3.tts.edit_align import asr_device
 
 from zonos3_mlx.engine import LaciTake
@@ -51,7 +52,7 @@ class MlxHost:
         state = self.state
         if state.laci_slots is None:
             state.laci_slots = laci_slots(state.options.batch)
-        gain = np.float32(state.engine.output_gain(None))
+        gain = state.engine.output_gain(None)
         engine = state.engine
         plans = []
         for take in takes:
@@ -87,7 +88,7 @@ class MlxHost:
                     job.abort()
             if job.record is None:
                 raise RuntimeError("LACI take: the scheduler sent no LACI record")
-            audio = np.frombuffer(data, dtype=np.float32) * gain if data else None
+            audio = output_pcm(np.frombuffer(data, dtype=np.float32), gain) if data else None
             return audio, job.record
 
         return list(await asyncio.gather(*(run(plan) for plan in plans)))

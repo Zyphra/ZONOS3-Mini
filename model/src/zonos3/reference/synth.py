@@ -29,6 +29,7 @@ from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM
 from zonos3.speaker_cfg import guided_logits
 from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
 from zonos3.tts import plan as P
+from zonos3.tts.audio import output_pcm
 from zonos3.tts.delay import apply_cold_start_delay
 from zonos3.tts.laci import LaciConfig, LaciHeads, LaciSession, RateBuckets
 from zonos3.tts.probe import locate_text_span
@@ -622,7 +623,8 @@ def decode_rows(
 
 
 class _Emit:
-    """Streamed PCM out: gained, the last ``fade_out_ms`` held back and faded at the end of the take."""
+    """Streamed PCM out: through the output stage (gain + soft limiter), the last ``fade_out_ms`` held back and faded at
+    the end of the take."""
 
     def __init__(self, on_audio, gain: float, fade_out_ms: float):
         self.on_audio, self.gain, self.fade_out_ms = on_audio, np.float32(gain), fade_out_ms
@@ -631,7 +633,7 @@ class _Emit:
         self.parts: list[np.ndarray] = []
 
     def __call__(self, chunk: np.ndarray, last: bool) -> None:
-        data = np.concatenate((self.held, chunk * self.gain)).astype(np.float32)
+        data = np.concatenate((self.held, output_pcm(chunk, float(self.gain)))).astype(np.float32)
         if last:
             data, self.held = fade_out(data, self.fade_out_ms), data[:0]
         elif self.hold:
@@ -794,7 +796,7 @@ def synthesize(
         context_codes=plan.context_codes,
         device=device,
     )
-    pcm = fade_out(pcm * np.float32(gain), float(req.fade_out_ms)).astype(np.float32)
+    pcm = fade_out(output_pcm(pcm, gain), float(req.fade_out_ms)).astype(np.float32)
     if on_audio is not None:
         on_audio(pcm)
     return SynthResult(pcm, plan.seed, record, rows, eos_frame, plan)

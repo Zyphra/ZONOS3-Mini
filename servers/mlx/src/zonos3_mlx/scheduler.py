@@ -30,6 +30,7 @@ import mlx.core as mx
 import numpy as np
 import torch
 from zonos3.reference.synth import ProbeState, Sampling, fade_out, steer_fn
+from zonos3.tts.audio import output_pcm
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciSession, RateBuckets
 from zonos3.tts.plan import Branch
 from zonos3.tts.probe import locate_text_span
@@ -471,7 +472,7 @@ class Scheduler:
             audio_pad_id=self.config.audio_pad_id,
         ).result()
         pcm = fade_out(
-            pcm * np.float32(self.engine.output_gain(plan.request.headroom_db)), float(plan.request.fade_out_ms)
+            output_pcm(pcm, self.engine.output_gain(plan.request.headroom_db)), float(plan.request.fade_out_ms)
         )
         return _Result(pcm.astype(np.float32), plan.seed, record, rows, eos, plan, job)
 

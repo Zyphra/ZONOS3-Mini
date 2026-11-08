@@ -2,6 +2,8 @@
 // defaults and limits every server shares, embedded at build time and parsed on first use.
 #pragma once
 
+#include <cstddef>
+
 struct zonos3_generation_registry {
     int sample_rate;                    // the API's audio rate (Hz)
     struct {                            // the v2 sampling defaults (servers/api/openapi.yaml repeats them)
@@ -19,6 +21,12 @@ struct zonos3_generation_registry {
     bool stream_codebooks_first_only;                       // ... on the first chunk only (scope "first") or every one
     double reference_audio_max_seconds, upload_max_seconds, edit_max_seconds;   // the longest reference clip, upload
                                                                                 // and speech-edit clip
+    double output_limit_dbfs;                               // the soft limiter's knee after the output gain
 };
 
 const zonos3_generation_registry & zonos3_generation();
+
+// The output stage's soft limiter (zonos3.tts.audio.output_pcm), in place, after the decoder's output gain: samples
+// at or below the knee k = 10^(output_limit_dbfs / 20) pass unchanged, louder ones become
+// sign(x) * (k + (1 - k) * tanh((|x| - k) / (1 - k))): slope 1 at the knee, bounded by full scale. Per sample.
+void zonos3_soft_limit(float * pcm, size_t n);

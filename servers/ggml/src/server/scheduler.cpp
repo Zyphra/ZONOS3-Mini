@@ -3,6 +3,7 @@
 #include "server/scheduler.h"
 
 #include "server/state.h"
+#include "zonos3-generation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +15,8 @@
 namespace zs {
 
 // The silence-prefill and decode-context rows are decoded (the decoder needs them as context) but their audio is
-// never emitted: drop the first skip_samples samples of the job's output, then apply the output gain.
+// never emitted: drop the first skip_samples samples of the job's output, then the output stage: the output gain and
+// the soft limiter (zonos3_soft_limit).
 static void finish_block(ReqJob & job, std::vector<float> & pcm) {
     if (job.skip_samples > 0) {
         const size_t n = std::min(pcm.size(), (size_t) job.skip_samples);
@@ -22,6 +24,7 @@ static void finish_block(ReqJob & job, std::vector<float> & pcm) {
         job.skip_samples -= (int64_t) n;
     }
     if (job.gain != 1.0f) for (float & v : pcm) v *= job.gain;
+    zonos3_soft_limit(pcm.data(), pcm.size());
 }
 
 // Cosine fade-out over the final fade_ms milliseconds.

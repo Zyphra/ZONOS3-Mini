@@ -19,7 +19,7 @@ from zonos3.reference.synth import Sampling, fade_out
 from zonos3.server.schemas import SPEAKER_INPUT_FIELDS, GenerateRequest, SpeechRequest
 from zonos3.server.speech import check_format, resolve_stream_decode, speech_headers
 from zonos3.server.voices import normalize_session_id
-from zonos3.tts.audio import pcm16_wav_bytes
+from zonos3.tts.audio import output_pcm, pcm16_wav_bytes
 from zonos3.tts.plan import parse_request, request_head
 from zonos3.tts.stream import StreamDecoder
 
@@ -145,7 +145,7 @@ class JobRun:
 
 
 def finish_pcm(audio: bytes, gain: float, fade_out_ms: float) -> np.ndarray:
-    pcm = np.frombuffer(audio, dtype=np.float32) * np.float32(gain)
+    pcm = output_pcm(np.frombuffer(audio, dtype=np.float32), gain)
     return fade_out(pcm.astype(np.float32), float(fade_out_ms))
 
 
@@ -204,12 +204,13 @@ async def generate_response(state: ServerState, req: GenerateRequest, session_id
 
 
 async def _stream(run: JobRun, gain: float, fade_out_ms: float):
-    """Gained chunks as they come; the last ``fade_out_ms`` is held back and faded at the end of stream."""
+    """Chunks through the output stage (gain + soft limiter) as they come; the last ``fade_out_ms`` is held back and
+    faded at the end of stream."""
     fade_bytes = int(SAMPLE_RATE * max(0.0, fade_out_ms) / 1000.0) * 4
     held = b""
     try:
         async for chunk in run.chunks():
-            data = (np.frombuffer(chunk, dtype=np.float32) * np.float32(gain)).astype(np.float32).tobytes()
+            data = output_pcm(np.frombuffer(chunk, dtype=np.float32), gain).tobytes()
             if fade_bytes > 0:
                 held += data
                 if len(held) > fade_bytes:

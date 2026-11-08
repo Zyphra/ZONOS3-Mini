@@ -255,6 +255,11 @@ if (BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zonos3.gguf
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zac.gguf)
     set_tests_properties(prefix-stream PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
+    # The output stage's soft limiter after the decoder gain (output_limit_dbfs of the generation registry).
+    add_executable(output-limit tests/output-limit.cpp)
+    target_link_libraries(output-limit PRIVATE zonos3)
+    add_test(NAME output-limit COMMAND output-limit)
+    set_tests_properties(output-limit PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
 endif()
 
 # --- Graph features (plan 7.5/7.6/7.8): CPU invariants of the alignment probe and accent adapters.

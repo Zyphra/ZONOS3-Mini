@@ -9,6 +9,7 @@ import {
   ALIGN_PROBE_MAX_TEXT, CONTEXT_CAPACITY, DECODE_CONTEXT_FRAMES, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES,
   STREAM_CODEBOOKS, STREAM_CODEBOOKS_SCOPE, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE,
 } from '../generation';
+import { outputPcm } from '../output';
 import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
 import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
@@ -409,7 +410,8 @@ function decodeRows(codes: number[], H: number, ctx: Int32Array | null, K: numbe
   return rows;
 }
 
-/** Runs one planned request to completion; PCM goes to `emit` (gain applied, prefill/context dropped). */
+/** Runs one planned request to completion; PCM goes to `emit` (prefill/context dropped, then the output stage: gain and
+ *  soft limiter). */
 export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => void, aborted: () => boolean): Promise<void> {
   const { probe, follower, laci } = attachProbe(e, p);
   const bb = e.backbone, codec = e.codec;
@@ -424,12 +426,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
       out = out.subarray(n);
       skip -= n;
     }
-    if (gain !== 1) {
-      const g = new Float32Array(out.length);
-      for (let i = 0; i < out.length; i++) g[i] = Math.fround(out[i] * gain);
-      out = g;
-    }
-    return out;
+    return outputPcm(out, gain);
   };
 
   const slot: SlotState = newSlot(p.prompt.prefillFrames);

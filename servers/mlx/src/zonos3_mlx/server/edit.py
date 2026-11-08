@@ -16,6 +16,7 @@ import numpy as np
 import torch
 from zonos3.generation import SAMPLE_RATE, UPLOAD_MAX_SECONDS
 from zonos3.reference.synth import Sampling
+from zonos3.tts.audio import output_pcm
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_runtime import EditRuntime, FillJob
 from zonos3.tts.plan import Speaker, resolve_condition_buckets, validate_phoneme_groups
@@ -114,7 +115,7 @@ class MlxEditEngine:
     async def decode(self, codes: np.ndarray) -> np.ndarray:
         engine = self.state.engine
         audio = await self.state.run(engine.decoder.decode, np.asarray(codes, dtype=np.int64))
-        return audio * np.float32(engine.output_gain(None))
+        return output_pcm(audio, engine.output_gain(None))
 
 
 def runtime(state: ServerState) -> EditRuntime:

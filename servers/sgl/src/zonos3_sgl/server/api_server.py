@@ -62,6 +62,7 @@ from zonos3.tts.audio import (
     _decode_audio_bytes,
     _decode_wav_bytes,
     _transcode_audio_bytes_to_wav,
+    output_pcm,
     pcm16_wav_bytes,
     write_pcm16_wav,
 )
@@ -339,12 +340,12 @@ class _RulesContext:
         return dual_codec_hop(_audio_codec(self.config)) is not None
 
 
-def _apply_gain_pcm(audio_bytes: bytes, gain: float) -> bytes:
-    """Scale float32 PCM bytes (the decoder's headroom: the iSTFT head is unbounded)."""
-    if gain == 1.0 or not audio_bytes:
+def _output_pcm_bytes(audio_bytes: bytes, gain: float) -> bytes:
+    """Float32 PCM bytes through the output stage (zonos3.tts.audio.output_pcm): the decoder's headroom gain (the iSTFT
+    head is unbounded), then the soft limiter."""
+    if not audio_bytes:
         return audio_bytes
-    samples = np.frombuffer(audio_bytes, dtype=np.float32) * np.float32(gain)
-    return samples.astype(np.float32).tobytes()
+    return output_pcm(np.frombuffer(audio_bytes, dtype=np.float32), gain).tobytes()
 
 
 def _output_gain(config: ServerArgs, headroom_db: float | None) -> float:
@@ -844,7 +845,7 @@ class FrontendManager:
                         first_byte = False
                     total_audio_bytes += len(ack.audio_data)
                     chunk_count += 1
-                    data = _apply_gain_pcm(ack.audio_data, gain)
+                    data = _output_pcm_bytes(ack.audio_data, gain)
                     if fade_bytes > 0:
                         held += data
                         if len(held) > fade_bytes:
@@ -889,7 +890,7 @@ class FrontendManager:
         # wait_for_ack stays suspended after the final reply: drop the request's queue here
         self.ack_map.pop(uid, None)
         self.event_map.pop(uid, None)
-        audio_data = _apply_fade_out_pcm(_apply_gain_pcm(audio_data, gain), fade_out_ms)
+        audio_data = _apply_fade_out_pcm(_output_pcm_bytes(audio_data, gain), fade_out_ms)
         if t_start is not None:
             e2e_s = time.perf_counter() - t_start
             audio_s = len(audio_data) / (SAMPLE_RATE * 4)
@@ -1560,7 +1561,9 @@ class _SglEditEngine:
         reply = await _backend_reply(
             get_global_state(), lambda uid: TTSDecodeCodesMsg(uid=uid, codes=torch.as_tensor(codes, dtype=torch.int32))
         )
-        return np.frombuffer(reply.audio_data, dtype=np.float32)
+        return output_pcm(
+            np.frombuffer(reply.audio_data, dtype=np.float32), _output_gain(get_global_state().config, None)
+        )
 
 
 # The server's speech editing, over the ASR and FuseAlign workers it shares with plugins.

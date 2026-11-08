@@ -52,4 +52,3 @@ def test_output_gain_from_headroom():
     assert api_server._output_gain(c, 0.0) == 1.0
     assert abs(api_server._output_gain(c, 6.0) - 0.5012) < 1e-3
     assert abs(api_server._output_gain(c, None) - 10 ** (-3.0 / 20)) < 1e-9  # the registry decoder's headroom_db 3.0
-    assert api_server._apply_gain_pcm(b"", 0.5) == b""

@@ -84,7 +84,7 @@ CORS allows every origin and exposes the response headers above.
 | `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |
 | `tag_cfg_scale` | `1.0` | Nonverbal-tag guidance, 1–4 ([guide](guide.md#nonverbal-markup-and-tag-cfg)) |
 | `laci` | `false` | Alignment-guarded decoding ([features](features.md#laci-alignment-guarded-decoding)) |
-| `headroom_db`, `fade_out_ms`, `decode_context` | registry, `0`, `false` | Output gain, tail fade, decoding behind the reference context |
+| `headroom_db`, `fade_out_ms`, `decode_context` | registry, `0`, `false` | Output gain (followed by every server's soft limiter above −1 dBFS, `output_limit_dbfs` in `generation.json`), tail fade, decoding behind the reference context |
 
 On a phoneme-token checkpoint `text` may carry pronunciation groups, U+E000 IPA U+E001 (see
 [guide: Pronunciation input](guide.md#pronunciation-input-phoneme-tokens)); a malformed group or a symbol outside the

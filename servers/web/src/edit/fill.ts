@@ -7,6 +7,7 @@ import { vocabIds, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { acceptFrame, newSlot, slotRow } from '../slot';
 import type { Tokenizer } from '../tokenizer';
+import { outputPcm } from '../output';
 import { editPromptTokens, extractFill } from './frames';
 import type { Span } from './words';
 
@@ -72,8 +73,8 @@ export async function decodeCodes(codec: CodecApi, codes: Int32Array, padId: num
   const out = new Float32Array(parts.reduce((a, p) => a + p.length, 0));
   let o = 0;
   for (const p of parts) {
-    for (let i = 0; i < p.length; i++) out[o + i] = Math.fround(p[i] * codec.gain);
+    out.set(p, o);
     o += p.length;
   }
-  return out;
+  return outputPcm(out, codec.gain);
 }
