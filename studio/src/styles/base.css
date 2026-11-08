@@ -550,20 +550,43 @@ select.input {
 .toasts {
   position: fixed;
   bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 12px;
+  right: 12px;
   display: grid;
   gap: 8px;
-  z-index: 50;
+  justify-items: center;
+  z-index: 90;
+  pointer-events: none;
+}
+.toasts-live {
+  display: contents;
 }
 .toast {
-  padding: 9px 16px;
-  border-radius: 999px;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, 100%);
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--r);
   background: var(--surface-2);
   border: 1px solid var(--line-2);
   box-shadow: var(--shadow);
   font-size: 13px;
   animation: rise 220ms var(--ease);
+}
+.toast-text {
+  flex: 1 1 auto;
+}
+.toast-action {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.toast-x {
+  flex: 0 0 auto;
+}
+.toast-dl {
+  padding: 9px 16px;
 }
 .toast-ok {
   border-color: color-mix(in srgb, var(--ok) 50%, transparent);
@@ -578,13 +601,51 @@ select.input {
     transform: translateY(6px);
   }
 }
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  display: grid;
+  place-items: center;
+  z-index: 95;
+  padding: 16px;
+}
+.confirm-dialog {
+  width: min(440px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  animation: rise 160ms var(--ease);
+}
+.confirm-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.confirm-dialog p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.confirm-dialog p.confirm-only {
+  color: var(--text);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
 .sheet-backdrop {
   position: fixed;
   inset: 0;
   background: var(--backdrop);
   display: grid;
   place-items: center;
-  z-index: 60;
+  z-index: 85;
 }
 .sheet {
   max-height: 88vh;

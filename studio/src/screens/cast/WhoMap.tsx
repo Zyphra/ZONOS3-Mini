@@ -3,7 +3,7 @@ import { drag } from '../../components/drag';
 import { Slider } from '../../components/Slider';
 import { clamp } from '../../lib/math';
 import { controlById, hue, spec } from '../../state/app';
-import { accentMix, baseSpeaker, design, designs, identity, setBase, setValue } from '../../state/design';
+import { accentMix, baseSpeaker, design, designs, identity, setValue, switchBase } from '../../state/design';
 import { identityEstimate } from '../../state/engine';
 import { speakers } from '../../state/library';
 import { extent, femaleAt, spotOf, who, yAtYears, yearsAt } from '../../state/who';
@@ -86,10 +86,13 @@ export function WhoMap({ large }: { large?: boolean }) {
     const el = svg.current;
     if (!el || !rail) return;
     let idle = 0;
+    // Pitch by wheel only on purpose: the map has focus, or ⌘ / Ctrl is held (a plain scroll over the map scrolls the page).
     const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0 || (document.activeElement !== el && !e.ctrlKey && !e.metaKey)) return;
       e.preventDefault();
       designs.begin();
-      setValue(rail.id, (design.value.values[rail.id] ?? 0) + (e.deltaY < 0 ? 0.1 : -0.1));
+      const step = 0.1 * clamp(Math.abs(e.deltaY) / 50, 0.5, 3);
+      setValue(rail.id, (design.value.values[rail.id] ?? 0) + (e.deltaY < 0 ? step : -step));
       clearTimeout(idle);
       idle = window.setTimeout(() => designs.end(), 400);
     };
@@ -97,7 +100,7 @@ export function WhoMap({ large }: { large?: boolean }) {
     return () => el.removeEventListener('wheel', onWheel);
   }, [rail]);
 
-  if (!cx || !cy) return <p class="muted">This bundle has no gender / age controls.</p>;
+  if (!cx || !cy) return <p class="muted">This voice bundle has no gender / age controls.</p>;
 
   const { x: [x0, x1], y: [y0, y1] } = extent.value;
   const toX = (v: number) => PAD_L + ((v - x0) / (x1 - x0)) * (W - PAD_L - PAD_R);
@@ -144,11 +147,12 @@ export function WhoMap({ large }: { large?: boolean }) {
     const k = e.shiftKey ? 0.5 : 0.1;
     const dx = e.key === 'ArrowRight' ? k : e.key === 'ArrowLeft' ? -k : 0;
     const dy = e.key === 'ArrowUp' ? k : e.key === 'ArrowDown' ? -k : 0;
-    if (!dx && !dy && e.key !== '0') return;
+    const reset = e.key === '0' || e.key === 'Delete' || e.key === 'Backspace';
+    if (!dx && !dy && !reset) return;
     e.preventDefault();
     designs.begin();
-    setValue(cx.id, e.key === '0' ? 0 : gx + dx);
-    setValue(cy.id, e.key === '0' ? 0 : gy + dy);
+    setValue(cx.id, reset ? 0 : gx + dx);
+    setValue(cy.id, reset ? 0 : gy + dy);
     designs.end();
   };
 
@@ -168,7 +172,7 @@ export function WhoMap({ large }: { large?: boolean }) {
           viewBox={`0 0 ${W} ${H}`}
           role="slider"
           tabIndex={0}
-          aria-label={`Who map: masculine to feminine (x), age in years (y). Arrow keys move, scroll changes pitch.`}
+          aria-label={`Who map: masculine to feminine (x), age in years (y). Arrow keys move; scroll while focused (or with ⌘ / Ctrl) changes pitch.`}
           aria-valuetext={`${cx.label} ${gx.toFixed(1)}, ${cy.label} ${gy.toFixed(1)} (about ${years} years)`}
           onKeyDown={key}
           onPointerDown={(e) => {
@@ -207,9 +211,24 @@ export function WhoMap({ large }: { large?: boolean }) {
           {ring && <path class="identity-ring" d={`M${ring.map(([a, b]) => `${toX(inX(base.x + a)).toFixed(1)},${toY(inY(base.y + b)).toFixed(1)}`).join('L')}Z`} />}
           {marks.map(({ s, spot }) => {
             const l = labels.get(s.id);
+            const go = () => switchBase(s.id, 'map');
             return (
-              <g class={`landmark${l ? '' : ' is-quiet'}`} transform={`translate(${toX(inX(spot.x))},${toY(inY(spot.y))})`} onClick={() => setBase(s.id)} role="button" aria-label={`Switch base voice to ${s.label}`}>
+              <g
+                class={`landmark${l ? '' : ' is-quiet'}`}
+                transform={`translate(${toX(inX(spot.x))},${toY(inY(spot.y))})`}
+                onClick={go}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  go();
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label={`Switch base voice to ${s.label}`}
+              >
                 <title>{`${s.label}${spot.measured ? '' : ' (saved from ' + spot.from + ')'} — click to make it the base voice`}</title>
+                <circle class="landmark-hit" r="14" />
                 <circle r="5" />
                 <text x={l?.dx ?? 9} y={l?.dy ?? 4} text-anchor={l?.anchor ?? 'start'}>
                   {s.label}

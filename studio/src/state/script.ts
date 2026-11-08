@@ -11,18 +11,13 @@ import { design, type Design } from './design';
 import { durationFactor, type Values } from './engine';
 import { History } from './history';
 import { cast } from './library';
+import { matchLines, newLine, staleReason, type Line } from './lines';
 import { buildRequest, PREVIEW_SEED, remapSpans, type Span } from './requests';
+
+export { matchLines, splitScript, staleReason, type Line } from './lines';
 
 /** Codec frame rate (frames per second) used to measure a take's frames per character. */
 const FPS = 15;
-
-export interface Line {
-  id: string;
-  text: string;
-  spans: Span[];
-  /** Persona id; absent / null: the script's voice. */
-  voice?: string | null;
-}
 
 export interface Script {
   lines: Line[];
@@ -52,16 +47,6 @@ const DEMO = [
   "Honestly? I wasn't sure we'd ever get here.",
   "But here we are, and I couldn't be happier about it.",
 ];
-
-export function splitScript(text: string): string[] {
-  return text
-    .split(/\n+/)
-    .flatMap((para) => para.split(/(?<=[.!?…])\s+(?=\S)/))
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-const newLine = (text: string, voice?: string | null): Line => ({ id: uid(), text, spans: [], ...(voice ? { voice } : {}) });
 
 /** A new project's script: the demo lines. */
 export const newScript = (): Script => ({ lines: DEMO.map((t) => newLine(t)), baseline: {}, voice: null, gap: 0.35 });
@@ -101,12 +86,34 @@ export function setLineText(id: string, text: string) {
     ...s,
     lines: s.lines.map((l) => (l.id === id ? { ...l, text, spans: remapSpans(l.spans, l.text, text) } : l)),
   }));
+  if (lineError.value[id]) lineError.value = { ...lineError.value, [id]: null };
 }
 
-/** Lines whose text is unchanged keep their id, painting and voice (and so their takes). */
-export function replaceScript(text: string) {
-  const old = new Map(script.value.lines.map((l) => [l.text, l]));
-  commit((s) => ({ ...s, lines: splitScript(text).map((t) => old.get(t) ?? newLine(t)) }));
+/** Replace the lines with `rows` (see `matchLines`): unchanged and edited-in-place rows keep their takes. */
+export function replaceScript(rows: string[]) {
+  const { lines } = matchLines(script.value.lines, rows);
+  commit((s) => ({ ...s, lines }));
+}
+
+/** Every line that speaks as `voice` goes back to the script voice (one undo step); returns their ids. */
+export function clearVoice(voice: string): string[] {
+  const ids = script.value.lines.filter((l) => l.voice === voice).map((l) => l.id);
+  commit((s) => ({
+    ...s,
+    voice: s.voice === voice ? null : s.voice,
+    lines: s.lines.map((l) => (l.voice === voice ? { ...l, voice: null } : l)),
+  }));
+  return ids;
+}
+
+/** Give lines (by id) a voice again (Undo of `clearVoice`). */
+export function setLinesVoice(ids: string[], voice: string | null, scriptVoice?: string | null) {
+  const set = new Set(ids);
+  commit((s) => ({
+    ...s,
+    voice: scriptVoice === undefined ? s.voice : scriptVoice,
+    lines: s.lines.map((l) => (set.has(l.id) ? { ...l, voice } : l)),
+  }));
 }
 
 /** Insert a line after `afterId` (null: at the end); returns its id. */
@@ -250,21 +257,33 @@ export function lineRequest(line: Line, seed: number): GenerateRequest {
   return buildRequest(spec.value, requestContext.value, lineDesign(line), line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language });
 }
 
-export async function renderLine(lineId: string) {
+/** Renders in flight by line id (a line's busy button cancels its own). */
+const lineCtrl = new Map<string, AbortController>();
+
+export function cancelLine(lineId: string) {
+  lineCtrl.get(lineId)?.abort();
+}
+
+export async function renderLine(lineId: string, signal?: AbortSignal): Promise<boolean> {
   const line = script.value.lines.find((l) => l.id === lineId);
-  if (!line || !line.text.trim()) return;
+  if (!line || !line.text.trim()) return false;
   const problem = pronProblem(line.text, pronTokens.value);
   if (problem) {
     lineError.value = { ...lineError.value, [lineId]: problem };
-    return;
+    return false;
   }
+  lineCtrl.get(lineId)?.abort();
+  const ctrl = new AbortController();
+  lineCtrl.set(lineId, ctrl);
+  signal?.addEventListener('abort', () => ctrl.abort(), { once: true });
+  if (signal?.aborted) ctrl.abort();
   const existing = takes.value[lineId] ?? [];
   const seed = existing.length ? Math.floor(Math.random() * 1e6) : PREVIEW_SEED;
   lineBusy.value = { ...lineBusy.value, [lineId]: true };
   lineError.value = { ...lineError.value, [lineId]: null };
   try {
     const request = lineRequest(line, seed);
-    const audio = await render(request);
+    const audio = await render(request, { signal: ctrl.signal });
     const prior = takes.value[lineId] ?? [];
     const keeper = prior.find((t) => t.starred) ?? prior[prior.length - 1];
     // The new take becomes the keeper when there is none or the keeper no longer matches the line (Regenerate).
@@ -272,10 +291,42 @@ export async function renderLine(lineId: string) {
     const take: Take = { id: uid(), text: line.text, seed, request, audio, createdAt: Date.now(), starred };
     const list = [...prior.map((t) => (starred && t.starred ? { ...t, starred: false } : t)), take];
     takes.value = { ...takes.value, [lineId]: list };
+    return true;
   } catch (e) {
     if (!isAbort(e)) lineError.value = { ...lineError.value, [lineId]: errorText(e) };
+    return false;
   } finally {
+    if (lineCtrl.get(lineId) === ctrl) lineCtrl.delete(lineId);
     lineBusy.value = { ...lineBusy.value, [lineId]: false };
+  }
+}
+
+/** A batch of renders in progress (Render missing / Regenerate stale): counts for the rail, one Cancel for all. */
+export const renderQueue = signal<{ total: number; done: number; failed: number } | null>(null);
+let batch: AbortController | null = null;
+
+export function cancelRenders() {
+  batch?.abort();
+}
+
+/** Render `ids` with the shared concurrency limit; the queue counts finished and failed lines until all settle. */
+export async function renderLines(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  batch?.abort();
+  const ctrl = new AbortController();
+  batch = ctrl;
+  renderQueue.value = { total: ids.length, done: 0, failed: 0 };
+  await Promise.all(
+    ids.map(async (id) => {
+      const ok = await renderLine(id, ctrl.signal);
+      const q = renderQueue.value;
+      if (!q || batch !== ctrl) return;
+      renderQueue.value = { ...q, done: q.done + 1, failed: q.failed + (ok || ctrl.signal.aborted ? 0 : 1) };
+    }),
+  );
+  if (batch === ctrl) {
+    batch = null;
+    renderQueue.value = null;
   }
 }
 
@@ -283,10 +334,30 @@ export function starTake(lineId: string, takeId: string) {
   takes.value = { ...takes.value, [lineId]: (takes.value[lineId] ?? []).map((t) => ({ ...t, starred: t.id === takeId })) };
 }
 
-export function deleteTake(lineId: string, takeId: string) {
-  const list = (takes.value[lineId] ?? []).filter((t) => t.id !== takeId);
+/** Remove a take; returns what `restoreTake` needs to put it back. */
+export function deleteTake(lineId: string, takeId: string): { take: Take; index: number; wasStarred: boolean } | null {
+  const all = takes.value[lineId] ?? [];
+  const index = all.findIndex((t) => t.id === takeId);
+  if (index < 0) return null;
+  const take = all[index];
+  const list = all.filter((t) => t.id !== takeId);
   if (list.length && !list.some((t) => t.starred)) list[list.length - 1] = { ...list[list.length - 1], starred: true };
   takes.value = { ...takes.value, [lineId]: list };
+  return { take, index, wasStarred: take.starred };
+}
+
+/** Put a deleted take back at `index`; `star` makes it the keeper again. */
+export function restoreTake(lineId: string, take: Take, index: number, star: boolean) {
+  const rest = (takes.value[lineId] ?? []).filter((t) => t.id !== take.id).map((t) => (star ? { ...t, starred: false } : t));
+  const at = Math.min(index, rest.length);
+  takes.value = { ...takes.value, [lineId]: [...rest.slice(0, at), { ...take, starred: star }, ...rest.slice(at)] };
+}
+
+/** Add a take to a line (an edited keeper from Edit): it becomes the keeper. Returns its number (1-based). */
+export function addTake(lineId: string, take: Take): number {
+  const prior = (takes.value[lineId] ?? []).map((t) => ({ ...t, starred: false }));
+  takes.value = { ...takes.value, [lineId]: [...prior, { ...take, starred: true }] };
+  return prior.length + 1;
 }
 
 /** The keeper of each line in script order: the starred take (else the latest), or null. */
@@ -299,18 +370,25 @@ export const keepers = computed(() =>
 
 /** Does a take still match its line (text, painting, baseline, voice)? */
 export function takeIsStale(line: Line, t: Take): boolean {
-  if (t.edited) return t.text !== line.text;
+  return takeStaleReason(line, t) !== null;
+}
+
+/** Why a take no longer matches its line ("text changed", "voice changed", …), or null when it still does. */
+export function takeStaleReason(line: Line, t: Take): string | null {
+  if (t.edited) return t.text !== line.text ? 'text changed' : null;
   const req = lineRequest(line, t.seed);
-  const strip = (r: GenerateRequest) => JSON.stringify({ ...r, control_span_rate: undefined, control_span_follow: undefined });
-  return strip(req) !== strip(t.request);
+  const strip = (r: GenerateRequest): GenerateRequest => ({ ...r, control_span_rate: undefined, control_span_follow: undefined });
+  const stored = strip(t.request);
+  const fresh = strip(req);
+  return staleReason(stored, fresh) ?? (JSON.stringify(stored) !== JSON.stringify(fresh) ? 'settings changed' : null);
 }
 
 /** Lines whose keeper take no longer matches them (a changed voice, text, painting or baseline). */
 export const staleLines = computed(() => keepers.value.flatMap(({ line, take }) => (take && takeIsStale(line, take) ? [line] : [])));
 
 /** A new take of every stale line (render.ts limits how many run at once). */
-export async function regenerateStale(): Promise<void> {
-  await Promise.all(staleLines.value.map((l) => renderLine(l.id)));
+export function regenerateStale(): Promise<void> {
+  return renderLines(staleLines.value.map((l) => l.id));
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────────────────────────────

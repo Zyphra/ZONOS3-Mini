@@ -39,9 +39,15 @@ export function embeddingOf(id: string | null | undefined): Float32Array | null 
   return (id && embeddings.get(id)) || null;
 }
 
-export function ensureEmbedding(s: Speaker): Promise<Float32Array | null> {
+/** The speaker's embedding (fetched once; `retry` forgets a failed fetch and asks again). */
+export function ensureEmbedding(s: Speaker, retry = false): Promise<Float32Array | null> {
   const have = embeddings.get(s.id);
   if (have) return Promise.resolve(have);
+  if (retry && embeddingErrors.value[s.id]) {
+    const rest = { ...embeddingErrors.value };
+    delete rest[s.id];
+    embeddingErrors.value = rest;
+  }
   let p = loading.get(s.id);
   if (!p) {
     p = api
@@ -190,6 +196,23 @@ export function savePersona(p: Persona) {
   cast.value = [...cast.value.filter((x) => x.id !== p.id), p];
 }
 
-export function removePersona(id: string) {
+/** Remove a persona; returns it (and its index) so the caller can offer Undo. */
+export function removePersona(id: string): { persona: Persona; index: number } | null {
+  const index = cast.value.findIndex((x) => x.id === id);
+  if (index < 0) return null;
+  const persona = cast.value[index];
   cast.value = cast.value.filter((x) => x.id !== id);
+  return { persona, index };
+}
+
+/** Put a removed persona back where it was. */
+export function restorePersona(p: Persona, index: number) {
+  const rest = cast.value.filter((x) => x.id !== p.id);
+  cast.value = [...rest.slice(0, index), p, ...rest.slice(index)];
+}
+
+export function renamePersona(id: string, name: string) {
+  const n = name.trim();
+  if (!n) return;
+  cast.value = cast.value.map((x) => (x.id === id ? { ...x, name: n } : x));
 }

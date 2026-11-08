@@ -23,6 +23,7 @@ import {
   lineBusy,
   lineError,
   lineVoiceId,
+  matchLines,
   mixdown,
   moveLine,
   paint,
@@ -30,6 +31,7 @@ import {
   removeLine,
   renderLine,
   replaceScript,
+  restoreTake,
   script,
   scripts,
   setBaseline,
@@ -37,6 +39,7 @@ import {
   setLineText,
   setLineVoice,
   setVoice,
+  splitScript,
   staleLines,
   starTake,
   takeIsStale,
@@ -46,6 +49,7 @@ import {
   voiceDesign,
   type Line,
 } from '../../state/script';
+import { confirm } from '../../components/ConfirmDialog';
 import { MoodControls, type Binding } from '../cast/QuickControls';
 import { canEdit, openClip } from '../../state/edit';
 import { LanguageSelect } from '../../components/LanguageSelect';
@@ -227,7 +231,11 @@ function BrushBar() {
   useEffect(() => {
     if (!b) return;
     const close = (e: Event) => {
-      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !bar.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.line-text')) brush.value = null;
+      if (e instanceof KeyboardEvent) {
+        if (e.key !== 'Escape' || e.defaultPrevented) return;
+        e.preventDefault();
+        brush.value = null;
+      } else if (!bar.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.line-text')) brush.value = null;
     };
     window.addEventListener('pointerdown', close);
     window.addEventListener('keydown', close);
@@ -340,7 +348,15 @@ function TakeStrip({ line }: { line: Line }) {
                 <Icon name="edit" size={12} />
               </button>
             )}
-            <button class="icon-btn sm" onClick={() => deleteTake(line.id, t.id)} aria-label={`Delete take ${i + 1}`}>
+            <button
+              class="icon-btn sm"
+              onClick={() => {
+                const r = deleteTake(line.id, t.id);
+                if (r) notify(`Take ${i + 1} deleted`, 'info', { label: 'Undo', run: () => restoreTake(line.id, r.take, r.index, r.wasStarred) });
+              }}
+              aria-label={`Delete take ${i + 1}`}
+              title="Delete this take"
+            >
               <Icon name="x" size={12} />
             </button>
           </li>
@@ -464,7 +480,7 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
           title={`Speaks as ${voiceName(voice)}`}
         >
           <option value="">Script voice ({voiceName(script.value.voice)})</option>
-          {line.voice && !cast.value.some((p) => p.id === line.voice) && <option value={line.voice}>(removed voice)</option>}
+          {line.voice && !cast.value.some((p) => p.id === line.voice) && <option value={line.voice}>(voice unavailable)</option>}
           {cast.value.map((p) => (
             <option value={p.id}>{p.name}</option>
           ))}
@@ -500,13 +516,49 @@ function LineRow({ line, n, playing }: { line: Line; n: number; playing: boolean
   );
 }
 
+/** The textarea's text differs from the lines (Cancel asks before discarding it). */
+const scriptTextDirty = signal(false);
+const linesAsText = () => script.value.lines.map((l) => l.text).join('\n');
+
+async function closeScriptText() {
+  if (scriptTextDirty.value && !(await confirm('Discard your text changes?', { ok: 'Discard', danger: true }))) return;
+  scriptTextDirty.value = false;
+  editAll.value = false;
+}
+
 function ScriptText() {
-  const [text, setText] = useState(script.value.lines.map((l) => l.text).join('\n'));
+  const pasting = script.value.lines.length === 0;
+  const [text, setText] = useState(linesAsText);
+  useEffect(() => () => void (scriptTextDirty.value = false), []);
+  const apply = async () => {
+    const rows = splitScript(text, { sentences: pasting });
+    const { dropped } = matchLines(script.value.lines, rows);
+    const takesLost = dropped.reduce((n, l) => n + (takes.value[l.id]?.length ?? 0), 0);
+    if (dropped.length && takesLost) {
+      const ok = await confirm(`${dropped.length} line${dropped.length === 1 ? '' : 's'} will be removed with ${takesLost} take${takesLost === 1 ? '' : 's'}. Apply anyway?`, { ok: 'Apply', danger: true });
+      if (!ok) return;
+    }
+    replaceScript(rows);
+    scriptTextDirty.value = false;
+    editAll.value = false;
+  };
   return (
     <div class="script-text">
-      <textarea class="input" rows={10} value={text} data-tags onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)} aria-label="Script text" />
-      <p class="hint">One line per sentence: the script is split at line breaks and sentence ends. Lines whose text is unchanged keep their paint and takes.</p>
-      <button class="btn primary" onClick={() => (replaceScript(text), (editAll.value = false))}>
+      <textarea
+        class="input"
+        rows={10}
+        value={text}
+        data-tags
+        onInput={(e) => {
+          const v = (e.currentTarget as HTMLTextAreaElement).value;
+          setText(v);
+          scriptTextDirty.value = v !== linesAsText();
+        }}
+        aria-label="Script text"
+        placeholder={pasting ? 'Paste or type the script' : undefined}
+      />
+      <p class="hint">{pasting ? 'The script is split at line breaks and sentence ends.' : 'One line per row. Rows you leave unchanged keep their paint, voice and takes.'}</p>
+      <button class="btn primary" onClick={() => void apply()}>
         Apply script
       </button>
     </div>
@@ -712,8 +764,8 @@ export function DirectScreen() {
             <span class="eyebrow">Direct</span>
             <h2>Script</h2>
           </div>
-          <button class="btn ghost" onClick={() => (editAll.value = !editAll.value)}>
-            <Icon name="edit" size={14} /> {editAll.value ? 'Back to lines' : 'Edit as text'}
+          <button class="btn ghost" onClick={() => (editAll.value ? void closeScriptText() : (editAll.value = true))}>
+            <Icon name={editAll.value ? 'x' : 'edit'} size={14} /> {editAll.value ? (scriptTextDirty.value ? 'Cancel' : 'Back to lines') : 'Edit as text'}
           </button>
         </header>
         {editAll.value ? (

@@ -8,6 +8,7 @@ import { Icon } from '../../components/Icon';
 import { Rail, RailBar, RailToggle } from '../../components/Rail';
 import { Waveform } from '../../components/Waveform';
 import { isTagToken, normalizeTokens, planRegions, wordDiff } from '../../edit/regions';
+import { isTyping } from '../../lib/dom';
 import { slug } from '../../lib/files';
 import { EDIT_LANGUAGES, langLabel } from '../../lib/languages';
 import { parsePron } from '../../lib/pron';
@@ -31,11 +32,6 @@ let wordDrag: { i: number; edge: 'start' | 'end'; t0: number; decided: boolean }
 
 function focusSelectedWord() {
   requestAnimationFrame(() => document.querySelector<HTMLElement>('.ew-wblock.is-sel .ew-wlabel')?.focus({ preventScroll: false }));
-}
-
-function isTyping(t: EventTarget | null) {
-  const el = t as HTMLElement | null;
-  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 }
 
 function editKeys(e: KeyboardEvent): boolean {

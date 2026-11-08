@@ -3,21 +3,33 @@ import { useRef, useState } from 'preact/hooks';
 import type { Rendered } from '../../api';
 import { nowPlaying } from '../../audio/player';
 import * as player from '../../audio/player';
-import { autoplay, autoRender, ID_A, ID_B, phrase, playSide, preview, previewText, reference, retry, side, speak } from '../../audio/preview';
+import { autoplay, autoRender, ID_A, ID_B, phrase, playSide, preview, previewText, reference, retry, retryReference, side, speak } from '../../audio/preview';
 import { errorText, isAbort, render } from '../../audio/render';
 import { exportWav } from '../../audio/mix';
 import { Icon } from '../../components/Icon';
 import { isPronError, PronMarks, PronounceButton } from '../../components/Pron';
+import { openRail } from '../../components/Rail';
 import { TagButton, TagField, TagMarks } from '../../components/Tags';
 import { Waveform } from '../../components/Waveform';
 import { uid } from '../../lib/math';
-import { backend, notify, requestContext, spec } from '../../state/app';
+import { backend, notify, projectSettings, requestContext, spec } from '../../state/app';
 import { applyPreset, baseSpeaker, design, designs, neighbours, steered, type Design, type Variation } from '../../state/design';
 import { presetToValues } from '../../state/engine';
 import { pinForMix } from '../../state/atlas';
-import { embeddingsSynthetic, refreshSpeakers, saveEmbeddingVoice, savePersona } from '../../state/library';
+import { cast, embeddingErrors, embeddingsSynthetic, ensureEmbedding, refreshSpeakers, saveEmbeddingVoice, savePersona } from '../../state/library';
 import { buildRequest, PREVIEW_SEED } from '../../state/requests';
 import { rememberOrigin, who } from '../../state/who';
+
+/** Scroll a freshly added library / cast row into view and flash it. */
+export function revealRow(selector: string) {
+  requestAnimationFrame(() => {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (!el) return;
+    el.scrollIntoView({ block: 'nearest' });
+    el.classList.add('is-flash');
+    setTimeout(() => el.classList.remove('is-flash'), 1200);
+  });
+}
 
 /** A / B: the design vs the unsteered voice (keys A and B do the same). */
 function ABButtons() {
@@ -39,10 +51,46 @@ function ABButtons() {
 function statusText(): string {
   const p = preview.value;
   const a = p.a;
-  if (p.status === 'waiting') return 'listening…';
+  if (p.status === 'waiting') return 'waiting…';
   if (p.status === 'rendering') return 'rendering…';
-  if (p.status === 'idle') return a ? 'out of date' : 'not generated yet';
-  return a ? `${(a.pcm.length / a.sr).toFixed(1)} s · ${Math.round(a.ttfbMs)} ms` : '';
+  if (p.status === 'idle') return a ? 'out of date' : design.value.baseId ? 'Press Speak to hear it' : '';
+  if (p.status === 'error') return '';
+  return a ? `${(a.pcm.length / a.sr).toFixed(1)} s · first audio ${Math.round(a.ttfbMs)} ms` : '';
+}
+
+/** The B side failed: the same error box as A, with its own Retry. */
+function ReferenceError() {
+  const err = reference.value.error;
+  if (side.value !== 'B' || !err) return null;
+  return (
+    <div class="error-box" role="alert">
+      <b>Couldn’t render the original voice</b>
+      <span>{err}</span>
+      <button class="btn sm" onClick={retryReference}>
+        <Icon name="refresh" size={14} /> Retry
+      </button>
+    </div>
+  );
+}
+
+/** Auto-generate / auto-play, as two toggles beside A/B. */
+function PreviewToggles() {
+  return (
+    <div class="preview-toggles" role="group" aria-label="Preview settings">
+      <button
+        class={`icon-btn sm${autoRender.value ? ' is-on' : ''}`}
+        aria-pressed={autoRender.value}
+        onClick={() => (autoRender.value = !autoRender.value)}
+        title="Auto-generate on every change (off: only on Speak)"
+        aria-label="Auto-generate on every change"
+      >
+        <Icon name="wand" size={14} />
+      </button>
+      <button class={`icon-btn sm${autoplay.value ? ' is-on' : ''}`} aria-pressed={autoplay.value} onClick={() => (autoplay.value = !autoplay.value)} title="Auto-play new takes" aria-label="Auto-play new takes">
+        <Icon name="speaker" size={14} />
+      </button>
+    </div>
+  );
 }
 
 /** The waveform of the side being shown (A: the design, still coming while it renders; B: the unsteered voice). */
@@ -80,7 +128,7 @@ export function PreviewStrip() {
 }
 
 /** The project's preview line from what was typed ('' when it is the bundle's own). */
-function setPhrase(text: string) {
+export function setPhrase(text: string) {
   previewText.value = text.trim() === spec.value.ui.preview_text ? '' : text;
 }
 
@@ -104,8 +152,11 @@ export function SpeakPanel() {
     setDraft(null);
     speak();
   };
+  const noVoice = !design.value.baseId;
+  const stale = p.status === 'idle' && !!a;
+  const isErr = p.status === 'error';
   return (
-    <section class={`speak${p.status === 'idle' && a ? ' is-stale' : ''}`} aria-label="Speak">
+    <section class={`speak${stale || isErr ? ' is-stale' : ''}`} aria-label="Speak">
       <div class="speak-text">
         <TagField text={text} block>
           <textarea
@@ -153,14 +204,24 @@ export function SpeakPanel() {
       <div class="speak-bar">
         <button
           class={`btn primary speak-go${pending ? ' is-busy' : ''}`}
-          disabled={!design.value.baseId || !text.trim()}
+          disabled={noVoice || !text.trim()}
           onClick={() => (playingA ? player.stop() : go())}
-          title="Speak this text (Enter in the text box)"
+          title={noVoice ? 'Pick a voice in Voices first' : 'Speak this text (Enter in the text box)'}
         >
-          <Icon name={playingA ? 'stop' : 'play'} size={14} /> {playingA ? 'Stop' : pending ? 'Rendering…' : 'Speak'}
+          <Icon name={playingA ? 'stop' : 'play'} size={14} /> {playingA ? 'Stop' : pending ? 'Rendering…' : stale && !autoRender.value ? 'Speak · out of date' : 'Speak'}
         </button>
-        <PreviewWave />
+        {noVoice ? (
+          <span class="hint speak-hint">
+            <button class="link" onClick={() => openRail('cast-library')}>
+              Pick a voice in Voices
+            </button>{' '}
+            to start
+          </span>
+        ) : (
+          <PreviewWave />
+        )}
         <ABButtons />
+        <PreviewToggles />
         <span class="metrics" title="clip length · time to first audio">
           {statusText()}
         </span>
@@ -168,35 +229,23 @@ export function SpeakPanel() {
           <Icon name="download" />
         </button>
       </div>
-      {p.status === 'error' && !isPronError(p.error) && (
+      {isErr && isPronError(p.error) && (
         <div class="error-box" role="alert">
-          <b>The server refused this render.</b>
+          <b>Fix the pronunciation marked above</b>
+          <span>{p.error}</span>
+        </div>
+      )}
+      {isErr && !isPronError(p.error) && (
+        <div class="error-box" role="alert">
+          <b>Couldn’t render</b>
           <span>{p.error}</span>
           <button class="btn sm" onClick={retry}>
             <Icon name="refresh" size={14} /> Retry
           </button>
         </div>
       )}
+      <ReferenceError />
       {noSteer && <p class="note">This server can’t apply controls yet: A and B both play the base voice.</p>}
-    </section>
-  );
-}
-
-/** Right column: when the Speak take renders and plays. */
-export function PreviewSettings() {
-  return (
-    <section class="monitor-card preview-settings" aria-label="Preview settings">
-      <header class="monitor-head">
-        <h3>Preview</h3>
-      </header>
-      <label class="toggle" title="Generate again after every change to the text or the voice (off: only when you press Speak)">
-        <input type="checkbox" checked={autoRender.value} onChange={(e) => (autoRender.value = (e.currentTarget as HTMLInputElement).checked)} />
-        <span>Auto-generate on every change</span>
-      </label>
-      <label class="toggle" title="Play every new render automatically">
-        <input type="checkbox" checked={autoplay.value} onChange={(e) => (autoplay.value = (e.currentTarget as HTMLInputElement).checked)} />
-        <span>Auto-play new takes</span>
-      </label>
     </section>
   );
 }
@@ -245,7 +294,7 @@ function findVariations() {
   tilesFor.value = around;
   tiles.value = neighbours(around).map((v) => ({ ...v, id: uid(), audio: null, error: null, busy: true }));
   for (const t of tiles.value) {
-    const req = buildRequest(spec.value, requestContext.value, t.design, phrase.value, PREVIEW_SEED);
+    const req = buildRequest(spec.value, requestContext.value, t.design, phrase.value, PREVIEW_SEED, { language: projectSettings.value.language });
     render(req, { signal: ctrl.signal })
       .then((audio) => (tiles.value = tiles.value.map((x) => (x.id === t.id ? { ...x, audio, busy: false } : x))))
       .catch((e) => !isAbort(e) && (tiles.value = tiles.value.map((x) => (x.id === t.id ? { ...x, error: errorText(e), busy: false } : x))));
@@ -254,34 +303,49 @@ function findVariations() {
 
 export function Variations() {
   const list = tiles.value;
-  const stale = tilesFor.value !== null && tilesFor.value !== design.value;
+  const d = design.value;
+  // The tile that was stepped to is "current": moving onto it is not moving away from the set.
+  const current = list.find((t) => t.design === d) ?? null;
+  const stale = tilesFor.value !== null && tilesFor.value !== d && !current;
+  const rendering = list.filter((t) => t.busy).length;
+  const allFailed = list.length > 0 && list.every((t) => t.error);
   return (
     <section class="monitor-card" aria-label="Variations">
       <header class="monitor-head">
         <h3>Voices near this one</h3>
-        <button class="btn sm" onClick={findVariations} disabled={!design.value.baseId}>
-          <Icon name="dice" size={14} /> {list.length ? 'Five more' : 'Find five'}
+        <button class="btn sm" onClick={findVariations} disabled={!d.baseId || rendering > 0}>
+          <Icon name="dice" size={14} /> {rendering ? `Rendering ${list.length - rendering}/${list.length}…` : list.length ? 'Five more' : 'Find five'}
         </button>
       </header>
       {!list.length ? (
         <p class="muted small">Five small, safe moves around this voice, rendered side by side. Click one to step there.</p>
+      ) : allFailed ? (
+        <div class="error-line">
+          Couldn’t render: {list[0].error}{' '}
+          <button class="link" onClick={findVariations}>
+            Retry
+          </button>
+        </div>
       ) : (
         <ul class={`tiles${stale ? ' is-stale' : ''}`}>
           {list.map((t) => {
             const id = `var:${t.id}`;
             const playing = nowPlaying.value?.id === id;
             return (
-              <li class="tile">
+              <li class={`tile${t === current ? ' is-current' : ''}`}>
                 <button class={`play-mini${playing ? ' is-playing' : ''}${t.busy ? ' is-busy' : ''}`} disabled={!t.audio} onClick={() => t.audio && player.toggle(id, t.audio.pcm, t.audio.sr)} aria-label={`Play variation: ${t.changes.join(', ')}`}>
                   <Icon name={playing ? 'stop' : 'play'} size={12} />
                 </button>
                 <button
                   class="tile-body"
+                  aria-current={t === current ? 'true' : undefined}
                   onClick={() => {
+                    if (t === current) return;
                     designs.apply(t.design);
                     if (t.audio) player.play(id, t.audio.pcm, t.audio.sr);
+                    notify(`Stepped to: ${t.changes.join(' · ')}`, 'info', { label: 'Undo', run: () => designs.undo() });
                   }}
-                  title="Step to this voice (undo with ⌘Z)"
+                  title={t === current ? 'The voice on the bench' : 'Step to this voice (undo with ⌘Z)'}
                 >
                   <span class="tile-changes">{t.changes.join(' · ')}</span>
                   {t.error ? <span class="error-line small">{t.error}</span> : <Waveform pcm={t.audio?.pcm} color="var(--o)" playId={id} height={22} busy={t.busy} />}
@@ -296,12 +360,20 @@ export function Variations() {
   );
 }
 
+/** `name`, or "name 2", "name 3"… when the cast already has it. */
+function uniqueName(name: string): string {
+  const taken = new Set(cast.value.map((p) => p.name));
+  if (!taken.has(name)) return name;
+  for (let i = 2; ; i++) if (!taken.has(`${name} ${i}`)) return `${name} ${i}`;
+}
+
 export function SavePanel() {
   const [name, setName] = useState('');
   const [signature, setSignature] = useState('');
   const [busy, setBusy] = useState(false);
   const d = design.value;
   const b = backend.value!;
+  const embErr = embeddingErrors.value[d.baseId];
   const canServer = d.mode === 'embedding' && !!steered.value && (b.kind === 'offline' || !embeddingsSynthetic.value) && b.steering;
   const why = d.mode !== 'embedding'
     ? 'Exact clones are already library voices.'
@@ -309,15 +381,21 @@ export function SavePanel() {
       ? 'This server can’t apply controls yet, so there is no designed voice to save.'
       : embeddingsSynthetic.value
         ? 'Needs the server’s real embedding for this voice.'
-      : !steered.value
-        ? 'Waiting for the base voice’s embedding…'
-        : 'Caches the steered embedding on the server as a new library voice (delivery and mood stay in the persona).';
+        : embErr
+          ? `Couldn't fetch this voice's embedding: ${embErr}`
+          : !steered.value
+            ? 'Waiting for the base voice’s embedding…'
+            : null;
   const label = name.trim() || `${baseSpeaker.value?.label ?? 'Voice'} variant`;
 
   const toCast = () => {
-    savePersona({ id: uid(), name: label, design: structuredClone(d), signature: signature.trim() || phrase.value, createdAt: Date.now() });
-    notify(`“${label}” joined your cast`, 'ok');
+    const final = uniqueName(label);
+    const p = { id: uid(), name: final, design: structuredClone(d), signature: signature.trim() || phrase.value, createdAt: Date.now() };
+    savePersona(p);
+    notify(`“${final}” joined your cast`, 'ok');
     setName('');
+    setSignature('');
+    revealRow(`[data-persona="${p.id}"]`);
   };
   const toServer = async () => {
     if (!steered.value) return;
@@ -328,6 +406,7 @@ export function SavePanel() {
       rememberOrigin(s, baseSpeaker.value, d.values[g.gender.control] ?? 0, d.values[g.age.control] ?? 0);
       await refreshSpeakers();
       notify(`Saved “${s.label}” as a voice`, 'ok');
+      revealRow(`[data-voice="${s.id}"]`);
     } catch (e) {
       notify(`Couldn’t save the voice: ${errorText(e)}`, 'error');
     } finally {
@@ -340,17 +419,37 @@ export function SavePanel() {
       <header class="monitor-head">
         <h3>Keep it</h3>
       </header>
-      <input class="input" placeholder={label} value={name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="Name" />
-      <input class="input" placeholder="Signature line (optional)" value={signature} onInput={(e) => setSignature((e.currentTarget as HTMLInputElement).value)} aria-label="Signature line" />
-      <div class="row gap-s">
-        <button class="btn primary" onClick={toCast} disabled={!d.baseId} title="Save the whole design (voice, accent, delivery, mood) to your cast in this browser">
-          <Icon name="plus" size={14} /> Save to cast
-        </button>
-        <button class="btn" onClick={() => void toServer()} disabled={!canServer || busy} title={why}>
-          <Icon name="save" size={14} /> {busy ? 'Saving…' : 'Save as voice'}
-        </button>
-      </div>
-      <p class="hint">{why}</p>
+      <form
+        class="col gap-s"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (d.baseId) toCast();
+        }}
+      >
+        <input class="input" placeholder={label} value={name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="Name" />
+        <input class="input" placeholder="Signature line: what this voice says when loaded (optional)" value={signature} onInput={(e) => setSignature((e.currentTarget as HTMLInputElement).value)} aria-label="Signature line" />
+        <div class="row gap-s">
+          <button type="submit" class="btn primary" disabled={!d.baseId} title="Save the whole design (voice, accent, delivery, mood) to this project's cast">
+            <Icon name="plus" size={14} /> Save to cast
+          </button>
+          <button type="button" class="btn" onClick={() => void toServer()} disabled={!canServer || busy} title={why ?? 'Caches the steered embedding on the server as a new library voice (delivery and mood stay in the persona)'}>
+            <Icon name="save" size={14} /> {busy ? 'Saving…' : 'Save as voice'}
+          </button>
+        </div>
+      </form>
+      {why && (
+        <p class="hint">
+          {why}
+          {embErr && (
+            <>
+              {' · '}
+              <button class="link" onClick={() => baseSpeaker.value && void ensureEmbedding(baseSpeaker.value, true)}>
+                Retry
+              </button>
+            </>
+          )}
+        </p>
+      )}
     </section>
   );
 }

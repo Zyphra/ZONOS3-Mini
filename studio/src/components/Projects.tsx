@@ -37,10 +37,9 @@ import {
   switching,
 } from '../state/projects';
 import type { ProjectMeta } from '../state/projectStore';
+import { trapTab } from './focusTrap';
 import { Icon } from './Icon';
 import '../styles/projects.css';
-
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const SAVE_TEXT = { saved: 'All changes saved', saving: 'Saving…', error: 'Not saved', conflict: 'Changed elsewhere', off: 'Not saved' } as const;
 
@@ -69,22 +68,13 @@ function pickImport() {
   input.click();
 }
 
-/** Tab stays inside `box`. */
-function trapTab(e: KeyboardEvent, box: HTMLElement) {
-  const items = [...box.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => x.offsetParent !== null);
-  if (!items.length) return;
-  const i = items.indexOf(document.activeElement as HTMLElement);
-  e.preventDefault();
-  items[e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : i === items.length - 1 ? 0 : i + 1].focus();
-}
-
 function SaveDot() {
   const s = saveState.value;
   return <span class={`proj-dot is-${s}`} role="img" aria-label={SAVE_TEXT[s]} title={saveError.value ?? SAVE_TEXT[s]} />;
 }
 
 /** A name being edited: Enter or leaving commits, Escape cancels. */
-function NameInput({ value, label, onDone }: { value: string; label: string; onDone: (name: string | null) => void }) {
+export function NameInput({ value, label, onDone }: { value: string; label: string; onDone: (name: string | null) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
   useLayoutEffect(() => {

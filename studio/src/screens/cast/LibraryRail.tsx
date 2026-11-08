@@ -3,14 +3,16 @@ import { embeddingOnly, type Speaker } from '../../api';
 import { nowPlaying } from '../../audio/player';
 import { FileDrop } from '../../components/FileDrop';
 import { Icon } from '../../components/Icon';
+import { confirm } from '../../components/ConfirmDialog';
 import { notify } from '../../state/app';
-import { design, designs, setBase } from '../../state/design';
+import { design, designs, switchBase } from '../../state/design';
 import {
   cast,
   clipLoading,
   ensureEmbedding,
   recording,
   removePersona,
+  restorePersona,
   speakers,
   speakersError,
   speakersLoading,
@@ -21,6 +23,28 @@ import {
   uploading,
   type Persona,
 } from '../../state/library';
+import { clearVoice, script, setLinesVoice } from '../../state/script';
+
+/** Remove a persona from the cast; lines that spoke as it go back to the script voice (asked first), with Undo. */
+async function removeFromCast(p: Persona) {
+  const s = script.value;
+  const n = s.lines.filter((l) => l.voice === p.id).length + (s.voice === p.id ? 1 : 0);
+  if (n > 0) {
+    const ok = await confirm(`${n} line${n === 1 ? ' speaks' : 's speak'} as ${p.name}. Remove it? They will fall back to the script voice.`, { ok: 'Remove', danger: true });
+    if (!ok) return;
+  }
+  const wasScriptVoice = s.voice === p.id;
+  const ids = n > 0 ? clearVoice(p.id) : [];
+  const removed = removePersona(p.id);
+  if (!removed) return;
+  notify(`Removed “${p.name}”`, 'info', {
+    label: 'Undo',
+    run: () => {
+      restorePersona(removed.persona, removed.index);
+      if (ids.length || wasScriptVoice) setLinesVoice(ids, p.id, wasScriptVoice ? p.id : undefined);
+    },
+  });
+}
 
 function VoiceRow({ s }: { s: Speaker }) {
   const on = design.value.baseId === s.id;
@@ -37,7 +61,7 @@ function VoiceRow({ s }: { s: Speaker }) {
       >
         <Icon name={playing ? 'stop' : 'play'} size={12} />
       </button>
-      <button class="voice-name" onClick={() => setBase(s.id)} aria-pressed={on} title={on ? 'Current base voice' : 'Use as the base voice'}>
+      <button class="voice-name" onClick={() => switchBase(s.id, 'library')} aria-pressed={on} title={on ? 'Current base voice' : 'Use as the base voice'}>
         <span class="voice-label">{s.label}</span>
         {embeddingOnly(s) && <span class="tag">designed</span>}
       </button>
@@ -65,7 +89,7 @@ function Recorder() {
     <button
       class="btn btn-rec"
       disabled={uploading.value}
-      onClick={() => void startRecording((s) => s && (setBase(s.id), void ensureEmbedding(s)))}
+      onClick={() => void startRecording((s) => s && (switchBase(s.id, 'clip'), void ensureEmbedding(s)))}
       title="Record 5-30 s of clean speech to clone a voice"
     >
       <Icon name="mic" /> Record
@@ -92,7 +116,7 @@ function PersonaRow({ p }: { p: Persona }) {
       >
         <Icon name="copy" size={14} />
       </button>
-      <button class="icon-btn sm" aria-label={`Remove ${p.name}`} title="Remove from cast" onClick={() => removePersona(p.id)}>
+      <button class="icon-btn sm" aria-label={`Remove ${p.name}`} title="Remove from cast" onClick={() => void removeFromCast(p)}>
         <Icon name="trash" size={14} />
       </button>
     </li>
@@ -103,7 +127,7 @@ function PersonaRow({ p }: { p: Persona }) {
 async function cloneFile(f: File) {
   const s = await uploadClip(f, f.name.replace(/\.[^.]+$/, ''), f.name);
   if (s) {
-    setBase(s.id);
+    switchBase(s.id, 'clip');
     void ensureEmbedding(s);
   }
 }

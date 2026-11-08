@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { hue, modalOpen } from '../state/app';
+import { dialogKeys, focusFirst } from './focusTrap';
 import { Icon } from './Icon';
 
 interface Props {
@@ -17,7 +18,6 @@ interface Props {
   children: ComponentChildren;
 }
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const EASE = 'cubic-bezier(0.2, 0.7, 0.2, 1)';
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -45,8 +45,7 @@ export function CardModal({ family, title, origin, returnFocus, onClose, aside, 
       el.querySelector('.card-modal-inner')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, delay: 120, easing: 'ease-out', fill: 'backwards' });
       backdrop.current!.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
     }
-    const first = el.querySelector<HTMLElement>('.card-modal-body ' + FOCUSABLE) ?? el.querySelector<HTMLElement>(FOCUSABLE);
-    first?.focus({ preventScroll: true });
+    focusFirst(el, '.card-modal-body');
     return () => {
       modalOpen.value = false;
     };
@@ -66,21 +65,7 @@ export function CardModal({ family, title, origin, returnFocus, onClose, aside, 
     el.animate([{ transform: 'none' }, { transform: flip(origin.getBoundingClientRect(), el.getBoundingClientRect()) }], { duration: 240, easing: EASE, fill: 'forwards' }).finished.then(done, done);
   };
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-    const items = [...box.current!.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => x.offsetParent !== null);
-    if (!items.length) return;
-    const i = items.indexOf(document.activeElement as HTMLElement);
-    const next = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : i === items.length - 1 ? 0 : i + 1;
-    e.preventDefault();
-    items[next].focus();
-  };
+  const onKeyDown = dialogKeys(() => box.current, close);
 
   return (
     <div

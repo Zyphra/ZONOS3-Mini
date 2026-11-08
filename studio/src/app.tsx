@@ -6,7 +6,7 @@ import { startPreview, playSide } from './audio/preview';
 import * as player from './audio/player';
 import { DownloadBar } from './components/DownloadBar';
 import { Icon } from './components/Icon';
-import { act, activeHistory, backend, bootError, bootProgress, encoderDownload, modalOpen, primaryAction, screenKeys, toasts, type Act } from './state/app';
+import { act, activeHistory, backend, bootError, bootProgress, dismissToast, encoderDownload, modalOpen, primaryAction, screenKeys, toasts, type Act } from './state/app';
 import { embeddingsSynthetic, loadAllEmbeddings, refreshSpeakers } from './state/library';
 import { openLastProject } from './state/projects';
 import { CastScreen } from './screens/cast/CastScreen';
@@ -16,8 +16,10 @@ import { PronEditor } from './components/Pron';
 import { TagPalette } from './components/Tags';
 import { ZyphraMark, ZyphraWord } from './components/Brand';
 import { ProjectLauncher, ProjectSwitcher } from './components/Projects';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { theme, toggleTheme } from './state/theme';
 import { phone } from './lib/media';
+import { isTyping } from './lib/dom';
 
 const showKeys = signal(false);
 
@@ -42,11 +44,6 @@ const ACTS: { id: Act; label: string; hint: string }[] = [
   { id: 'edit', label: 'Edit', hint: 'change words in recorded speech' },
 ];
 
-function isTyping(t: EventTarget | null) {
-  const el = t as HTMLElement | null;
-  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
-}
-
 function onKey(e: KeyboardEvent) {
   if (!modalOpen.value && !showKeys.value && screenKeys.value?.(e)) return;
   const mod = e.metaKey || e.ctrlKey;
@@ -69,9 +66,11 @@ function onKey(e: KeyboardEvent) {
     else primaryAction.value?.();
   } else if (act.value === 'cast' && (e.key === 'a' || e.key === 'b')) {
     playSide(e.key === 'a' ? 'A' : 'B');
-  } else if (e.key === '?') {
+  } else if (e.key === '?' && !modalOpen.value) {
     showKeys.value = !showKeys.value;
   } else if (e.key === 'Escape') {
+    if (e.defaultPrevented || !showKeys.value) return;
+    e.preventDefault();
     showKeys.value = false;
   } else if (/^[1-3]$/.test(e.key) && !modalOpen.value) {
     act.value = ACTS[Number(e.key) - 1].id;
@@ -293,22 +292,39 @@ export function App() {
           <EditScreen />
         )}
       </main>
-      <div class="toasts" aria-live="polite">
+      <div class="toasts">
         {encoderDownload.value && (
           <div class="toast toast-dl">
             <DownloadBar d={encoderDownload.value} />
           </div>
         )}
-        {toasts.value.map((t) => (
-          <div key={t.id} class={`toast toast-${t.kind}`}>
-            {t.text}
+        <div class="toasts-live" aria-live="polite">
+          {toasts.value.map((t) => (
+          <div key={t.id} class={`toast toast-${t.kind}`} role={t.kind === 'error' ? 'alert' : undefined}>
+            <span class="toast-text">{t.text}</span>
+            {t.action && (
+              <button
+                class="link toast-action"
+                onClick={() => {
+                  dismissToast(t.id);
+                  t.action!.run();
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
+            <button class="icon-btn sm toast-x" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
+              <Icon name="x" size={12} />
+            </button>
           </div>
-        ))}
+          ))}
+        </div>
       </div>
       <Keys />
       <PronEditor />
       <TagPalette />
       <ProjectLauncher />
+      <ConfirmDialog />
     </div>
   );
 }

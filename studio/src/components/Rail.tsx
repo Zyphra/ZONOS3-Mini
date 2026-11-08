@@ -20,6 +20,14 @@ function closeDrawer() {
   opener = null;
 }
 
+/** Bring rail `id` into view: on a phone as a drawer, on desktop by unfolding it. */
+export function openRail(id: string) {
+  if (phone.peek()) {
+    opener = document.activeElement as HTMLElement | null;
+    drawer.value = id;
+  } else if (folded.peek()[id]) folded.value = { ...folded.peek(), [id]: false };
+}
+
 interface Props {
   id: string;
   side: 'left' | 'right';

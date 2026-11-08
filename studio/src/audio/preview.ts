@@ -6,7 +6,7 @@
  */
 import { computed, effect, signal, untracked } from '@preact/signals';
 import type { GenerateRequest, Rendered } from '../api';
-import { pronTokens, requestContext, spec } from '../state/app';
+import { notify, projectSettings, pronTokens, requestContext, spec } from '../state/app';
 import { pronProblem } from '../lib/pron';
 import { design } from '../state/design';
 import { load, persist } from '../state/persist';
@@ -124,6 +124,12 @@ async function loadReference() {
   }
 }
 
+/** Forget a failed B render and try it again. */
+export function retryReference() {
+  reference.value = { key: '', take: null, error: null };
+  void loadReference();
+}
+
 function schedule(key: string) {
   clearTimeout(timer);
   const hit = cached(reqA!);
@@ -168,8 +174,9 @@ export function startPreview() {
       });
       return;
     }
-    reqA = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED);
-    reqB = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED, { unsteered: true });
+    const language = projectSettings.value.language;
+    reqA = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED, { language });
+    reqB = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED, { unsteered: true, language });
     untracked(() => {
       const key = requestKey(reqA!);
       const p = preview.value;
@@ -188,7 +195,7 @@ export function startPreview() {
 /** Force a fresh render of the current settings (after an error). */
 export function retry() {
   const d = design.value;
-  const req = buildRequest(spec.value, requestContext.value, d, phrase.value, PREVIEW_SEED);
+  const req = buildRequest(spec.value, requestContext.value, d, phrase.value, PREVIEW_SEED, { language: projectSettings.value.language });
   preview.value = { ...preview.value, key: '' };
   void run(req, requestKey(req));
 }
@@ -214,7 +221,10 @@ export function speak() {
   side.value = 'A';
   const p = preview.value;
   if (p.status === 'ready' && p.a) return player.play(ID_A, p.a.pcm, p.a.sr);
-  if (!reqA) return;
+  if (!reqA) {
+    if (!design.value.baseId) notify('Pick a voice first');
+    return;
+  }
   playNext = true;
   if (p.status === 'rendering') return;
   clearTimeout(timer);

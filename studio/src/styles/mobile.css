@@ -672,7 +672,4 @@
   .proj-menu {
     max-width: calc(100vw - 16px);
   }
-  .toasts {
-    max-width: calc(100vw - 24px);
-  }
 }

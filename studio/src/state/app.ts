@@ -59,12 +59,31 @@ export interface Toast {
   id: number;
   text: string;
   kind: 'info' | 'error' | 'ok';
+  /** One thing the reader can do about it (Undo, Retry, Go to…). */
+  action?: { label: string; run: () => void };
 }
 export const toasts = signal<Toast[]>([]);
 let toastId = 0;
+const timers = new Map<number, number>();
 
-export function notify(text: string, kind: Toast['kind'] = 'info') {
+export function dismissToast(id: number) {
+  clearTimeout(timers.get(id));
+  timers.delete(id);
+  toasts.value = toasts.value.filter((t) => t.id !== id);
+}
+
+/** Show a toast; returns its id. Errors stay 15 s, toasts with an action 8 s, the rest 3.5 s. Repeating the last text restarts its timer instead of stacking. */
+export function notify(text: string, kind: Toast['kind'] = 'info', action?: Toast['action']): number {
+  const ms = kind === 'error' ? 15000 : action ? 8000 : 3500;
+  const same = toasts.value.find((t) => t.text === text && t.kind === kind);
+  if (same) {
+    clearTimeout(timers.get(same.id));
+    toasts.value = toasts.value.map((t) => (t === same ? { ...t, action } : t));
+    timers.set(same.id, window.setTimeout(() => dismissToast(same.id), ms));
+    return same.id;
+  }
   const id = ++toastId;
-  toasts.value = [...toasts.value.slice(-3), { id, text, kind }];
-  setTimeout(() => (toasts.value = toasts.value.filter((t) => t.id !== id)), kind === 'error' ? 7000 : 3500);
+  toasts.value = [...toasts.value.slice(-3), { id, text, kind, action }];
+  timers.set(id, window.setTimeout(() => dismissToast(id), ms));
+  return id;
 }
