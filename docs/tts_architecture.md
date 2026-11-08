@@ -71,11 +71,13 @@ The model is trained with an inter-codebook delay: codebook `j` is shifted by `j
    └─ emit TTSUserMsg(input_ids: 2D tensor)
 
 3. Scheduler
-   ├─ Prefill: engine.forward_batch_tts()  # full prompt in one pass
+   ├─ Prefill: engine.forward_batch_tts()  # full prompt in one pass (GDN checkpoints: a CUDA graph at padded shapes)
    │   └─ extract last-token logits per sequence
    └─ Decode loop (frame by frame):
        ├─ engine.forward_batch_tts()       # single frame input
-       ├─ sample_tts(logits)               # → [cb0..cb9, text_placeholder]
+       ├─ sample_tts(logits)               # → [cb0..cb9, text_placeholder] on the GPU, without a host sync
+       │                                   #   (the host schedules the next step while the GPU runs this one; the
+       │                                   #   scheduler stream waits on the engine stream before touching the token pool)
        ├─ TTSSequence.append_token()       # EOS detection
        ├─ emit TTSDetokenizeMsg per frame
        └─ repeat until is_finished
@@ -244,18 +246,34 @@ normalized only above 1.0 and cut to whole codec frames within the reference lim
 ## GDN / Full-AttnRes family (2026-10)
 
 Checkpoints with `attention_pattern != "global"` use `zonos3_sgl/models/gdn.py` (`OriginalGDN`): the canonical 64-frame chunked
-gated-delta-rule recompute (FLA `chunk_gated_delta_rule` + `causal_conv1d`) with per-slot float32 recurrent and
+gated-delta-rule recompute (FLA's `chunk_gated_delta_rule` + `causal_conv1d` forward functions, called directly with
+`cu_seqlens` and chunk indices built on the host and copied without blocking; FLA would derive the indices with a host
+sync per call) with per-slot float32 recurrent and
 convolution states (`--cache-type naive`). The unfinished chunk of every slot is kept in a fixed 64-row window
 (`_window`, `_win_len`), which the eager prefill path reads and writes and which makes decode a static-shape
 computation: `_forward_decode_static` processes every padded request as one 64-row sequence (real rows first, zero
 rows after; the kernels are causal, so the real rows are bit-identical to the ragged call), gathers the new row's
 output and commits the states only when a window fills. `Engine` captures that step in CUDA graphs per batch size
 (`GraphRunner` hooks `before_capture` / `after_capture` / `before_replay` fill the static slot buffer and switch the
-layers' static mode; `note_graph_decode` keeps the host mirrors current after a replay). Two details keep replays
-valid: all layers share one set of static `cu_seqlens` tensors (FLA memoizes its chunk-index preparation by tensor
-identity in 4-entry caches), and the engine pins the cache results those tensors produced (`pin_fla_cache`) because
+layers' static mode; `note_graph_forward` keeps the host mirrors current after a replay). Two details keep replays
+valid: all layers share one set of static `cu_seqlens` / chunk-index tensors (FLA memoizes results derived from them by
+tensor identity in 4-entry caches), and the engine pins the cache results those tensors produced (`pin_fla_cache`) because
 the captured kernels hold raw pointers to them and eager prefills would otherwise evict and free them. The fused
-Full-AttnRes bank is one persistent context per decode batch size (`_attnres_state`). `residual_type == "full_attnres"` routes
+Full-AttnRes bank is one persistent context per graphed shape (`_attnres_state`).
+
+Prefills of fresh requests run as CUDA graphs too (`zonos3_sgl/engine/prefill_graph.py`, `PrefillGraphs`): eagerly a
+prefill launches ~900 kernels (~1,400 with a reference prefix) for 3-6 ms of GPU work in 40-60 ms of host time. Each
+request is padded to its complete 64-row chunks plus one 64-row window (`PrefillLayout`), so the layer stack's shapes
+depend only on the requests' complete-chunk counts; one graph per tuple of counts, captured on first use (single
+requests of up to 5 complete chunks at startup) and kept in an LRU (`ZONOS3_PREFILL_GRAPHS`, 16) for prefills of up to
+`ZONOS3_PREFILL_GRAPH_MAX_ROWS` padded rows (1024); `ZONOS3_PREFILL_CUDA_GRAPH=0` turns them off. The embedding
+prologue (speaker and condition rows) runs eagerly on the real rows (`Zonos3ForCausalLM.embed`), which are scattered
+into the graph's padded input; the graph runs `forward_layers`, the head and the last-row gather. No real row reads a
+padded one: attention is causal over each request's own page-table row (padded positions write their KV to the dummy
+page), `_forward_prefill_static` runs the eager path's committed pass over the complete chunks and its uncommitted tail
+pass as a zero-padded 64-row window (the decode window's layout), and every other kernel is batch-invariant (below), so
+graph and eager prefills leave bit-identical logits, GDN states and KV rows. Continuations (a cached prefix: LACI
+rollbacks) and accent adapters stay eager. `residual_type == "full_attnres"` routes
 every sub-layer output through `full_attnres_route()` in `zonos3_sgl/models/zonos3.py` (reference schedule
 `_forward_full_attnres_reference`, or the trainer's Triton kernels in `zonos3_sgl/models/training_attnres*.py` when
 `ZONOS3_USE_TRAINING_ATTNRES=1`). The `ZONOS3_USE_TRAINING_{RMSNORM,ROUTER_WEIGHTS,SONIC_EXPERTS,ATTNRES,ROPE}` switches

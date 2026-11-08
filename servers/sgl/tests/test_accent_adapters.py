@@ -591,19 +591,27 @@ def test_every_gdn375k_lora_module_maps_to_the_op_that_computes_it(tmp_path, mon
 
 
 class _FakeGDNKernels:
-    """Row-local CPU stand-ins for the FLA kernels: out = (x W_v) * (x W_z), then wo."""
+    """Row-local CPU stand-ins for the FLA forward functions: out = (x W_v) * (x W_z), then wo."""
 
     @staticmethod
-    def conv(qkv, weight, initial_state, output_final_state, activation, backend, cu_seqlens):
-        return qkv, initial_state
+    def conv(x, weight, bias, residual, initial_state, output_final_state, activation, cu_seqlens, chunk_indices, BT):
+        return x, initial_state
 
     @staticmethod
-    def prefill(q, k, v, g, beta, initial_state, output_final_state, cu_seqlens, **kwargs):
-        return v, initial_state
+    def l2norm(x):
+        return x, None
 
     @staticmethod
-    def norm(output, z, weight, bias, activation, eps):
-        return output * z
+    def beta(x, scale):
+        return x
+
+    @staticmethod
+    def delta_rule(q, k, v, g, beta, initial_state, **kwargs):
+        return g, v, None, initial_state, initial_state, None
+
+    @staticmethod
+    def norm(x, g, weight, bias, activation, eps, residual, residual_dtype, is_rms_norm):
+        return x * g, None, None, None
 
 
 def _gdn(monkeypatch, capacity):
@@ -614,9 +622,11 @@ def _gdn(monkeypatch, capacity):
     gdn.in_proj.weight = torch.randn(2056, HIDDEN) * 0.3
     gdn.wo.weight = torch.randn(HIDDEN, 512) * 0.1
     gdn.A_log = gdn.dt_bias = torch.zeros(4)
-    gdn._conv_fn = _FakeGDNKernels.conv
-    gdn._prefill_fn = _FakeGDNKernels.prefill
-    gdn._norm_fn = _FakeGDNKernels.norm
+    gdn._conv_fwd = _FakeGDNKernels.conv
+    gdn._l2norm_fwd = _FakeGDNKernels.l2norm
+    gdn._beta_fwd = _FakeGDNKernels.beta
+    gdn._delta_rule_fwd = _FakeGDNKernels.delta_rule
+    gdn._norm_fwd = _FakeGDNKernels.norm
     gdn.allocate_cache(capacity, torch.device("cpu"), torch.float32)
     return gdn_module, gdn
 
@@ -672,7 +682,7 @@ def test_gdn_mixer_shifts_replayed_tails_and_graph_windows_by_their_requests_acc
         scales = [a for (_, _, a), n in zip(accents, lengths) for _ in range(n)]
         batch = _use_batch(monkeypatch, model, slots, scales)
         batch.reqs = batch.padded_reqs = reqs
-        batch.is_decode, batch.padded_size = decode, len(reqs)
+        batch.is_decode, batch.padded_size, batch.gdn_prefill = decode, len(reqs), None
         monkeypatch.setattr(gdn_module, "get_global_ctx", lambda: SimpleNamespace(batch=batch))
         x = torch.randn(sum(lengths), HIDDEN)
         out = gdn.forward(x)

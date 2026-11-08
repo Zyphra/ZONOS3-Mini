@@ -52,6 +52,8 @@ Zonos3 supports FlashAttention and FlashInfer backends. Use `--attn` to select a
 
 Decode CUDA graph capture is enabled by default. Set `--cuda-graph-max-bs 0` to disable it, or use a positive value to control the maximum captured batch size.
 
+On GDN checkpoints, prefills of fresh requests also run as CUDA graphs: each request is padded to its complete 64-row chunks plus one 64-row window, one graph per shape, captured on first use (single requests of up to 5 complete chunks at startup) and kept in an LRU of `ZONOS3_PREFILL_GRAPHS` (16) for prefills of up to `ZONOS3_PREFILL_GRAPH_MAX_ROWS` padded rows (1024). They compute the same bits as the eager prefill; `ZONOS3_PREFILL_CUDA_GRAPH=0` turns them off. See [tts_architecture.md](tts_architecture.md#gdn--full-attnres-family-2026-10).
+
 ## Radix Cache
 
 The KV cache manager defaults to radix caching. Use `--cache-type naive` to select the naive cache manager.

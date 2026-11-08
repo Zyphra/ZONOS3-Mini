@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List
 
 import torch
 import torch.nn.functional as F
@@ -109,6 +108,17 @@ def apply_repetition_penalty(
     return torch.where(repeated, adjusted_logits, logits)
 
 
+def _on_device(t: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """``t`` on ``device`` without blocking the host: a CPU tensor bound for CUDA goes through pinned memory (a
+    pageable source may make the driver synchronize with the stream)."""
+    if t.device == device:
+        return t
+    if device.type == "cuda" and t.device.type == "cpu":
+        t = t if t.is_pinned() else t.pin_memory()
+        return t.to(device, non_blocking=True)
+    return t.to(device)
+
+
 _debug_sample_count = 0
 
 
@@ -162,7 +172,7 @@ def sample_tts(
     text_vocab: int = 0,
     generators: list[torch.Generator | None] | None = None,
     stop_blocked: torch.Tensor | None = None,
-) -> List[List[int]]:
+) -> torch.Tensor:
     """Functional interface for TTS sampling.
 
     Args:
@@ -183,25 +193,31 @@ def sample_tts(
         stop_blocked: Optional (B, C) bool mask of the codebooks whose stop token is
             not allowed yet (a request's min_frames); None leaves every stop id allowed.
 
+    The values of temperatures, top_ks, top_ps, min_ps and stop_token_ids pick host-side branches (greedy, the
+    batch's top-k / top-p / min-p, each row's vocabulary width): pass them as CPU tensors and sampling never waits on
+    the GPU (a server can then queue the next step behind it); on the logits' device each read blocks on a copy.
+
     Returns:
-        List of unpacked tokens, each is [cb0, cb1, ..., cb8, text_placeholder]
+        (B, n_codebooks + 1) int32 on the logits' device: each row's codes [cb0, ..., cb8] and the text placeholder
     """
     global _debug_sample_count
     B, C, V = logits.shape
+    device = logits.device
     codebook_size = int(codebook_size)
     audio_pad_id = int(audio_pad_id)
     if not 0 < codebook_size < V or not codebook_size <= audio_pad_id < V:
         raise ValueError(f"Invalid codebook_size={codebook_size} / audio_pad_id={audio_pad_id} for vocabulary {V}")
     if tuple(stop_token_ids.shape) != (B,):
         raise ValueError(f"Expected stop_token_ids of shape ({B},), received {tuple(stop_token_ids.shape)}")
+    host_stop_ids = stop_token_ids.tolist()
 
     # Padding targets are ignored during training, so their logits are
     # unconstrained and padding must never be sampled as an audio code. Of the
     # end tokens only the row's own stop id stays available: it is a supervised
     # target in every delayed codebook during the autoregressive flush, while
     # the other end token (EOA vs span-end) would end the wrong kind of segment.
-    token_ids = torch.arange(V, device=logits.device).view(1, 1, V)
-    stop_ids = stop_token_ids.to(device=logits.device, dtype=token_ids.dtype).view(B, 1, 1)
+    token_ids = torch.arange(V, device=device).view(1, 1, V)
+    stop_ids = _on_device(stop_token_ids, device).to(token_ids.dtype).view(B, 1, 1)
     invalid = (token_ids == audio_pad_id) | ((token_ids >= codebook_size) & (token_ids != stop_ids))
 
     if codebook_sizes is not None:
@@ -210,10 +226,10 @@ def sample_tts(
             raise ValueError(f"Expected {C} per-codebook sizes, received {len(sizes)}")
         if any(size <= 0 or size > codebook_size for size in sizes):
             raise ValueError(f"Invalid per-codebook sizes {sizes!r} for codebook size {codebook_size}")
-        limits = torch.tensor(sizes, device=logits.device).view(1, C, 1)
+        limits = _on_device(torch.tensor(sizes), device).view(1, C, 1)
         invalid = invalid | ((token_ids >= limits) & (token_ids < codebook_size))
     if stop_blocked is not None:
-        invalid = invalid | ((token_ids == stop_ids) & stop_blocked.to(logits.device).view(B, C, 1))
+        invalid = invalid | ((token_ids == stop_ids) & _on_device(stop_blocked, device).view(B, C, 1))
     logits = logits.masked_fill(invalid, float("-inf"))
 
     # Debug: print detailed stats matching reference format for first 10 samples
@@ -263,11 +279,11 @@ def sample_tts(
     )
 
     # Check if all greedy (temperature <= 0)
-    if (temperatures <= 0).all():
+    if bool((temperatures <= 0).all()):
         next_ids = torch.argmax(logits, dim=-1)
     else:
         # Per-sequence temperature scaling: (B,) -> (B, 1, 1) for broadcasting
-        temp_broadcast = temperatures.view(B, 1, 1).clamp(min=1e-8)
+        temp_broadcast = _on_device(temperatures, device).view(B, 1, 1).clamp(min=1e-8)
         logits = logits / temp_broadcast
         logits_flat = logits.view(B * C, V)
 
@@ -294,20 +310,20 @@ def sample_tts(
         # An aggressive min_p (>1) or top_p can remove every token in a row,
         # leaving an all-zero distribution. torch.multinomial would then raise a
         # CUDA device-side assert that aborts the scheduler, so fall back to
-        # greedy (argmax) for any fully-masked row.
+        # greedy (argmax) for any fully-masked row. Applied unconditionally (a
+        # no-op select on valid rows) so the host never reads the mask.
         invalid_rows = probs.sum(dim=-1) <= 0
-        if bool(invalid_rows.any()):
-            greedy = logits_flat.argmax(dim=-1)
-            fallback = torch.zeros_like(probs)
-            fallback.scatter_(-1, greedy.unsqueeze(-1), 1.0)
-            probs = torch.where(invalid_rows.unsqueeze(-1), fallback, probs)
+        greedy = logits_flat.argmax(dim=-1)
+        fallback = torch.zeros_like(probs)
+        fallback.scatter_(-1, greedy.unsqueeze(-1), 1.0)
+        probs = torch.where(invalid_rows.unsqueeze(-1), fallback, probs)
 
         # Draw each row over the narrowest vocabulary prefix that holds its allowed ids:
         # codes, EOA and pad (the base vocabulary), plus the trailing span-end column only
         # for span rows. torch.multinomial draws one exponential per column, so an
         # utterance on an edit checkpoint then consumes exactly the random numbers of the
         # same checkpoint without the span-end row: same seed, same audio.
-        widths = [max(int(stop), audio_pad_id) + 1 for stop in stop_token_ids.tolist()]
+        widths = [max(int(stop), audio_pad_id) + 1 for stop in host_stop_ids]
         # Use per-request generators for deterministic sampling when seeds are set
         has_generators = generators and any(g is not None for g in generators)
         if has_generators and B == 1 and generators[0] is not None:
@@ -327,9 +343,6 @@ def sample_tts(
         else:
             next_ids = torch.multinomial(probs[:, : max(widths)].contiguous(), num_samples=1).view(B, C)
 
-    # Return unpacked format: list of (audio codes + text placeholder)
-    next_ids_list = next_ids.tolist()
-
     # Debug: print sampled tokens for first 10 samples
     if (
         logger.isEnabledFor(logging.DEBUG)
@@ -337,8 +350,8 @@ def sample_tts(
         and not torch.cuda.is_current_stream_capturing()
     ):
         step = _debug_sample_count
-        sampled = next_ids_list[0] if next_ids_list else []
-        logger.debug("Step %d sampled: %s", step, sampled)
+        next_ids_list = next_ids.tolist()
+        logger.debug("Step %d sampled: %s", step, next_ids_list[0] if next_ids_list else [])
         for i, row in enumerate(next_ids_list):
             eoa_positions = [j for j, t in enumerate(row) if t == EOA_TOKEN]
             if eoa_positions:
@@ -349,4 +362,6 @@ def sample_tts(
                     i,
                 )
 
-    return [row + [text_vocab] for row in next_ids_list]
+    # Unpacked rows: the audio codes, then the text placeholder
+    placeholder = torch.full((B, 1), int(text_vocab), dtype=torch.int32, device=device)
+    return torch.cat((next_ids.to(torch.int32), placeholder), dim=1)

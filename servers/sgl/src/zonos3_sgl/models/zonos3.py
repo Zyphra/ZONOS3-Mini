@@ -1162,6 +1162,10 @@ class Zonos3ForCausalLM(BaseOP):
 
     def _forward_model(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Run model forward pass to get hidden states."""
+        return self.forward_layers(self.embed(input_ids))
+
+    def embed(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Input rows of the layer stack: frame embeddings with the batch's speaker and condition rows, normalized."""
         global _model_debug_counter
         batch = get_global_ctx().batch
         is_decode = batch.is_decode
@@ -1215,14 +1219,22 @@ class Zonos3ForCausalLM(BaseOP):
 
         if should_debug and _model_debug_counter <= 10:
             _logger.debug("  After emb_norm: norm=%.4f, mean=%.6f", x.norm().item(), x.mean().item())
+        return x
 
+    def forward_layers(self, x: torch.Tensor) -> torch.Tensor:
+        """The layer stack and output norm over the embedded rows ``x`` (embed)."""
+        batch = get_global_ctx().batch
+        capturing = torch.cuda.is_current_stream_capturing()
+        should_debug = batch.is_decode and _logger.isEnabledFor(logging.DEBUG) and not capturing
         residual: torch.Tensor | None = None
         router_states: torch.Tensor | None = None
         if self.block_attnres_queries is not None and self.config.residual_type == "full_attnres":
             if os.environ.get("ZONOS3_USE_TRAINING_ATTNRES") == "1":
                 from .training_attnres import forward_layers_full
 
-                h = forward_layers_full(self, x, state=self._attnres_state(x) if is_decode else None)
+                # graphed shapes (decode steps, padded prefills) keep one persistent bank per shape
+                persistent = batch.is_decode or batch.gdn_prefill is not None
+                h = forward_layers_full(self, x, state=self._attnres_state(x) if persistent else None)
             else:
                 h = self._forward_full_attnres_reference(x)
         elif self.block_attnres_queries is not None and os.environ.get("ZONOS3_USE_TRAINING_ATTNRES") == "1":
@@ -1269,8 +1281,9 @@ class Zonos3ForCausalLM(BaseOP):
         return h
 
     def _attnres_state(self, x: torch.Tensor):
-        """One persistent fused-AttnRes bank per decode shape, so the decode step allocates nothing and can be
-        captured in a CUDA graph (a fresh context per forward gives the same bits: receipt capture-probe2.json)."""
+        """One persistent fused-AttnRes bank per graphed shape (decode batch size, padded prefill rows), so a graphed
+        forward allocates nothing and can be captured (a fresh context per forward gives the same bits: receipt
+        capture-probe2.json)."""
         key = (x.shape[0], x.dtype, x.device)
         state = self._attnres_states.get(key)
         if state is None:

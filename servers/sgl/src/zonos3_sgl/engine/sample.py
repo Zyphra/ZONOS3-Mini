@@ -3,23 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 import torch
 from zonos3.tts.sampler import active_repetition_window, clamp_sampling, sample_tts
+
+from zonos3_sgl.utils.torch_utils import make_device_tensor
 
 if TYPE_CHECKING:
     from zonos3_sgl.core import TTSBatch
 
 
-def make_device_tensor(data: List, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-    """Create a tensor on device from a list."""
-    return torch.tensor(data, dtype=dtype, pin_memory=True).to(device, non_blocking=True)
-
-
 @dataclass
 class TTSBatchSamplingArgs:
-    """Sampling arguments for a TTS batch."""
+    """Sampling arguments for a TTS batch. The per-request scalars (temperatures, top_ks, top_ps, min_ps,
+    stop_token_ids) are CPU tensors: sample_tts branches on their values without waiting on the GPU."""
 
     temperatures: torch.Tensor
     top_ks: torch.Tensor
@@ -123,11 +121,11 @@ class TTSSampler:
                 self.device,
             )
         return TTSBatchSamplingArgs(
-            temperatures=make_device_tensor(temps, torch.float32, self.device),
-            top_ks=make_device_tensor(top_ks, torch.int32, self.device),
-            top_ps=make_device_tensor(top_ps, torch.float32, self.device),
-            min_ps=make_device_tensor(min_ps, torch.float32, self.device),
-            stop_token_ids=make_device_tensor(stop_ids, torch.int64, self.device),
+            temperatures=torch.tensor(temps, dtype=torch.float32),
+            top_ks=torch.tensor(top_ks, dtype=torch.int32),
+            top_ps=torch.tensor(top_ps, dtype=torch.float32),
+            min_ps=torch.tensor(min_ps, dtype=torch.float32),
+            stop_token_ids=torch.tensor(stop_ids, dtype=torch.int64),
             text_vocab=self.text_vocab,
             repetition_token_ids=repetition_token_ids,
             repetition_penalties=repetition_penalties_tensor,
@@ -135,15 +133,15 @@ class TTSSampler:
             stop_blocked=stop_blocked,
         )
 
-    def sample(self, logits: torch.Tensor, args: TTSBatchSamplingArgs) -> List[List[int]]:
-        """Sample from multi-codebook logits.
+    def sample(self, logits: torch.Tensor, args: TTSBatchSamplingArgs) -> torch.Tensor:
+        """Sample from multi-codebook logits without waiting on the GPU.
 
         Args:
             logits: Shape (B, n_codebooks, vocab_size)
             args: Sampling arguments
 
         Returns:
-            List of unpacked tokens [cb0, cb1, ..., cb8, text_placeholder]
+            (B, n_codebooks + 1) int32 on the logits' device: [cb0, cb1, ..., cb8, text_placeholder] per row
         """
         return sample_tts(
             logits=logits,
@@ -161,16 +159,3 @@ class TTSSampler:
             generators=args.generators,
             stop_blocked=args.stop_blocked,
         )
-
-    def sample_to_tensor(self, logits: torch.Tensor, args: TTSBatchSamplingArgs) -> torch.Tensor:
-        """Sample and return as tensor instead of list.
-
-        Args:
-            logits: Shape (B, n_codebooks, vocab_size)
-            args: Sampling arguments
-
-        Returns:
-            Tensor of shape (B, n_codebooks + 1) with sampled tokens
-        """
-        tokens_list = self.sample(logits, args)
-        return torch.tensor(tokens_list, dtype=torch.int32, device=self.device)

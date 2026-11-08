@@ -26,7 +26,7 @@ def _sample(logits, stop_ids, temperature):
         stop_token_ids=torch.tensor(stop_ids),
         codebook_sizes=CODEBOOK_SIZES,
         text_vocab=99,
-    )
+    ).tolist()
 
 
 def test_greedy_rows_only_take_their_own_end_token():
@@ -114,7 +114,7 @@ def _seeded(logits, stop_ids, seeds):
         codebook_sizes=CODEBOOK_SIZES,
         text_vocab=99,
         generators=[torch.Generator().manual_seed(seed) for seed in seeds],
-    )
+    ).tolist()
 
 
 def test_utterances_draw_the_same_samples_as_a_checkpoint_without_span_end():
@@ -173,7 +173,7 @@ def test_min_frames_hold_the_aligned_stop_frame_back(min_frames):
             codebook_sizes=CODEBOOK_SIZES,
             text_vocab=99,
             stop_blocked=args.stop_blocked,
-        )[0]
+        )[0].tolist()
         req.total_generated += 1
         if req.check_eos(tokens[:n]):
             break

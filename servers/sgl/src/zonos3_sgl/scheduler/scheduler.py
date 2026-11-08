@@ -26,6 +26,7 @@ from zonos3_sgl.message import (
     TTSUserMsg,
 )
 from zonos3_sgl.utils.logger import init_logger
+from zonos3_sgl.utils.torch_utils import make_device_tensor, to_device
 
 from .cache import CacheManager
 from .config import SchedulerConfig
@@ -1029,6 +1030,11 @@ class TTSScheduler(SchedulerIOMixin):
 
     def _schedule_next_batch(self) -> TTSForwardInput | None:
         """Schedule next batch (prefill first, then decode)."""
+        # Scheduling writes the token pool (a new request's prompt rows, possibly in a slot just freed) and reads it
+        # (repetition history) on this stream, while the step still running on the engine stream writes its sampled
+        # rows: order this stream's work after that step on the GPU. The host does not wait (sampling never syncs),
+        # so it prepares the next step while the GPU runs the current one.
+        torch.cuda.current_stream().wait_stream(self.engine.stream)
         batch = self._schedule_prefill() or self.decode_manager.schedule_next_batch()
         return self._prepare_batch(batch) if batch else None
 
@@ -1140,12 +1146,14 @@ class TTSScheduler(SchedulerIOMixin):
         """Sample only externally visible rows, then mirror one sample to each twin."""
         pairs = self._cfg_pairs(batch)
         if not pairs:
-            return self.tts_sampler.sample_to_tensor(logits, sample_args)
+            return self.tts_sampler.sample(logits, sample_args)
         rows = [i for i, req in enumerate(batch.reqs) if not req.is_cfg_uncond]
-        indices = torch.tensor(rows, dtype=torch.long, device=logits.device)
+        indices = make_device_tensor(rows, torch.long, logits.device)
 
         def select(value):
-            return None if value is None else value.index_select(0, indices)
+            if value is None:
+                return None
+            return value[rows] if value.device.type == "cpu" else value.index_select(0, indices)
 
         visible_args = replace(
             sample_args,
@@ -1159,7 +1167,7 @@ class TTSScheduler(SchedulerIOMixin):
             stop_blocked=select(sample_args.stop_blocked),
             generators=[sample_args.generators[i] for i in rows],
         )
-        sampled = self.tts_sampler.sample_to_tensor(logits.index_select(0, indices), visible_args)
+        sampled = self.tts_sampler.sample(logits.index_select(0, indices), visible_args)
         result = torch.empty((len(batch.reqs), sampled.shape[1]), dtype=sampled.dtype, device=sampled.device)
         result.index_copy_(0, indices, sampled)
         self._sync_cfg_twin_tokens(result, batch)
@@ -1197,8 +1205,8 @@ class TTSScheduler(SchedulerIOMixin):
             offset += req.extend_len
 
         if emb_values:
-            batch.speaker_emb_values = torch.stack(emb_values, dim=0).to(self.device, non_blocking=True)
-            batch.speaker_token_positions = torch.tensor(token_positions, dtype=torch.long, device=self.device)
+            batch.speaker_emb_values = to_device(torch.stack(emb_values, dim=0), self.device)
+            batch.speaker_token_positions = make_device_tensor(token_positions, torch.long, self.device)
         else:
             batch.speaker_emb_values = None
             batch.speaker_token_positions = None
@@ -1225,8 +1233,8 @@ class TTSScheduler(SchedulerIOMixin):
             if positions[index]:
                 rows.append(
                     (
-                        torch.tensor(values[index], dtype=torch.long, device=self.device),
-                        torch.tensor(positions[index], dtype=torch.long, device=self.device),
+                        make_device_tensor(values[index], torch.long, self.device),
+                        make_device_tensor(positions[index], torch.long, self.device),
                     )
                 )
             else:
@@ -1242,8 +1250,8 @@ class TTSScheduler(SchedulerIOMixin):
         lengths = torch.tensor([req.extend_len for req in reqs])
         slots = torch.tensor([req.accent_slot for req in reqs], dtype=torch.int32)
         scales = torch.tensor([req.accent_scale for req in reqs], dtype=torch.float32)
-        batch.accent_slots = torch.repeat_interleave(slots, lengths).to(self.device, non_blocking=True)
-        batch.accent_scales = torch.repeat_interleave(scales, lengths).to(self.device, non_blocking=True)
+        batch.accent_slots = to_device(torch.repeat_interleave(slots, lengths), self.device)
+        batch.accent_scales = to_device(torch.repeat_interleave(scales, lengths), self.device)
 
     def _forward(self, forward_input: TTSForwardInput) -> TTSForwardOutput:
         """Run forward pass on batch."""

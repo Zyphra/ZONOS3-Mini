@@ -73,12 +73,15 @@ def _sgl_prefill_logits(tts, plan) -> torch.Tensor:
         )
     )
     model.compute_logits = capture
+    # every row's logits exist only in the eager prefill (a prefill graph computes the same bits, last rows out)
+    graphs, tts.engine.prefill_graphs = tts.engine.prefill_graphs, None
     try:
         tts.run_forever()
     except RequestAllFinished:
         pass
     finally:
         del model.compute_logits
+        tts.engine.prefill_graphs = graphs
     return captured[0]
 
 

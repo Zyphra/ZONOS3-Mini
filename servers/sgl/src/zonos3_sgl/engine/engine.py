@@ -22,12 +22,17 @@ from zonos3_sgl.layers import set_rope_device
 from zonos3_sgl.models import create_model, load_checkpoint_weight
 from zonos3_sgl.utils.logger import init_logger
 from zonos3_sgl.utils.misc import divide_even
-from zonos3_sgl.utils.torch_utils import torch_dtype
+from zonos3_sgl.utils.torch_utils import make_device_tensor, torch_dtype
 
 from .config import EngineConfig
 from .graph import GraphRunner, get_free_memory, mem_GB
+from .prefill_graph import PrefillGraphs
 
 logger = init_logger(__name__)
+
+# Single-request prefill graphs captured at startup: up to this many complete 64-row chunks (embedding prompts take
+# 0-1, a default voice's reference prefix 4-5); other shapes are captured on first use.
+PREFILL_PREWARM_CHUNKS = 5
 
 
 def create_page_table(shape: Tuple[int, int], device: torch.device) -> torch.Tensor:
@@ -273,6 +278,30 @@ class Engine:
             probe_capacity=(config.align_probe_max_text, config.align_probe_max_masked, config.align_probe_max_keys),
             n_heads=self.model_config.num_qo_heads,
         )
+        self.prefill_graphs = self._init_prefill_graphs(config) if self._uses_gdn else None
+
+    # ------------------------------------------------------------------ prefill CUDA graphs
+    def _init_prefill_graphs(self, config: EngineConfig) -> PrefillGraphs | None:
+        """Prefill graphs for GDN checkpoints (engine/prefill_graph.py): prefills of up to
+        ZONOS3_PREFILL_GRAPH_MAX_ROWS padded rows (1024), at most ZONOS3_PREFILL_GRAPHS graphs (16), single requests
+        of up to PREFILL_PREWARM_CHUNKS complete chunks captured now; ZONOS3_PREFILL_CUDA_GRAPH=0 disables them (the
+        eager prefill computes the same bits)."""
+        if os.environ.get("ZONOS3_PREFILL_CUDA_GRAPH", "1").strip().lower() in {"0", "false", "no", "off"}:
+            logger.info_rank0("Prefill CUDA graphs: disabled")
+            return None
+        graphs = PrefillGraphs(
+            model=self.model,
+            ctx=self.ctx,
+            page_table=self.page_table,
+            dummy_page=self.dummy_page,
+            gdn_layers=self._gdn_layers,
+            stream=self.stream,
+            max_requests=config.max_running_req,
+            max_rows=int(os.environ.get("ZONOS3_PREFILL_GRAPH_MAX_ROWS", "1024")),
+            max_graphs=int(os.environ.get("ZONOS3_PREFILL_GRAPHS", "16")),
+        )
+        graphs.prewarm([(w,) for w in range(PREFILL_PREWARM_CHUNKS + 1)], dummy_slot=self.dummy_req.table_idx)
+        return graphs
 
     # ------------------------------------------------------------------ GDN CUDA graphs
     def _gdn_graph_batch_sizes(self, config: EngineConfig, free_memory: int) -> list[int]:
@@ -523,6 +552,10 @@ class Engine:
             Logits tensor of shape (batch_size, n_codebooks, vocab_size)
         """
         assert torch.cuda.current_stream() == self.stream
+        if batch.is_prefill and self.prefill_graphs is not None:
+            key = self.prefill_graphs.key(batch)
+            if key is not None:
+                return self.prefill_graphs.run(batch, key)
         if batch.is_decode and self.model.steer_rows is not None:
             self._fill_steer_rows(batch)
         with self.ctx.forward_batch(batch):
@@ -544,7 +577,7 @@ class Engine:
             if use_graph:
                 logits = self.graph_runner.replay(batch)
                 for gdn in self._gdn_layers:
-                    gdn.note_graph_decode(batch.reqs)
+                    gdn.note_graph_forward(batch.reqs)
             else:
                 logits = self.model.forward()
 
@@ -562,8 +595,7 @@ class Engine:
             for req in batch.reqs:
                 cumsum += req.extend_len  # extend_len = device_len - cached_len
                 last_indices.append(cumsum - 1)
-            last_indices = torch.tensor(last_indices, device=logits.device)
-            return logits[last_indices]
+            return logits[make_device_tensor(last_indices, torch.long, logits.device)]
 
     def shutdown(self) -> None:
         self.graph_runner.destroy_cuda_graphs()

@@ -458,23 +458,23 @@ def sample_row(
     stop_blocked = None
     if sampling.min_frames > 0:
         stop_blocked = torch.tensor([[total_generated < sampling.min_frames + cb for cb in range(n_cb)]], device=device)
-    row = sample_tts(
+    # the per-request scalars stay on the CPU: sample_tts reads them on the host
+    return sample_tts(
         logits.float().unsqueeze(0),
-        torch.tensor([s.temperature], dtype=torch.float32, device=device),
-        torch.tensor([s.topk], dtype=torch.int32, device=device),
-        torch.tensor([s.top_p], dtype=torch.float32, device=device),
-        torch.tensor([s.min_p], dtype=torch.float32, device=device),
+        torch.tensor([s.temperature], dtype=torch.float32),
+        torch.tensor([s.topk], dtype=torch.int32),
+        torch.tensor([s.top_p], dtype=torch.float32),
+        torch.tensor([s.min_p], dtype=torch.float32),
         codebook_size=c.codebook_size,
         audio_pad_id=c.audio_pad_id,
-        stop_token_ids=torch.tensor([stop_id], dtype=torch.int64, device=device),
+        stop_token_ids=torch.tensor([stop_id], dtype=torch.int64),
         repetition_token_ids=repetition_ids,
         repetition_penalties=repetition_penalties,
         codebook_sizes=c.codebook_sizes,
         text_vocab=c.text_vocab,
         generators=[generator],
         stop_blocked=stop_blocked,
-    )[0]
-    return torch.tensor(row, dtype=torch.int32)
+    )[0].cpu()
 
 
 def generate_rows(

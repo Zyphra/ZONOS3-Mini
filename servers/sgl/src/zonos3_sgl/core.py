@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from zonos3_sgl.attention import BaseAttnBackend, BaseAttnMetadata
     from zonos3_sgl.kvcache import BaseCacheHandle
+    from zonos3_sgl.models.gdn import PrefillInputs
     from zonos3_sgl.tts.align_probe import AlignProbe, ProbeInputs
 
 
@@ -295,6 +296,8 @@ class TTSBatch:
     # and the rows needing the eager per-request path (masked heads, all-heads probes).
     probe: "ProbeInputs | None" = field(default=None, init=False)
     probe_legacy: list[int] | None = field(default=None, init=False)
+    # A prefill CUDA graph's GDN inputs (zonos3_sgl.engine.prefill_graph): padded layout, slots, real row counts.
+    gdn_prefill: "PrefillInputs | None" = field(default=None, init=False)
 
     @property
     def is_prefill(self) -> bool:

@@ -33,7 +33,7 @@ def test_repetition_penalty_applies_per_codebook_for_greedy_sampling():
         text_vocab=99,
     )
 
-    assert tokens == [[1, 0, 99]]
+    assert tokens.tolist() == [[1, 0, 99]]
 
 
 def test_repetition_penalty_handles_negative_logits_sign_aware():
