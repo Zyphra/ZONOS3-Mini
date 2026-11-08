@@ -200,6 +200,11 @@ effect(() => {
 
 addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && timer && void save());
 addEventListener('pagehide', () => timer && void save());
+// Leaving with work not yet (or not able to be) written: the browser asks first.
+addEventListener('beforeunload', (e) => {
+  const s = saveState.value;
+  if (timer || s === 'saving' || s === 'error' || s === 'conflict' || (s === 'off' && current.value)) e.preventDefault();
+});
 
 // ── Voices ────────────────────────────────────────────────────────────────────────────────────────
 

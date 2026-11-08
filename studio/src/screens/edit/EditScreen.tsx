@@ -785,12 +785,12 @@ function Workspace() {
           </button>
         </div>
         <span class="grow" />
-        {E.canSendBack.value && (
-          <button class="btn sm" onClick={E.sendBack} title="Replace the take in Direct with this version">
+        {d.current > 0 && d.source.kind === 'take' && (
+          <button class="btn sm" disabled={!E.canSendBack.value} onClick={() => void E.sendBack()} title={E.canSendBack.value ? 'Add this version to the Direct line as a new keeper take' : 'The original take is gone from Direct'}>
             <Icon name="undo" size={13} /> Send back to Direct
           </button>
         )}
-        <button class="icon-btn" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label="Export what is shown as WAV" title="Export WAV">
+        <button class="icon-btn" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label={`Export ${isTake ? disp.label.replace('Take ', 'T') : `v${d.current}`} as WAV`} title={`Export ${isTake ? disp.label.replace('Take ', 'T') : `v${d.current}`}`}>
           <Icon name="download" />
         </button>
       </header>

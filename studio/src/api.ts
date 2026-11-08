@@ -542,15 +542,15 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
 
 /** Qwen3-ASR transcript + FuseAlign word timings of a clip (plain base64 WAV). */
 /** `language`: the clip's language (server code); it picks the recognition language and the alignment tokenization. */
-export function transcribe(audio_base64: string, language = 'en_us'): Promise<Alignment> {
-  if (current().edit.fixture) return fixtureEdit.transcribe(current().edit, audio_base64, language);
-  return ok<Alignment>(client.POST('/v2/edit/transcribe', { body: { audio_base64, language } }));
+export function transcribe(audio_base64: string, language = 'en_us', signal?: AbortSignal): Promise<Alignment> {
+  if (current().edit.fixture) return fixtureEdit.transcribe(current().edit, audio_base64, language, signal);
+  return ok<Alignment>(client.POST('/v2/edit/transcribe', { body: { audio_base64, language }, signal }));
 }
 
 /** Forced alignment of known text. */
-export function align(audio_base64: string, text: string, language = 'en_us'): Promise<Alignment> {
-  if (current().edit.fixture) return fixtureEdit.align(audio_base64, text, language);
-  return ok<Alignment>(client.POST('/v2/edit/align', { body: { audio_base64, text, language } }));
+export function align(audio_base64: string, text: string, language = 'en_us', signal?: AbortSignal): Promise<Alignment> {
+  if (current().edit.fixture) return fixtureEdit.align(audio_base64, text, language, signal);
+  return ok<Alignment>(client.POST('/v2/edit/align', { body: { audio_base64, text, language }, signal }));
 }
 
 export async function edit(req: EditRequest, signal?: AbortSignal): Promise<EditResponse> {
