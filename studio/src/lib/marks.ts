@@ -54,6 +54,9 @@ export const ICONS: Record<string, string> = {
   left: 'M15 6l-6 6 6 6',
   right: 'M9 6l6 6-6 6',
   more: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
+  speaker: 'M4 9h4l5-4v14l-5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11',
+  brush: 'M15 4l5 5-8 8-5-5zM7 12l5 5-2 2a3 3 0 0 1-4.2 0l-1.6-1.6a3 3 0 0 1 0-4.2z',
+  gear: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 2.5v2.3M12 19.2v2.3M2.5 12h2.3M19.2 12h2.3M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6',
 };
 
 export const FILLED_ICONS: Record<string, true> = { play: true, stop: true, dice: true, more: true };

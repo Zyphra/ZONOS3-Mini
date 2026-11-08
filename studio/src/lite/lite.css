@@ -64,7 +64,7 @@
   font: 500 10.5px var(--mono);
   letter-spacing: 0;
   border: 1px solid var(--o);
-  color: var(--o);
+  color: var(--o-hi);
 }
 
 /* The voice-source switch: the studio's .mode pill over radio inputs. */
@@ -169,7 +169,7 @@ a.btn {
 .chosen-name strong {
   font-weight: 500;
   font-size: 15px;
-  color: var(--o);
+  color: var(--o-hi);
 }
 .btn.is-playing {
   border-color: var(--o);
@@ -254,5 +254,33 @@ p.error-box {
   }
   .row.nowrap {
     flex-wrap: wrap;
+  }
+}
+
+.hint-inline.is-warn {
+  color: var(--warn);
+}
+#backend {
+  cursor: pointer;
+  background: none;
+}
+@media (max-width: 560px) {
+  /* Phones: no zoom on focus (16 px inputs), 40 px targets, a short pill. */
+  .lite .input,
+  .lite textarea.input,
+  .lite select.input {
+    font-size: 16px;
+    min-height: 40px;
+  }
+  .lite .btn,
+  .lite .icon-btn,
+  .lite .mode-btn,
+  .lite .link {
+    min-height: 40px;
+  }
+  #backend .pill-text {
+    max-width: 64px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }

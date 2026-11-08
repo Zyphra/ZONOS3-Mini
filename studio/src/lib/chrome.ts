@@ -52,6 +52,7 @@ export function mountChrome(onTheme?: () => void) {
     const light = document.documentElement.dataset.theme !== 'light';
     if (light) document.documentElement.dataset.theme = 'light';
     else delete document.documentElement.dataset.theme;
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', light ? '#f5f3ee' : '#0a0a0a');
     try {
       localStorage.setItem('zvs.theme', JSON.stringify(light ? 'light' : 'dark'));
     } catch {

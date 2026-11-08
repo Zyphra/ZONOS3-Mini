@@ -9,6 +9,8 @@ export const backend = signal<Backend | null>(null);
 export const bootError = signal<string | null>(null);
 /** Boot-screen download while a backend loads (the in-browser server's models). */
 export const bootProgress = signal<Download | null>(null);
+/** What boot is doing now ("Connecting to …", "Loading voices…", "Opening “x”…"). */
+export const bootStage = signal<string>('Opening the studio…');
 /** The encoder models a clip voice's first use loads on the in-browser server; null once they are in. */
 export const encoderDownload = signal<Download | null>(null);
 
@@ -50,6 +52,8 @@ export const act = signal<Act>(ACT_IDS.includes(initialAct) ? initialAct : 'cast
 export const activeHistory = signal<History<unknown> | null>(null);
 /** A dialog is open: act switching by number keys is off. */
 export const modalOpen = signal(false);
+/** The project settings dialog (language, voice mode, tag strength). */
+export const settingsOpen = signal(false);
 /** The current act's own keys (called first; return true when handled). */
 export const screenKeys = signal<((e: KeyboardEvent) => boolean) | null>(null);
 /** What space does on the current act. */
@@ -59,12 +63,31 @@ export interface Toast {
   id: number;
   text: string;
   kind: 'info' | 'error' | 'ok';
+  /** One thing the reader can do about it (Undo, Retry, Go to…). */
+  action?: { label: string; run: () => void };
 }
 export const toasts = signal<Toast[]>([]);
 let toastId = 0;
+const timers = new Map<number, number>();
 
-export function notify(text: string, kind: Toast['kind'] = 'info') {
+export function dismissToast(id: number) {
+  clearTimeout(timers.get(id));
+  timers.delete(id);
+  toasts.value = toasts.value.filter((t) => t.id !== id);
+}
+
+/** Show a toast; returns its id. Errors stay 15 s, toasts with an action 8 s, the rest 3.5 s. Repeating the last text restarts its timer instead of stacking. */
+export function notify(text: string, kind: Toast['kind'] = 'info', action?: Toast['action']): number {
+  const ms = kind === 'error' ? 15000 : action ? 8000 : 3500;
+  const same = toasts.value.find((t) => t.text === text && t.kind === kind);
+  if (same) {
+    clearTimeout(timers.get(same.id));
+    toasts.value = toasts.value.map((t) => (t === same ? { ...t, action } : t));
+    timers.set(same.id, window.setTimeout(() => dismissToast(same.id), ms));
+    return same.id;
+  }
   const id = ++toastId;
-  toasts.value = [...toasts.value.slice(-3), { id, text, kind }];
-  setTimeout(() => (toasts.value = toasts.value.filter((t) => t.id !== id)), kind === 'error' ? 7000 : 3500);
+  toasts.value = [...toasts.value.slice(-3), { id, text, kind, action }];
+  timers.set(id, window.setTimeout(() => dismissToast(id), ms));
+  return id;
 }

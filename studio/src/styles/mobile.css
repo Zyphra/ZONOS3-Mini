@@ -122,7 +122,7 @@
     min-width: 0;
   }
   .app {
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
   }
 
   /* Top bar: mark, project, undo / redo / more on one row; the acts as a tab row under it. Above the screen (its
@@ -132,7 +132,7 @@
     z-index: 45;
     flex-wrap: wrap;
     gap: 0 6px;
-    padding: 0 4px 0 12px;
+    padding: env(safe-area-inset-top) calc(4px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));
   }
   .brand {
     height: 46px;
@@ -224,12 +224,15 @@
   .ab-btn,
   .mode-btn,
   .tab,
-  .chip {
-    min-height: 36px;
+  .chip,
+  .link,
+  .toggle,
+  .proj-item {
+    min-height: 40px;
   }
   .play-mini {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
   }
   .voice-name {
     min-height: 40px;
@@ -277,6 +280,8 @@
     top: 0;
     bottom: 0;
     z-index: 66;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
     width: min(88vw, 360px);
     background: var(--bg);
     box-shadow: var(--shadow);
@@ -592,11 +597,15 @@
     right: 0;
     top: auto;
     bottom: 0;
-    max-height: 62vh;
+    max-height: 62dvh;
     overflow-y: auto;
     transform: none;
     border-radius: var(--r) var(--r) 0 0;
     padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+  /* Toasts sit above the brush sheet, not on its buttons. */
+  .app:has(.brushbar) .toasts {
+    bottom: calc(62dvh + 8px);
   }
   .brushbar-body {
     grid-template-columns: minmax(0, 1fr);
@@ -665,14 +674,17 @@
   .sheet {
     min-width: 0;
     width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     padding: 16px 18px;
+  }
+  .toasts {
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    left: calc(12px + env(safe-area-inset-left));
+    right: calc(12px + env(safe-area-inset-right));
   }
   .tag-palette,
   .pron-editor,
   .proj-menu {
     max-width: calc(100vw - 16px);
-  }
-  .toasts {
-    max-width: calc(100vw - 24px);
   }
 }

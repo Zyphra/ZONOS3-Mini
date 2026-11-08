@@ -26,7 +26,7 @@ import { ApiError, bodyOf, createHttp, errorOf, MissingMedia, newSessionId, read
 import { wavBytes } from './lib/wav';
 import { encodeNpy, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
 import { onEncoderProgress, selectWebEngine, startWebEngine, transport, webEngineAvailable } from './lib/web-engine';
-import { bootProgress, encoderDownload } from './state/app';
+import { bootProgress, bootStage, encoderDownload } from './state/app';
 
 // ── Contract types ────────────────────────────────────────────────────────────────────────────────
 
@@ -304,16 +304,26 @@ function projectCaps(c: Schemas['ProjectsCapability'] | undefined): ProjectCaps 
   return { max_media_bytes: c.max_media_bytes, max_project_bytes: c.max_project_bytes, fixture: false };
 }
 
+/** Where the studio looks for a server: `?server=`, else this site. */
+export const serverLabel = () => server || location.origin;
+
 /** The in-browser server: load the engine and its models (progress on the boot screen), then serve from this tab. */
 async function startWeb(make: (kind: BackendKind, spec: ControlsSpec) => Promise<Backend>): Promise<Backend> {
+  bootStage.value = 'Loading the in-browser engine…';
   await startWebEngine((d) => (bootProgress.value = d));
   bootProgress.value = null;
+  bootStage.value = 'Starting the voice engine…';
   // A clip voice's first use downloads the encoders: a bar in the corner until they are in.
   void onEncoderProgress((d) => (encoderDownload.value = d.fraction >= 1 ? null : d));
   return make('web', await getControls());
 }
 
-export async function connect(): Promise<Backend> {
+export interface ConnectOptions {
+  /** No server answered and this browser could run the engine: asked before the (large) download. `false` → offline. */
+  confirmWeb?: () => Promise<boolean>;
+}
+
+export async function connect(opts: ConnectOptions = {}): Promise<Backend> {
   const make = async (kind: BackendKind, spec: ControlsSpec): Promise<Backend> => {
     const caps = kind === 'offline' ? null : await ok<Capabilities>(client.GET('/v2/capabilities')).catch(() => null);
     // The in-browser server answers like a live one; its capabilities say which features are off.
@@ -322,19 +332,27 @@ export async function connect(): Promise<Backend> {
   };
   if (forced === 'offline') return make('offline', fixture);
   if (forced === 'web') return startWeb(make);
+  bootStage.value = `Connecting to ${serverLabel()}…`;
   try {
     return await make('live', await getControls());
   } catch (err) {
     if (forced === 'live') throw err;
     if (err instanceof ApiError && err.status === 404) return make('fixture', fixture);
     if (forced === 'fixture') return make('fixture', fixture);
-    // Nothing (or not a ZONOS server) answered: the in-browser server when this browser and site can run it.
-    if (forced === 'auto' && (await webEngineAvailable()))
+    // Nothing (or not a ZONOS server) answered: the in-browser server when this browser and site can run it (asked first).
+    if (forced === 'auto' && (await webEngineAvailable()) && (!opts.confirmWeb || (await opts.confirmWeb()))) {
+      selectWebEngine();
       return startWeb(make);
+    }
     // Else run on the client-side fixture.
     return make('offline', fixture);
   }
 }
+
+/** The forced mode (`?api=`), for the shell's messages. */
+export const forcedMode = () => forced;
+/** This browser and site could run the in-browser engine. */
+export const canRunWeb = webEngineAvailable;
 
 export async function getControls(): Promise<ControlsSpec> {
   if (forced === 'fixture') throw new ApiError(404, 'fixture forced');
@@ -542,15 +560,15 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
 
 /** Qwen3-ASR transcript + FuseAlign word timings of a clip (plain base64 WAV). */
 /** `language`: the clip's language (server code); it picks the recognition language and the alignment tokenization. */
-export function transcribe(audio_base64: string, language = 'en_us'): Promise<Alignment> {
-  if (current().edit.fixture) return fixtureEdit.transcribe(current().edit, audio_base64, language);
-  return ok<Alignment>(client.POST('/v2/edit/transcribe', { body: { audio_base64, language } }));
+export function transcribe(audio_base64: string, language = 'en_us', signal?: AbortSignal): Promise<Alignment> {
+  if (current().edit.fixture) return fixtureEdit.transcribe(current().edit, audio_base64, language, signal);
+  return ok<Alignment>(client.POST('/v2/edit/transcribe', { body: { audio_base64, language }, signal }));
 }
 
 /** Forced alignment of known text. */
-export function align(audio_base64: string, text: string, language = 'en_us'): Promise<Alignment> {
-  if (current().edit.fixture) return fixtureEdit.align(audio_base64, text, language);
-  return ok<Alignment>(client.POST('/v2/edit/align', { body: { audio_base64, text, language } }));
+export function align(audio_base64: string, text: string, language = 'en_us', signal?: AbortSignal): Promise<Alignment> {
+  if (current().edit.fixture) return fixtureEdit.align(audio_base64, text, language, signal);
+  return ok<Alignment>(client.POST('/v2/edit/align', { body: { audio_base64, text, language }, signal }));
 }
 
 export async function edit(req: EditRequest, signal?: AbortSignal): Promise<EditResponse> {

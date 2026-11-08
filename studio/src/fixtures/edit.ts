@@ -138,13 +138,13 @@ async function asr(signal?: AbortSignal) {
   loaded = true;
 }
 
-export async function transcribe(caps: EditCaps, b64: string, language = 'en_us'): Promise<Alignment> {
+export async function transcribe(caps: EditCaps, b64: string, language = 'en_us', signal?: AbortSignal): Promise<Alignment> {
   if (!caps.edit_transcribe) throw noAsr('send the transcript to /v2/edit/align instead');
   languageOk(language);
   await asr();
   const { pcm, sr, duration } = decode(b64);
   if (duration > 150) throw new ApiError(400, `Alignment supports clips up to 150 s (this one is ${duration.toFixed(1)} s).`);
-  await wait(500 + duration * 40);
+  await wait(500 + duration * 40, signal);
   const k = lookup(known, duration);
   let words: EditWord[];
   if (k) {
@@ -167,12 +167,12 @@ export async function transcribe(caps: EditCaps, b64: string, language = 'en_us'
   return { text, duration: round3(duration), words };
 }
 
-export async function align(b64: string, text: string, language = 'en_us'): Promise<Alignment> {
+export async function align(b64: string, text: string, language = 'en_us', signal?: AbortSignal): Promise<Alignment> {
   languageOk(language);
   const { pcm, sr, duration } = decode(b64);
   if (duration > 150) throw new ApiError(400, `Alignment supports clips up to 150 s (this one is ${duration.toFixed(1)} s).`);
   if (!normalizeTokens(text).length) throw new ApiError(400, 'text has no words to align.');
-  await wait(300 + duration * 25);
+  await wait(300 + duration * 25, signal);
   const k = lookup(known, duration);
   const raw = [...text.trim().matchAll(/\S+/g)].map((m) => m[0]);
   let words: EditWord[];

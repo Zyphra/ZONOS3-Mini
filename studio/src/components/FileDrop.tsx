@@ -1,3 +1,4 @@
+import { createPortal } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from './Icon';
 
@@ -59,13 +60,15 @@ export function FileDrop({ label, hint, icon = 'upload', busy, onFile }: Props) 
     };
   }, []);
   if (!over) return null;
-  return (
+  // On <body>: a folded rail or a closed drawer must not clip or hide the overlay.
+  return createPortal(
     <div class={`file-drop${busy ? ' is-busy' : ''}`} aria-hidden="true">
       <div class="file-drop-card">
         <Icon name={icon} size={30} />
         <b>{busy ?? label}</b>
         {hint && !busy && <span class="muted small">{hint}</span>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

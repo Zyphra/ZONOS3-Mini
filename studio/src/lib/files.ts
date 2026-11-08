@@ -37,7 +37,8 @@ export function download(buf: ArrayBuffer, name: string, mime = 'audio/wav') {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-export const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'voice';
+/** A file-name-safe form of a label: letters and digits of any script kept, runs of anything else become one dash. */
+export const slug = (s: string) => s.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'voice';
 
 /** Plain base64 of bytes (no data-URL prefix), chunked to stay under argument-length limits. */
 export function bytesToBase64(buf: ArrayBuffer): string {

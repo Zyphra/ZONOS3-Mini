@@ -4,6 +4,7 @@ import { signal } from '@preact/signals';
 import { phone } from '../lib/media';
 import { modalOpen } from '../state/app';
 import { load, persist } from '../state/persist';
+import { dialogKeys } from './focusTrap';
 import { Icon } from './Icon';
 
 /** Desktop: the rails folded away, by id (browser-wide). */
@@ -18,6 +19,14 @@ function closeDrawer() {
   drawer.value = null;
   opener?.focus({ preventScroll: true });
   opener = null;
+}
+
+/** Bring rail `id` into view: on a phone as a drawer, on desktop by unfolding it. */
+export function openRail(id: string) {
+  if (phone.peek()) {
+    opener = document.activeElement as HTMLElement | null;
+    drawer.value = id;
+  } else if (folded.peek()[id]) folded.value = { ...folded.peek(), [id]: false };
 }
 
 interface Props {
@@ -56,8 +65,17 @@ export function Rail({ id, side, title, children }: Props) {
       closeDrawer();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // The page behind the drawer is inert: Tab stays in the drawer, screen readers see only it.
+    const parent = box.current?.parentElement;
+    const others = parent ? [...parent.children].filter((el) => el !== box.current && !el.classList.contains('rail-scrim')) : [];
+    for (const el of others) el.setAttribute('inert', '');
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      for (const el of others) el.removeAttribute('inert');
+    };
   }, [open]);
+  // Keys inside an open drawer: Tab stays in, Esc closes (the dialog pattern); on desktop the column is plain.
+  const drawerKeys = open ? dialogKeys(() => box.current, closeDrawer) : undefined;
   const chevron = side === 'left' ? (isFolded ? 'right' : 'left') : isFolded ? 'left' : 'right';
   return (
     <>
@@ -69,6 +87,7 @@ export function Rail({ id, side, title, children }: Props) {
         aria-label={open ? title : undefined}
         aria-modal={open ? 'true' : undefined}
         inert={onPhone && !open ? true : undefined}
+        onKeyDown={drawerKeys}
       >
         <div class="rail-drawer-head">
           <h3>{title}</h3>

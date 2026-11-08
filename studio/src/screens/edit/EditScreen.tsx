@@ -8,6 +8,7 @@ import { Icon } from '../../components/Icon';
 import { Rail, RailBar, RailToggle } from '../../components/Rail';
 import { Waveform } from '../../components/Waveform';
 import { isTagToken, normalizeTokens, planRegions, wordDiff } from '../../edit/regions';
+import { isTyping } from '../../lib/dom';
 import { slug } from '../../lib/files';
 import { EDIT_LANGUAGES, langLabel } from '../../lib/languages';
 import { parsePron } from '../../lib/pron';
@@ -33,11 +34,6 @@ function focusSelectedWord() {
   requestAnimationFrame(() => document.querySelector<HTMLElement>('.ew-wblock.is-sel .ew-wlabel')?.focus({ preventScroll: false }));
 }
 
-function isTyping(t: EventTarget | null) {
-  const el = t as HTMLElement | null;
-  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
-}
-
 function editKeys(e: KeyboardEvent): boolean {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key === 'Enter') {
@@ -45,8 +41,11 @@ function editKeys(e: KeyboardEvent): boolean {
     void E.generate();
     return true;
   }
-  if (mod || e.altKey || isTyping(e.target) || !E.version.value) return false;
-  const role = (e.target as HTMLElement)?.getAttribute?.('role');
+  const target = e.target as HTMLElement | null;
+  const role = target?.getAttribute?.('role');
+  // Tab cycles words only from the transcript or a word label; elsewhere it is the browser's.
+  const inWords = !!target?.closest?.('.ed-area, .ew-wlabel');
+  if (mod || e.altKey || (isTyping(e.target) && !(e.key === 'Tab' && inWords)) || !E.version.value) return false;
   const d = E.displayed.value;
   // A selected word: the keys edit its timing.
   const sw = E.selectedWord.value;
@@ -55,19 +54,23 @@ function editKeys(e: KeyboardEvent): boolean {
     switch (e.key) {
       case 'ArrowLeft':
       case 'ArrowRight':
+        if (isTyping(e.target)) return false;
         e.preventDefault();
         E.nudgeWord((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.05 : 0.01));
         return true;
       case 'Tab':
+        if (!inWords) return false;
         e.preventDefault();
         E.selectedWord.value = clamp(sw + (e.shiftKey ? -1 : 1), 0, n - 1);
         focusSelectedWord();
         return true;
       case ',':
       case '.':
+        if (isTyping(e.target)) return false;
         E.activeEdge.value = e.key === ',' ? 'start' : 'end';
         return true;
       case 'Enter':
+        if (isTyping(e.target)) return false;
         e.preventDefault();
         E.playWord(sw);
         return true;
@@ -76,6 +79,7 @@ function editKeys(e: KeyboardEvent): boolean {
         return true;
     }
   }
+  if (isTyping(e.target)) return false;
   switch (e.key) {
     case ' ':
       if (e.target instanceof HTMLButtonElement || role === 'slider' || role === 'button') return false;
@@ -84,18 +88,30 @@ function editKeys(e: KeyboardEvent): boolean {
       return true;
     case 'a':
     case 'b':
-      E.toggleAB();
+      if (role === 'slider') return false;
+      if (e.key === 'b' && !E.selectedTake.value) {
+        notify('Generate takes first');
+        return true;
+      }
+      E.toggleAB(e.key === 'a' ? 'version' : 'take');
       return true;
     case 'k':
+      if (!E.selectedTake.value) {
+        notify('Generate takes first');
+        return true;
+      }
       void E.keep();
       return true;
     case '[':
+      if (role === 'slider') return false;
       zoom.value = clamp(zoom.value / 1.6, 1, 64);
       return true;
     case ']':
+      if (role === 'slider') return false;
       zoom.value = clamp(zoom.value * 1.6, 1, 64);
       return true;
     case '0':
+      if (role === 'slider') return false;
       zoom.value = 1;
       return true;
     case 'ArrowLeft':
@@ -140,6 +156,7 @@ function Sources() {
     return () => clearInterval(t);
   }, [rec]);
   const lineTakes = script.value.lines.flatMap((l, i) => (scriptTakes.value[l.id] ?? []).map((t, k) => ({ l, i, t, k })));
+  const clips = speakers.value.filter((s) => s.has_preview !== false);
   const busy = !!E.busy.value;
   return (
     <div class="rail-section edit-sources">
@@ -151,7 +168,7 @@ function Sources() {
         <button class={`btn sm btn-rec${rec ? ' is-recording' : ''}`} disabled={busy && !rec} onClick={() => void E.recordClip()}>
           {rec ? (
             <>
-              <span class="rec-dot" /> Stop · {Math.floor((Date.now() - rec.started) / 1000)} s
+              <span class="rec-dot" /> Stop · {Math.floor((Date.now() - rec.started) / 1000)} / {Math.round(E.maxSeconds.value)} s
             </>
           ) : (
             <>
@@ -171,6 +188,7 @@ function Sources() {
           }}
         />
       </div>
+      <p class="hint">Clips up to {Math.round(E.maxSeconds.value)} s.</p>
       <details class="src-group" open={!!lineTakes.length}>
         <summary>Direct takes {lineTakes.length ? <b>{lineTakes.length}</b> : null}</summary>
         {lineTakes.length ? (
@@ -191,12 +209,12 @@ function Sources() {
           <p class="muted small">Render takes in Direct; each one can be opened here.</p>
         )}
       </details>
-      <details class="src-group">
-        <summary>Voice clips</summary>
+      <details class="src-group" open={clips.length > 0}>
+        <summary>
+          Voice clips {clips.length ? <b>{clips.length}</b> : null}
+        </summary>
         <ul class="src-list">
-          {speakers.value
-            .filter((s) => s.has_preview !== false)
-            .map((s) => (
+          {clips.map((s) => (
               <li>
                 <button
                   class={`src-item${loadingVoice.value === s.id ? ' is-busy' : ''}`}
@@ -208,7 +226,7 @@ function Sources() {
                   <span class="tag">{s.transcript ? 'text' : E.canTranscribe.value ? 'asr' : 'needs text'}</span>
                 </button>
               </li>
-            ))}
+          ))}
         </ul>
       </details>
     </div>
@@ -227,7 +245,7 @@ function Versions() {
           const playing = nowPlaying.value?.id === id;
           return (
             <li class={`version-row${i === d.current ? ' is-current' : ''}${i > d.current ? ' is-future' : ''}`}>
-              <button class="version-main" onClick={() => E.jumpTo(i)} aria-current={i === d.current} title={i === d.current ? 'Current version' : 'Step to this version'}>
+              <button class="version-main" onClick={() => void E.jumpTo(i)} aria-current={i === d.current} title={i === d.current ? 'Current version' : 'Step to this version'}>
                 <span class="badge">v{i}</span>
                 <span class="version-label">{v.label}</span>
                 <span class="mono muted">{(v.pcm.length / v.sr).toFixed(1)} s</span>
@@ -398,7 +416,8 @@ function Regions() {
   const rs = E.regions.value;
   const g = E.gen.value;
   const sel = E.selectedTake.value;
-  const missing = g && sel && g.spans.length === rs.length ? E.takeUnheard(sel, g) : null;
+  const earlier = !!g && g.target !== E.text.value.trim();
+  const missing = g && sel && !earlier && g.spans.length === rs.length ? E.takeUnheard(sel, g) : null;
   const err = E.regionError.value;
   const secs = rs.reduce((a, r) => a + E.seconds(r.end - r.start), 0);
   return (
@@ -414,6 +433,7 @@ function Regions() {
           {err}
         </p>
       )}
+      {earlier && g && g.takes.length > 0 && <p class="note">The takes were made from earlier text; generate again for this one.</p>}
       {!rs.length ? (
         <p class="ed-regions-empty">
           <b>Change words</b>, or <b>drag across the waveform</b> to re-say a stretch as it is. Then pick how it should sound: whisper, slower, angry…
@@ -441,11 +461,23 @@ function Regions() {
                     <Icon name="expand" size={12} />
                   </button>
                   {r.manual && (
-                    <button class="icon-btn sm" onClick={() => E.removeRegion(r.id)} aria-label={`Remove region ${k + 1}`}>
+                    <button class="icon-btn sm" onClick={() => E.removeRegion(r.id)} aria-label={`Remove region ${k + 1}`} title="Remove this region">
                       <Icon name="x" size={12} />
                     </button>
                   )}
+                  {r.changes.length > 0 && (
+                    <button class="link" onClick={() => E.revertRegion(r.id)} title="Put the original words back into the text">
+                      revert these words
+                    </button>
+                  )}
                 </div>
+                {(r.edited || r.mergedFrom) && (
+                  <p class="region-note">
+                    {r.edited ? 'edges adjusted · text edits reset them' : ''}
+                    {r.edited && r.mergedFrom ? ' · ' : ''}
+                    {r.mergedFrom ? `merged from ${r.mergedFrom} regions` : ''}
+                  </p>
+                )}
                 {missing?.[k]?.length ? (
                   <p class="region-unheard" role="note">
                     Not heard in {sel!.label.toLowerCase()}: <b>{missing[k].join(', ')}</b>
@@ -463,7 +495,8 @@ function Regions() {
   );
 }
 
-function GenerateBar() {
+/** What the server is doing for this clip, with elapsed time and a Cancel: a sticky row under the header. */
+function BusyRow() {
   const b = E.busy.value;
   const [, tick] = useState(0);
   useEffect(() => {
@@ -471,8 +504,24 @@ function GenerateBar() {
     const t = setInterval(() => tick((n) => n + 1), 100);
     return () => clearInterval(t);
   }, [b]);
+  if (!b) return null;
+  const elapsed = (performance.now() - b.started) / 1000;
+  return (
+    <div class="ed-busy-row" role="status" aria-live="polite">
+      <span class="loader sm" />
+      <span class="ed-status is-busy">
+        {b.label} {elapsed.toFixed(1)} s
+      </span>
+      <button class="btn sm" onClick={E.cancel}>
+        <Icon name="x" size={13} /> Cancel
+      </button>
+    </div>
+  );
+}
+
+function GenerateBar() {
+  const b = E.busy.value;
   const n = E.takeCount.value;
-  const elapsed = b ? (performance.now() - b.started) / 1000 : 0;
   const generating = !!b && /Generating|Regenerating/.test(b.label);
   return (
     <section class="ed-generate" aria-label="Generate">
@@ -483,7 +532,9 @@ function GenerateBar() {
         <Direction name="all regions" values={E.wholeValues.value} set={E.setWholeValue} clear={() => (E.wholeValues.value = {})} />
       </div>
       <details class="pro ed-advanced">
-        <summary>Advanced</summary>
+        <summary>
+          Advanced <span class="muted">· margin {E.margin.value.toFixed(2)} s · context {E.contextSeconds.value} s</span>
+        </summary>
         <div class="ed-pro-row">
           <label>
             margin
@@ -514,19 +565,6 @@ function GenerateBar() {
             />
             s
           </label>
-          <label>
-            seed
-            <input
-              type="number"
-              class="input"
-              placeholder="random"
-              value={E.seedPin.value ?? ''}
-              onChange={(e) => {
-                const x = (e.currentTarget as HTMLInputElement).value;
-                E.seedPin.value = x === '' ? null : Math.max(0, Math.floor(Number(x)));
-              }}
-            />
-          </label>
         </div>
       </details>
       <div class="ed-gen-row">
@@ -538,9 +576,20 @@ function GenerateBar() {
           ))}
         </div>
         <span class="muted small">take{n > 1 ? 's' : ''}</span>
-        <span class={`ed-status${b ? ' is-busy' : ''}`} aria-live="polite">
-          {b ? `${b.label} ${elapsed.toFixed(1)} s` : ''}
-        </span>
+        <label class="ed-seed" title="A fixed seed repeats a take's randomness; empty picks one each time">
+          seed
+          <input
+            type="number"
+            class="input"
+            placeholder="random"
+            value={E.seedPin.value ?? ''}
+            onChange={(e) => {
+              const x = (e.currentTarget as HTMLInputElement).value;
+              E.seedPin.value = x === '' ? null : Math.max(0, Math.floor(Number(x)));
+            }}
+          />
+        </label>
+        <span class="grow" />
         <button
           class={`btn primary${generating ? ' is-busy' : ''}`}
           disabled={!generating && !E.canGenerate.value}
@@ -561,7 +610,7 @@ function GenerateBar() {
       </div>
       {E.genError.value && (
         <div class="error-box" role="alert">
-          <b>The server refused this edit.</b>
+          <b>{E.genRefused.value ? 'The server refused this edit' : 'Generation failed'}</b>
           <span>{E.genError.value}</span>
         </div>
       )}
@@ -602,7 +651,7 @@ function Takes() {
             <button class="take-card-head" onClick={() => E.selectTake(i)} aria-pressed={sel} title="Select (A/B compares it with the version)">
               <b>{t.label}</b>
               <span class="mono muted">seed {t.seed}</span>
-              {i === best && wer !== null && <span class="badge badge-best">best match</span>}
+              {i === best && (wer !== null ? <span class="badge badge-best">best match</span> : <span class="badge badge-best" title="No speech recognition on this server: the first take without length warnings">preselected: no warnings</span>)}
               {wer !== null && <span class={`badge wer ${wer === 0 ? 'ok' : wer <= 0.2 ? 'warn' : 'bad'}`}>WER {Math.round(wer * 100)}%</span>}
             </button>
             <div class="take-wave" onClick={() => E.selectTake(i)}>
@@ -660,7 +709,10 @@ function Takes() {
                     <Icon name="refresh" size={12} /> r{k + 1}
                   </button>
                 ))}
-              <button class="icon-btn sm" onClick={() => exportWav(t.pcm, t.sr, `${slug(E.doc.value?.name ?? 'edit')}-${slug(t.label)}`)} aria-label={`Export ${t.label} as WAV`}>
+              <button class="link take-seed" onClick={() => (E.seedPin.value = t.seed)} title="Generate again with this take's seed">
+                seed {t.seed} · use
+              </button>
+              <button class="icon-btn sm" onClick={() => exportWav(t.pcm, t.sr, `${slug(E.doc.value?.name ?? 'edit')}-${slug(t.label)}`)} aria-label={`Export ${t.label} as WAV`} title={`Export ${t.label.replace('Take ', 'take ')}`}>
                 <Icon name="download" size={13} />
               </button>
               <button class="btn sm primary" disabled={!!E.busy.value} onClick={() => (E.selectTake(i), void E.keep())} title="Keep: becomes the new version (K)">
@@ -682,11 +734,15 @@ function Unavailable() {
     <div class="empty">
       <Icon name="edit" size={28} />
       <h2>This server can’t edit speech</h2>
-      <p>
-        Speech editing needs the speech-editing checkpoint (the one it serves may have no span-end token, so it can only speak whole utterances), the FuseAlign forced aligner and the reference encoder. Speech recognition is optional: without it you type each clip’s transcript. Serve the speech-editing checkpoint to edit words in recordings:
-      </p>
-      <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=assets/steering/studio_bundle_mect60k.json</pre>
-      <p class="muted small">{b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
+      <p>Changing words in a recording needs a server with the speech-editing model. Cast and Direct work as usual.</p>
+      <details class="pro">
+        <summary>For whoever runs the server</summary>
+        <p>
+          Speech editing needs the speech-editing checkpoint (the one it serves may have no span-end token, so it can only speak whole utterances), the FuseAlign forced aligner and the reference encoder. Speech recognition is optional: without it you type each clip’s transcript. Serve the speech-editing checkpoint to edit words in recordings:
+        </p>
+        <pre class="mono">SERVE_MODEL=&lt;edit checkpoint&gt; STEER_BUNDLE=assets/steering/studio_bundle_mect60k.json</pre>
+        <p class="muted small">{b.kind !== 'fixture' && b.kind !== 'offline' ? `${b.server || location.origin} reports speech_editing: false.` : 'Fixture mode: started with ?edit=0.'} Every studio control also works on the edit checkpoint.</p>
+      </details>
     </div>
   );
 }
@@ -746,6 +802,8 @@ function Workspace() {
           <span class="eyebrow">{({ take: 'Direct take', voice: 'Voice clip', upload: 'Upload', recording: 'Recording' } as const)[d.source.kind]}</span>
           <h2 title={d.name}>{d.name}</h2>
         </div>
+        <label class="ed-lang-wrap">
+          <span class="muted small">clip language</span>
         <select
           class="input ed-lang"
           value={d.language}
@@ -763,6 +821,7 @@ function Workspace() {
             <option value={l}>{langLabel(l)}</option>
           ))}
         </select>
+        </label>
         <div class="ab" role="group" aria-label="Compare">
           <button class={`ab-btn${!isTake ? ' is-on' : ''}`} onClick={() => E.toggleAB('version')} title="The current version (A)">
             <b>v{d.current}</b> version
@@ -789,15 +848,16 @@ function Workspace() {
           </button>
         </div>
         <span class="grow" />
-        {E.canSendBack.value && (
-          <button class="btn sm" onClick={E.sendBack} title="Replace the take in Direct with this version">
+        {d.current > 0 && d.source.kind === 'take' && (
+          <button class="btn sm" disabled={!E.canSendBack.value} onClick={() => void E.sendBack()} title={E.canSendBack.value ? 'Add this version to the Direct line as a new keeper take' : 'The original take is gone from Direct'}>
             <Icon name="undo" size={13} /> Send back to Direct
           </button>
         )}
-        <button class="icon-btn" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label="Export what is shown as WAV" title="Export WAV">
+        <button class="icon-btn" onClick={() => exportWav(disp.pcm, disp.sr, `${slug(d.name)}-${isTake ? slug(disp.label) : `v${d.current}`}`)} aria-label={`Export ${isTake ? disp.label.replace('Take ', 'T') : `v${d.current}`} as WAV`} title={`Export ${isTake ? disp.label.replace('Take ', 'T') : `v${d.current}`}`}>
           <Icon name="download" />
         </button>
       </header>
+      <BusyRow />
       <div class={`ed-wave-card${isTake ? ' is-take' : ''}`}>
         <div class="ed-wave-label">
           {isTake ? (
@@ -810,10 +870,10 @@ function Workspace() {
             </span>
           )}
           <span class="ed-timing-tools">
-            {!isTake && (
+            {!isTake && !E.fixMode.value && (
               <>
-                <span class="muted" title="Click a word to select and hear it; drag its edges to fix the timing (Alt-drag opens a gap at a shared boundary). With a word selected: ←/→ nudge the edge 10 ms (⇧ 50 ms), , / . pick the start / end edge, Tab next word, Enter play, Esc done.">
-                  word timings{E.adjustedCount.value ? ` · ${E.adjustedCount.value} adjusted` : ''}
+                <span class="muted" title="With a word selected: ←/→ nudge the edge 10 ms (⇧ 50 ms), , / . pick the start / end edge, Tab next word, Enter play, Esc done.">
+                  {E.adjustedCount.value ? `${E.adjustedCount.value} timing${E.adjustedCount.value === 1 ? '' : 's'} adjusted` : ''}
                 </span>
                 <label class="toggle" title="Start word playback 0.3 s early">
                   <input type="checkbox" checked={E.preRoll.value} onChange={(e) => (E.preRoll.value = (e.currentTarget as HTMLInputElement).checked)} />
@@ -829,6 +889,7 @@ function Workspace() {
             <span class="muted">{v.duration.toFixed(1)} s original</span>
           </span>
         </div>
+        <p class="hint ed-word-hint">{timingEditable ? 'Drag a word’s edge to fix its timing · click to hear it · ⌥-drag opens a gap' : isTake ? 'Word timings: switch to the version (A) to edit' : 'Word timings: finish the transcript first'}</p>
         <EditWave
           pcm={disp.pcm}
           sr={disp.sr}

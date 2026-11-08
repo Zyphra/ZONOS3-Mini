@@ -7,11 +7,11 @@ import { Panel } from '../../components/Panel';
 import { Rail, RailBar, RailToggle } from '../../components/Rail';
 import { phone } from '../../lib/media';
 import { activeHistory, primaryAction, spec } from '../../state/app';
-import { baseSpeaker, canClone, design, designs, identity, resetDesign, rollDesign, setMode, setValue } from '../../state/design';
+import { baseSpeaker, benchMoved, canClone, design, designs, identity, resetDesign, roll, setMode, setValue } from '../../state/design';
 import type { History } from '../../state/history';
 import { AccentAtlas } from './AccentAtlas';
 import { LibraryRail } from './LibraryRail';
-import { Personas, PreviewSettings, PreviewStrip, SavePanel, SpeakPanel, Variations } from './Monitor';
+import { Personas, PreviewStrip, SavePanel, SpeakPanel, Variations } from './Monitor';
 import { MoodControls, RoomAxis, SliderGroup, type Binding } from './QuickControls';
 import { TextureRadar } from './TextureRadar';
 import { AccentTile, DeliveryTile, MoodTile, RoomTile, WhoTile } from './Tiles';
@@ -27,48 +27,73 @@ export const designBinding = (): Binding => ({
 function IdentityMeter() {
   const id = identity.value;
   const thr = spec.value.ui.identity_threshold ?? 0.8;
+  if (design.value.mode === 'reference') {
+    return (
+      <div class="identity-meter" title="Exact clone sends the recording itself: the identity is the recording's">
+        <span class="eyebrow">identity</span>
+        <span class="identity-caption">clone: identity kept</span>
+      </div>
+    );
+  }
+  const isNew = id < thr;
   return (
-    <div class={`identity-meter${id < thr ? ' is-new' : ''}`} title="Estimated identity kept vs the base voice: product of each control’s measured identity curve. An estimate, not a measurement.">
+    <div class={`identity-meter${isNew ? ' is-new' : ''}`} title="Estimated identity kept vs the base voice: product of each control’s measured identity curve. An estimate, not a measurement.">
       <span class="eyebrow">identity · est.</span>
       <div class="meter">
         <div class="meter-fill" style={{ width: `${id * 100}%` }} />
         <div class="meter-mark" style={{ left: `${thr * 100}%` }} />
       </div>
       <b>{id.toFixed(2)}</b>
+      <span class="identity-caption">{isNew ? 'new person: below the threshold' : benchMoved() ? 'still the base voice' : `≈ ${id.toFixed(2)} unchanged`}</span>
     </div>
   );
+}
+
+/** ← / → in the mode radiogroup move between the two radios (the disabled one is skipped). */
+function modeKeys(e: KeyboardEvent) {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const items = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]:not([disabled])')];
+  const i = items.indexOf(document.activeElement as HTMLButtonElement);
+  if (i < 0 || items.length < 2) return;
+  e.preventDefault();
+  const next = items[(i + (e.key === 'ArrowRight' ? 1 : items.length - 1)) % items.length];
+  next.focus();
+  next.click();
 }
 
 function BenchHeader() {
   const d = design.value;
   const clone = d.mode === 'reference';
   return (
-    <div class="bench-head">
+    <div class="bench-head" id="bench-head">
       <div class="bench-title">
         <span class="eyebrow">Shape the voice</span>
         <h2 title={baseSpeaker.value?.label}>{baseSpeaker.value?.label ?? 'Pick a voice'}</h2>
       </div>
-      <div class="mode" role="radiogroup" aria-label="Voice mode">
-        <button role="radio" aria-checked={!clone} class={`mode-btn${!clone ? ' is-on' : ''}`} onClick={() => setMode('embedding')} title="Steer identity, accent, texture and room through the speaker embedding">
-          Designable
-        </button>
-        <button
-          role="radio"
-          aria-checked={clone}
-          class={`mode-btn${clone ? ' is-on' : ''}`}
-          disabled={!canClone.value}
-          onClick={() => setMode('reference')}
-          title={canClone.value ? 'Clone the reference recording exactly; only delivery and mood can be steered' : 'This voice was saved from an embedding and has no recording to clone'}
-        >
-          Exact clone
-        </button>
+      <div class="mode-wrap">
+        <div class="mode" role="radiogroup" aria-label="Voice mode" onKeyDown={modeKeys}>
+          <button role="radio" aria-checked={!clone} class={`mode-btn${!clone ? ' is-on' : ''}`} onClick={() => setMode('embedding')} title="Steer identity, accent, texture and room through the speaker embedding">
+            Designable
+          </button>
+          <button
+            role="radio"
+            aria-checked={clone}
+            class={`mode-btn${clone ? ' is-on' : ''}`}
+            disabled={!canClone.value}
+            onClick={() => setMode('reference')}
+            title={canClone.value ? 'Clone the reference recording exactly; only delivery and mood can be steered' : 'This voice was saved from an embedding and has no recording to clone'}
+          >
+            Exact clone
+          </button>
+        </div>
+        {!canClone.value && <span class="hint">Exact clone needs a recording; this voice was saved from an embedding.</span>}
       </div>
       <IdentityMeter />
       <div class="row gap-s">
-        <button class="btn" onClick={() => designs.apply(rollDesign())} title="A random voice inside every control’s tested-safe range">
+        <button class="btn" onClick={roll} title="A random voice inside every control’s tested-safe range">
           <Icon name="dice" size={14} /> Roll a voice
         </button>
-        <button class="icon-btn" onClick={resetDesign} title="Reset: back to the plain base voice" aria-label="Reset to the plain base voice">
+        <button class="icon-btn" onClick={resetDesign} title={clone ? 'Reset delivery and mood (Who, Accent, Texture and Room are kept for Designable)' : 'Reset: back to the plain base voice'} aria-label="Reset the controls">
           <Icon name="refresh" size={16} />
         </button>
       </div>
@@ -83,15 +108,19 @@ const EMBEDDING_CARDS: CardId[] = ['who', 'accent', 'texture', 'room'];
 
 const CLONE_LOCK = (
   <>
-    <b>Exact clone keeps the recording’s identity.</b>
-    <span>Who, accent, texture and room live in the speaker embedding. Switch to Designable to steer them; your moves here are kept.</span>
+    <b>Exact clone copies the recording as is.</b>
+    <span>Delivery and mood still work; Who, Accent, Texture and Room don’t. Switch to Designable to steer them; your moves here are kept.</span>
     <button class="btn sm" onClick={() => setMode('embedding')}>
       Switch to Designable
     </button>
   </>
 );
-/** A phone tile has no room for the explanation; the header's mode switch is right below. */
-const TILE_LOCK = <b>Exact clone</b>;
+/** A phone tile has no room for the explanation: tapping the lock scrolls to the mode switch below the tiles. */
+const TILE_LOCK = (
+  <button class="link" onClick={() => document.getElementById('bench-head')?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
+    <b>Exact clone</b> · change
+  </button>
+);
 
 export function CastScreen() {
   useEffect(() => {
@@ -133,6 +162,7 @@ export function CastScreen() {
         <SpeakPanel />
         {onPhone ? (
           <>
+            <BenchHeader />
             <div class="cast-tiles">
               {tile('who', <WhoTile />)}
               {tile('accent', <AccentTile />)}
@@ -141,16 +171,15 @@ export function CastScreen() {
               {tile('delivery', <DeliveryTile />, false)}
               {tile('mood', <MoodTile />, false)}
             </div>
-            <BenchHeader />
           </>
         ) : (
           <>
             <BenchHeader />
             <div class="hero">
-              <Panel family="who" title="Who" locked={locked} aside={<span class="hint" title="Drag the dot to move gender / age, scroll for pitch, click a voice to start from it">drag · scroll = pitch</span>}>
+              <Panel family="who" title="Who" locked={locked} onExpand={locked ? undefined : expand('who')} aside={<span class="hint" title="Drag the dot to move gender / age; scroll while the map has focus (or with ⌘ / Ctrl) for pitch; click a voice to start from it">drag the dot</span>}>
                 <WhoMap />
               </Panel>
-              <Panel family="accent" title="Accent" locked={locked}>
+              <Panel family="accent" title="Accent" locked={locked} onExpand={locked ? undefined : expand('accent')} aside={<span class="hint">drag into a region · deeper = stronger</span>}>
                 <AccentAtlas />
               </Panel>
             </div>
@@ -174,7 +203,6 @@ export function CastScreen() {
       <Rail id="cast-monitor" side="right" title="More">
         <aside class="monitor" aria-label="Monitor">
           <div class="monitor-scroll">
-            <PreviewSettings />
             <Personas />
             <Variations />
             <SavePanel />

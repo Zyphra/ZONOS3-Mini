@@ -2,7 +2,7 @@
 import { computed } from '@preact/signals';
 import { embeddingOnly, type ControlSpec, type ControlsSpec, type SpeakerMode } from '../api';
 import { clamp, fmt } from '../lib/math';
-import { projectSettings, spec } from './app';
+import { notify, projectSettings, spec } from './app';
 import { homePin, mixAt, pinForMix, placeFor, type Pin } from './atlas';
 import { controlUsable, identityEstimate, presetToValues, steerEmbedding, toDoses, type AccentMix, type Values } from './engine';
 import { History } from './history';
@@ -69,6 +69,29 @@ export function setBase(id: string) {
   });
 }
 
+/** The bench has moves on it that `setBase` would clear. */
+export const benchMoved = (d: Design = design.value) => Object.values(d.values).some(Boolean) || Object.keys(accentsOf(spec.value, d)).length > 0;
+
+/**
+ * `setBase` from the UI (library row, map landmark, a new clip): when the bench had moves, say so and offer Undo
+ * instead of clearing them silently.
+ */
+export function switchBase(id: string, from: 'library' | 'map' | 'clip') {
+  const d = design.value;
+  if (id === d.baseId && !benchMoved(d)) return;
+  const moved = benchMoved(d);
+  setBase(id);
+  if (!moved) return;
+  const label = speakers.value.find((s) => s.id === id)?.label ?? 'this voice';
+  const how = from === 'clip' ? 'the new clip' : label;
+  notify(`Starting from ${how}; your moves were cleared`, 'info', { label: 'Undo', run: () => designs.undo() });
+}
+
+/** Applied a design that may change the mode: say so when Exact clone turned into Designable. */
+function noteModeChange(before: SpeakerMode, after: SpeakerMode) {
+  if (before === 'reference' && after === 'embedding') notify('Switched to Designable');
+}
+
 export function setMode(mode: SpeakerMode) {
   if (mode !== design.value.mode) designs.apply({ ...design.value, mode });
 }
@@ -79,10 +102,30 @@ export function applyPreset(name: string) {
   const { values, accents } = presetToValues(preset);
   const d = design.value;
   designs.apply({ ...d, mode: 'embedding', values, pin: pinForMix(accents, spec.value.ui.accents, d.pin.tab) });
+  noteModeChange(d.mode, 'embedding');
 }
 
+/** Roll and apply a random voice; the toast names the new base and offers Undo. */
+export function roll() {
+  const before = design.value;
+  const next = rollDesign();
+  designs.apply(next);
+  const label = speakers.value.find((s) => s.id === next.baseId)?.label ?? 'a voice';
+  notify(`Rolled on ${label}`, 'info', { label: 'Undo', run: () => designs.undo() });
+  noteModeChange(before.mode, next.mode);
+}
+
+/** Back to the plain base voice: in Exact clone only the usable controls (delivery, mood) reset; the rest wait for Designable. */
 export function resetDesign() {
-  designs.apply({ ...design.value, values: {}, pin: homePin(design.value.pin.tab) });
+  const d = design.value;
+  const s = spec.value;
+  const values: Values = {};
+  for (const [id, v] of Object.entries(d.values)) {
+    const c = s.ui.controls.find((x) => x.id === id);
+    if (c && !controlUsable(s, c, d.mode)) values[id] = v;
+  }
+  const accentUsable = s.ui.accents.some((a) => controlUsable(s, a, d.mode));
+  designs.apply({ ...d, values, pin: accentUsable ? homePin(d.pin.tab) : d.pin });
 }
 
 // ── Randomness: roll and neighbours ───────────────────────────────────────────────────────────────

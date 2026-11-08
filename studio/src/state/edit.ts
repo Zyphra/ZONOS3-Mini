@@ -9,6 +9,7 @@ import * as api from '../api';
 import type { ControlSpec, Dose, EditRequest, EditTake } from '../api';
 import * as player from '../audio/player';
 import { errorText, isAbort } from '../audio/render';
+import { ApiError } from '../lib/http';
 import { MIN_GAP_FRAMES, contextWindows, isTagToken, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
 import { bytesToBase64, base64ToBytes } from '../lib/files';
 import { parseWav, wavBytes } from '../lib/wav';
@@ -19,7 +20,8 @@ import { act, backend, notify, projectSettings, pronTokens, spec } from './app';
 import { controlDose, type Values } from './engine';
 import { History } from './history';
 import { load, persist } from './persist';
-import { script, setLineText, takes as scriptTakes } from './script';
+import { addTake, lineRequest, script, setLineText, takes as scriptTakes } from './script';
+import { confirm } from '../components/ConfirmDialog';
 
 export type SourceKind = 'take' | 'voice' | 'upload' | 'recording';
 
@@ -69,6 +71,10 @@ export interface Region {
   manual: boolean;
   /** Direction for this region: UI values of spannable controls. */
   values: Values;
+  /** Its edges were dragged (a text edit re-plans and resets them). */
+  edited?: boolean;
+  /** How many regions (text changes or manual stretches) closer than the minimum gap this one absorbed. */
+  mergedFrom?: number;
 }
 
 export interface Take {
@@ -123,10 +129,22 @@ export const regions = signal<Region[]>([]);
 let touched = false;
 export const fixMode = signal(false);
 export const wholeValues = signal<Values>({});
-export const gen = signal<Generation | null>(null);
+/** Generations by version id: stepping back to a version shows its takes again. */
+const gens = signal<Map<string, Generation>>(new Map());
+export const gen = computed<Generation | null>(() => (versionId.value && gens.value.get(versionId.value)) || null);
+function setGen(g: Generation | null) {
+  const next = new Map(gens.value);
+  const id = g?.versionId ?? versionId.value;
+  if (!id) return;
+  if (g) next.set(id, g);
+  else next.delete(id);
+  gens.value = next;
+}
 export const ab = signal<'version' | 'take'>('version');
 export const busy = signal<{ label: string; started: number } | null>(null);
 export const genError = signal<string | null>(null);
+/** The error was the server's refusal (4xx), not a failure. */
+export const genRefused = signal(false);
 /** Where playback starts, seconds in the displayed audio. */
 export const cursor = signal(0);
 /** The word whose timing the keyboard edits, and which of its edges. */
@@ -208,9 +226,7 @@ export const suggestedTranscript = signal('');
 export async function openClip(source: Source, pcm: Float32Array, sr: number, knownText?: string | null, language?: string): Promise<boolean> {
   // A pronunciation group is not a word the aligner can read: such clips are transcribed (or typed) instead.
   const grouped = !!knownText && parsePron(knownText, null).groups.length > 0;
-  suggestedTranscript.value = grouped ? spokenText(knownText!) : '';
-  if (grouped) knownText = null;
-  const known = knownText?.trim() ?? '';
+  const known = (grouped ? '' : knownText?.trim()) ?? '';
   const transcribe = !known && canTranscribe.value;
   const max = maxSeconds.value;
   const dur = pcm.length / sr;
@@ -223,27 +239,35 @@ export async function openClip(source: Source, pcm: Float32Array, sr: number, kn
     return false;
   }
   if (busy.value) return false;
-  const had = doc.value && doc.value.versions.length > 1;
+  const had = doc.value;
+  if (had && had.versions.length > 1) {
+    const ok = await confirm(`Opening another clip closes v1–v${had.versions.length} of “${had.name}”. Continue?`, { ok: 'Open', danger: true });
+    if (!ok) return false;
+  }
+  suggestedTranscript.value = grouped ? spokenText(knownText!) : '';
   const p = projectSettings.value.language;
   const lang = language ?? clipLanguages.value[clipKey(source, dur)] ?? (EDIT_LANGUAGES.includes(p) ? p : 'en_us');
+  ctrl = new AbortController();
   busy.value = { label: known ? 'Aligning the transcript…' : transcribe ? asrLabel('Transcribing…') : 'Opening…', started: performance.now() };
   genError.value = null;
   act.value = 'edit';
   try {
     const b64 = await wavOf(pcm, sr);
-    const a = known ? await api.align(b64, known, lang) : transcribe ? await api.transcribe(b64, lang) : { text: '', duration: dur, words: [] };
+    const a = known ? await api.align(b64, known, lang, ctrl.signal) : transcribe ? await api.transcribe(b64, lang, ctrl.signal) : { text: '', duration: dur, words: [] };
     if (transcribe) asrWarmed = true;
     const v: Version = { id: uid(), label: 'Original', pcm, sr, b64, duration: a.duration || dur, transcript: a.text, words: a.words, alignedWords: a.words, automatic: transcribe };
     player.stop();
+    gens.value = new Map();
     docs.reset({ name: source.label, source, language: lang, versions: [v], current: 0 });
     clipLanguages.value = { ...clipLanguages.value, [clipKey(source, dur)]: lang };
-    if (had) notify('Opened a new clip; the previous edit history was closed.');
     return true;
   } catch (e) {
-    notify(`Couldn’t open the clip: ${errorText(e)}`, 'error');
+    if (isAbort(e)) notify('Cancelled');
+    else notify(`Couldn’t open the clip: ${errorText(e)}`, 'error');
     return false;
   } finally {
     busy.value = null;
+    ctrl = null;
   }
 }
 
@@ -256,7 +280,7 @@ effect(() => {
   const v = untracked(() => version.value);
   untracked(() => {
     selectedWord.value = null;
-    gen.value = null;
+    genError.value = null;
     ab.value = 'version';
     // A version without a transcript opens on typing it.
     fixMode.value = !!v && !v.transcript;
@@ -266,6 +290,12 @@ effect(() => {
     text.value = v?.transcript ?? '';
     if (v) replan();
   });
+});
+
+/** The draft differs from the version (typed text or regions): leaving the version would lose it. */
+export const draftDirty = computed(() => {
+  const v = version.value;
+  return !!v && (text.value.trim() !== (v.transcript ?? '').trim() || regions.value.length > 0);
 });
 
 /** Retiming the current version re-plans the regions against the corrected words (the draft text stays). */
@@ -388,12 +418,34 @@ function merged(list: Region[]): Region[] {
         ...prev,
         end: Math.max(prev.end, r.end),
         changes: [...prev.changes, ...r.changes],
-        manual: prev.manual && r.manual,
+        // One manual part keeps the region removable (and its edges the user's).
+        manual: prev.manual || r.manual,
         values: keepPrev ? prev.values : r.values,
+        edited: prev.edited || r.edited,
+        mergedFrom: (prev.mergedFrom ?? 1) + (r.mergedFrom ?? 1),
       };
-    } else out.push({ ...r });
+    } else out.push({ ...r, mergedFrom: undefined });
   }
   return out;
+}
+
+/** Put the original words of a planned region back into the text (its changes are undone, the region disappears). */
+export function revertRegion(id: string) {
+  const v = version.value;
+  const r = regions.value.find((x) => x.id === id);
+  if (!v || !r || !r.changes.length) return;
+  const plan = planRegions(v.words, text.value, { duration: v.duration, frameRate: fps.value, marginSeconds: margin.value, groups: pronEdit.value });
+  const expanded = v.words.flatMap((w) => w.tokens.map(() => w));
+  let t = text.value;
+  // Later changes first, so earlier character offsets stay valid.
+  for (const c of [...r.changes].sort((a, b) => b.j1 - a.j1)) {
+    const from = c.j1 < plan.owners.length ? plan.owners[c.j1][0] : t.length;
+    const to = c.j2 > c.j1 ? plan.owners[c.j2 - 1][1] : from;
+    const words = [...new Set(expanded.slice(c.i1, c.i2))].map((w) => w.word);
+    const sep = c.j1 === c.j2 && from > 0 && from < t.length && !/\s/.test(t[from - 1]) ? ' ' : '';
+    t = t.slice(0, from) + sep + words.join(' ') + (c.j1 === c.j2 && words.length && from < t.length && !/\s/.test(t[from]) ? ' ' : '') + t.slice(to);
+  }
+  setText(t.replace(/[ \t]{2,}/g, ' '));
 }
 
 /** Regions from the text diff, plus the manual ones; direction carries over to the region it overlaps most. */
@@ -446,7 +498,7 @@ export function moveEdges(id: string, startSec: number, endSec: number) {
       if (r.id !== id) return r;
       if (!r.manual) touched = true;
       const start = clamp(Math.round(startSec * fps.value), 0, total - 1);
-      return { ...r, start, end: clamp(Math.round(endSec * fps.value), start + 1, total) };
+      return { ...r, start, end: clamp(Math.round(endSec * fps.value), start + 1, total), edited: true };
     }),
   );
 }
@@ -682,11 +734,14 @@ export async function generate() {
       wants: regionTargets(v.words, tgt, list.map((r) => ({ start: seconds(r.start), end: seconds(r.end), changes: r.changes })), groups),
       groups,
     };
-    gen.value = { versionId: v.id, ...facts, contexts, takes: ts, selected: bestOf(ts, facts) };
+    setGen({ versionId: v.id, ...facts, contexts, takes: ts, selected: bestOf(ts, facts) });
     ab.value = 'take';
     cursor.value = 0;
   } catch (e) {
-    if (!isAbort(e)) genError.value = errorText(e);
+    if (!isAbort(e)) {
+      genError.value = errorText(e);
+      genRefused.value = e instanceof ApiError && e.status < 500;
+    }
   } finally {
     busy.value = null;
     ctrl = null;
@@ -701,6 +756,7 @@ export function cancel() {
 export function loadDoc(next: Doc | null) {
   cancel();
   suggestedTranscript.value = '';
+  gens.value = new Map();
   docs.reset(next);
 }
 
@@ -735,10 +791,13 @@ export async function retryRegion(k: number) {
       return nt;
     });
     const takes = [...g.takes, ...fresh];
-    gen.value = { ...g, takes, selected: bestOf(takes, g, g.takes.length) };
+    setGen({ ...g, takes, selected: bestOf(takes, g, g.takes.length) });
     ab.value = 'take';
   } catch (e) {
-    if (!isAbort(e)) genError.value = errorText(e);
+    if (!isAbort(e)) {
+      genError.value = errorText(e);
+      genRefused.value = e instanceof ApiError && e.status < 500;
+    }
   } finally {
     busy.value = null;
     ctrl = null;
@@ -751,7 +810,7 @@ export function selectTake(i: number) {
   const playing = player.nowPlaying.value;
   const at = playing ? player.playhead.value : cursor.value;
   const wasTake = ab.value === 'take';
-  gen.value = { ...g, selected: i };
+  setGen({ ...g, selected: i });
   ab.value = 'take';
   const t = g.takes[i];
   // Same moment in the new take (from the version when we were on it).
@@ -821,28 +880,42 @@ export async function keep() {
   const d = doc.value;
   const v = version.value;
   if (!g || !t || !d || !v || busy.value) return;
+  const later = d.versions.length - 1 - d.current;
+  if (later > 0) {
+    const ok = await confirm(later === 1 ? `Keeping replaces v${d.current + 1}. Continue?` : `Keeping replaces v${d.current + 1}–v${d.versions.length - 1}. Continue?`, { ok: 'Keep', danger: true });
+    if (!ok) return;
+  }
+  ctrl = new AbortController();
   busy.value = { label: 'Keeping the take…', started: performance.now() };
   try {
     // A transcript describes the audio: pronunciation groups become the words heard there, aligned afresh.
     const spoken = spokenOf(g, t);
-    const words = spoken === g.target && t.words ? t.words : (await api.align(t.b64, spoken, d.language)).words;
+    const words = spoken === g.target && t.words ? t.words : (await api.align(t.b64, spoken, d.language, ctrl.signal)).words;
     const changes = g.changes.flat();
-    const label = summarizeChanges(changes, v.words, text.value, g.groups) || (g.manual.some(Boolean) ? 'regenerated' : 'edit');
+    const label = summarizeChanges(changes, v.words, g.target, g.groups) || (g.manual.some(Boolean) ? 'regenerated' : 'edit');
     const nv: Version = { id: uid(), label, pcm: t.pcm, sr: t.sr, b64: t.b64, duration: t.duration, transcript: spoken, words, alignedWords: words, automatic: false, ...(spoken !== g.target ? { display: g.target } : {}) };
     player.stop();
     docs.apply({ ...d, versions: [...d.versions.slice(0, d.current + 1), nv], current: d.current + 1 });
     const heard = (t.verify?.groups ?? []).map((x) => x.heard ?? '?');
     notify(spoken !== g.target ? `Kept ${t.label.toLowerCase()} as v${d.current + 1}; its transcript spells the pronunciations as heard (${heard.join(', ') || 'guessed'})` : `Kept ${t.label.toLowerCase()} as v${d.current + 1}`, 'ok');
   } catch (e) {
-    notify(`Couldn’t keep the take: ${errorText(e)}`, 'error');
+    if (isAbort(e)) notify('Cancelled');
+    else notify(`Couldn’t keep the take: ${errorText(e)}`, 'error');
   } finally {
     busy.value = null;
+    ctrl = null;
   }
 }
 
-export function jumpTo(index: number) {
+/** Leaving the version loses typed text and regions: ask first. */
+async function leaveVersionOk(): Promise<boolean> {
+  return !draftDirty.value || confirm('Changing the version discards your unsaved text and regions. Continue?', { ok: 'Continue', danger: true });
+}
+
+export async function jumpTo(index: number) {
   const d = doc.value;
   if (!d || index === d.current || !d.versions[index]) return;
+  if (!(await leaveVersionOk())) return;
   player.stop();
   docs.apply({ ...d, current: index });
 }
@@ -870,19 +943,23 @@ export async function setLanguage(language: string) {
     clipLanguages.value = { ...clipLanguages.value, [key]: language };
     return;
   }
+  if (!(await leaveVersionOk())) return;
   const retranscribe = v.automatic && canTranscribe.value;
+  ctrl = new AbortController();
   busy.value = { label: retranscribe ? asrLabel('Transcribing…') : 'Aligning the transcript…', started: performance.now() };
   try {
-    const a = retranscribe ? await api.transcribe(v.b64, language) : await api.align(v.b64, v.transcript, language);
+    const a = retranscribe ? await api.transcribe(v.b64, language, ctrl.signal) : await api.align(v.b64, v.transcript, language, ctrl.signal);
     if (retranscribe) asrWarmed = true;
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words };
     docs.apply({ ...d, language, versions: d.versions.map((x, i) => (i === d.current ? nv : x)) });
     clipLanguages.value = { ...clipLanguages.value, [key]: language };
     notify(`${retranscribe ? 'Transcribed' : 'Aligned'} in ${langLabel(language)}`, 'ok');
   } catch (e) {
-    notify(`Couldn’t switch to ${langLabel(language)}: ${errorText(e)}`, 'error');
+    if (isAbort(e)) notify('Cancelled');
+    else notify(`Couldn’t switch to ${langLabel(language)}: ${errorText(e)}`, 'error');
   } finally {
     busy.value = null;
+    ctrl = null;
   }
 }
 
@@ -892,43 +969,51 @@ export async function saveFix(corrected: string) {
   const v = version.value;
   if (!d || !v || !corrected.trim()) return;
   const first = !v.transcript;
+  ctrl = new AbortController();
   busy.value = { label: first ? 'Aligning the transcript…' : 'Re-aligning…', started: performance.now() };
   try {
-    const a = await api.align(v.b64, corrected.trim(), d.language);
+    const a = await api.align(v.b64, corrected.trim(), d.language, ctrl.signal);
     const nv: Version = { ...v, id: uid(), transcript: a.text, words: a.words, alignedWords: a.words, automatic: false };
     docs.apply({ ...d, versions: d.versions.map((x, i) => (i === d.current ? nv : x)) });
     notify(first ? 'Transcript aligned: edit the words to change the speech' : 'Transcript corrected and re-aligned', 'ok');
   } catch (e) {
-    notify(`Couldn’t ${first ? 'align' : 're-align'}: ${errorText(e)}`, 'error');
+    if (isAbort(e)) notify('Cancelled');
+    else notify(`Couldn’t ${first ? 'align' : 're-align'}: ${errorText(e)}`, 'error');
   } finally {
     busy.value = null;
+    ctrl = null;
   }
 }
 
 // ── Sending back ──────────────────────────────────────────────────────────────────────────────────
 
-export const canSendBack = computed(() => {
-  const d = doc.value;
-  return !!d && d.current > 0 && d.source.kind === 'take';
+/** The Direct take this clip came from, when it still exists. */
+export const sourceTake = computed(() => {
+  const s = doc.value?.source;
+  if (!s || s.kind !== 'take' || !s.lineId || !s.takeId) return null;
+  const line = script.value.lines.find((l) => l.id === s.lineId);
+  const take = scriptTakes.value[s.lineId]?.find((t) => t.id === s.takeId);
+  return line && take ? { line, take } : null;
 });
 
-/** Put the current version where the clip came from: the Direct take. */
-export function sendBack() {
+export const canSendBack = computed(() => {
+  const d = doc.value;
+  return !!d && d.current > 0 && d.source.kind === 'take' && !!sourceTake.value;
+});
+
+/** Put the current version where the clip came from: a new keeper take on the Direct line (the original stays). */
+export async function sendBack() {
   const d = doc.value;
   const v = version.value;
-  if (!d || !v || !canSendBack.value) return;
+  const src = sourceTake.value;
+  if (!d || !v || !src || !canSendBack.value) return;
+  const { line } = src;
   const audio = { pcm: v.pcm, sr: v.sr, ttfbMs: 0, totalMs: 0 };
-  if (d.source.kind === 'take' && d.source.lineId && d.source.takeId) {
-    const { lineId, takeId } = d.source;
-    const line = script.value.lines.find((l) => l.id === lineId);
-    const list = scriptTakes.value[lineId];
-    if (!line || !list?.some((t) => t.id === takeId)) return notify('That take no longer exists in Direct.', 'error');
-    // The line keeps its pronunciation groups (the transcript spells them as heard).
-    const said = v.display ?? v.transcript;
-    scriptTakes.value = { ...scriptTakes.value, [lineId]: list.map((t) => (t.id === takeId ? { ...t, audio, text: said, edited: true } : t)) };
-    if (line.text !== said) setLineText(lineId, said);
-    notify('The edited take replaced the original in Direct', 'ok');
-  }
+  // The line keeps its pronunciation groups (the transcript spells them as heard).
+  const said = v.display ?? v.transcript;
+  const n = addTake(line.id, { id: uid(), text: said, seed: 0, request: lineRequest(line, 0), audio, createdAt: Date.now(), starred: true, edited: true });
+  notify(`Added to Direct as take ${n}`, 'ok', { label: 'Go to Direct', run: () => (act.value = 'direct') });
+  if (line.text !== said && (await confirm(`Also change the line's text to “${said}”?`, { ok: 'Change the text' }))) setLineText(line.id, said);
 }
 
 // ── Recording ─────────────────────────────────────────────────────────────────────────────────────

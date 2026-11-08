@@ -39,9 +39,15 @@ export function embeddingOf(id: string | null | undefined): Float32Array | null 
   return (id && embeddings.get(id)) || null;
 }
 
-export function ensureEmbedding(s: Speaker): Promise<Float32Array | null> {
+/** The speaker's embedding (fetched once; `retry` forgets a failed fetch and asks again). */
+export function ensureEmbedding(s: Speaker, retry = false): Promise<Float32Array | null> {
   const have = embeddings.get(s.id);
   if (have) return Promise.resolve(have);
+  if (retry && embeddingErrors.value[s.id]) {
+    const rest = { ...embeddingErrors.value };
+    delete rest[s.id];
+    embeddingErrors.value = rest;
+  }
   let p = loading.get(s.id);
   if (!p) {
     p = api
@@ -95,14 +101,37 @@ export async function toggleClip(s: Speaker) {
 
 export const uploading = signal(false);
 
-export async function uploadClip(blob: Blob, label: string, fileName: string): Promise<Speaker | null> {
+/** Longest reference clip the servers take (`model/src/zonos3/registries/generation.json` audio_max_seconds.reference). */
+export const REFERENCE_MAX_S = 60;
+/** A recording stops itself here. */
+export const RECORD_MAX_S = 30;
+
+/** A clip (dropped, chosen or recorded) becomes a voice; `makeBase` says the toast should mention it became the base. */
+export async function uploadClip(blob: Blob, label: string, fileName: string, makeBase = false): Promise<Speaker | null> {
   uploading.value = true;
   try {
     // Normalise whatever the browser recorded / the user dropped to a WAV the server surely reads.
-    const { pcm, sr } = await player.decode(await blob.arrayBuffer());
+    let pcm: Float32Array;
+    let sr: number;
+    try {
+      ({ pcm, sr } = await player.decode(await blob.arrayBuffer()));
+    } catch {
+      notify('That file isn’t audio the browser can read (try WAV or MP3)', 'error');
+      return null;
+    }
+    const seconds = pcm.length / sr;
+    if (seconds < 2) {
+      notify('Too short: record at least 5 s', 'error');
+      return null;
+    }
+    if (seconds > REFERENCE_MAX_S) {
+      notify(`Clip is ${Math.round(seconds)} s; the limit is ${REFERENCE_MAX_S} s`, 'error');
+      return null;
+    }
     const s = await saveClipVoice(label, wavBytes(pcm, sr).buffer, fileName.replace(/\.[^.]+$/, '') + '.wav');
     await refreshSpeakers();
-    notify(`Added “${s.label}” to your voices`, 'ok');
+    notify(makeBase ? `Added ${s.label} and made it the base voice` : `Added “${s.label}” to your voices`, 'ok');
+    if (seconds < 5 || seconds > 30) notify(`Clip is ${Math.round(seconds)} s; 5–30 s of clean speech clones best`);
     return s;
   } catch (e) {
     notify(`Upload failed: ${errorText(e)}`, 'error');
@@ -146,11 +175,16 @@ export async function saveEmbeddingVoice(label: string, embedding: Float32Array)
 export const recording = signal<{ started: number; stop: () => void } | null>(null);
 
 export async function startRecording(onDone: (s: Speaker | null) => void) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    notify('Recording needs HTTPS (or localhost)', 'error');
+    return;
+  }
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    notify(`Microphone unavailable: ${errorText(e)}`, 'error');
+    const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    notify(denied ? 'Allow the microphone in the browser’s site settings' : `Microphone unavailable: ${errorText(e)}`, 'error');
     return;
   }
   const rec = new MediaRecorder(stream);
@@ -161,10 +195,10 @@ export async function startRecording(onDone: (s: Speaker | null) => void) {
     recording.value = null;
     const blob = new Blob(parts, { type: rec.mimeType });
     const when = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    onDone(await uploadClip(blob, `Recording ${when}`, 'recording.webm'));
+    onDone(await uploadClip(blob, `Recording ${when}`, 'recording.webm', true));
   };
   rec.start();
-  const auto = setTimeout(() => rec.state === 'recording' && rec.stop(), 30_000);
+  const auto = setTimeout(() => rec.state === 'recording' && rec.stop(), RECORD_MAX_S * 1000);
   recording.value = {
     started: Date.now(),
     stop: () => {
@@ -190,6 +224,23 @@ export function savePersona(p: Persona) {
   cast.value = [...cast.value.filter((x) => x.id !== p.id), p];
 }
 
-export function removePersona(id: string) {
+/** Remove a persona; returns it (and its index) so the caller can offer Undo. */
+export function removePersona(id: string): { persona: Persona; index: number } | null {
+  const index = cast.value.findIndex((x) => x.id === id);
+  if (index < 0) return null;
+  const persona = cast.value[index];
   cast.value = cast.value.filter((x) => x.id !== id);
+  return { persona, index };
+}
+
+/** Put a removed persona back where it was. */
+export function restorePersona(p: Persona, index: number) {
+  const rest = cast.value.filter((x) => x.id !== p.id);
+  cast.value = [...rest.slice(0, index), p, ...rest.slice(index)];
+}
+
+export function renamePersona(id: string, name: string) {
+  const n = name.trim();
+  if (!n) return;
+  cast.value = cast.value.map((x) => (x.id === id ? { ...x, name: n } : x));
 }

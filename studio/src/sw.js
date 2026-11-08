@@ -23,7 +23,14 @@ const BYPASS = ['/v1/', '/v2/', '/models/'];
 
 self.addEventListener('install', (event) => {
   // cache: 'reload' skips the HTTP cache, so the precache is what this build put on the server.
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' })))));
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' }))))
+      // Pages an older worker controls are told: the app offers a reload (the new worker takes over once they close).
+      .then(() => self.clients.matchAll({ includeUncontrolled: false }))
+      .then((clients) => clients.forEach((c) => c.postMessage({ type: 'zvs-update', version: VERSION }))),
+  );
 });
 
 self.addEventListener('activate', (event) => {

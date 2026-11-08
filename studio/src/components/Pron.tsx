@@ -228,7 +228,7 @@ export function PronMarks({ text, replace, issuesOnly }: { text: string; replace
   if (!tokens) {
     return parsed.groups.length ? (
       <span class="pron-marks">
-        <span class="pron-off" title={`Pronunciation input needs the phoneme-token checkpoint: ${SERVE_HINT}`}>
+        <span class="pron-off" title="This server reads parentheses as plain text: it has no pronunciation input">
           ( ) read as text
         </span>
       </span>
@@ -270,9 +270,14 @@ export function PronHelp() {
   if (!b) return null;
   if (!pronOn.value) {
     return (
-      <p class="hint pron-help" title={SERVE_HINT}>
-        Pronunciation input (X-SAMPA in parentheses) needs the phoneme-token checkpoint; on this server parentheses are read as text.
-      </p>
+      <div class="hint pron-help">
+        <p>This server has no pronunciation input: parentheses are read as text.</p>
+        <details class="pro">
+          <summary>For whoever runs the server</summary>
+          <p>Pronunciation input (X-SAMPA in parentheses) needs the phoneme-token checkpoint and a lexicon:</p>
+          <pre class="mono">{SERVE_HINT}</pre>
+        </details>
+      </div>
     );
   }
   return (
@@ -282,8 +287,8 @@ export function PronHelp() {
         {phonemizeOn.value ? ' Or select words and press /ə/ to look them up.' : ''}
       </p>
       {phonemizeOn.value && languages.value.length > 1 && (
-        <label class="pron-lang">
-          lexicon
+        <label class="pron-lang" title="Where /ə/ looks words up. It follows the project language until you pick another here (for this session)">
+          lexicon (for /ə/ lookups) · {lookupLanguage.value === projectSettings.value.language ? 'follows language' : 'overridden'}
           <select class="input" value={lookupLanguage.value} onChange={(e) => (pronLanguage.value = (e.currentTarget as HTMLSelectElement).value)} aria-label="Pronunciation lexicon language">
             {languages.value.map((l) => (
               <option value={l}>{langLabel(l)}</option>
