@@ -12,7 +12,7 @@ import * as api from '../api';
 import { embeddingOnly, type Backend } from '../api';
 import { MissingMedia, RevisionConflict } from '../lib/http';
 import { previewText } from '../audio/preview';
-import { errorText } from '../audio/render';
+import { errorText, onUnknownVoice } from '../audio/render';
 import { download, slug } from '../lib/files';
 import { uid } from '../lib/math';
 import { backend, dismissToast, notify, projectSettings } from './app';
@@ -198,6 +198,17 @@ function schedule() {
 effect(() => {
   void [design.value, cast.value, voiceOrigins.value, previewText.value, script.value, takes.value, edit.doc.value, edit.clipLanguages.value, projectSettings.value, ownVoices.value];
   untracked(schedule);
+});
+
+// A render refused for a voice the server forgot (it restarted): reopening the project registers the voices again.
+let unknownVoiceAt = 0;
+onUnknownVoice(() => {
+  if (Date.now() - unknownVoiceAt < 10_000) return;
+  unknownVoiceAt = Date.now();
+  notify('The server restarted and forgot this voice', 'error', {
+    label: 'Reopen project',
+    run: () => void (saveState.value === 'conflict' ? reloadProject() : save().then(reloadProject)),
+  });
 });
 
 addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && timer && void save());

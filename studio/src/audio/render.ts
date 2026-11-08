@@ -3,6 +3,7 @@
  * requests, and a small concurrency limit (latency stays near 0.7 s up to 4 parallel requests on one GPU).
  */
 import { generate, type GenerateRequest, type Rendered } from '../api';
+import { ApiError } from '../lib/http';
 
 const MAX_PARALLEL = 4;
 const CACHE_SIZE = 120;
@@ -87,6 +88,9 @@ export async function render(req: GenerateRequest, opts: RenderOptions = {}): Pr
       const r = await generate(req, opts);
       remember(key, r);
       return r;
+    } catch (e) {
+      if (isUnknownVoice(e)) unknownVoice?.(req.speaker_embedding_id ?? '');
+      throw e;
     } finally {
       release();
     }
@@ -100,6 +104,14 @@ export async function render(req: GenerateRequest, opts: RenderOptions = {}): Pr
 }
 
 export const isAbort = (e: unknown) => e instanceof DOMException && e.name === 'AbortError';
+
+/** The server no longer knows the voice (its session restarted): every server says so with a 400/404 "unknown voice". */
+export const isUnknownVoice = (e: unknown) => e instanceof ApiError && (e.status === 400 || e.status === 404) && /unknown (voice|speaker)/i.test(e.detail);
+let unknownVoice: ((id: string) => void) | null = null;
+/** Called (once per render) when a render fails because the server forgot the voice: the projects layer offers a reopen. */
+export function onUnknownVoice(fn: (id: string) => void) {
+  unknownVoice = fn;
+}
 
 export function errorText(e: unknown): string {
   if (e instanceof Error) return e.message;
