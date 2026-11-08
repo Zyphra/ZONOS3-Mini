@@ -132,7 +132,7 @@ LM = (
     .to(DEVICE)
 )
 CONFIG = LM.config
-ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k.json"))
+ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k_x10.json"))
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
 EDIT_LORA = AccentState.for_model(LM, EDIT_ADAPTER, 1.0)
 # The gold pronunciation lexicon behind "Phonemize selection"; espeak-ng (espeakng-loader) guesses the words it lacks.

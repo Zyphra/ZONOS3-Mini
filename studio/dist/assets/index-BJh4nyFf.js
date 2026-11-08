@@ -1,1 +1,0 @@
-import"./marks-vWJYJ6hZ.js";import{t as e}from"./chrome-DdIk5zrY.js";if(e(),location.search)for(let e of document.querySelectorAll(`a[data-keep-query]`))e.search=location.search;

@@ -41,7 +41,7 @@ export const spec = cached(async (): Promise<SpecInfo> => {
 });
 
 export const NO_STEERING =
-  'This server has no steering bundle (start it with STEER_BUNDLE=assets/steering/studio_bundle_mect60k.json, or the MLX server with steer.gguf next to the backbone).';
+  'This server has no steering bundle (start it with STEER_BUNDLE=assets/steering/studio_bundle_mect60k_x10.json, or the MLX server with steer.gguf next to the backbone).';
 
 export function requestContext(c: zonos.Capabilities, doc: ProjectDoc | null): RequestContext {
   const t = c.tag_cfg;

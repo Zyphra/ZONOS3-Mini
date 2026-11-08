@@ -130,7 +130,7 @@ $T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full
 $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-encoder.gguf
 $T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/zac-encoder.gguf
 $T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf
-$T steer ../../assets/steering/studio_bundle_mect60k.json -o models/steer.gguf
+$T steer ../../assets/steering/studio_bundle_mect60k_x10.json -o models/steer.gguf
 $T accents ACCENT_ADAPTER_DIR -o models/accents.gguf          # when accent adapters (<accent>.pt) are available
 ```
 

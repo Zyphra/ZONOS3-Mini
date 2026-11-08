@@ -58,8 +58,8 @@ describe('steer', () => {
   it.skipIf(!existsSync(new URL('steer.gguf', MODELS)))('loads the shipped steer.gguf', () => {
     const b = loadSteer(gguf(new URL('steer.gguf', MODELS)), { nEmbd: 1024, nLayer: 11, speakerDim: 192 });
     expect(b.sets.map((s) => (s.hidden ? `${s.name}(${s.source})` : s.name))).toEqual([
-      'identity', 'pitch', 'accents_en', 'accents_l1', 'accent_hidden(15)', 'mandarin', 'mandarin_hidden(15)', 'texture',
-      'room', 'delivery(19)', 'expressive(19)', 'disfluency(19)', 'mood(19)', 'emotions(19)']);
+      'identity', 'pitch', 'accents_en', 'accents_l1', 'mandarin', 'mandarin_hidden(15)', 'texture', 'room',
+      'delivery(19)', 'expressive(19)', 'disfluency(19)', 'mood(19)', 'emotions(19)', 'emphasis_nv_nodur(19)']);
     expect(b.sources).toEqual([15, 19]);
     expect(b.rateExtension?.direction).toBe('delivery.tempo');
     const doc = controlsDocument(b, 192) as Record<string, any>;

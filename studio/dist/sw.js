@@ -14,7 +14,7 @@
 // cache under it). clients.claim on activate only takes over pages nothing controls yet (the first visit), which then
 // read this version's cache; a cache miss still falls back to the network.
 
-const VERSION = "05026bf7d261";
+const VERSION = "95acb2fefa56";
 const PRECACHE = [
   "/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2",
   "/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2",
@@ -27,12 +27,12 @@ const PRECACHE = [
   "/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2",
   "/assets/jetbrains-mono-latin-500-normal-BWZEU5yA.woff2",
   "/assets/jetbrains-mono-latin-500-normal-CJOVTJB7.woff",
+  "/assets/latin-500-BD8Qns8_.js",
   "/assets/latin-500-DKfSw4PI.css",
-  "/assets/latin-500-mEzu5PAv.js",
-  "/assets/marks-vWJYJ6hZ.js",
+  "/assets/marks-Pw3vwSPV.js",
   "/assets/marks-xKv10YAh.css",
-  "/assets/studio-Db15lcga.js",
-  "/assets/studio-duKmS6ht.css",
+  "/assets/studio-CjF1MT2j.js",
+  "/assets/studio-g5T57gFG.css",
   "/studio.html",
   "/theme-boot.js"
 ];
@@ -43,7 +43,14 @@ const BYPASS = ['/v1/', '/v2/', '/models/'];
 
 self.addEventListener('install', (event) => {
   // cache: 'reload' skips the HTTP cache, so the precache is what this build put on the server.
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' })))));
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' }))))
+      // Pages an older worker controls are told: the app offers a reload (the new worker takes over once they close).
+      .then(() => self.clients.matchAll({ includeUncontrolled: false }))
+      .then((clients) => clients.forEach((c) => c.postMessage({ type: 'zvs-update', version: VERSION }))),
+  );
 });
 
 self.addEventListener('activate', (event) => {

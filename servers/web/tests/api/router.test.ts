@@ -27,8 +27,8 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(r.status).toBe(200);
     expect(validate('ControlsDocument', r.json())).toEqual([]);
     const sets = r.json<{ sets: Record<string, { calibration?: unknown; source_index?: number }> }>().sets;
-    expect(sets.accent_hidden).toMatchObject({ space: 'attnres_source', source_index: 15 });
-    expect(sets.accent_hidden.calibration).toBeUndefined();
+    expect(sets.mandarin_hidden).toMatchObject({ space: 'attnres_source', source_index: 15 });
+    expect(sets.mandarin_hidden.calibration).toBeUndefined();
     expect(sets.mood.calibration).toMatchObject({ by_speaker: {}, global_default: 4 });
   });
 

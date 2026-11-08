@@ -77,7 +77,7 @@ voice-cloning page at `/lite` (pick, upload, record or load a voice embedding, t
 | --- | --- |
 | `SERVE_MODEL` | Checkpoint directory or `hf://` location (`--model-path`); default the release LM |
 | `SERVE_VOICES` | Default-voice directory (`--tts-default-voices-dir`); default `assets/default_voices/` |
-| `STEER_BUNDLE` | Steering bundle (`--steer-bundle`) behind every steering control (emotion axes, styles, accent directions, …); default `assets/steering/studio_bundle_mect60k.json`, empty serves no controls |
+| `STEER_BUNDLE` | Steering bundle (`--steer-bundle`) behind every steering control (emotion axes, styles, accent directions, word emphasis, …); default `assets/steering/studio_bundle_mect60k_x10.json`, empty serves no controls |
 | `PHONEME_LEXICON` | Gold pronunciation lexicon directory (`--tts-phoneme-lexicon`) for `POST /v2/phonemize` |
 | `ZONOS3_STUDIO_PROJECTS` | Shared studio project store (`--studio-projects-dir`); empty (default) keeps projects in the browser |
 | `LACI_HEADS` | `"lang=path ..."` LACI alignment heads (`--laci-heads`) |

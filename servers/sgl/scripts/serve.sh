@@ -1,7 +1,7 @@
 #!/bin/bash
 # Exact-mode ZONOS3 server on 127.0.0.1:1919 (sources servers/sgl/scripts/env.sh). Extra flags are appended.
 # Defaults serve the ZONOS3 Mini release LM (hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo) with the voices in
-# assets/default_voices/ and the steering bundle assets/steering/studio_bundle_mect60k.json (the studio's controls). Overrides:
+# assets/default_voices/ and the steering bundle assets/steering/studio_bundle_mect60k_x10.json (the studio's controls). Overrides:
 #   SERVE_MODEL                 checkpoint dir or hf:// location (--model-path)
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)
 #   STEER_BUNDLE                steering bundle (--steer-bundle); empty serves no controls
@@ -22,7 +22,7 @@ serve_package=zonos3-sgl
 source "$repo_root/servers/sgl/scripts/env.sh"
 
 cd "$repo_root"
-steer_bundle="${STEER_BUNDLE-$repo_root/assets/steering/studio_bundle_mect60k.json}"
+steer_bundle="${STEER_BUNDLE-$repo_root/assets/steering/studio_bundle_mect60k_x10.json}"
 if [[ -n "$steer_bundle" ]]; then
     # The studio embeds every library voice and every upload: run the speaker encoder on the GPU.
     export ZONOS3_SPEAKER_EMBEDDER_DEVICE="${ZONOS3_SPEAKER_EMBEDDER_DEVICE:-cuda}"

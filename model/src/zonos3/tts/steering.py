@@ -3,8 +3,8 @@
 A bundle file (``--steer-bundle``) names direction sets and carries the UI metadata
 the studio reads from ``/v2/controls``::
 
-    {"name": "studio_mect60k",
-     "sets": {"identity": "speaker_attributes_mect60k", "delivery": "ears_styles_mect60k", ...},
+    {"name": "studio_mect60k_x10",
+     "sets": {"identity": "speaker_attributes_mect60k_x10", "delivery": "ears_styles_mect60k_x10", ...},
      "timing": {"delivery.tempo": [[-2, 2.2], [0, 1.0], [2, 0.63]]},
      "ui": {...}}
 
