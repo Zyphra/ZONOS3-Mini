@@ -1068,8 +1068,9 @@ async def _tts_generate_msg(
     needs req.laci)."""
     # The tokenizer normalizes the text (the longest step before the scheduler, ~0.2 ms per English character) while
     # this coroutine resolves the request; the TTSTokenizeMsg then finds it memoized. An invalid language is
-    # rejected below.
-    if req.text_normalization:
+    # rejected below. Only with the shared tokenizer: separate tokenizer processes (--num-tokenizer > 0) take messages
+    # round-robin and memoize per process, so the request would mostly reach another process and normalize twice.
+    if req.text_normalization and state.config.share_tokenizer:
         try:
             language = languages.normalize(req.language)
         except ValueError:
