@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import torch
-from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING
+from zonos3.generation import (
+    DECODE_CONTEXT_FRAMES,
+    SAMPLE_RATE,
+    SAMPLING,
+    STREAM_CODEBOOKS,
+    STREAM_CODEBOOKS_SCOPE,
+)
 
 from .utils import deserialize_type, serialize_type
 
@@ -44,6 +50,11 @@ class TTSSamplingParams:
     # chunks of an incremental decode on a stateful codec stream, flushed at EOS
     # (equal to the whole decode); None = one exact chunk at EOS (default).
     stream_decode: str | None = None
+    # Prefix decode only: decode a frame once this many of its codebooks arrived (n_codebooks = complete frames), the
+    # newest frames' later residual codebooks left out (a coarser RVQ decode, first audio up to n_codebooks - 1 rows
+    # earlier); for the "first" chunk only (later chunks wait for complete frames) or "all" (registry defaults).
+    stream_codebooks: int = STREAM_CODEBOOKS
+    stream_codebooks_scope: str = STREAM_CODEBOOKS_SCOPE
 
 
 @dataclass
@@ -146,6 +157,15 @@ class TTSEncodeAudioMsg(BaseTTSTokenizerMsg):
 
 
 @dataclass
+class TTSNormalizeMsg(BaseTTSTokenizerMsg):
+    """A request's text to normalize ahead of its TTSTokenizeMsg (Frontend -> Tokenizer, no reply): the tokenizer
+    worker runs the (memoized) normalizer while the frontend still resolves the request's rules and speaker."""
+
+    text: str
+    language: str
+
+
+@dataclass
 class TTSDecodeCodesMsg(BaseTTSTokenizerMsg):
     """Decode complete codec frames [frames, n_codebooks] (Frontend -> Tokenizer -> TTSAudioReply)."""
 
@@ -169,6 +189,9 @@ class TTSDetokenizeMsg(BaseTTSTokenizerMsg):
     prefill_rows: torch.Tensor | None = None
     # Request's progressive-decode mode (TTSSamplingParams.stream_decode), read by the vocoder.
     stream_decode: str | None = None
+    # Request's early partial-frame decode (TTSSamplingParams.stream_codebooks / _scope), read by the vocoder.
+    stream_codebooks: int = STREAM_CODEBOOKS
+    stream_codebooks_scope: str = STREAM_CODEBOOKS_SCOPE
     # The request's sampling_params.end_token. "span" fills are returned as
     # delayed codec rows (TTSCodesReply), never vocoded on their own.
     end_token: str = "utterance"

@@ -64,7 +64,9 @@ def whole_decode(frames: np.ndarray) -> bytes:
     return audio[0].numpy().astype(np.float32).tobytes()
 
 
-def run(manager: vocoder.TTSVocoderManager, rows: list[list[int]], uid: int = 7, stream_decode=None, eos_frame=None):
+def run(
+    manager: vocoder.TTSVocoderManager, rows: list[list[int]], uid: int = 7, stream_decode=None, eos_frame=None, **extra
+):
     chunks = []
     for i, row in enumerate(rows):
         msg = TTSDetokenizeMsg(
@@ -73,6 +75,7 @@ def run(manager: vocoder.TTSVocoderManager, rows: list[list[int]], uid: int = 7,
             finished=i == len(rows) - 1,
             eos_frame=eos_frame,
             stream_decode=stream_decode,
+            **extra,
         )
         chunks.extend(manager.decode_frames([msg]))
     return chunks
@@ -99,6 +102,11 @@ class FakeCodecStream:
 
     def flush(self) -> np.ndarray:
         return np.zeros(0, np.float32)
+
+    def fork(self) -> FakeCodecStream:
+        twin = FakeCodecStream(self.decoder)
+        twin.history = self.history.copy()
+        return twin
 
 
 @pytest.fixture
@@ -135,7 +143,7 @@ def test_default_mode_is_one_exact_chunk_at_eos(fake):
 def test_prefix_mode_ramps_and_matches_the_whole_decode(fake):
     frames = make_frames(60, seed=1)
     manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
-    chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
+    chunks = run(manager, delayed_rows(frames), stream_decode="prefix", stream_codebooks=N_CB)
     # the first chunk (1 frame) once that frame is complete: after its row plus the shear tail
     assert next(i for i, c in enumerate(chunks) if c) == 1 + (N_CB - 1) - 1
     live = [len(c) // (HOP * 4) for c in chunks[:-1] if c]
@@ -157,7 +165,7 @@ def test_prefix_mode_hold_back_and_steady_chunks(fake):
         prefix_context_frames=12,
         prefix_first_chunk_frames=5,
     )
-    chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
+    chunks = run(manager, delayed_rows(frames), stream_decode="prefix", stream_codebooks=N_CB)
     assert next(i for i, c in enumerate(chunks) if c) == 5 + 2 + (N_CB - 1) - 1
     assert all(len(c) == 5 * HOP * 4 for c in chunks[:-1] if c)
     assert b"".join(chunks) == whole_decode(frames)
@@ -175,9 +183,79 @@ def test_prefix_mode_respects_eos(fake):
         prefix_hold_back_frames=1,
         prefix_context_frames=100,
     )
-    chunks = run(manager, delayed_rows(frames), stream_decode="prefix")
+    chunks = run(manager, delayed_rows(frames), stream_decode="prefix", stream_codebooks=N_CB)
     assert b"".join(chunks) == whole_decode(frames[:eos])
     assert sum(fake.streams[0].chunks) == eos
+
+
+def lm_completed_silence_prefill(gen_frames: np.ndarray, prefill: int = 3, seed: int = 4):
+    """[silence prefill | generated] frames as the LM leaves them: the prefill rows hold the silence frame's sheared
+    lower triangle, the codebooks of the prefill frames that fall in generated rows (f + j >= prefill) are the LM's."""
+    silence = np.asarray(SPEC["silence_frame"], np.int64)
+    frames = np.concatenate([np.repeat(silence[None], prefill, 0), gen_frames])
+    rng = np.random.RandomState(seed)
+    for f in range(prefill):
+        for j in range(prefill - f, N_CB):
+            frames[f, j] = rng.randint(0, 4096)
+    return silence, frames
+
+
+def test_silence_prefill_continues_a_primed_stream(fake):
+    """A prefix request opened by the silence prefill (no decode context) continues a stream that decoded the prefill
+    frames once as pure silence (shared by every such request): the first chunk is one generated frame, and the
+    audio is the generated frames' decoded behind pure silence, not behind the LM-completed prefill frames."""
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
+    for uid, seed in ((1, 5), (2, 6)):
+        gen = make_frames(40, seed=seed)
+        silence, frames = lm_completed_silence_prefill(gen)
+        rows = delayed_rows(frames)
+        manager.register_request_context(uid, prefill_rows=np.asarray(rows[:3]))
+        chunks = run(manager, rows[3:], uid=uid, stream_decode="prefix", stream_codebooks=N_CB)
+        live = [len(c) // (HOP * 4) for c in chunks[:-1] if c]
+        assert live[:5] == [1, 2, 4, 8, 15]
+        primed = whole_decode(np.concatenate([np.repeat(silence[None], 3, 0), gen]))[3 * HOP * 4 :]
+        assert b"".join(chunks) == primed
+        assert primed != whole_decode(frames)[3 * HOP * 4 :]  # the LM's prefill codebooks would change the audio
+    assert [s.chunks for s in fake.streams] == [[3]]  # one primed stream, decoded once
+
+
+def test_other_prefill_rows_decode_from_the_stream_start(fake):
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
+    frames = make_frames(43, seed=7)
+    rows = delayed_rows(frames)
+    manager.register_request_context(9, prefill_rows=np.asarray(rows[:3]))
+    chunks = run(manager, rows[3:], uid=9, stream_decode="prefix", stream_codebooks=N_CB)
+    assert b"".join(chunks) == whole_decode(frames)[3 * HOP * 4 :]
+    assert fake.streams[0].chunks[0] == 4  # prefill + first generated frame
+
+
+@pytest.mark.parametrize("codebooks", [1, 4])
+def test_stream_codebooks_decode_frames_before_their_last_codebooks(fake, codebooks):
+    """stream_codebooks = k: a frame is decoded once its first k codebooks arrived (row f + k - 1), the missing
+    residual codes reach the codec as -1; every frame is decoded once and the audio keeps the whole decode's length."""
+    frames = make_frames(40, seed=8)
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
+    chunks = run(
+        manager, delayed_rows(frames), stream_decode="prefix", stream_codebooks=codebooks, stream_codebooks_scope="all"
+    )
+    assert next(i for i, c in enumerate(chunks) if c) == codebooks - 1
+    decoded = fake.streams[0].history
+    assert (decoded[0, :codebooks] == frames[0, :codebooks]).all() and (decoded[0, codebooks:] == -1).all()
+    known = decoded >= 0
+    assert (decoded[known] == frames[known]).all() and (decoded[-1] == frames[-1]).all()  # the EOS tail is complete
+    assert len(b"".join(chunks)) == len(whole_decode(frames))
+
+
+def test_default_decodes_the_first_chunk_from_one_codebook_then_complete_frames(fake):
+    frames = make_frames(40, seed=9)
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
+    rows = delayed_rows(frames)
+    chunks = run(manager, rows, stream_decode="prefix")  # the registry default: k = 1 on the first chunk
+    assert next(i for i, c in enumerate(chunks) if c) == 0
+    decoded = fake.streams[0].history
+    assert (decoded[0, 1:] == -1).all() and (decoded[1:] == frames[1:]).all()
+    # the second chunk (frames 1-2) waits for frame 2's last codebook: row 2 + N_CB - 1
+    assert next(i for i, c in enumerate(chunks) if c and i > 0) == 2 + N_CB - 1
 
 
 def test_stream_decode_survives_serialization():

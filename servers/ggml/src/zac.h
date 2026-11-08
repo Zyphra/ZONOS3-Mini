@@ -55,6 +55,9 @@ struct zac_model {
     std::array<std::shared_ptr<const pocketfft::detail::pocketfft_r<float>>, 2> irfft; // shared by clones
     int rs_orig = 736, rs_new = 735, rs_width = 17;
     std::vector<float> rs_kernel; // host [rs_new][2*rs_width + rs_orig]
+    // Host copies of res.bias (the residual out_proj biases summed, [latent]) and of the per-codebook res.{i}.bias
+    // ([n_codebooks - 1][latent]; empty: a GGUF without them, which cannot leave residual codebooks out).
+    std::vector<float> res_bias, res_cb_bias;
     ggml_tensor * get(const std::string & n) const;
 };
 
@@ -97,9 +100,13 @@ void zac_free(zac_model & m);
 bool zac_clone(zac_model & dst, const zac_model & src);
 // 44.1 kHz output samples per 15 Hz frame.
 int zac_samples_per_frame(const zac_model & m);
-// Decode frames [st.n_done, f_hi) of the sheared code matrix `codes` ([H, n_codebooks], codebook c
-// of frame t read from row t+c; rows >= H count as padding) and append the resampled audio that is
-// final so far. The resampler holds back its lookahead until zac_stream_flush. The stream
+// Whether the model can decode a frame with residual codebooks left out (its GGUF has res.{i}.bias).
+bool zac_partial_frames(const zac_model & m);
+// Decode frames [st.n_done, f_hi) (f_hi <= H) of the sheared code matrix `codes` ([H, n_codebooks], codebook c
+// of frame t read from row t+c) and append the resampled audio that is final so far. A residual cell (c >= 1)
+// whose row is >= H or whose code is negative is missing: that codebook's term (table row and res.{c-1}.bias) is
+// left out of the frame's RVQ sum (early partial-frame decode; needs zac_partial_frames). Complete frames decode
+// exactly as without missing cells. The resampler holds back its lookahead until zac_stream_flush. The stream
 // allocates its K/V cache on m's backend on first use and must always be used with the same `m`
 // (and destroyed before zac_free(m)).
 bool zac_stream_decode(const zac_model & m, zac_stream & st, const int32_t * codes, int H, int f_hi,

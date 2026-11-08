@@ -49,6 +49,10 @@ struct GenReq {
     bool stream = true;
     bool wav = false;
     bool prefix = false;                    // streaming with stream_decode=prefix
+    // Early partial-frame decode (prefix streaming): a frame decodes once its first stream_codebooks codebooks
+    // arrived (n_codebooks = complete frames only), on the first chunk only when stream_codebooks_first_only.
+    int stream_codebooks = zonos3_generation().stream_codebooks_default;
+    bool stream_codebooks_first_only = zonos3_generation().stream_codebooks_first_only;
     zonos3_steering steering;
     // Speech-edit infill (pyhost.cpp): the stop id (-1 = EOA; span-end for an infill), masked until min_frames frames
     // are generated (sgl min_frames); a codes-only job finishes with its generated rows in ReqJob::codes and decodes
@@ -151,6 +155,17 @@ struct PrefixStreamSettings {
     int hold_back_frames = 0;
     int context_frames = 450;
 };
+
+// The frames of a prefix stream decodable now (zonos3.tts.stream.PrefixDecoder.ready): `rows` delayed rows [H,
+// ncb] (silence-prefill rows first), `complete` frames undelayable (H - (ncb - 1), capped at the EOS frame), the EOS
+// frame (-1: not yet), `emitted` frames handed to the codec (prefill frames at the start). With codebooks < ncb (and
+// not first_only past the first chunk) a frame is decodable once its first `codebooks` codebooks arrived, capped at
+// EOS and walked back over rows whose semantic code is EOA / padding (>= audio_pad_id - 1).
+int prefix_ready(const int32_t * rows, int H, int ncb, int32_t audio_pad_id, int complete, int eos_frame, int emitted,
+                 int prefill, int codebooks, bool first_only);
+// The next prefix chunk's end frame (> emitted), or -1 while fewer than `need` new frames are decodable behind the
+// hold-back.
+int prefix_chunk_end(const PrefixStreamSettings & ps, int ready, int emitted, int prefill);
 
 void start_scheduler(ServerState & s);   // ZAC lanes + backbone worker; waits until the worker is ready
 void stop_scheduler(ServerState & s);

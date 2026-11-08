@@ -7,6 +7,7 @@ iSTFT, FIR mixer, resampler) is `zonos3.codec.stream_host`. Concatenated outputs
 whole sequence: after F frames exactly 2940*F - 1470 samples are out, flush brings the total to 2940*F.
 """
 
+import copy
 import math
 
 import numpy as np
@@ -32,15 +33,35 @@ def _convnext(block, x, hist):
     return x + h.transpose(1, 2), xf[..., -(k - 1) :]
 
 
+def _clone(state):
+    """A copy of a (nested lists/tuples of) tensor state; None entries (no history yet) stay None."""
+    if state is None:
+        return None
+    if isinstance(state, (list, tuple)):
+        return type(state)(_clone(s) for s in state)
+    return state.clone()
+
+
+def _tensors(state):
+    """The tensors of a nested state, in order."""
+    if state is None:
+        return []
+    if isinstance(state, (list, tuple)):
+        return [t for s in state for t in _tensors(s)]
+    return [state]
+
+
 def _moss_layer(layer, x, pos0, cache):
-    """MossLayer.forward on positions [pos0, pos0+t) attending to the cached keys/values of the previous positions."""
+    """MossLayer.forward on positions [pos0, pos0+t) (pos0: an int64 scalar tensor) attending to the cached
+    keys/values of the previous positions."""
     b, t, d = x.shape
     q, k, v = layer.qkv(layer.norm1(x)).reshape(b, t, 3, layer.heads, layer.head_dim).unbind(2)
     frequency = torch.exp(
         torch.arange(layer.head_dim // 2, device=x.device, dtype=torch.float32)
         * (-math.log(10000.0) * 2 / layer.head_dim)
     )
-    phase = (pos0 + torch.arange(t, device=x.device)).to(torch.float32)[:, None] * frequency[None, :]
+    steps = torch.arange(t, device=x.device)
+    phase = (pos0 + steps).to(torch.float32)[:, None] * frequency[None, :]
     cos, sin = phase.cos()[None, :, None, :], phase.sin()[None, :, None, :]
 
     def rope(z):
@@ -54,10 +75,8 @@ def _moss_layer(layer, x, pos0, cache):
         k = torch.cat((cache[0].to(k.dtype), k), 2)
         v = torch.cat((cache[1].to(v.dtype), v), 2)
     width = k.shape[2]
-    lc = width - t
-    qp = torch.arange(pos0, pos0 + t, device=x.device)
-    kp = torch.arange(pos0 - lc, pos0 + t, device=x.device)
-    delta = qp[:, None] - kp[None, :]
+    # query i sits at pos0 + i, key j at pos0 - (width - t) + j
+    delta = (steps + (width - t))[:, None] - torch.arange(width, device=x.device)[None, :]
     valid = (delta >= 0) & (delta < layer.context)
     bias = x.new_full((t, (width + 7) // 8 * 8), float("-inf"))
     bias[:, :width].masked_fill_(valid, 0)
@@ -68,10 +87,69 @@ def _moss_layer(layer, x, pos0, cache):
     return x + layer.ffn_scale * layer.ffn(layer.norm2(x)), cache
 
 
+class ChunkGraphs:
+    """CUDA graphs of `ISTFTStream._trunk` shared by the streams of one model, one per chunk shape: (chunk frames,
+    stream position up to `ISTFTStream.full_frames`, past which every KV cache is full and the shapes stop changing;
+    the position itself is a graph input). Shapes are captured while `capturing` (`capture`: a warm-up decode);
+    afterwards streams replay the graph of a captured shape and run any other shape eagerly. A replay runs the eager
+    kernels on copies of the same inputs, so its outputs are bit-identical to the eager decode."""
+
+    def __init__(self):
+        self.graphs: dict[tuple[int, int], _ChunkGraph] = {}
+        self.capturing = False
+        self.pool = None
+
+    def capture(self, model: ISTFTCodec, chunks) -> None:
+        """Capture the shapes of one stream decoding ``chunks`` frames per call from the start (zero codes)."""
+        stream = ISTFTStream(model, graphs=self)
+        self.capturing = True
+        try:
+            for n in chunks:
+                stream.decode(np.zeros((int(n), stream.n_codebooks), np.int64))
+        finally:
+            self.capturing = False
+
+    def run(self, stream, key, packed, frames, state):
+        graph = self.graphs.get(key)
+        if graph is None:
+            if self.pool is None:
+                self.pool = torch.cuda.graph_pool_handle()
+            graph = self.graphs[key] = _ChunkGraph(stream, packed, frames, state, self.pool)
+        return graph.run(packed, frames, state)
+
+
+class _ChunkGraph:
+    """One captured `_trunk` shape with static inputs (codes, position, state before) and outputs."""
+
+    def __init__(self, stream, packed, frames, state, pool):
+        device = stream.device
+        self.packed = packed.to(device)
+        self.frames = torch.full((), frames, dtype=torch.int64, device=device)
+        self.state = _clone(state)
+        side = torch.cuda.Stream(device)
+        side.wait_stream(torch.cuda.current_stream(device))
+        with torch.cuda.stream(side):  # lazy initialization (cuBLAS handles, workspaces) outside the capture
+            stream._trunk(self.packed, self.frames, *self.state)
+        torch.cuda.current_stream(device).wait_stream(side)
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph, pool=pool):
+            self.ys, self.out = stream._trunk(self.packed, self.frames, *self.state)
+
+    def run(self, packed, frames, state):
+        """Replay on ``state`` -> the head outputs (graph buffers, valid until the next replay) and a copy of the state
+        after."""
+        self.packed.copy_(packed)
+        self.frames.fill_(frames)
+        for dst, src in zip(_tensors(self.state), _tensors(state), strict=True):
+            dst.copy_(src)
+        self.graph.replay()
+        return self.ys, _clone(self.out)
+
+
 class ISTFTStream:
     """Incremental decoder over one utterance; feed undelayed code frames [n, codebooks] in order."""
 
-    def __init__(self, model: ISTFTCodec, max_chunk: int = 32):
+    def __init__(self, model: ISTFTCodec, max_chunk: int = 32, graphs: ChunkGraphs | None = None):
         if not isinstance(model.head, MultiResISTFTHead):
             raise ValueError("ISTFTStream needs the multi-resolution iSTFT head")
         self.model = model
@@ -86,6 +164,14 @@ class ISTFTStream:
         head = model.head
         self.head_hist = [None] * len(head.blocks)
         self.kv = [[None] * len(s.layers) if isinstance(s, MossStage) else None for s in model.stages]
+        # frames after which every KV cache holds its full window (the state shapes stop changing)
+        self.full_frames, cpf = 0, 1
+        for stage in model.stages:
+            if isinstance(stage, Patch):
+                cpf *= stage.size
+            elif isinstance(stage, MossStage):
+                keep = max(layer.context for layer in stage.layers) - 1
+                self.full_frames = max(self.full_frames, -(-keep // cpf))
         windows = [getattr(head, f"window_{i}").detach().cpu().numpy() for i in range(len(head.n_ffts))]
         self.head = IstftHeadStream(
             head.n_ffts, head.hop, windows, head.mixer.weight[0].detach().cpu().numpy(), head.max_log_magnitude
@@ -95,10 +181,19 @@ class ISTFTStream:
             rs.kernel[:, 0].detach().cpu().numpy(), rs.orig_freq // rs.gcd, rs.new_freq // rs.gcd, rs.width
         )
         self.device = next(model.parameters()).device
+        self.graphs = graphs if self.device.type == "cuda" else None
 
     def decode(self, codes: np.ndarray) -> np.ndarray:
+        """The next code frames [n, codebooks] -> the samples now final. A residual code (codebook >= 1) of -1 is
+        missing: that codebook's contribution is left out of the frame, a coarser RVQ decode (the codec trained with
+        quantizer dropout)."""
         codes = np.asarray(codes)
-        if codes.ndim != 2 or codes.shape[1] != self.n_codebooks or ((codes < 0) | (codes >= _CODEBOOK_SIZE)).any():
+        if (
+            codes.ndim != 2
+            or codes.shape[1] != self.n_codebooks
+            or ((codes < -1) | (codes >= _CODEBOOK_SIZE)).any()
+            or (codes[:, 0] < 0).any()
+        ):
             raise ValueError("Invalid matched codec tokens")
         if len(codes) == 0:
             return np.zeros(0, np.float32)
@@ -115,18 +210,48 @@ class ISTFTStream:
     def flush(self) -> np.ndarray:
         return np.concatenate([self.resampler.push(self.head.flush()), self.resampler.flush()])
 
+    def fork(self) -> "ISTFTStream":
+        """An independent stream continuing from this one's state. The trunk state tensors are never written in place
+        (every chunk makes new ones), so the twins share them; the host overlap-add and resampler state is copied."""
+        twin = copy.copy(self)
+        twin.sem_hist, twin.head_hist = list(self.sem_hist), list(self.head_hist)
+        twin.kv = [None if layers is None else list(layers) for layers in self.kv]
+        twin.head, twin.resampler = copy.deepcopy(self.head), copy.deepcopy(self.resampler)
+        return twin
+
     def _chunk(self, codes):
-        m, dev = self.model, self.device.type
         n = len(codes)
-        packed = torch.as_tensor(np.ascontiguousarray(codes.T[None]), dtype=torch.int64, device=self.device)
+        packed = torch.as_tensor(np.ascontiguousarray(codes.T[None]), dtype=torch.int64)
+        state = (self.sem_hist, self.kv, self.head_hist)
+        key = (n, min(self.frames, self.full_frames))
+        if self.graphs is not None and (self.graphs.capturing or key in self.graphs.graphs):
+            ys, state = self.graphs.run(self, key, packed, self.frames, state)
+        else:
+            frames = torch.full((), self.frames, dtype=torch.int64, device=self.device)
+            ys, state = self._trunk(packed.to(self.device), frames, *state)
+        ys = [y.cpu().numpy() for y in ys]
+        self.sem_hist, self.kv, self.head_hist = state
+        out = self.resampler.push(self.head.push(*ys))
+        self.frames += n
+        return out
+
+    def _trunk(self, packed, frames, sem_hist, kv, head_hist):
+        """The GPU half of a chunk, free of side effects (CUDA-graph capturable): codes [1, codebooks, n] int64, the
+        stream position (int64 scalar tensor) and the state before -> the iSTFT head's float32 outputs [n, bins] and the
+        state after."""
+        m, dev = self.model, self.device.type
+        sem_hist, head_hist = list(sem_hist), list(head_hist)
+        kv = [None if layers is None else list(layers) for layers in kv]
         q = m.quantizer
         with torch.autocast(dev, enabled=False):
             x = q.semantic_quantizer.from_codes(packed[:, :1])[0]
             for i, block in enumerate(self.sem_blocks):
-                x, self.sem_hist[i] = _convnext(block, x, self.sem_hist[i])
+                x, sem_hist[i] = _convnext(block, x, sem_hist[i])
             z = self.sem_out(x).float()
             for i, vq in enumerate(q.quantizer.quantizers):
-                z = z + vq.out_proj(vq.decode_code(packed[:, 1 + i]))
+                code = packed[:, 1 + i]
+                part = vq.out_proj(vq.decode_code(code.clamp(min=0)))
+                z = z + torch.where(code[:, None, :] >= 0, part, 0.0)  # exactly ``part`` for present codes
         x = z
         cpf = 1
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"):
@@ -136,8 +261,9 @@ class ISTFTStream:
                     cpf *= stage.size
                 elif isinstance(stage, MossStage):
                     x = stage.input_proj(x.transpose(1, 2))
+                    pos0 = frames * cpf
                     for li, layer in enumerate(stage.layers):
-                        x, self.kv[si][li] = _moss_layer(layer, x, self.frames * cpf, self.kv[si][li])
+                        x, kv[si][li] = _moss_layer(layer, x, pos0, kv[si][li])
                     x = stage.output_proj(x).transpose(1, 2)
                 else:
                     raise ValueError(f"ISTFTStream: unsupported stage {type(stage).__name__}")
@@ -145,9 +271,7 @@ class ISTFTStream:
         with torch.autocast(dev, enabled=False):
             h = x
             for i, block in enumerate(head.blocks):
-                h, self.head_hist[i] = _convnext(block, h, self.head_hist[i])
+                h, head_hist[i] = _convnext(block, h, head_hist[i])
             h = head.norm(h.transpose(1, 2))
-            ys = [lin(h)[0].float().cpu().numpy() for lin in head.outs]
-        out = self.resampler.push(self.head.push(*ys))
-        self.frames += n
-        return out
+            ys = [lin(h)[0].float() for lin in head.outs]
+        return ys, (sem_hist, kv, head_hist)

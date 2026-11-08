@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validate } from '../../src/api/validate';
-import { call, haveEditModels, haveModels, stubApi } from './stub';
+import { bareApi, call, haveEditModels, haveModels, stubApi } from './stub';
 
 const SESSION = { 'x-tts-session-id': 's1' };
 type Detail = { detail: Record<string, unknown>[] };
@@ -214,5 +214,67 @@ describe.skipIf(!haveModels)('engine api', () => {
     expect(r.headers['content-type']).toBe('audio/pcm');
     expect(r.body.length % 4).toBe(0);
     expect(r.body.length).toBeGreaterThan(0);
+  });
+});
+
+describe('early partial-frame prefix decode (stream_codebooks / stream_codebooks_scope)', () => {
+  const missing = (c: { idx: Int32Array; n: number }) => {
+    let m = 0;
+    for (let cb = 1; cb < 10; cb++) for (let i = 0; i < c.n; i++) if (c.idx[cb * 16 + i] === -1) m++;
+    return m;
+  };
+  const prefixRun = async (extra: Record<string, unknown>, partialFrames = true) => {
+    const s = bareApi({ frames: 60, partialFrames });
+    const r = await call(s.api, 'POST', '/v2/generate', { text: 'Hello there.', seed: 2, stream_decode: 'prefix', ...extra });
+    expect(r.status).toBe(200);
+    return s.codec;
+  };
+  const contiguous = (chunks: { p0: number; n: number }[]) =>
+    chunks.every((c, i) => i === 0 ? c.p0 === 0 : c.p0 === chunks[i - 1].p0 + chunks[i - 1].n);
+
+  it('k=1 by default: the first chunk leaves before any decode step, its last frame without residual codebooks', async () => {
+    const codec = await prefixRun({});
+    const first = codec.chunks[0];
+    expect(first.step).toBe(0);
+    const last = first.n - 1;
+    expect(first.idx[last]).toBe(7);                                         // codebook 0 present
+    for (let cb = 1; cb < 10; cb++) expect(first.idx[cb * 16 + last]).toBe(-1);
+    // scope 'first': every later chunk decodes complete frames, each frame exactly once
+    expect(codec.chunks.slice(1).every(c => missing(c) === 0)).toBe(true);
+    expect(contiguous(codec.chunks)).toBe(true);
+    const complete = await prefixRun({ stream_codebooks: 10 });
+    expect(codec.frames).toBe(complete.frames);
+  });
+
+  it('k = n_codebooks keeps the complete-frame ramp', async () => {
+    const codec = await prefixRun({ stream_codebooks: 10 });
+    expect(codec.chunks[0].step).toBe(9);
+    expect(codec.chunks.every(c => missing(c) === 0)).toBe(true);
+    expect(contiguous(codec.chunks)).toBe(true);
+  });
+
+  it("scope 'all' decodes every prefix chunk early", async () => {
+    const codec = await prefixRun({ stream_codebooks: 3, stream_codebooks_scope: 'all' });
+    expect(codec.chunks[0].step).toBe(2);
+    const early = codec.chunks.filter(c => missing(c) > 0);
+    expect(early.length).toBeGreaterThan(2);
+    for (const c of early) for (let i = 0; i < c.n; i++) expect(c.idx[2 * 16 + i]).not.toBe(-1);   // k=3: cb 0..2 present
+    expect(contiguous(codec.chunks)).toBe(true);
+  });
+
+  it('a codec without per-codebook biases decodes complete frames only', async () => {
+    const codec = await prefixRun({ stream_codebooks: 1 }, false);
+    expect(codec.chunks[0].step).toBe(9);
+    expect(codec.chunks.every(c => missing(c) === 0)).toBe(true);
+  });
+
+  it('stream_codebooks above n_codebooks is 400; below 1 or a bad scope fail the spec (422)', async () => {
+    const { api } = bareApi();
+    const big = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream_codebooks: 11 });
+    expect(big.status).toBe(400);
+    expect(JSON.stringify(big.json())).toContain('stream_codebooks must be 1..10');
+    expect((await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream_codebooks: 0 })).status).toBe(422);
+    expect((await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream_codebooks_scope: 'some' })).status).toBe(422);
+    expect((await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream: false, stream_codebooks: 10 })).status).toBe(200);
   });
 });

@@ -467,8 +467,15 @@ def export_zac(path, out):
     res = np.concatenate([g.arr(f"res.{c}.table") for c in range(9)], axis=0).astype(np.float16)
     w.add("res.tables", res, "f16", [res.shape[1], res.shape[0]])
     del res
+    # Per-codebook residual biases (res.bias is their sum): early partial-frame decode drops a missing codebook's whole
+    # term. Older codec GGUFs lack them; the web codec then decodes complete frames only.
+    if all(f"res.{c}.bias" in g.tensors for c in range(9)):
+        biases = np.concatenate([g.arr(f"res.{c}.bias") for c in range(9)], axis=0).astype(np.float32)
+        w.add("res.biases", biases, "f32", [biases.size])
     for name, t in g.tensors.items():
         if name == "sem.table" or (name.startswith("res.") and name.endswith(".table")):
+            continue
+        if name.startswith("res.") and name.endswith(".bias") and name != "res.bias":
             continue
         ne = g.ne(name)
         if t.tensor_type == GGMLQuantizationType.Q8_0:

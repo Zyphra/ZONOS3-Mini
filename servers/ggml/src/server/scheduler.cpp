@@ -56,16 +56,20 @@ static void zac_lane_submit(ZacLane & lane, ZacTask && t) {
 }
 
 // The first H delayed rows of the job's audio stream, behind its decode-context frames: the delayed matrix of
-// [context frames | stream frames], whose cells left padded in the stream's first rows hold context codes.
+// [context frames | stream frames], whose cells left padded in the stream's first rows hold context codes. With
+// fewer than ncb - 1 stream rows (an early partial-frame chunk) the matrix runs on to the context's last cell, the
+// stream cells there marked missing (-1).
 static std::vector<int32_t> decode_rows(const ServerState & s, const ReqJob & job, int H) {
     const int ncb = (int) s.model.hp.n_codebooks;
     const int K = job.ctx_frames;
     if (K == 0) return std::vector<int32_t>(job.codes.begin(), job.codes.begin() + (size_t) H * ncb);
     const int32_t pad = (int32_t) s.model.hp.audio_pad_id;
     const int32_t * ctx = job.gr.decode_context.data() + (job.gr.decode_context.size() / ncb - K) * ncb;
-    std::vector<int32_t> rows((size_t) (K + H) * ncb, pad);
-    for (int r = 0; r < K + H; ++r) {
-        if (r >= K) std::copy_n(job.codes.begin() + (size_t) (r - K) * ncb, ncb, rows.begin() + (size_t) r * ncb);
+    const int R = K + std::max(H, ncb - 1);
+    std::vector<int32_t> rows((size_t) R * ncb, pad);
+    for (int r = 0; r < R; ++r) {
+        if (r >= K + H) std::fill_n(rows.begin() + (size_t) r * ncb, ncb, -1);
+        else if (r >= K) std::copy_n(job.codes.begin() + (size_t) (r - K) * ncb, ncb, rows.begin() + (size_t) r * ncb);
         for (int c = 0; c < ncb; ++c) {
             const int frame = r - c;
             if (frame >= 0 && frame < K) rows[(size_t) r * ncb + c] = ctx[(size_t) frame * ncb + c];
@@ -85,6 +89,10 @@ static void zac_lane_loop(ServerState & s, ZacLane & lane) {
         zac_decode(lane.zac, codes.data(), H, ncb, /*eos=*/-1, pcm);
         zac_stream scratch;
         zac_stream_decode(lane.zac, scratch, codes.data(), H, 16, pcm);
+        if (zac_partial_frames(lane.zac)) {   // the first early partial-frame chunk: residual codebooks left out
+            zac_stream partial;
+            zac_stream_decode(lane.zac, partial, codes.data(), 1, 1, pcm);
+        }
     }
     for (;;) {
         ZacTask t;
@@ -130,24 +138,43 @@ static void zac_lane_loop(ServerState & s, ZacLane & lane) {
     }
 }
 
+int prefix_ready(const int32_t * rows, int H, int ncb, int32_t audio_pad_id, int complete, int eos_frame, int emitted,
+                 int prefill, int codebooks, bool first_only) {
+    if (codebooks >= ncb || (first_only && emitted > prefill)) return complete;
+    int ready = H - (codebooks - 1);
+    if (eos_frame >= 0) ready = std::min(ready, eos_frame);
+    while (ready > std::max(complete, emitted) && rows[(size_t) (ready - 1) * ncb] >= audio_pad_id - 1) --ready;
+    return ready;
+}
+
+int prefix_chunk_end(const PrefixStreamSettings & ps, int ready, int emitted, int prefill) {
+    const int decodable = ready - ps.hold_back_frames;
+    const int need = std::min(ps.chunk_frames, ps.first_chunk_frames + emitted - prefill);
+    return decodable - emitted >= need ? decodable : -1;
+}
+
 // Prefix streaming: once `need` new frames are decodable beyond the hold-back, stream-decode up to there on the job's
 // lane. `need` ramps from first_chunk_frames, doubling with what was emitted (1, 2, 4, 8, ...), up to chunk_frames.
+// Early partial-frame decode: the frames handed over may lack their last residual codebooks (rows not yet
+// generated: the codec leaves those codebooks out); no frame is decoded twice.
 static void prefix_submit_ready(ServerState & s, const std::shared_ptr<ReqJob> & job) {
     const int ncb = (int) s.model.hp.n_codebooks;
     const int H = (int) job->codes.size() / ncb;
     int complete = H - (ncb - 1);
     if (job->eos_frame >= 0) complete = std::min(complete, job->eos_frame);
-    const int decodable = complete - s.prefix.hold_back_frames;
-    const int need = std::min(s.prefix.chunk_frames, s.prefix.first_chunk_frames + job->emitted - job->prompt.prefill_frames);
-    if (decodable - job->emitted < need) return;
+    const int prefill = job->prompt.prefill_frames;
+    const int ready = prefix_ready(job->codes.data(), H, ncb, (int32_t) s.model.hp.audio_pad_id, complete, job->eos_frame,
+                                   job->emitted, prefill, job->gr.stream_codebooks, job->gr.stream_codebooks_first_only);
+    const int end = prefix_chunk_end(s.prefix, ready, job->emitted, prefill);
+    if (end < 0) return;
     ZacTask t;
     t.job = job;
     t.kind = ZacTask::WINDOW;
     t.codes = decode_rows(s, *job, H);
-    t.H = H + job->ctx_frames;
-    t.f_hi = decodable + job->ctx_frames;
+    t.H = (int) t.codes.size() / ncb;
+    t.f_hi = end + job->ctx_frames;
     zac_lane_submit(s.zac_lanes[job->lane], std::move(t));
-    job->emitted = decodable;
+    job->emitted = end;
 }
 
 // Eviction: hand the final whole decode to the lane, which finishes the channel.
@@ -162,7 +189,7 @@ static void submit_finalize(ServerState & s, const std::shared_ptr<ReqJob> & job
     t.fail = !dropped && job->eos_frame >= 0 && job->eos_frame <= job->prompt.prefill_frames;
     if (!dropped && !t.fail) {
         t.codes = decode_rows(s, *job, nf);
-        t.H = nf + job->ctx_frames;
+        t.H = (int) t.codes.size() / ncb;
     }
     zac_lane_submit(s.zac_lanes[job->lane], std::move(t));
 }

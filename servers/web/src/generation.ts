@@ -19,6 +19,10 @@ export const DECODE_CONTEXT_FRAMES = registry.decode_context_frames;
 export const REFERENCE_MAX_FRAMES = registry.reference_max_frames;
 /** The frame budget of a request (its max_tokens is capped here). */
 export const MAX_FRAMES = registry.max_frames;
+/** Early partial-frame prefix decode: a request without stream_codebooks / stream_codebooks_scope decodes a frame once
+ *  this many of its codebooks arrived, on the first prefix chunk only ('first') or every chunk ('all'). */
+export const STREAM_CODEBOOKS = registry.stream_codebooks.default;
+export const STREAM_CODEBOOKS_SCOPE = registry.stream_codebooks.scope as 'first' | 'all';
 /** Samples per codec frame (44.1 kHz). */
 export const HOP = 2940;
 /** Rows per slot: native context_capacity = min(context_length, max_frames + 4096). */

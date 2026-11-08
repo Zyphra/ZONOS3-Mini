@@ -26,6 +26,8 @@ const zonos3_generation_registry & zonos3_generation() {
         out.decode_context_frames = doc.at("decode_context_frames").get<int>();
         out.reference_max_frames = doc.at("reference_max_frames").get<int>();
         out.max_frames = doc.at("max_frames").get<int>();
+        out.stream_codebooks_default = doc.at("stream_codebooks").at("default").get<int>();
+        out.stream_codebooks_first_only = doc.at("stream_codebooks").at("scope").get<std::string>() == "first";
         out.reference_audio_max_seconds = seconds.at("reference").get<double>();
         out.upload_max_seconds = seconds.at("upload").get<double>();
         out.edit_max_seconds = seconds.at("edit").get<double>();

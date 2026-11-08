@@ -19,6 +19,7 @@ from zonos3.utils.release import hf_join, resolve_file
 REGISTRY = Path(__file__).resolve().parents[1] / "registries" / "codec_registry_keep2_plain.json"
 _CACHE = {}
 _INFO = {}
+_GRAPHS = {}
 
 
 @functools.cache
@@ -140,15 +141,18 @@ def decode_model(model, codes, e):
     return audio.float().squeeze(1).cpu()
 
 
+def _key(codec):
+    return codec, os.environ.get("ZONOS3_AUDIO_CODEC_DEVICE", "cuda:0")
+
+
 def _model(codec):
     """The codec's decoder on ZONOS3_AUDIO_CODEC_DEVICE (default cuda:0), loaded once after the checkpoint's sha256."""
     e = entry(codec)
-    device = os.environ.get("ZONOS3_AUDIO_CODEC_DEVICE", "cuda:0")
-    key = (codec, device)
+    key = _key(codec)
     if key not in _CACHE:
         actual = sha256_file(resolve_file(e["checkpoint"]))
         assert actual == e["checkpoint_sha256"], ("generator checkpoint sha256", actual, e["checkpoint_sha256"])
-        _CACHE[key] = load_model(codec, device)
+        _CACHE[key] = load_model(codec, key[1])
     return _CACHE[key]
 
 
@@ -160,7 +164,19 @@ def decode(codes, codec):
 
 
 def stream(codec):
-    """A fresh stateful decoder (ISTFTStream) on the cached model: decode(codes [n, codebooks]) -> final samples, flush()."""
+    """A fresh stateful decoder (ISTFTStream) on the cached model: decode(codes [n, codebooks]) -> final samples, flush().
+    It replays the CUDA graphs captured by ``capture_stream_graphs`` for matching chunk shapes."""
     from zonos3.codec.istft_head_a_20261002.stream import ISTFTStream
 
-    return ISTFTStream(_model(codec))
+    return ISTFTStream(_model(codec), graphs=_GRAPHS.get(_key(codec)))
+
+
+def capture_stream_graphs(codec, chunks) -> None:
+    """CUDA-graph the chunk shapes of a stream decoding ``chunks`` frames per call from the start (bit-identical to
+    the eager decode; a no-op unless the codec runs on CUDA)."""
+    from zonos3.codec.istft_head_a_20261002.stream import ChunkGraphs
+
+    model = _model(codec)
+    if next(model.parameters()).device.type != "cuda":
+        return
+    _GRAPHS.setdefault(_key(codec), ChunkGraphs()).capture(model, chunks)

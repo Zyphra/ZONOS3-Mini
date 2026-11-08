@@ -130,6 +130,7 @@ class _RawReferenceModelConfig:
     speaker_embedding_dim = 0
     residual_type = "full_attnres"
     hidden_size = 4
+    n_codebooks = 10
 
 
 class _RawReferenceConfig:

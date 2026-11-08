@@ -30,12 +30,15 @@ export function finalBlocks(H: number, emitted: number, eosFrame: number): Range
   return out;
 }
 
-/** Un-sheared indices [10][16] clamped to [0, 4095] for frames [p0, p0+n) of flat codes [H][10]. */
-export function buildIdx(codes: ArrayLike<number>, H: number, p0: number, n: number, out = new Int32Array(NCB * 16)): Int32Array {
+/** Un-sheared indices [10][16] clamped to [0, 4095] for frames [p0, p0+n) of flat codes [H][10]. `missing`: a residual
+ *  cell whose row is past H (not arrived; early partial-frame decode) is -1, which the codec leaves out. */
+export function buildIdx(codes: ArrayLike<number>, H: number, p0: number, n: number, out = new Int32Array(NCB * 16),
+                         missing = false): Int32Array {
   out.fill(0);
   for (let c = 0; c < NCB; c++)
     for (let i = 0; i < n; i++) {
       const t = p0 + i + c;
+      if (t >= H && missing && c > 0) { out[c * 16 + i] = -1; continue; }
       const raw = t < H ? codes[t * NCB + c] : 4097;
       out[c * 16 + i] = Math.min(Math.max(raw, 0), MAX_CODE);
     }

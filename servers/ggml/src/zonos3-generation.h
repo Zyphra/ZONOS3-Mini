@@ -15,6 +15,8 @@ struct zonos3_generation_registry {
     int decode_context_frames;                              // decode_context_frames unset or 0
     int reference_max_frames;                               // the reference prefix; longer codes keep their first frames
     int max_frames;                                         // the default --max frame budget
+    int stream_codebooks_default;                           // prefix streaming: codebooks a frame needs to decode
+    bool stream_codebooks_first_only;                       // ... on the first chunk only (scope "first") or every one
     double reference_audio_max_seconds, upload_max_seconds, edit_max_seconds;   // the longest reference clip, upload
                                                                                 // and speech-edit clip
 };

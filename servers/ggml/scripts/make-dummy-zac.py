@@ -95,7 +95,14 @@ def main():
     put("sem.bias", rnd(SEM))
     for i in range(9):
         put(f"res.{i}.table", rnd(4096, LATENT, scale=1.0))
-    put("res.bias", rnd(LATENT))
+    total = rnd(LATENT)
+    put("res.bias", total)
+    # res.{i}.bias: the per-codebook biases adding up to res.bias (early partial-frame decode subtracts a missing
+    # codebook's); their own generator leaves every other tensor as before.
+    biases = np.random.default_rng(1).standard_normal((9, LATENT)) * 0.5
+    biases[-1] = total.astype(np.float64) - biases[:-1].sum(0)
+    for i in range(9):
+        put(f"res.{i}.bias", biases[i])
     for b in range(SEM_DEPTH):
         p = f"sem_head.{b}"
         put(p + ".dw.weight", rnd(SEM, 7))

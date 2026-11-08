@@ -72,6 +72,12 @@ static bool zac_init_backend(zac_model & m, ggml_backend_dev_t dev) {
     return true;
 }
 
+// i for the per-codebook residual bias "res.{i}.bias" (0 <= i < 9: the n_codebooks - 1 residual codebooks), else -1.
+static int res_bias_index(const std::string & name) {
+    if (name.size() != 10 || name.compare(0, 4, "res.") != 0 || name.compare(5, 5, ".bias") != 0) return -1;
+    return name[4] >= '0' && name[4] <= '8' ? name[4] - '0' : -1;
+}
+
 bool zac_load(zac_model & m, const char * path, bool use_gpu) {
     ggml_context * ctx_meta = nullptr;
     gguf_init_params gp = {/*no_alloc=*/true, /*ctx=*/&ctx_meta};
@@ -191,6 +197,18 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
             shape("head.window." + std::to_string(i), {m.n_fft[i]});
         }
         shape("head.mixer.weight", {m.fir_kernel, 2});
+        shape("res.bias", {m.latent_dim});
+        if (const ggml_tensor * rb = ggml_get_tensor(ctx_meta, "res.bias"); rb && rb->type != GGML_TYPE_F32 && bad.empty())
+            bad = "res.bias";
+        // Per-codebook residual biases (early partial-frame decode): all of res.0.bias .. res.{n-2}.bias or none.
+        int n_res_bias = 0;
+        for (int i = 0; i + 1 < m.n_codebooks; ++i) {
+            const std::string name = "res." + std::to_string(i) + ".bias";
+            if (!ggml_get_tensor(ctx_meta, name.c_str())) continue;
+            shape(name, {m.latent_dim});
+            ++n_res_bias;
+        }
+        if (n_res_bias != 0 && n_res_bias != m.n_codebooks - 1 && bad.empty()) bad = "res.{i}.bias (some codebooks only)";
         if (!bad.empty()) return reject(("tensor '" + bad + "' missing or wrongly shaped").c_str());
     }
 
@@ -216,7 +234,8 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
     for (ggml_tensor * t = ggml_get_first_tensor(ctx_meta); t; t = ggml_get_next_tensor(ctx_meta, t)) {
         const std::string name = ggml_get_name(t);
         Kind kind = PLAIN;
-        if (name == "resample.kernel" || name == "head.mixer.weight" || name == "head.window.0" || name == "head.window.1")
+        if (name == "resample.kernel" || name == "head.mixer.weight" || name == "head.window.0" || name == "head.window.1" ||
+            res_bias_index(name) >= 0)
             kind = HOST;
         else if (ends_with(name, ".dw.weight")) kind = DW;
         else if ((name.rfind("stage.", 0) == 0 || name.rfind("sem_head.", 0) == 0 || name.rfind("head.", 0) == 0) &&
@@ -275,7 +294,10 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
             const std::string nm = name;
             if (nm == "resample.kernel") m.rs_kernel.assign(hp, hp + n);
             else if (nm == "head.mixer.weight") m.mixer.assign(hp, hp + n);
-            else m.window[nm.back() - '0'].assign(hp, hp + n);
+            else if (const int c = res_bias_index(nm); c >= 0) {
+                m.res_cb_bias.resize((size_t) (m.n_codebooks - 1) * m.latent_dim);
+                std::copy(hp, hp + n, m.res_cb_bias.begin() + (size_t) c * m.latent_dim);
+            } else m.window[nm.back() - '0'].assign(hp, hp + n);
             continue;
         }
         if (l.kind == PLAIN || (l.kind == MAT && l.src->type == l.dst->type)) {
@@ -304,6 +326,7 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
                 ggml_backend_tensor_set(l.dst, rep.data(), 0, (size_t) n * sizeof(float));
             }
         }
+        if (std::string(name) == "res.bias") m.res_bias.assign((const float *) tmp.data(), (const float *) tmp.data() + n);
         m.t[name] = l.dst;
     }
     fclose(f);
@@ -671,6 +694,10 @@ int zac_samples_per_frame(const zac_model & m) {
     return m.hop;
 }
 
+bool zac_partial_frames(const zac_model & m) {
+    return !m.res_cb_bias.empty();
+}
+
 static ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, ggml_tensor * w, ggml_tensor * b, float eps) {
     return ggml_add(ctx, ggml_mul(ctx, ggml_norm(ctx, x, eps), w), b);
 }
@@ -1035,14 +1062,38 @@ static void head_flush(const zac_model & m, zac_stream & st, std::vector<float> 
 
 // Decode frames [f0, f0 + n_valid) through the trunk and head projections, advancing the conv/KV
 // history in `st`, and append the internal-rate samples that are final so far to `internal`.
+// A residual cell whose row is >= H or whose code is negative is missing (zac_stream_decode).
 static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * codes, int H,
                          int f0, int n_valid, std::vector<float> & internal) {
-    const int ncb = m.n_codebooks, gf = m.is_gpu ? gpu_width(n_valid) : n_valid;
+    const int ncb = m.n_codebooks, gf = m.is_gpu ? gpu_width(n_valid) : n_valid, L = m.latent_dim;
+    // miss[c * n_valid + i]: residual codebook c of frame f0 + i is missing. A chunk without missing cells runs the
+    // plain graph; one with them multiplies each affected codebook's rows by a 0/1 keep mask (1 is exact) and adds a
+    // per-frame bias (res.bias itself for complete frames, minus the missing codebooks' res.{c-1}.bias otherwise).
+    std::vector<uint8_t> miss((size_t) ncb * n_valid, 0);
+    std::vector<bool> cb_missing(ncb, false);
+    bool partial = false;
+    for (int i = 0; i < n_valid; ++i) {
+        if (codes[(size_t) (f0 + i) * ncb] < 0) {
+            fprintf(stderr, "zac: frame %d has no semantic code\n", f0 + i);
+            return false;
+        }
+        for (int c = 1; c < ncb; ++c) {
+            const int t = f0 + i + c;
+            if (t < H && codes[(size_t) t * ncb + c] >= 0) continue;
+            miss[(size_t) c * n_valid + i] = 1;
+            cb_missing[c] = partial = true;
+        }
+    }
+    if (partial && !zac_partial_frames(m)) {
+        fprintf(stderr, "zac: missing residual codes need a decoder GGUF with res.{i}.bias (reconvert with "
+                        "tools/convert_gguf.py codec-decoder)\n");
+        return false;
+    }
     ggml_context * ctx = ggml_init({(size_t) 64 * 1024 * 1024, nullptr, true});
     ggml_cgraph * graph = ggml_new_graph_custom(ctx, 16384, false);
     render_ctx rc{ctx, m, n_valid, 1, {}, {}, {}, graph, &st, 0};
 
-    std::vector<ggml_tensor *> ids(ncb);
+    std::vector<ggml_tensor *> ids(ncb), keep(ncb, nullptr);
     for (int c = 0; c < ncb; ++c) {
         ids[c] = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, gf);
         ggml_set_input(ids[c]);
@@ -1050,9 +1101,21 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
     ggml_tensor * x = ggml_add(ctx, ggml_get_rows(ctx, m.get("sem.table"), ids[0]), m.get("sem.bias"));
     for (int b = 0; b < m.sem_depth; ++b) x = convnext_block(rc, x, "sem_head." + std::to_string(b));
     x = ggml_add(ctx, ggml_mul_mat(ctx, m.get("sem_head.out.weight"), x), m.get("sem_head.out.bias"));
-    for (int c = 1; c < ncb; ++c)
-        x = ggml_add(ctx, x, ggml_get_rows(ctx, m.get("res." + std::to_string(c - 1) + ".table"), ids[c]));
-    x = ggml_add(ctx, x, m.get("res.bias")); // [latent, gf]
+    for (int c = 1; c < ncb; ++c) {
+        ggml_tensor * part = ggml_get_rows(ctx, m.get("res." + std::to_string(c - 1) + ".table"), ids[c]);
+        if (cb_missing[c]) {
+            keep[c] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, gf);
+            ggml_set_input(keep[c]);
+            part = ggml_mul(ctx, part, keep[c]);
+        }
+        x = ggml_add(ctx, x, part);
+    }
+    ggml_tensor * res_bias = m.get("res.bias");
+    if (partial) {
+        res_bias = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, L, gf);
+        ggml_set_input(res_bias);
+    }
+    x = ggml_add(ctx, x, res_bias); // [latent, gf]
 
     struct stage_in {
         ggml_tensor *pos, *slots, *mask;
@@ -1116,7 +1179,8 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
         return false;
     }
 
-    // Un-shear: codebook c of frame t is row t + c; rows past H are padding (clamped to a valid id).
+    // Un-shear: codebook c of frame t is row t + c; rows past H (right-padding columns, missing cells) are clamped
+    // to a valid id, a missing cell's row then multiplied by 0.
     std::vector<int32_t> col(gf);
     for (int c = 0; c < ncb; ++c) {
         for (int i = 0; i < gf; ++i) {
@@ -1124,6 +1188,30 @@ static bool decode_chunk(const zac_model & m, zac_stream & st, const int32_t * c
             col[i] = std::clamp(t < H ? codes[(size_t) t * ncb + c] : 4097, 0, m.codebook_size - 1);
         }
         ggml_backend_tensor_set(ids[c], col.data(), 0, (size_t) gf * sizeof(int32_t));
+    }
+    if (partial) {
+        std::vector<float> kv(gf);
+        for (int c = 1; c < ncb; ++c) {
+            if (!keep[c]) continue;
+            for (int i = 0; i < gf; ++i) kv[i] = i < n_valid && miss[(size_t) c * n_valid + i] ? 0.0f : 1.0f;
+            ggml_backend_tensor_set(keep[c], kv.data(), 0, (size_t) gf * sizeof(float));
+        }
+        std::vector<float> bias((size_t) L * gf);
+        std::vector<double> v(L);
+        for (int i = 0; i < gf; ++i) {
+            float * b = bias.data() + (size_t) i * L;
+            std::copy(m.res_bias.begin(), m.res_bias.end(), b);
+            bool left_out = false;
+            for (int c = 1; c < ncb && i < n_valid; ++c) {
+                if (!miss[(size_t) c * n_valid + i]) continue;
+                if (!left_out) std::copy(m.res_bias.begin(), m.res_bias.end(), v.begin());
+                left_out = true;
+                const float * cb = m.res_cb_bias.data() + (size_t) (c - 1) * L;
+                for (int j = 0; j < L; ++j) v[j] -= cb[j];
+            }
+            if (left_out) std::transform(v.begin(), v.end(), b, [](double d) { return (float) d; });
+        }
+        ggml_backend_tensor_set(res_bias, bias.data(), 0, bias.size() * sizeof(float));
     }
     std::vector<int32_t> pos, slots;
     std::vector<ggml_fp16_t> mask;
@@ -1226,7 +1314,7 @@ static void resample(const zac_model & m, zac_stream & st, bool flush, std::vect
 
 bool zac_stream_decode(const zac_model & m, zac_stream & st, const int32_t * codes, int H, int f_hi,
                        std::vector<float> & audio) {
-    if (f_hi < 0 || H < 0 || (f_hi > st.n_done && !codes)) return false;
+    if (f_hi < 0 || H < 0 || (f_hi > st.n_done && (!codes || f_hi > H))) return false;
     if (st.kc.empty() && !zac_stream_alloc(m, st)) return false;
     if (st.owner != &m) {
         fprintf(stderr, "zac: stream used with a different codec model\n");

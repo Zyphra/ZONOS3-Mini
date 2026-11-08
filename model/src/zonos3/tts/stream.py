@@ -65,6 +65,17 @@ def prefix_need(emitted: int, prefill: int, s: StreamSettings) -> int:
     return min(s.chunk, s.first_chunk + emitted - prefill)
 
 
+def prefix_chunks(prefill: int, s: StreamSettings, frames: int) -> list[int]:
+    """The frames of each codec-stream decode of a primed prefix stream (the ``prefill`` frames decoded on their own)
+    whose rows keep arriving one at a time, until ``frames`` frames are decoded: 3, then 1, 2, 4, 8, 15, 15, ... by
+    default."""
+    chunks, start = [prefill] if prefill else [], prefill
+    while start < frames:
+        chunks.append(prefix_need(start, prefill, s))
+        start += chunks[-1]
+    return chunks
+
+
 def _host(x) -> np.ndarray:
     """A numpy view of rows or codes (torch tensors on any device, arrays, lists)."""
     return x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
@@ -75,9 +86,16 @@ _EMPTY = np.zeros(0, dtype=np.float32)
 
 class PrefixDecoder:
     """One request's prefix-mode decode on a stateful codec ``stream``. The stream decodes [decode-context frames |
-    silence-prefill frames | generated frames] from frame 0; the context and prefill samples are dropped. ``step`` emits
-    the next chunk once ``prefix_need`` frames are decodable behind the hold-back; ``finish`` decodes up to the target
-    and flushes the stream (no samples past the target's end)."""
+    silence-prefill frames | generated frames] from frame 0; the context and prefill samples are dropped. A ``stream``
+    that already decoded the prefill frames (``stream.frames == prefill``, no decode context; ``primed_samples`` of
+    them came out) starts at the generated frames. ``step`` emits the next chunk once ``prefix_need`` frames are
+    decodable behind the hold-back; ``finish`` decodes up to the target and flushes the stream (no samples past the
+    target's end, or the last frame emitted).
+
+    Early partial-frame decode (``codebooks`` < n_codebooks; ``first_only``: the first chunk only): a frame is
+    decodable once its first ``codebooks`` codebooks arrived (``ready``). The missing residual codes (audio padding
+    after the undelay) reach the codec as -1, left out of the frame (a coarser RVQ decode); a frame is never decoded
+    again."""
 
     def __init__(
         self,
@@ -89,9 +107,16 @@ class PrefixDecoder:
         prefill: int,
         context_codes=None,
         settings: StreamSettings = StreamSettings(),
+        primed_samples: int = 0,
+        codebooks: int | None = None,
+        first_only: bool = False,
     ):
         self.stream = stream
         self.n_codebooks, self.pad, self.hop = n_codebooks, audio_pad_id, hop
+        self.codebooks = n_codebooks if codebooks is None else int(codebooks)
+        if not 1 <= self.codebooks <= n_codebooks:
+            raise ValueError(f"stream_codebooks must be 1..{n_codebooks}")
+        self.first_only = first_only
         self.prefill = int(prefill)
         self.settings = settings
         self.context = None
@@ -100,13 +125,29 @@ class PrefixDecoder:
         ctx = 0 if self.context is None else len(self.context)
         self.ctx = ctx
         self.emitted = self.prefill
-        self.skip = (ctx + self.prefill) * hop  # raw stream samples still to drop
-        self.produced = 0  # raw stream samples
+        if stream.frames and (stream.frames != self.prefill or ctx):
+            raise ValueError("a primed codec stream must have decoded exactly the prefill frames, without context")
+        self.produced = int(primed_samples) if stream.frames else 0  # raw stream samples
+        self.skip = (ctx + self.prefill) * hop - self.produced  # raw stream samples still to drop
         self.done = False
 
-    def step(self, buffer, complete: int) -> np.ndarray:
-        """The delayed rows so far and the complete (undelayable, pre-EOS) frame count -> the next chunk, or empty."""
-        decodable = complete - self.settings.hold_back
+    def ready(self, buffer, complete: int, eos: int | None = None) -> int:
+        """Frames decodable now: the ``complete`` ones (undelayable, pre-EOS), or with early decode every frame whose
+        first ``codebooks`` codebooks arrived (codebook j of frame f rides row f + j), capped at ``eos`` and before any
+        frame whose semantic code is not a code (padding / EOA)."""
+        if self.codebooks >= self.n_codebooks or (self.first_only and self.emitted > self.prefill):
+            return complete
+        ready = len(buffer) - (self.codebooks - 1)
+        if eos is not None:
+            ready = min(ready, eos)
+        while ready > max(complete, self.emitted) and int(buffer[ready - 1][0]) >= self.pad - 1:
+            ready -= 1
+        return ready
+
+    def step(self, buffer, complete: int, eos: int | None = None) -> np.ndarray:
+        """The delayed rows so far, the complete (undelayable, pre-EOS) frame count and the EOS frame when known -> the
+        next chunk, or empty."""
+        decodable = self.ready(buffer, complete, eos) - self.settings.hold_back
         if decodable - self.emitted < prefix_need(self.emitted, self.prefill, self.settings):
             return _EMPTY
         return self._decode(buffer, decodable)
@@ -118,13 +159,15 @@ class PrefixDecoder:
         self.done = True
         parts = [self._decode(buffer, target)] if target > self.emitted else []
         tail = self.stream.flush()
-        cap = max(0, (self.ctx + max(target, self.prefill)) * self.hop - self.produced)
+        cap = max(0, (self.ctx + max(target, self.emitted)) * self.hop - self.produced)
         parts.append(self._out(tail[:cap]))
         return np.concatenate(parts).astype(np.float32, copy=False)
 
     def _decode(self, buffer, end: int) -> np.ndarray:
         start = 0 if self.stream.frames == 0 else self.emitted  # the first call decodes the prefill rows too
         codes = undelay_window(buffer, start, end, self.n_codebooks, self.pad).numpy()
+        if self.codebooks < self.n_codebooks:
+            codes[:, 1:][codes[:, 1:] == self.pad] = -1
         if start == 0 and self.context is not None:
             codes = np.concatenate([self.context, codes], axis=0)
         self.emitted = end
@@ -141,7 +184,8 @@ class PrefixDecoder:
 class StreamDecoder:
     """One request's rows as they come -> float32 PCM. ``decode(codes)`` runs the codec on undelayed int64 codes
     [frames, n_codebooks] (whole mode; the reference tail prepended at the stream start, its samples dropped here);
-    prefix mode drives ``stream`` (a codec stream) through a ``PrefixDecoder``."""
+    prefix mode drives ``stream`` (a codec stream) through a ``PrefixDecoder`` (``codebooks`` / ``first_only``: its
+    early partial-frame decode, the request's stream_codebooks / stream_codebooks_scope == "first")."""
 
     def __init__(
         self,
@@ -156,6 +200,8 @@ class StreamDecoder:
         mode: str = "whole",
         overlap_frames: int = 4,
         settings: StreamSettings = StreamSettings(),
+        codebooks: int | None = None,
+        first_only: bool = False,
     ):
         if mode not in ("whole", "prefix"):
             raise ValueError(f"stream decode mode must be whole or prefix, got {mode!r}")
@@ -184,6 +230,8 @@ class StreamDecoder:
                 prefill=self.prefill,
                 context_codes=self.context,
                 settings=settings,
+                codebooks=codebooks,
+                first_only=first_only,
             )
         self.eos: int | None = None
         self.done = False
@@ -242,7 +290,7 @@ class StreamDecoder:
         return audio
 
     def _prefix_chunk(self) -> np.ndarray:
-        return self.prefix.step(self.buffer, self._target())
+        return self.prefix.step(self.buffer, self._target(), self.eos)
 
     def _prefix_final(self) -> np.ndarray:
         return self.prefix.finish(self.buffer, self._target())

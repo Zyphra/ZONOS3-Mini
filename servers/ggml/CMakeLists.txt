@@ -244,6 +244,14 @@ if (BUILD_TESTING)
     target_link_libraries(text-wav PRIVATE zonos3-text zonos3-audio)
     add_test(NAME text-wav COMMAND text-wav)
     set_tests_properties(text-wav PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
+    # Prefix streaming with early partial-frame decode (stream_codebooks): the ready rule, the codec leaving missing
+    # residual codebooks out (dummy-zac.gguf carries res.{i}.bias), the request fields and scheduler streams.
+    add_executable(prefix-stream tests/prefix-stream.cpp)
+    target_link_libraries(prefix-stream PRIVATE zonos3-server-core)
+    add_test(NAME prefix-stream COMMAND prefix-stream
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zonos3.gguf
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dummy-zac.gguf)
+    set_tests_properties(prefix-stream PROPERTIES PASS_REGULAR_EXPRESSION "PASS")
 endif()
 
 # --- Graph features (plan 7.5/7.6/7.8): CPU invariants of the alignment probe and accent adapters.

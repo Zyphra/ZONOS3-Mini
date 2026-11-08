@@ -676,6 +676,15 @@ components:
           description: "Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default)."
           enum: [prefix, whole, null]
           default: null
+        stream_codebooks:
+          description: "Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry's `stream_codebooks.default`."
+          type: integer
+          minimum: 1
+          default: 1
+        stream_codebooks_scope:
+          description: "Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry's `stream_codebooks.scope`."
+          enum: [first, all]
+          default: first
         speaker_mode:
           description: Speaker path on checkpoints that carry both (null = the checkpoint default).
           enum: [embedding, reference, null]

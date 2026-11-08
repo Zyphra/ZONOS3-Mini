@@ -1,5 +1,5 @@
 {
-  "description": "Request defaults and limits of every server and the studio (zonos3.generation). sample_rate: the API's audio rate (Hz). sampling: the v2 sampling defaults (servers/api/openapi.yaml repeats them; model/tests/test_generation.py keeps the two equal). tag_cfg_scale: the tag-CFG scale range. silence_prefill_frames: the server default length (ZONOS3_SILENCE_PREFILL_FRAMES overrides it) and the longest a request may ask for. decode_context_frames: the reference tail decoded ahead of the stream when a request leaves decode_context_frames unset or 0. reference_max_frames: the reference prefix of the GGUF servers (60 s at the dual codec's 2940-sample hop; longer reference codes keep their first frames). max_frames: the GGUF servers' default frame budget (--max). audio_max_seconds: the longest reference clip, upload and speech-edit clip.",
+  "description": "Request defaults and limits of every server and the studio (zonos3.generation). sample_rate: the API's audio rate (Hz). sampling: the v2 sampling defaults (servers/api/openapi.yaml repeats them; model/tests/test_generation.py keeps the two equal). tag_cfg_scale: the tag-CFG scale range. silence_prefill_frames: the server default length (ZONOS3_SILENCE_PREFILL_FRAMES overrides it) and the longest a request may ask for. decode_context_frames: the reference tail decoded ahead of the stream when a request leaves decode_context_frames unset or 0. reference_max_frames: the reference prefix of the GGUF servers (60 s at the dual codec's 2940-sample hop; longer reference codes keep their first frames). max_frames: the GGUF servers' default frame budget (--max). audio_max_seconds: the longest reference clip, upload and speech-edit clip. stream_codebooks: the prefix stream's early partial-frame decode defaults (request fields stream_codebooks / stream_codebooks_scope): a frame is decoded once its first `default` codebooks arrived, for the `scope` chunks (first: the first chunk only; all: every chunk); default = n_codebooks decodes complete frames only.",
   "sample_rate": 44100,
   "sampling": {
     "temperature": 0.75,
@@ -15,5 +15,6 @@
   "decode_context_frames": 30,
   "reference_max_frames": 900,
   "max_frames": 2000,
-  "audio_max_seconds": {"reference": 60, "upload": 600, "edit": 150}
+  "audio_max_seconds": {"reference": 60, "upload": 600, "edit": 150},
+  "stream_codebooks": {"default": 1, "scope": "first"}
 }

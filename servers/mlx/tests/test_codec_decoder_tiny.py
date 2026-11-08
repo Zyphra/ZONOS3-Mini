@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import math
 
+import mlx.core as mx
 import numpy as np
 import pytest
-from conftest import FIXTURES
+from conftest import FIXTURES, dummy_codec
 from gguf import GGUFReader
 from zonos3_mlx.models.codec_decoder import CodecDecoder
 
@@ -90,15 +91,19 @@ def moss(R, x, p, n_head, context, eps):
 
 
 def reference_decode(R, codes):
+    """The whole decode of ``codes``; a residual code of -1 leaves its table row and ``res.{i}.bias`` out."""
     m = R.meta
     F = len(codes)
     x = R.t["sem.table"][codes[:, 0]] + R.t["sem.bias"]
     for b in range(m["sem_head.depth"]):
         x = convnext(R, x, f"sem_head.{b}", m["convnext_eps"])
     x = R.lin("sem_head.out.weight", x, "sem_head.out.bias")
+    missing = codes[:, 1:] < 0
     for c in range(1, 10):
-        x = x + R.t[f"res.{c - 1}.table"][codes[:, c]]
+        x = x + np.where(missing[:, c - 1 : c], 0.0, R.t[f"res.{c - 1}.table"][np.maximum(codes[:, c], 0)])
     x = x + R.t["res.bias"]
+    if missing.any():
+        x = x - missing @ np.stack([R.t[f"res.{i}.bias"] for i in range(9)])
     for s in range(5):
         p = f"stage.{s}"
         x = R.lin(p + ".in.weight", x)
@@ -171,6 +176,27 @@ def codes():
     return unshear(stream, eos)
 
 
+@pytest.fixture(scope="module")
+def biased(tmp_path_factory):
+    """The dummy decoder with per-codebook residual biases (early partial-frame decode)."""
+    return dummy_codec(tmp_path_factory.mktemp("zac") / "zac.gguf", residual_biases=True)
+
+
+@pytest.fixture(scope="module")
+def unbiased(tmp_path_factory):
+    """The dummy decoder with only the summed ``res.bias`` (early partial-frame decode off)."""
+    return dummy_codec(tmp_path_factory.mktemp("zac") / "zac.gguf", residual_biases=False)
+
+
+def first_chunk_partial(codes, rows: int = 4):
+    """``codes`` as the k = 1 first chunk after ``rows`` delayed rows leaves them: codebook j of frame f < rows is
+    known once row f + j arrived, the rest missing (-1)."""
+    partial = codes.copy()
+    for f in range(rows):
+        partial[f, rows - f :] = -1
+    return partial
+
+
 def test_decode_matches_the_float64_transcription(codes):
     got = CodecDecoder.load(GGUF).decode(codes)
     want = reference_decode(Ref(GGUF), codes)
@@ -209,3 +235,51 @@ def test_stream_equals_the_whole_decode(codes):
     out = np.concatenate(parts + [stream.flush()])
     assert len(out) == len(full)
     np.testing.assert_allclose(out, full, atol=1e-5)
+
+
+def test_stream_leaves_missing_residual_codes_out_of_their_frames(codes, biased):
+    """Missing residual codes (-1) drop their codebooks' table rows and biases (the float64 transcription), in any
+    chunking; the decode is coarser than the complete one, not the same."""
+    dec = CodecDecoder.load(biased)
+    assert dec.early_decode
+    partial = first_chunk_partial(codes)
+    want = reference_decode(Ref(biased), partial)
+    stream = dec.stream()
+    got = np.concatenate([stream.decode(partial[:4]), stream.decode(partial[4:9]), stream.decode(partial[9:])])
+    got = np.concatenate([got, stream.flush()])
+    assert got.shape == want.shape
+    assert np.abs(got - want).max() <= 1e-4
+    assert np.abs(got - dec.decode(codes)).max() > 1e-2
+
+
+def test_complete_codes_decode_bit_identically_with_residual_biases(codes, biased, unbiased):
+    """The residual biases change nothing for complete codes: the stream is bit-identical to the decoder without them,
+    and in a chunk with missing codes the latent of every complete frame is the complete decode's, bit for bit."""
+    dec, plain = CodecDecoder.load(biased), CodecDecoder.load(unbiased)
+    assert not plain.early_decode
+
+    def run(d):
+        s = d.stream()
+        return np.concatenate([s.decode(codes[:4]), s.decode(codes[4:]), s.flush()])
+
+    assert np.array_equal(run(dec), run(plain))
+
+    partial = first_chunk_partial(codes)
+    x = mx.array(np.random.default_rng(2).standard_normal((len(codes), dec.res_biases.shape[1])).astype(np.float32))
+    ids = mx.array(np.maximum(partial, 0).astype(np.int32))
+    mixed = np.array(dec._residual(x, ids, partial[:, 1:] < 0))
+    complete = np.array(dec._residual(x, ids))
+    assert np.array_equal(mixed[4:], complete[4:])
+    assert not np.allclose(mixed[:4], complete[:4])
+
+
+def test_stream_refuses_non_codes_and_missing_codes_without_residual_biases(codes, biased, unbiased):
+    plain = CodecDecoder.load(unbiased)
+    with pytest.raises(ValueError, match="residual codes cannot be missing"):
+        plain.stream().decode(first_chunk_partial(codes))
+    dec = CodecDecoder.load(biased)
+    for row, col, bad in ((0, 0, -1), (2, 3, -2), (1, 5, 4096), (0, 0, 4097)):
+        wrong = codes.copy()
+        wrong[row, col] = bad
+        with pytest.raises(ValueError, match="codec ids"):
+            dec.stream().decode(wrong)

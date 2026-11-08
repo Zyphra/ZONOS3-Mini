@@ -5,11 +5,13 @@ upsampling (15 -> 240 Hz), the multi-resolution iSTFT head (ConvNeXt trunk, two 
 non-causal FIR mixer at 44160 Hz, then the exact 44160 -> 44100 sinc resampler. The C++ decoder streams in chunks with
 conv histories and ring KV caches; over a whole utterance that equals one causal pass, which is what ``decode`` runs.
 ``CodecDecoder.stream()`` is the incremental form (``CodecStream``: conv histories, KV caches, the NumPy host half of
-zonos3.codec.stream_host) that the prefix-streaming decode drives.
+zonos3.codec.stream_host) that the prefix-streaming decode drives; it takes missing residual codes (-1, early
+partial-frame decode) when the GGUF carries the per-codebook residual biases ``res.{i}.bias``.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,7 @@ from zonos3.tts.stream import StreamDecoder
 
 from zonos3_mlx.gguf_io import GGUFFile, Weight, matmul
 
+logger = logging.getLogger("zonos3_mlx.codec")
 ARCH = "mossdual_istft"
 _ATTN_BLOCK = 512  # query rows per windowed-attention block
 
@@ -231,6 +234,20 @@ class CodecDecoder:
         self.host_windows = [host[f"head.window.{i}"] for i in range(2)]
         self.host_mixer = host["head.mixer.weight"]
         self.host_rs_kernel = host["resample.kernel"]
+        # per-codebook residual out_proj biases (``res.bias`` is their sum): a missing residual code drops its
+        # codebook's table row and bias from the frame; without them the early partial-frame decode is off. A host
+        # stack, not a lazy mx.stack: the codec thread evaluates it, on its own stream.
+        res = [f"res.{i}.bias" for i in range(self.n_codebooks - 1)]
+        self.res_biases = None
+        if all(n in self.P.t for n in res):
+            self.res_biases = mx.array(np.stack([np.array(self.P.t[n]) for n in res]))
+        else:
+            logger.info("%s: no per-codebook residual biases: early partial-frame decode off", self.name)
+
+    @property
+    def early_decode(self) -> bool:
+        """Whether streams decode frames with missing residual codes (``CodecStream.decode`` code -1)."""
+        return self.res_biases is not None
 
     @classmethod
     def load(cls, path: str | Path) -> "CodecDecoder":
@@ -247,9 +264,7 @@ class CodecDecoder:
         for b in range(self.sem_depth):
             x = convnext_block(P, x, f"sem_head.{b}", self.convnext_eps)
         x = P.lin("sem_head.out.weight", x, "sem_head.out.bias")
-        for c in range(1, self.n_codebooks):
-            x = x + P.t[f"res.{c - 1}.table"][codes[:, c]]
-        x = x + P.t["res.bias"]
+        x = self._residual(x, codes)
         mx.eval(x)
         for s, hp in enumerate(self.stages):
             p = f"stage.{s}"
@@ -266,6 +281,24 @@ class CodecDecoder:
             mx.eval(x)
         x = _layer_norm(x, P.t["head.norm.weight"], P.t["head.norm.bias"], self.convnext_eps)
         return P.lin("head.out.0.weight", x, "head.out.0.bias"), P.lin("head.out.1.weight", x, "head.out.1.bias")
+
+    def _residual(self, x: mx.array, ids: mx.array, missing: np.ndarray | None = None) -> mx.array:
+        """x + the residual codebooks of ``ids`` [n, n_codebooks] (their folded tables and ``res.bias``). ``missing``
+        [n, n_codebooks - 1] marks the residual codes left out: their table rows and biases are not added (the other
+        frames' sums are bit-identical to the complete decode)."""
+        P = self.P
+        if missing is None or not missing.any():
+            for c in range(1, self.n_codebooks):
+                x = x + P.t[f"res.{c - 1}.table"][ids[:, c]]
+            return x + P.t["res.bias"]
+        if self.res_biases is None:
+            raise ValueError(f"{self.name} has no per-codebook residual biases: residual codes cannot be missing")
+        present = mx.array(~missing)
+        for c in range(1, self.n_codebooks):
+            x = x + mx.where(present[:, c - 1 : c], P.t[f"res.{c - 1}.table"][ids[:, c]], 0.0)
+        x = x + P.t["res.bias"]
+        dropped = mx.array(missing.astype(np.float32)) @ self.res_biases
+        return mx.where(mx.array(missing.any(axis=1))[:, None], x - dropped, x)
 
     # ---------------------------------------------------------------------------------------------- iSTFT head
     def _istft(self, spec: mx.array, i: int) -> mx.array:
@@ -362,7 +395,9 @@ class CodecStream:
     """Incremental ``CodecDecoder.decode``: ``decode(codes [n, n_codebooks])`` returns the 44100 Hz samples that are
     final (2940*F - 1470 after F frames), ``flush()`` the rest; the concatenation equals the whole decode. Conv
     histories and per-layer KV caches carry the trunk state; the overlap-add iSTFT, the FIR mixer and the resampler run
-    on the host (zonos3.codec.stream_host, ports of zac.cpp's)."""
+    on the host (zonos3.codec.stream_host, ports of zac.cpp's). A residual code (codebook >= 1) of -1 is missing:
+    that codebook's contribution is left out of the frame, a coarser RVQ decode (the codec trained with quantizer
+    dropout; ``CodecDecoder.early_decode`` decoders only)."""
 
     def __init__(self, dec: CodecDecoder, max_chunk: int = 32):
         from zonos3.codec.stream_host import IstftHeadStream, ResamplerStream
@@ -378,11 +413,14 @@ class CodecStream:
 
     def decode(self, codes: np.ndarray) -> np.ndarray:
         codes = np.asarray(codes)
+        size = self.dec.codebook_size
         if codes.ndim != 2 or codes.shape[1] != self.dec.n_codebooks:
             raise ValueError(f"codes must be [frames, {self.dec.n_codebooks}], got {codes.shape}")
+        if ((codes < -1) | (codes >= size)).any() or (codes[:, 0] < 0).any():
+            raise ValueError(f"codes must be codec ids 0..{size - 1} (residual codebooks: -1 = missing)")
         if len(codes) == 0:
             return np.zeros(0, dtype=np.float32)
-        codes = np.clip(codes, 0, self.dec.codebook_size - 1).astype(np.int32)
+        codes = codes.astype(np.int32)
         return np.concatenate(
             [self._chunk(codes[i : i + self.max_chunk]) for i in range(0, len(codes), self.max_chunk)]
         )
@@ -404,14 +442,12 @@ class CodecStream:
 
     def _chunk(self, codes: np.ndarray) -> np.ndarray:
         d, P = self.dec, self.dec.P
-        ids = mx.array(codes)
+        ids = mx.array(np.maximum(codes, 0))
         x = P.t["sem.table"][ids[:, 0]] + P.t["sem.bias"]
         for b in range(d.sem_depth):
             x = self._block(x, f"sem_head.{b}", self.sem_hist, b)
         x = P.lin("sem_head.out.weight", x, "sem_head.out.bias")
-        for c in range(1, d.n_codebooks):
-            x = x + P.t[f"res.{c - 1}.table"][ids[:, c]]
-        x = x + P.t["res.bias"]
+        x = d._residual(x, ids, codes[:, 1:] < 0)
         mx.eval(x)
         cpf = 1  # stage positions per code frame
         for s, hp in enumerate(d.stages):

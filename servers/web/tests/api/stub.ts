@@ -73,13 +73,21 @@ class StubBackbone {
   }
 }
 
+/** A decoded chunk: its un-sheared indices, first frame, frame count and the backbone decode steps run before it. */
+export interface StubChunk { idx: Int32Array; p0: number; n: number; step: number }
+
 class StubCodec {
   readonly gain = Math.fround(10 ** (-3 / 20));
   /** Frames decoded since the last reset. */
   frames = 0;
-  reset() { this.frames = 0; }
-  async chunk(_idx: Int32Array, _p0: number, n: number) {
+  chunks: StubChunk[] = [];
+  /** Backbone decode steps so far (set by stubApi). */
+  clock: () => number = () => 0;
+  constructor(readonly partialFrames = true) {}
+  reset() { this.frames = 0; this.chunks = []; }
+  async chunk(idx: Int32Array, p0: number, n: number) {
     this.frames += n;
+    this.chunks.push({ idx: idx.slice(), p0, n, step: this.clock() });
     return new Float32Array(n * HOP).fill(0.5);
   }
   async flush() { return new Float32Array(0); }
@@ -108,7 +116,7 @@ function editStubs(sources: number[], frames: number): EditStubs {
   return { backbone, aligner, models: { hp, backbone: async () => backbone, align: (pcm, tokens) => aligner.align(pcm, tokens) } };
 }
 
-export function stubApi(opts: { frames?: number; editFrames?: number } = {}): StubSet {
+export function stubApi(opts: { frames?: number; editFrames?: number; partialFrames?: boolean } = {}): StubSet {
   const man = JSON.parse(readFileSync(models + 'backbone/manifest.json', 'utf8'));
   const hp = modelHp(man.meta);
   const g = (name: string) => parseGguf(file(models + 'companions/' + name));
@@ -118,7 +126,8 @@ export function stubApi(opts: { frames?: number; editFrames?: number } = {}): St
   for (const [lang, f] of Object.entries(index)) laci.set(lang, LaciHeads.parse(readFileSync(models + 'laci/' + f, 'utf8'), f));
   const voices = JSON.parse(readFileSync(models + 'voices/voices.json', 'utf8')) as { id: string; label: string; file: string }[];
   const backbone = new StubBackbone(steer.sources, opts.frames);
-  const codec = new StubCodec();
+  const codec = new StubCodec(opts.partialFrames);
+  codec.clock = () => backbone.steered.length;
   const edit = haveEditModels ? editStubs(steer.sources, opts.editFrames ?? 6) : null;
   const engine: Engine = {
     hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
@@ -156,10 +165,11 @@ const RELEASE_HP: ModelHp = {
 
 /** A stub engine without exported models: RELEASE_HP, no steering bundle, no LACI heads, no accent adapters, no
  *  speech editing, one default voice. */
-export function bareApi(): StubSet {
+export function bareApi(opts: { frames?: number; partialFrames?: boolean } = {}): StubSet {
   const hp = RELEASE_HP;
-  const backbone = new StubBackbone([]);
-  const codec = new StubCodec();
+  const backbone = new StubBackbone([], opts.frames);
+  const codec = new StubCodec(opts.partialFrames);
+  codec.clock = () => backbone.steered.length;
   const engine: Engine = {
     hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),

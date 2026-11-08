@@ -16,6 +16,7 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
+from zonos3 import languages
 from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLE_RATE, SAMPLING
 from zonos3.reference.synth import decode_base64_blob, load_embedding_vector, slerp
 from zonos3.server import plugins
@@ -87,6 +88,7 @@ from zonos3_sgl.message import (
     TTSCodesReply,
     TTSDecodeCodesMsg,
     TTSEncodeAudioMsg,
+    TTSNormalizeMsg,
     TTSSamplingParams,
     TTSTokenizeMsg,
 )
@@ -1038,6 +1040,16 @@ async def _tts_generate_msg(
     for its speaker mode, ``request_rules``); the tokenizer worker builds the prompt rows.
     ``laci_target_frames`` / ``laci_adjust_rate``: a LACI take's duration target (zonos3.server.plugins.LaciTakeRequest;
     needs req.laci)."""
+    # The tokenizer normalizes the text (the longest step before the scheduler, ~0.2 ms per English character) while
+    # this coroutine resolves the request; the TTSTokenizeMsg then finds it memoized. An invalid language is
+    # rejected below.
+    if req.text_normalization:
+        try:
+            language = languages.normalize(req.language)
+        except ValueError:
+            language = None
+        if language is not None:
+            await state.send_one(TTSNormalizeMsg(text=req.text, language=language))
     ctx = _RulesContext(state.config)
     try:
         request = plan.parse_request(req.model_dump())
@@ -1095,6 +1107,8 @@ async def _tts_generate_msg(
             speaker_cfg_scale=req.speaker_cfg_scale,
             tag_cfg_scale=req.tag_cfg_scale,
             stream_decode=stream_decode,
+            stream_codebooks=req.stream_codebooks,
+            stream_codebooks_scope=req.stream_codebooks_scope,
         ),
         speaker_embedding=rules.embedding,
         speaker_reference_audio=speaker_reference_audio,

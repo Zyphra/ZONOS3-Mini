@@ -300,7 +300,8 @@ bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
 
 // GenerateRequest -> GenReq in the rules' order (zonos3.tts.plan.request_head + request_rules, which sgl
 // _tts_generate_msg runs): tag CFG, speaker mode, condition rows, speaker, language, max_tokens, silence prefill,
-// accent, controls, stream decode, speaker CFG, pronunciation groups, LACI; then the scheduler's CFG twin choice.
+// stream codebooks, accent, controls, stream decode, speaker CFG, pronunciation groups, LACI; then the scheduler's CFG
+// twin choice.
 GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session) {
     GeneratePlan out;
     GenReq & gr = out.gr;
@@ -331,6 +332,21 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
             fail(400, "silence_prefill_frames must be 0.." + std::to_string(max_prefill));
         gr.silence_prefill = (int) frames;
     }
+    // stream_codebooks / stream_codebooks_scope (prefix streaming's early partial-frame decode): unset = the registry's
+    // stream_codebooks default / scope; above n_codebooks a 400. A decoder GGUF without the per-codebook residual
+    // biases decodes complete frames only (n_codebooks).
+    const int ncb = (int) s.model.hp.n_codebooks;
+    if (set(body, "stream_codebooks")) {
+        const int64_t k = body["stream_codebooks"].get<int64_t>();
+        if (k < 1 || k > ncb) fail(400, "stream_codebooks must be 1.." + std::to_string(ncb));
+        gr.stream_codebooks = (int) k;
+    }
+    if (set(body, "stream_codebooks_scope")) {
+        const std::string scope = body["stream_codebooks_scope"].get<std::string>();
+        if (scope != "first" && scope != "all") fail(400, "stream_codebooks_scope must be first or all");
+        gr.stream_codebooks_first_only = scope == "first";
+    }
+    if (!zac_partial_frames(s.zac)) gr.stream_codebooks = ncb;
     apply_accent(s, body, gr);
     apply_controls(s, body, gr);
     resolve_span_follow(s, body, gr);

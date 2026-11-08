@@ -14,6 +14,16 @@ describe('un-shear', () => {
     expect(idx[0]).toBe(4095);
     expect(idx[16]).toBe(4095);
   });
+  it('marks residual cells past H missing (-1) only on request; codebook 0 is never missing', () => {
+    const H = 3;
+    const codes = Array.from({ length: H * 10 }, (_, i) => 100 + i);
+    const idx = buildIdx(codes, H, 0, 3, undefined, true);
+    expect(idx[2]).toBe(codes[2 * 10]);              // frame 2, codebook 0: row 2 arrived
+    expect(idx[1 * 16 + 1]).toBe(codes[2 * 10 + 1]); // frame 1, codebook 1: row 2 arrived
+    expect(idx[1 * 16 + 2]).toBe(-1);                // frame 2, codebook 1: row 3 not yet
+    expect(idx[9 * 16 + 0]).toBe(-1);
+    expect(Array.from(buildIdx(codes, H, 0, 3))).not.toContain(-1);
+  });
 });
 
 function stream(Hmax: number, eos: number, eosAt = 0): Range[] {

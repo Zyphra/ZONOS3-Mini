@@ -27,4 +27,7 @@ MAX_FRAMES: int = int(_data["max_frames"])
 REFERENCE_AUDIO_MAX_SECONDS: float = float(_data["audio_max_seconds"]["reference"])
 UPLOAD_MAX_SECONDS: float = float(_data["audio_max_seconds"]["upload"])
 EDIT_MAX_SECONDS: float = float(_data["audio_max_seconds"]["edit"])
+# prefix streams: decode a frame once its first STREAM_CODEBOOKS codebooks arrived, for the "first" chunk or "all"
+STREAM_CODEBOOKS: int = int(_data["stream_codebooks"]["default"])
+STREAM_CODEBOOKS_SCOPE: str = str(_data["stream_codebooks"]["scope"])
 del _data

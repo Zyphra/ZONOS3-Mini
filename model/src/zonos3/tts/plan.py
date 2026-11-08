@@ -34,6 +34,8 @@ from zonos3.generation import (
     SAMPLING,
     SILENCE_PREFILL_DEFAULT_FRAMES,
     SILENCE_PREFILL_MAX_FRAMES,
+    STREAM_CODEBOOKS,
+    STREAM_CODEBOOKS_SCOPE,
     TAG_CFG_MAX_SCALE,
     TAG_CFG_MIN_SCALE,
 )
@@ -57,6 +59,8 @@ GENERATE_DEFAULTS: dict = {
     "seed": None,
     "stream": True,
     "stream_decode": None,
+    "stream_codebooks": STREAM_CODEBOOKS,
+    "stream_codebooks_scope": STREAM_CODEBOOKS_SCOPE,
     "format": "pcm",
     "speaker_mode": None,
     "condition_buckets": None,
@@ -467,6 +471,8 @@ def request_rules(
     language = languages.normalize(req.language)
     max_tokens = max_tokens_budget(req.max_tokens, ctx.max_frames)
     silence = 0 if edit else silence_prefill_frames(req.silence_prefill_frames, available=ctx.silence_available)
+    if not 1 <= int(req.stream_codebooks) <= int(ctx.n_codebooks):
+        raise ValueError(f"stream_codebooks must be 1..{int(ctx.n_codebooks)}")
     accent = resolve_accent(ctx.accent_names, req.accent, req.accent_strength)
     embedding = speaker.embedding
     sources = tuple(ctx.steering_sources)

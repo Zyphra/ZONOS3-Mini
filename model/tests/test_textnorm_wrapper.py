@@ -109,7 +109,7 @@ def test_german_ordinal_dates_keep_the_ordinal(tn):
 
 
 def test_phoneme_groups_are_kept_as_typed_and_the_text_between_normalized(monkeypatch):
-    normalizer = TTSTextNormalizer.__new__(TTSTextNormalizer)
+    normalizer = TTSTextNormalizer()
     seen = []
 
     def fake(text, language):

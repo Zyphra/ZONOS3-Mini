@@ -29,7 +29,9 @@ from zonos3_mlx.server import speakers
 from zonos3_mlx.server.state import ServerState
 
 logger = logging.getLogger("zonos3_mlx.server")
-# Progressive (prefix) streaming: StreamDecoder drives the decoder's stateful CodecStream.
+# Progressive (prefix) streaming: StreamDecoder drives the decoder's stateful CodecStream, with the request's early
+# partial-frame decode (stream_codebooks / stream_codebooks_scope) when the codec GGUF supports it (complete frames
+# otherwise).
 PREFIX_STREAM = True
 
 
@@ -51,6 +53,7 @@ class JobRun:
         c, dec = state.config, state.engine.decoder
         self.decoder = None
         if mode is not None:
+            req = plan.request
             self.decoder = StreamDecoder(
                 dec.decode,
                 stream=dec.stream() if mode == "prefix" else None,
@@ -61,6 +64,8 @@ class JobRun:
                 context_codes=plan.context_codes,
                 mode=mode,
                 settings=state.options.prefix,
+                codebooks=int(req.stream_codebooks) if dec.early_decode else None,
+                first_only=req.stream_codebooks_scope == "first",
             )
         self.rows: list = []
         self.eos_frame: int | None = None

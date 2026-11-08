@@ -6,8 +6,8 @@
 import type { ProbeInput } from '../backbone';
 import { locateTextSpan, probeReduce } from '../probe';
 import {
-  ALIGN_PROBE_MAX_TEXT, CONTEXT_CAPACITY, DECODE_CONTEXT_FRAMES, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES, TAG_CFG_MAX_SCALE,
-  TAG_CFG_MIN_SCALE,
+  ALIGN_PROBE_MAX_TEXT, CONTEXT_CAPACITY, DECODE_CONTEXT_FRAMES, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES,
+  STREAM_CODEBOOKS, STREAM_CODEBOOKS_SCOPE, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE,
 } from '../generation';
 import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
@@ -52,6 +52,8 @@ interface Plan {
   stream: boolean;
   wav: boolean;
   prefix: boolean;
+  streamCodebooks: number;            // early partial-frame decode: codebooks a frame needs (NCB = complete frames)
+  streamFirstOnly: boolean;           // stream_codebooks_scope 'first': only the first prefix chunk decodes early
   steering: Steering;
   spanFollow: '' | 'rate' | 'reading';
   laci: LaciHeads | null;
@@ -235,6 +237,7 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     referenceCodes: rs.codes, speakerEmbedding: rs.embedding ? Float32Array.from(rs.embedding) : null,
     conditionBuckets, silencePrefill: 0, decodeContext: null,
     cfgScale: 1, cfgKind: '', twinSteered: true, headroomDb: -1, fadeOutMs: 0, stream: true, wav: false, prefix: false,
+    streamCodebooks: STREAM_CODEBOOKS, streamFirstOnly: STREAM_CODEBOOKS_SCOPE === 'first',
     steering: new Steering(), spanFollow: '', laci: null, follow: null, followTokens: [],
     followLead: 1, followLag: 0, prompt: null!, twin: null,
   };
@@ -267,6 +270,12 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   if (truthy(body, 'control_spans')) p.spanFollow = p.follow ? 'reading' : 'rate';
   p.stream = bool(body, 'stream') ?? true;
   p.prefix = p.stream && (isSet(body, 'stream_decode') ? str(body, 'stream_decode') === 'prefix' : true);
+  // the spec validates the type, minimum 1 and the scope enum (422); above n_codebooks is a 400
+  if (isSet(body, 'stream_codebooks')) {
+    p.streamCodebooks = Number(body.stream_codebooks);
+    if (p.streamCodebooks > NCB) fail(400, `stream_codebooks must be 1..${NCB}`);
+  }
+  if (isSet(body, 'stream_codebooks_scope')) p.streamFirstOnly = str(body, 'stream_codebooks_scope') === 'first';
   if (speakerCfg !== 1.0) {
     const hasPrompt = (p.speakerMode === 'reference' && !!p.referenceCodes?.length) ||
       (p.speakerMode === 'embedding' && !!p.speakerEmbedding?.length);
@@ -443,10 +452,10 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
   let decoded = 0;         // frames handed to the codec
   let pcmChain: Promise<void> = Promise.resolve();
   let codecErr: unknown = null;
-  const decodeUpTo = (rows: number[], H: number, fHi: number) => {
+  const decodeUpTo = (rows: number[], H: number, fHi: number, missing = false) => {
     while (decoded < fHi) {
       const n = Math.min(BLOCK, fHi - decoded);
-      const out = codec.chunk(buildIdx(rows, H, decoded, n), decoded, n);
+      const out = codec.chunk(buildIdx(rows, H, decoded, n, undefined, missing), decoded, n);
       out.catch(() => {});   // handled through pcmChain; avoids an unhandled-rejection report
       decoded += n;
       pcmChain = pcmChain.then(() => out).then(pcm => { const f = finish(pcm); if (f.length) emit(f); })
@@ -454,14 +463,25 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
     }
   };
   let emitted = p.prompt.prefillFrames;   // prefix streaming: frames handed to the codec (scheduler job->emitted)
+  // early partial-frame decode (stream_codebooks < NCB; a codec without per-codebook biases decodes complete frames)
+  const k = codec.partialFrames ? p.streamCodebooks : ncb;
+  const pad = e.hp.audioPad;
   const prefixReady = () => {
     const H = codes.length / ncb;
     let complete = H - (ncb - 1);
     if (eosFrame >= 0) complete = Math.min(complete, eosFrame);
-    const decodable = complete - PREFIX_HOLD_BACK_FRAMES;
+    // zonos3.tts.stream PrefixDecoder.ready: frames whose first k codebooks arrived (codebook j of frame f rides row
+    // f + j), capped at EOS and walked back before a frame whose semantic code is EOA / padding
+    let ready = complete;
+    if (k < ncb && !(p.streamFirstOnly && emitted > p.prompt.prefillFrames)) {
+      ready = H - (k - 1);
+      if (eosFrame >= 0) ready = Math.min(ready, eosFrame);
+      while (ready > Math.max(complete, emitted) && codes[(ready - 1) * ncb] >= pad - 1) ready--;
+    }
+    const decodable = ready - PREFIX_HOLD_BACK_FRAMES;
     const need = Math.min(PREFIX_CHUNK_FRAMES, PREFIX_FIRST_CHUNK_FRAMES + emitted - p.prompt.prefillFrames);
     if (decodable - emitted < need) return;
-    decodeUpTo(decodeRows(codes, H, p.decodeContext, ctxFrames), H + ctxFrames, decodable + ctxFrames);
+    decodeUpTo(decodeRows(codes, H, p.decodeContext, ctxFrames), H + ctxFrames, decodable + ctxFrames, decodable > complete);
     emitted = decodable;
   };
 

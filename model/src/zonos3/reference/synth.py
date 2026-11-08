@@ -752,6 +752,8 @@ def synthesize(
             context_codes=plan.context_codes,
             mode="prefix",
             settings=stream,
+            codebooks=int(req.stream_codebooks),
+            first_only=req.stream_codebooks_scope == "first",
         )
         emit = _Emit(on_audio, gain, float(req.fade_out_ms))
 

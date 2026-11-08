@@ -19,6 +19,8 @@ export type BackboneApi = Pick<Backbone, 'steerSources'> & {
 /** Streaming codec decoder (src/zac.ts ZacStream). */
 export interface CodecApi {
   readonly gain: number;
+  /** Takes a residual code -1 as missing (early partial-frame decode; false: complete frames only). */
+  readonly partialFrames: boolean;
   reset(): void;
   /** Submits its GPU work before returning; results resolve in call order. */
   chunk(idx: Int32Array, p0: number, n: number): Promise<Float32Array>;

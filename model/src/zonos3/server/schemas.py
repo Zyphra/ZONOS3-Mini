@@ -8,7 +8,14 @@ from typing import Annotated, Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from zonos3.generation import DECODE_CONTEXT_FRAMES, SAMPLING, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE
+from zonos3.generation import (
+    DECODE_CONTEXT_FRAMES,
+    SAMPLING,
+    STREAM_CODEBOOKS,
+    STREAM_CODEBOOKS_SCOPE,
+    TAG_CFG_MAX_SCALE,
+    TAG_CFG_MIN_SCALE,
+)
 
 
 class _Strict(BaseModel):
@@ -54,6 +61,10 @@ class GenerationOptions(_Strict):
     seed: Seed | None = None  # None = drawn by the server (echoed in X-Seed)
     # "prefix" streams chunks of an incremental (stateful) codec decode, "whole" one exact chunk at EOS.
     stream_decode: Literal["prefix", "whole"] | None = None
+    # Prefix decode: decode a frame once its first stream_codebooks codebooks arrived (n_codebooks = complete frames;
+    # above: 400), the missing residual codebooks left out; for the "first" chunk only or "all" (registry defaults).
+    stream_codebooks: Annotated[int, Field(ge=1)] = STREAM_CODEBOOKS
+    stream_codebooks_scope: Literal["first", "all"] = STREAM_CODEBOOKS_SCOPE
     speaker_mode: Literal["embedding", "reference"] | None = None
     # Condition rows of the cond3 finetunes: bucket ids per name or raw values mapped through the checkpoint's edges.
     condition_buckets: ConditionBuckets = None

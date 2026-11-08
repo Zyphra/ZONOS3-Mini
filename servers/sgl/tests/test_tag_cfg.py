@@ -68,6 +68,9 @@ class _Vocoder:
     def __init__(self, **_):
         pass
 
+    def warm_prefix_stream(self):
+        pass
+
     def silence_prefill_frames_for(self, requested_frames):
         return SILENCE_FRAMES if requested_frames is None else int(requested_frames)
 

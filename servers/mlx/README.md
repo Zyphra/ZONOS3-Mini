@@ -15,7 +15,11 @@ Every file is auto-detected next to the backbone. Generation runs on one worker 
 `--batch` requests (default 4; a CFG request takes two slots) advance one row per tick, a CFG request's two forwards in
 one MLX evaluation. Streamed audio decodes on a second (codec) thread while the backbone steps on: progressive prefix
 chunks by default, the one exact decode at EOS with `ZONOS3_STREAM_DECODE_DEFAULT=whole` (as on the sgl server; a
-request's `stream_decode` wins).
+request's `stream_decode` wins). The first prefix chunk decodes before its frame is complete (early partial-frame
+decode, the request's `stream_codebooks` / `stream_codebooks_scope`, registry default 1 on the first chunk): the
+residual codebooks not yet generated are left out of that frame, and later chunks wait for complete frames. It needs
+the per-codebook residual biases (`res.{i}.bias`) in the decoder GGUF; with an older GGUF (only the summed
+`res.bias`) every request streams complete frames.
 
 ## Install and run
 

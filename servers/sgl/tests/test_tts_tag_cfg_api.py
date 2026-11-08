@@ -43,12 +43,13 @@ class _Frontend:
             laci_heads={},
         )
         self.sent = []
+        self.hints = []  # TTSNormalizeMsg: warms the tokenizer's normalizer memo, submits nothing
 
     def new_user(self):
         return len(self.sent) + 1
 
     async def send_one(self, message):
-        self.sent.append(message)
+        (self.hints if isinstance(message, api_server.TTSNormalizeMsg) else self.sent).append(message)
 
     async def stream_tts_audio(self, uid, **kwargs):
         yield b""

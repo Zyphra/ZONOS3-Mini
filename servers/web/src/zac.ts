@@ -91,6 +91,9 @@ export class ZacStream {
   readonly gain: number;
   /** The gemm kernel per row class chosen at load ('q8' or a gemm_h8 variant). */
   readonly gemmPlan: GemmPlan;
+  /** The model carries the per-codebook residual biases (res.biases): chunk() takes residual code -1 as missing
+   *  (early partial-frame decode). Without them every request decodes complete frames only. */
+  readonly partialFrames: boolean;
   private prog: Program;
   private idx: GPUBuffer;
   private dyn: GPUBuffer;
@@ -133,6 +136,9 @@ export class ZacStream {
       return v;
     };
     this.gain = Math.fround(Math.pow(10, -Number(w.meta['headroom_db']) / 20));
+    this.partialFrames = w.has('res.biases');
+    if (!this.partialFrames)
+      console.warn('zac: no per-codebook residual biases (res.biases; re-export with pnpm export): early partial-frame decode off');
     this.sink = makeSink({
       nFft: N_FFT, hop: HEAD_HOP, windows: [host('head.window.0'), host('head.window.1')],
       mixer: host('head.mixer.weight'), maxLogMag: Number(w.meta['head.max_log_magnitude']),
@@ -198,8 +204,10 @@ export class ZacStream {
     }
     const z = b.buf(F * LATENT * 4, 'zac.z');
     g(s, M('sem_head.out.weight'), z, { T: F, O: LATENT, IC: SEM }, { bias: T('sem_head.out.bias') });
-    b.dispatch('zac_embed', { idx: this.idx, tables: T('res.tables'), bias: T('res.bias'), outp: z },
-      { n: F, C: LATENT, F, y_off: 0, mode: 1 }, [Math.ceil(LATENT / 512), F, 1]);
+    b.dispatch('zac_embed', {
+      idx: this.idx, tables: T('res.tables'), bias: T('res.bias'), outp: z,
+      ...(this.partialFrames ? { biases: T('res.biases') } : {}),
+    }, { n: F, C: LATENT, F, y_off: 0, mode: 1 }, [Math.ceil(LATENT / 512), F, 1]);
 
     // ---- MOSS stages: windowed causal attention on absolute per-stage positions p0*cpf + i
     let x = z;
@@ -293,7 +301,8 @@ export class ZacStream {
   }
 
   /**
-   * Decode frames [p0, p0+n) (1 ≤ n ≤ 16) from un-sheared indices idx[10][16]. Submits the GPU work before
+   * Decode frames [p0, p0+n) (1 ≤ n ≤ 16) from un-sheared indices idx[10][16] (a residual -1 is a missing code when
+   * partialFrames; its codebook's term is left out of that frame). Submits the GPU work before
    * returning; the newly final 44.1 kHz samples resolve in call order (variable length: the FIR mixer and resampler
    * hold lookahead until flush()). No gain applied.
    */

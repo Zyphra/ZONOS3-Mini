@@ -61,9 +61,12 @@ The model is trained with an inter-codebook delay: codebook `j` is shifted by `j
 
 ```
 1. HTTP POST /v2/generate (or /v1/audio/speech)
+   ├─ FrontendManager sends TTSNormalizeMsg(text, language) first: the tokenizer normalizes the text while the
+   │  frontend resolves the request's rules and speaker (NeMo costs ~0.2 ms per English character)
    └─ FrontendManager assigns uid, creates TTSTokenizeMsg
 
 2. Tokenizer process
+   ├─ text normalization                   # TTSTextNormalizer, memoized per (text, language): a hit after step 1
    ├─ TTSPromptBuilder.build(text)         # SuperBPE / byte tokenization (zonos3/tts/prompt.py)
    │   └─ per text token: [audio_pad_id]*10 + [text_token_id]
    ├─ speaker row / condition rows / reference prefix before the text
@@ -219,8 +222,34 @@ the generator's conv-tail decoder is never used. The model is cached per device 
   `first + frames emitted so far`, capped at `ZONOS3_PREFIX_STREAM_CHUNK_FRAMES` (15, 1 s): 1, 2, 4, 8, 15, 15, ...
   `ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES` (0) complete frames stay undecoded until EOS, so first audio needs
   9 (shear) + 1 generated frames. At EOS the stream continues to the end and is flushed. The stream emits only final
-  samples, so the concatenated chunks equal the whole decode. `ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES` is still
-  validated (>= chunk) but unused.
+  samples, so the concatenated chunks equal the whole decode in fp32 (CPU); on CUDA the trunk runs in bf16 and any
+  change of chunk boundaries moves the PCM by ~1e-3 RMS. `ZONOS3_PREFIX_STREAM_CONTEXT_FRAMES` is still validated
+  (>= chunk) but unused.
+- **Primed stream** (prefix decode with the silence prefill rows and no decode context): the vocoder decodes the
+  prefill frames once as pure silence and every such request continues a fork of that stream
+  (`TTSVocoderManager._prefix_stream`, `ISTFTStream.fork`: the trunk state tensors are shared, never written in
+  place; the host iSTFT/resampler state is copied), so the first chunk is the first generated frame alone. The
+  prefill frames' codebooks that fall in generated rows (frame f, codebook j with f + j >= prefill) are the LM's and
+  are not decoded: the PCM moves ~1.7e-3 RMS (signal ~0.16), the same size as moving a chunk boundary
+  (~1.4e-3); the codes are unchanged.
+- **Codec CUDA graphs**: at tokenizer start `warm_prefix_stream` primes the default prefill's stream and captures the
+  chunk shapes of the primed ramp (3, then 1, 2, 4, 8, 15 ... until every KV cache is full at 150 frames, then the
+  steady 15-frame chunk; `zonos3.tts.stream.prefix_chunks`, `matched_codec.capture_stream_graphs`). A chunk whose
+  shape (frames, stream position up to `ISTFTStream.full_frames`) was captured replays `ChunkGraphs` (state copied
+  in and out, position as a graph input); other shapes (decode context, other prefills, EOS tails) run eagerly.
+  Replays are bit-identical to the eager decode; they cut the GPU half of the first chunk from ~11.8 ms of launches
+  to ~2.9 ms, leaving the host iSTFT head as the larger cost.
+- **Early partial-frame decode** (on by default in every server: `stream_codebooks` = 1 on the `first` chunk, the
+  generation registry's `stream_codebooks`; k = n_codebooks waits for complete frames): a frame is decodable once its
+  first k codebooks arrived (row f + k - 1 instead of f + 9; `zonos3.tts.stream.PrefixDecoder.ready`, capped at EOS
+  and before any frame whose semantic code is padding/EOA). The missing residual codes reach the codec as -1 and the
+  codec leaves those codebooks out of the RVQ sum, bias included (the codec trained with quantizer dropout 0.5; the
+  GGUF codecs need the per-codebook `res.{i}.bias` tensors, without them early decode is off for that model); a frame
+  is decoded once, never refined. With scope `first` (default) only the first chunk is early and later chunks wait
+  for complete frames; `all` decodes every chunk early. The codes are unchanged; the complete-code decode stays
+  bit-identical. Measured on sgl / one H100 (`early_sweep.py`): TTFA ~52.5 ms at k = 10 falls ~3.1 ms per codebook to
+  ~24.4 ms at k = 1; against the k = 10 take of the same seed the waveform SNR is 23.9 dB with scope `first` (6.5 dB
+  with `all`).
 - With a raw-reference prompt, `decode_context_frames` (default 30) of the reference's tail codes are prepended as
   decoder context whenever a decode starts at the stream start, and their samples dropped.
 

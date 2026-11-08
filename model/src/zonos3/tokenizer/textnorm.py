@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import threading
+from collections import OrderedDict
 from typing import Dict, Optional
 
 from zonos3 import languages
@@ -58,6 +59,9 @@ _MOSES_POSTPROCESS_LANGS = {"en", "zh", "ja", "ko"}
 # text is byte-identical. Training transcripts were single-line, so this is also the in-distribution shape for the
 # tokenizer when normalization is off (a raw "\n\n" tokenizes to a never-seen ".ĊĊ" token).
 _LINE_BREAK_RE = re.compile(r"\s*[^\S ]\s*")
+
+# Normalized texts kept per TTSTextNormalizer (LRU over (text, language)).
+NORMALIZED_MEMO_SIZE = 1024
 
 
 def collapse_line_breaks(text: str) -> str:
@@ -160,6 +164,9 @@ class TTSTextNormalizer:
 
     Construction and calls are serialized per language: the upstream
     Normalizer shares a mutable TokenParser and is not thread-safe.
+    Results are memoized per (text, language) (NORMALIZED_MEMO_SIZE, LRU): the
+    grammar is a pure function of the text and costs ~0.2 ms per English
+    character, and a server normalizes a request's text ahead of its prompt.
     """
 
     def __init__(self, cache_root: str | None = None):
@@ -167,6 +174,8 @@ class TTSTextNormalizer:
         self._normalizers: Dict[str, object] = {}
         self._locks: Dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
+        self._memo: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self._memo_lock = threading.Lock()
 
     @staticmethod
     def nemo_lang(language: str) -> Optional[str]:
@@ -237,6 +246,21 @@ class TTSTextNormalizer:
         return post_normalize(result, lang)
 
     def normalize(self, text: str, language: str) -> str:
+        """Normalize text for the given server language code (memoized; see _normalize_uncached)."""
+        key = (text, language)
+        with self._memo_lock:
+            result = self._memo.get(key)
+            if result is not None:
+                self._memo.move_to_end(key)
+                return result
+        result = self._normalize_uncached(text, language)
+        with self._memo_lock:
+            self._memo[key] = result
+            while len(self._memo) > NORMALIZED_MEMO_SIZE:
+                self._memo.popitem(last=False)
+        return result
+
+    def _normalize_uncached(self, text: str, language: str) -> str:
         """Normalize text for the given server language code.
 
         Returns the input (line breaks collapsed) for unsupported languages. A grammar failure on the whole text

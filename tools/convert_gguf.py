@@ -871,10 +871,13 @@ def cmd_codec_decoder(args, parser):
         t, b = table("quantizer.semantic_quantizer.quantizers.0")
         put("sem.table", t)
         put("sem.bias", b)
+        # res.bias = the nine out_proj biases summed (what a complete frame adds); res.{i}.bias = each one alone, which
+        # a decode leaving residual codebook i out of a frame (early partial-frame decode) subtracts.
         total = torch.zeros(1024, dtype=torch.float64)
         for i in range(9):
             t, b = table(f"quantizer.quantizer.quantizers.{i}")
             put(f"res.{i}.table", t)
+            put(f"res.{i}.bias", b)
             total += b.double()
         put("res.bias", total.float())
         consumed.update(k for k in sd if ".in_proj." in k and k.startswith("quantizer."))  # encode-only

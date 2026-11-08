@@ -198,6 +198,25 @@ def test_prefix_mode_needs_a_codec_stream():
         StreamDecoder(CausalFakeDecoder(), n_codebooks=N_CB, audio_pad_id=PAD, hop=HOP, mode="prefix")
 
 
+def test_early_decode_stops_at_eos_and_never_sends_a_missing_semantic_code():
+    """codebooks=1 on every chunk: frame f reaches the codec with row f, its missing residual codes as -1, and
+    nothing at or past the EOS frame (EOA in codebook 0) is decoded."""
+    frames = make_frames(12, seed=11)
+    eos = 7
+    frames[eos:] = EOA
+    codec = FakeStream()
+    dec = StreamDecoder(
+        CausalFakeDecoder(), stream=codec, n_codebooks=N_CB, audio_pad_id=PAD, hop=HOP, mode="prefix", codebooks=1
+    )
+    chunks = run(dec, delayed_rows(frames))
+    assert chunks[0] != b""
+    assert len(codec.history) == eos and (codec.history[:, 0] == frames[:eos, 0]).all()
+    assert (codec.history[eos - 1, 1:] == -1).all()
+    known = codec.history >= 0
+    assert (codec.history[known] == frames[:eos][known]).all()
+    assert len(b"".join(chunks)) == eos * HOP * 4
+
+
 def test_prefix_settings_validation(monkeypatch):
     for bad in ({"chunk": 0}, {"first_chunk": 0}, {"hold_back": -1}, {"chunk": 20, "context": 10}):
         with pytest.raises(ValueError):

@@ -27,6 +27,7 @@ from zonos3_sgl.message import (
     TTSDecodeCodesMsg,
     TTSDetokenizeMsg,
     TTSEncodeAudioMsg,
+    TTSNormalizeMsg,
     TTSTokenizeMsg,
     TTSUserMsg,
 )
@@ -145,6 +146,7 @@ def tokenize_worker(
         audio_pad_id=audio_pad_id,
         audio_codec=audio_codec,
     )
+    tts_vocoder_manager.warm_prefix_stream()
     # inline reference codes keep their first frames: the checkpoint's speaker_reference_max_seconds at the codec hop
     reference_limit = plan.reference_frame_limit(
         speaker_reference_max_seconds, tts_vocoder_manager.hop_length, SAMPLE_RATE
@@ -166,6 +168,7 @@ def tokenize_worker(
             tts_tokenize_msg = [m for m in pending_msg if isinstance(m, TTSTokenizeMsg)]
             tts_detokenize_msg = [m for m in pending_msg if isinstance(m, TTSDetokenizeMsg)]
             encode_msgs = [m for m in pending_msg if isinstance(m, TTSEncodeAudioMsg)]
+            normalize_msgs = [m for m in pending_msg if isinstance(m, TTSNormalizeMsg)]
             decode_msgs = [m for m in pending_msg if isinstance(m, TTSDecodeCodesMsg)]
             frontend_replies = []
             for msg in encode_msgs:
@@ -376,6 +379,12 @@ def tokenize_worker(
                 if len(batch_output.data) == 1:
                     batch_output = batch_output.data[0]
                 send_frontend.put(batch_output)
+
+            # Texts of requests the frontend is still resolving (TTSNormalizeMsg): normalize them now so their
+            # TTSTokenizeMsg finds the result memoized. After the vocoder work, which other streams wait on.
+            if text_normalizer is not None:
+                for msg in normalize_msgs:
+                    normalize_request_text(msg.text, msg.language, text_normalizer)
 
     except KeyboardInterrupt:
         pass

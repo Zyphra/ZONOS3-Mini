@@ -18,16 +18,17 @@ import numpy as np
 import pytest
 import soundfile as sf
 import torch
-from conftest import FIXTURES, REPO
+from conftest import FIXTURES, REPO, dummy_codec
 from fastapi.testclient import TestClient
 from zonos3.server.schemas import GenerateRequest
 from zonos3.tts.audio import pcm16_samples
 from zonos3.tts.phonemes import normalize_headword
 from zonos3.tts.plan import Speaker
 from zonos3.tts.steering import controls_document, load_bundle
+from zonos3.tts.stream import StreamDecoder
 from zonos3_mlx.engine import Engine, plan_request
 from zonos3_mlx.scheduler import Scheduler
-from zonos3_mlx.server import speakers
+from zonos3_mlx.server import generate, speakers
 from zonos3_mlx.server.app import create_app
 from zonos3_mlx.server.state import ServerOptions, ServerState
 
@@ -54,7 +55,7 @@ def files(tmp_path_factory):
         check=True,
         capture_output=True,
     )
-    (root / "zac-keep2.gguf").write_bytes((FIXTURES / "dummy-zac.gguf").read_bytes())
+    dummy_codec(root / "zac-keep2.gguf", residual_biases=False)  # early partial-frame decode off
     lexicon = root / "lexicon.lmdb"
     env = lmdb.open(str(lexicon), map_size=1 << 24, max_dbs=8, subdir=True)
     with env.begin(write=True) as txn:
@@ -116,15 +117,102 @@ def test_studio_pages_are_no_store_and_assets_immutable(client, tmp_path, monkey
 
 
 def test_prefix_stream_is_the_whole_decode_without_the_silence_prefill(client):
-    """A streamed request (the stateful prefix stream) carries the same audio as the buffered one; the buffered whole decode
-    also emits the re-decoded silence-prefill frames (3 by default) in front."""
-    body = {"text": "hello there", "seed": 4, "max_tokens": 40}
+    """A streamed request (the stateful prefix stream, complete frames) carries the same audio as the buffered one; the
+    buffered whole decode also emits the re-decoded silence-prefill frames (3 by default) in front."""
+    body = {"text": "hello there", "seed": 4, "max_tokens": 40, "stream_codebooks": 10}
     with client.stream("POST", "/v2/generate", json=body) as r:
         assert r.status_code == 200 and r.headers["x-seed"] == "4"
         streamed = np.frombuffer(b"".join(r.iter_bytes()), np.float32)
     whole = np.frombuffer(client.post("/v2/generate", json={**body, "stream": False}).content, np.float32)
     assert len(streamed) > 0 and len(whole) == len(streamed) + 3 * HOP
     np.testing.assert_allclose(whole[3 * HOP :], streamed, atol=1e-5)
+
+
+class RecordingDecoder(StreamDecoder):
+    """The server's StreamDecoder, recording the generated rows pushed when its first audio came out and every code
+    block its codec stream decoded."""
+
+    runs: list = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.first: int | None = None
+        self.decoded: list[np.ndarray] = []
+        RecordingDecoder.runs.append(self)
+        stream = self.prefix.stream
+        decode = stream.decode
+
+        def record(codes):
+            self.decoded.append(np.array(codes))
+            return decode(codes)
+
+        stream.decode = record
+
+    def push(self, row, eos_frame, finished=False):
+        out = super().push(row, eos_frame, finished)
+        if self.first is None and len(out):
+            self.first = len(self.buffer) - self.prefill
+        return out
+
+
+def streamed_run(client, monkeypatch, **fields) -> tuple[RecordingDecoder, np.ndarray]:
+    monkeypatch.setattr(generate, "StreamDecoder", RecordingDecoder)
+    RecordingDecoder.runs = []
+    body = {"text": "hello there", "seed": 4, "max_tokens": 40, "stream_decode": "prefix", **fields}
+    with client.stream("POST", "/v2/generate", json=body) as r:
+        assert r.status_code == 200
+        audio = np.frombuffer(b"".join(r.iter_bytes()), np.float32)
+    (run,) = RecordingDecoder.runs
+    assert len(run.buffer) - run.prefill >= 12, "the tiny model stopped too early for the timing checks"
+    return run, audio
+
+
+@pytest.fixture(scope="module")
+def early(files, tmp_path_factory):
+    """A server whose decoder GGUF carries the per-codebook residual biases (early partial-frame decode on)."""
+    zac = dummy_codec(tmp_path_factory.mktemp("early") / "zac.gguf", residual_biases=True)
+    engine = Engine.load(files / "m.gguf", zac=str(zac))
+    assert engine.decoder.early_decode
+    scheduler = Scheduler(engine, batch=2)
+    scheduler.start(warmup=False)
+    state = ServerState(engine, scheduler, ServerOptions(model_path=str(files / "m.gguf"), batch=2))
+    with TestClient(create_app(state)) as c:
+        yield c
+
+
+def test_default_stream_decodes_the_first_frame_from_its_semantic_code_then_complete_frames(early, monkeypatch):
+    """The registry default (stream_codebooks 1, scope "first"): the first chunk comes out after the first generated
+    row (not the 10th), its frames' unarrived residual codes reach the codec as -1; every later chunk is complete
+    frames (the second waits for frame prefill + 2's last codebook)."""
+    run, audio = streamed_run(early, monkeypatch)
+    complete_run, complete = streamed_run(early, monkeypatch, stream_codebooks=10)
+    assert run.first == 1 and complete_run.first == 10
+    first, *rest = run.decoded
+    assert (first[:, 0] >= 0).all() and (first[-1, 1:] == -1).all()
+    assert rest and len(rest[0]) == 2 and all((codes >= 0).all() for codes in rest)
+    assert len(audio) == len(complete) and not np.allclose(audio, complete, atol=1e-5)
+
+
+def test_stream_codebooks_scope_all_and_complete_frames(early, monkeypatch):
+    """scope "all": every chunk decodes as early as its frames' first k codebooks arrived; k = n_codebooks is the
+    complete-frame ramp, no missing code reaching the codec."""
+    run, _ = streamed_run(early, monkeypatch, stream_codebooks=2, stream_codebooks_scope="all")
+    assert run.first == 2
+    assert sum((codes < 0).any() for codes in run.decoded) > 1
+    run, _ = streamed_run(early, monkeypatch, stream_codebooks=10, stream_codebooks_scope="all")
+    assert run.first == 10 and all((codes >= 0).all() for codes in run.decoded)
+
+
+def test_early_decode_is_off_without_the_residual_biases(client, monkeypatch):
+    """A decoder GGUF with only the summed residual bias streams complete frames whatever the request asks."""
+    assert not client.app.state.zonos3.engine.decoder.early_decode
+    run, _ = streamed_run(client, monkeypatch, stream_codebooks=1, stream_codebooks_scope="all")
+    assert run.first == 10 and all((codes >= 0).all() for codes in run.decoded)
+
+
+def test_stream_codebooks_above_n_codebooks_is_refused(client):
+    r = client.post("/v2/generate", json={"text": "hi", "stream_codebooks": 11})
+    assert r.status_code == 400 and r.json()["detail"] == "stream_codebooks must be 1..10"
 
 
 def test_request_limits_follow_the_shared_rules(client):

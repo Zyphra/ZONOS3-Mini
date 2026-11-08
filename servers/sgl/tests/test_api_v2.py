@@ -81,12 +81,13 @@ class _Frontend:
     def __init__(self, config):
         self.config = config
         self.sent = []
+        self.hints = []  # TTSNormalizeMsg: warms the tokenizer's normalizer memo, submits nothing
 
     def new_user(self):
         return len(self.sent) + 1
 
     async def send_one(self, message):
-        self.sent.append(message)
+        (self.hints if isinstance(message, api_server.TTSNormalizeMsg) else self.sent).append(message)
 
     async def stream_tts_audio(self, uid, **kwargs):
         yield np.full(8, 0.25, dtype=np.float32).tobytes()
@@ -188,6 +189,17 @@ def test_generate_streams_pcm_with_the_drawn_seed(client, frontend):
     (msg,) = frontend.sent
     assert r.headers["x-seed"] == str(msg.sampling_params.seed) and 0 <= msg.sampling_params.seed < 2**31
     assert np.frombuffer(r.content, dtype="<f4").tolist() == [0.25] * 8
+
+
+def test_generate_sends_the_text_ahead_under_the_tokenizers_normalization_key(client, frontend):
+    text = "Call 555\nnow."
+    assert client.post("/v2/generate", json={"text": text, "language": "EN-US"}).status_code == 200
+    (msg,) = frontend.sent
+    # the memo key the tokenizer later normalizes with: the request text as sent, the normalized language
+    assert [(h.text, h.language) for h in frontend.hints] == [(msg.text, msg.language)] == [(text, "en_us")]
+    frontend.hints.clear()
+    assert client.post("/v2/generate", json={"text": text, "text_normalization": False}).status_code == 200
+    assert not frontend.hints
 
 
 def test_generate_wav_is_buffered_pcm16_and_clipped(client, frontend):

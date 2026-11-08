@@ -68,6 +68,7 @@ CORS allows every origin and exposes the response headers above.
 | `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `de`, `es`, `it`, `pt_br`, `ja`, `cmn`, `ko` (the `server` rows of `model/src/zonos3/registries/languages.json`) |
 | `text_normalization` | `true` | Verbalize numbers, dates and currency first |
 | `stream` | `true` | Chunked PCM; `stream_decode` (`prefix` / `whole`, null = server default) picks the decode |
+| `stream_codebooks`, `stream_codebooks_scope` | `1`, `first` | Prefix decode (every server): decode a frame once its first k codebooks arrived (missing residual codebooks left out), first audio up to 9 rows earlier; scope `first` (default) only for the first chunk, `all` for every chunk; k = n_codebooks waits for complete frames (defaults: `generation.json` `stream_codebooks`) |
 | `format` | `pcm` | `pcm`: float32 LE mono 44.1 kHz; `wav`: buffered 16-bit WAV (samples NaN → 0, clipped to [-1, 1], × 32767, rounded half to even; the same encoder in every server), needs `stream: false` |
 | `seed` | `null` | 0..4294967295; echoed in `X-Seed` |
 | `temperature`, `topk`, `top_p`, `min_p` | `0.75`, `80`, `0.69`, `0` | Sampling (the defaults of `model/src/zonos3/registries/generation.json`) |

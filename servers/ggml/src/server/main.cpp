@@ -353,6 +353,10 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         return 1;
     }
     s.zac_name = std::filesystem::path(zac_path).filename().string();
+    if (!zac_partial_frames(s.zac))
+        fprintf(stderr, "zonos3-server: %s has no per-codebook residual biases (res.{i}.bias): early partial-frame decode "
+                        "is off, prefix streaming decodes complete frames only (reconvert with tools/convert_gguf.py "
+                        "codec-decoder)\n", s.zac_name.c_str());
     // ZAC decode pool: one backend + thread per lane (ggml backends are not reentrant); lanes share s.zac's weights.
     s.zac_lanes = std::vector<ZacLane>(s.zac_threads);
     for (int i = 0; i < s.zac_threads; ++i)
