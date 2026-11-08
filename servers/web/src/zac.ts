@@ -159,7 +159,8 @@ export class ZacStream {
     const F = BLOCK_FRAMES;
     let cpf = 1;
     // Codec gemms skip row tiles past the dyn.b valid frames (cpf rows each, read at call time); h8 matrices run the
-    // planned kernel of their row class (F * cpf rows, as zacRows).
+    // planned kernel of their row class (F * cpf rows, as zacRows). The row-local layernorm/dwconv/patchUp/zac_embed
+    // dispatches exit past them too.
     const g = (X: GPUBuffer, W: Weight, Y: GPUBuffer, o: GemmOpts, ex: { bias?: GPUBuffer; scale?: GPUBuffer; res?: GPUBuffer } = {}) =>
       gemm(b, X, W, Y,
         { ...o, rowsDyn: cpf, kernel: W.dtype === 'h8' ? (F * cpf <= 32 ? this.gemmPlan.skinny : this.gemmPlan.large) : undefined },
@@ -181,16 +182,16 @@ export class ZacStream {
 
     // ---- semantic lookup + causal ConvNeXt head (768 ch, 15 Hz)
     let hx = withHistory(SEM, 6);
-    b.dispatch('zac_embed', { idx: this.idx, tables: T('sem.table'), bias: T('sem.bias'), outp: hx.xf },
-      { n: F, C: SEM, F, y_off: hx.off, mode: 0 }, [Math.ceil(SEM / 512), F, 1]);
+    b.dispatch('zac_embed', { idx: this.idx, tables: T('sem.table'), bias: T('sem.bias'), outp: hx.xf, dyn },
+      { n: F, C: SEM, F, y_off: hx.off, mode: 0, rows_dyn: 1 }, [Math.ceil(SEM / 512), F, 1]);
     const s = b.buf(F * SEM * 4, 'zac.sem');
     for (let bi = 0; bi < SEM_DEPTH; bi++) {
       const p = `sem_head.${bi}.`;
       const h = b.tmp(F * SEM * 4, 'zac.cn');
-      dwconv(b, hx.xf, T(p + 'dw.weight'), h, F, SEM, 7, T(p + 'dw.bias'));
+      dwconv(b, hx.xf, T(p + 'dw.weight'), h, F, SEM, 7, T(p + 'dw.bias'), 0, 0, { dyn, rowsDyn: cpf });
       exportHistory(hx.xf, hx.hist, SEM, 6);
       const hn = b.tmp(F * SEM * 4, 'zac.cn');
-      layernorm(b, h, T(p + 'norm.weight'), T(p + 'norm.bias'), hn, F, SEM, CNX_EPS);
+      layernorm(b, h, T(p + 'norm.weight'), T(p + 'norm.bias'), hn, F, SEM, CNX_EPS, 0, { dyn, rowsDyn: cpf });
       b.release(h);
       const h1 = b.tmp(F * SEM_FF * 4, 'zac.pw1');
       g(hn, M(p + 'pw1.weight'), h1, { T: F, O: SEM_FF, IC: SEM, act: ACT.gelu }, { bias: T(p + 'pw1.bias') });
@@ -205,9 +206,9 @@ export class ZacStream {
     const z = b.buf(F * LATENT * 4, 'zac.z');
     g(s, M('sem_head.out.weight'), z, { T: F, O: LATENT, IC: SEM }, { bias: T('sem_head.out.bias') });
     b.dispatch('zac_embed', {
-      idx: this.idx, tables: T('res.tables'), bias: T('res.bias'), outp: z,
+      idx: this.idx, tables: T('res.tables'), bias: T('res.bias'), outp: z, dyn,
       ...(this.partialFrames ? { biases: T('res.biases') } : {}),
-    }, { n: F, C: LATENT, F, y_off: 0, mode: 1 }, [Math.ceil(LATENT / 512), F, 1]);
+    }, { n: F, C: LATENT, F, y_off: 0, mode: 1, rows_dyn: 1 }, [Math.ceil(LATENT / 512), F, 1]);
 
     // ---- MOSS stages: windowed causal attention on absolute per-stage positions p0*cpf + i
     let x = z;
@@ -233,13 +234,13 @@ export class ZacStream {
         const p = `${sp}l${l}.`;
         const kr = b.buf(ring * nh * HEAD_DIM * 4, `zac.k${si}.${l}`);
         const vr = b.buf(ring * nh * HEAD_DIM * 4, `zac.v${si}.${l}`);
-        layernorm(b, xa, T(p + 'norm1.weight'), T(p + 'norm1.bias'), xn, rows, d, LN_EPS);
+        layernorm(b, xa, T(p + 'norm1.weight'), T(p + 'norm1.bias'), xn, rows, d, LN_EPS, 0, { dyn, rowsDyn: cpf });
         g(xn, M(p + 'qkv.weight'), qkv, { T: rows, O: 3 * d, IC: d });
         ropeKv(b, qkv, this.rope, q, kr, vr,
           { n: rows, nh, nkv: nh, hd: HEAD_DIM, in_stride: 3 * d, qkNorm: false, ring, posDyn: true, nDyn: true, posMul: cpf }, { dyn });
         attentionWin(b, q, kr, vr, ao, { n: rows, nh, window: st.ctx, ring, scale: 1 / Math.sqrt(HEAD_DIM), posMul: cpf }, dyn);
         g(ao, M(p + 'wo.weight'), xb, { T: rows, O: d, IC: d }, { scale: T(p + 'attn_scale'), res: xa });
-        layernorm(b, xb, T(p + 'norm2.weight'), T(p + 'norm2.bias'), xn, rows, d, LN_EPS);
+        layernorm(b, xb, T(p + 'norm2.weight'), T(p + 'norm2.bias'), xn, rows, d, LN_EPS, 0, { dyn, rowsDyn: cpf });
         g(xn, M(p + 'ffn1.weight'), f1, { T: rows, O: ff, IC: d, act: ACT.gelu });
         if (last && l === nl - 1) {
           headIn = withHistory(d, 6);
@@ -252,7 +253,7 @@ export class ZacStream {
       const y = b.buf(rows * st.outDim * 4, 'zac.sout');
       g(xa, M(sp + 'out.weight'), y, { T: rows, O: st.outDim, IC: d });
       const xp = b.buf(rows * st.outDim * 4, 'zac.patch');
-      patchUp(b, y, xp, rows, st.outDim / st.patch, st.patch);
+      patchUp(b, y, xp, rows, st.outDim / st.patch, st.patch, { dyn, rowsDyn: cpf * st.patch });
       x = xp;
       cpf *= st.patch;
     }
@@ -265,10 +266,10 @@ export class ZacStream {
     for (let bi = 0; bi < HEAD_DEPTH; bi++) {
       const p = `head.${bi}.`;
       const h = b.tmp(rows * SEM * 4, 'zac.hcn');
-      dwconv(b, cur.xf, T(p + 'dw.weight'), h, rows, SEM, 7, T(p + 'dw.bias'));
+      dwconv(b, cur.xf, T(p + 'dw.weight'), h, rows, SEM, 7, T(p + 'dw.bias'), 0, 0, { dyn, rowsDyn: cpf });
       exportHistory(cur.xf, cur.hist, SEM, 6);
       const hl = b.tmp(rows * SEM * 4, 'zac.hcn');
-      layernorm(b, h, T(p + 'norm.weight'), T(p + 'norm.bias'), hl, rows, SEM, CNX_EPS);
+      layernorm(b, h, T(p + 'norm.weight'), T(p + 'norm.bias'), hl, rows, SEM, CNX_EPS, 0, { dyn, rowsDyn: cpf });
       b.release(h);
       const h1 = b.tmp(rows * HEAD_FF * 4, 'zac.hpw1');
       g(hl, M(p + 'pw1.weight'), h1, { T: rows, O: HEAD_FF, IC: SEM, act: ACT.gelu }, { bias: T(p + 'pw1.bias') });
@@ -281,7 +282,7 @@ export class ZacStream {
       b.release(cur.xf);
       if (next) cur = next;
       else {
-        layernorm(b, out, T('head.norm.weight'), T('head.norm.bias'), hn, rows, SEM, CNX_EPS);
+        layernorm(b, out, T('head.norm.weight'), T('head.norm.bias'), hn, rows, SEM, CNX_EPS, 0, { dyn, rowsDyn: cpf });
         b.release(out);
       }
     }

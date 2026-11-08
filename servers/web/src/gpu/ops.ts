@@ -159,10 +159,13 @@ export function moeLora(b: Builder, lg: Buf, rbias: Buf, z: Buf, up: Weight, gat
   b.dispatch('moe_down_lora', { hbuf, sel, wts, dq: down.buf, ds: down.scales, outp: out, td, U: f.downUp.buf }, {}, [32, 1, n]);
 }
 
-/** Time-major patch up: y[t*h + j][ch] = x[t][ch*h + j], C = output channels. */
-export function patchUp(b: Builder, x: Buf, y: Buf, T: number, C: number, h: number): void {
+/** Time-major patch up: y[t*h + j][ch] = x[t][ch*h + j], C = output channels. ex.rowsDyn != 0: output rows at or past
+ *  dyn.b * rowsDyn exit. */
+export function patchUp(b: Builder, x: Buf, y: Buf, T: number, C: number, h: number,
+                        ex: { dyn?: Buf; rowsDyn?: number } = {}): void {
   const n = T * h * C;
-  b.dispatch('patch_up', { x, y }, { n, C, h }, linearWg(Math.ceil(n / 256)));
+  b.dispatch('patch_up', { x, y, dyn: ex.dyn ?? b.gpu.dummyUniform() }, { n, C, h, rows_dyn: ex.rowsDyn ?? 0 },
+    linearWg(Math.ceil(n / 256)));
 }
 
 /** Time-major patch down: y[t][ch*h + j] = x[t*h + j][ch]; T output rows, C input channels. */
@@ -171,8 +174,11 @@ export function patchDown(b: Builder, x: Buf, y: Buf, T: number, C: number, h: n
   b.dispatch('patch_down', { x, y }, { n, C, h }, linearWg(Math.ceil(n / 256)));
 }
 
-export function layernorm(b: Builder, x: Buf, w: Buf, bias: Buf, y: Buf, rows: number, N: number, eps: number, act = 0): void {
-  b.dispatch('layernorm', { x, w, b: bias, y }, { N, eps, act }, linearWg(rows));
+/** ex.rowsDyn != 0: rows at or past dyn.b * rowsDyn exit. */
+export function layernorm(b: Builder, x: Buf, w: Buf, bias: Buf, y: Buf, rows: number, N: number, eps: number, act = 0,
+                          ex: { dyn?: Buf; rowsDyn?: number } = {}): void {
+  b.dispatch('layernorm', { x, w, b: bias, y, dyn: ex.dyn ?? b.gpu.dummyUniform() }, { N, eps, act, rows_dyn: ex.rowsDyn ?? 0 },
+    linearWg(rows));
 }
 
 export const EW = { siluMul: 0, gluSplit: 1, add: 2, snake: 3, gluSplitBf16: 4 } as const;
@@ -187,9 +193,12 @@ export function snake(b: Builder, x: Buf, alpha: Buf, invAlpha: Buf, y: Buf, T: 
   elementwise(b, EW.snake, T * C, x, y, { C, y_off }, alpha, invAlpha);
 }
 
-/** Causal depthwise conv; `rnd` bits round to bf16: 1 the inputs as loaded, 2 the tap sum, 4 the output (after bias/act). */
-export function dwconv(b: Builder, Xf: Buf, w: Buf, y: Buf, T: number, C: number, K: number, bias?: Buf, act = 0, rnd = 0): void {
-  b.dispatch('dwconv', { Xf, w, b: bias, y }, { T, C, K, has_bias: bias ? 1 : 0, act, rnd }, linearWg(Math.ceil(T * C / 256)));
+/** Causal depthwise conv; `rnd` bits round to bf16: 1 the inputs as loaded, 2 the tap sum, 4 the output (after bias/act).
+ *  ex.rowsDyn != 0: rows at or past dyn.b * rowsDyn exit. */
+export function dwconv(b: Builder, Xf: Buf, w: Buf, y: Buf, T: number, C: number, K: number, bias?: Buf, act = 0, rnd = 0,
+                       ex: { dyn?: Buf; rowsDyn?: number } = {}): void {
+  b.dispatch('dwconv', { Xf, w, b: bias, y, dyn: ex.dyn ?? b.gpu.dummyUniform() },
+    { T, C, K, has_bias: bias ? 1 : 0, act, rnd, rows_dyn: ex.rowsDyn ?? 0 }, linearWg(Math.ceil(T * C / 256)));
 }
 
 export interface AttnOpts {

@@ -2,55 +2,80 @@
 // mix_emit/head_flush (servers/ggml/src/zac.cpp), with a Float64 mixed-radix real inverse DFT in place of pocketfft.
 
 /** Real inverse DFT of even length n from FFTPACK halfcomplex input [r0, r1, i1, …, r(n/2-1), i(n/2-1), r(n/2)]:
- *  x[j] = scale * (r0 + r(n/2)(-1)^j + 2 Σ_k (rk cos(2πjk/n) - ik sin(2πjk/n))). Mixed-radix decimation in time over
- *  the Hermitian-extended spectrum: radix-2/3 butterflies, a direct DFT for any other prime factor (23 here). */
+ *  x[j] = scale * (r0 + r(n/2)(-1)^j + 2 Σ_k (rk cos(2πjk/n) - ik sin(2πjk/n))). Half-length transform: with
+ *  M = n/2 and X the Hermitian spectrum, z[m] = x[2m] + i x[2m+1] is the inverse complex DFT of size M of
+ *  Z[k] = (X[k] + X[k+M]) + i e^{2πik/n} (X[k] - X[k+M]), X[k+M] = conj(X[M-k]). The size-M transform is a mixed-radix
+ *  decimation in time: radix-2/3 butterflies, a table-driven DFT for any other prime factor (23 here). */
 export class Irfft {
+  private readonly m: number;           // n / 2
   private readonly factors: number[] = [];
-  private readonly cos: Float64Array;   // cos/sin(2πk/n)
+  private readonly wc: Float64Array;    // cos/sin(2πk/n), k < m (pre-pass)
+  private readonly ws: Float64Array;
+  private readonly cos: Float64Array;   // cos/sin(2πk/m) (twiddles)
   private readonly sin: Float64Array;
-  private readonly xr: Float64Array;    // Hermitian spectrum
+  private readonly leaf = new Map<number, { c: Float64Array; s: Float64Array }>();   // prime p >= 5: cos/sin(2πqr/p), [q-1][r-1], q, r <= (p-1)/2
+  private readonly xr: Float64Array;    // Z
   private readonly xi: Float64Array;
-  private readonly yr: Float64Array;    // complex output
+  private readonly yr: Float64Array;    // z
   private readonly yi: Float64Array;
   private readonly tr: Float64Array;    // butterfly scratch
   private readonly ti: Float64Array;
+  private readonly ur: Float64Array;    // prime DFT scratch: t[r] ± t[p-r]
+  private readonly ui: Float64Array;
+  private readonly vr: Float64Array;
+  private readonly vi: Float64Array;
 
   constructor(readonly n: number) {
     if (!Number.isInteger(n) || n < 2 || n % 2) throw new Error(`irfft: n=${n} must be even`);
-    let r = n;
+    const m = this.m = n / 2;
+    let r = m;
     for (const p of [2, 3]) while (r % p === 0) { this.factors.push(p); r /= p; }
     for (let p = 5; r > 1; p += 2) while (r % p === 0) { this.factors.push(p); r /= p; }
     // The largest factor is the leaf: its direct DFT runs on gathered inputs without twiddles.
     this.factors.sort((a, b) => a - b);
-    this.cos = new Float64Array(n);
-    this.sin = new Float64Array(n);
-    for (let k = 0; k < n; k++) {
-      const a = (2 * Math.PI * k) / n;
-      this.cos[k] = Math.cos(a);
-      this.sin[k] = Math.sin(a);
+    this.wc = new Float64Array(m); this.ws = new Float64Array(m);
+    this.cos = new Float64Array(m); this.sin = new Float64Array(m);
+    for (let k = 0; k < m; k++) {
+      this.wc[k] = Math.cos((2 * Math.PI * k) / n); this.ws[k] = Math.sin((2 * Math.PI * k) / n);
+      this.cos[k] = Math.cos((2 * Math.PI * k) / m); this.sin[k] = Math.sin((2 * Math.PI * k) / m);
     }
-    this.xr = new Float64Array(n); this.xi = new Float64Array(n);
-    this.yr = new Float64Array(n); this.yi = new Float64Array(n);
-    const pmax = this.factors[this.factors.length - 1];
+    for (const p of this.factors) {
+      if (p < 5 || this.leaf.has(p)) continue;
+      const h = (p - 1) / 2, c = new Float64Array(h * h), s = new Float64Array(h * h);
+      for (let q = 1; q <= h; q++) for (let j = 1; j <= h; j++) {
+        const a = (2 * Math.PI * ((q * j) % p)) / p;
+        c[(q - 1) * h + j - 1] = Math.cos(a); s[(q - 1) * h + j - 1] = Math.sin(a);
+      }
+      this.leaf.set(p, { c, s });
+    }
+    this.xr = new Float64Array(m); this.xi = new Float64Array(m);
+    this.yr = new Float64Array(m); this.yi = new Float64Array(m);
+    const pmax = this.factors.length ? this.factors[this.factors.length - 1] : 1;
     this.tr = new Float64Array(pmax); this.ti = new Float64Array(pmax);
+    const hmax = (pmax - 1) >> 1;
+    this.ur = new Float64Array(hmax); this.ui = new Float64Array(hmax);
+    this.vr = new Float64Array(hmax); this.vi = new Float64Array(hmax);
   }
 
   exec(hc: ArrayLike<number>, out: Float64Array | Float32Array, scale: number): void {
-    const { n, xr, xi, yr } = this;
-    const h = n / 2;
-    xr[0] = hc[0]; xi[0] = 0;
-    for (let k = 1; k < h; k++) {
-      xr[k] = hc[2 * k - 1]; xi[k] = hc[2 * k];
-      xr[n - k] = xr[k]; xi[n - k] = -xi[k];
+    const { n, m, xr, xi, yr, yi, wc, ws } = this;
+    for (let k = 0; k < m; k++) {
+      const ar = k ? hc[2 * k - 1] : hc[0], ai = k ? hc[2 * k] : 0;   // X[k]
+      const j = m - k;                                                    // B = conj(X[m-k])
+      const br = j === m ? hc[n - 1] : hc[2 * j - 1], bi = j === m ? 0 : -hc[2 * j];
+      const sr = ar + br, si = ai + bi, dr = ar - br, di = ai - bi;
+      const c = wc[k], s = ws[k];
+      xr[k] = sr - (c * di + s * dr);
+      xi[k] = si + (c * dr - s * di);
     }
-    xr[h] = hc[n - 1]; xi[h] = 0;
-    this.rec(0, 1, 0, 0, n);
-    for (let j = 0; j < n; j++) out[j] = yr[j] * scale;
+    if (this.factors.length) this.rec(0, 1, 0, 0, m);
+    else { yr[0] = xr[0]; yi[0] = xi[0]; }
+    for (let j = 0; j < m; j++) { out[2 * j] = yr[j] * scale; out[2 * j + 1] = yi[j] * scale; }
   }
 
   /** y[o + j] = Σ_k x[i0 + k*is] e^{+2πi jk/nl}, j < nl, splitting by factors[level..]. */
   private rec(i0: number, is: number, o: number, level: number, nl: number): void {
-    const { xr, xi, yr, yi, tr, ti, cos, sin, n } = this;
+    const { xr, xi, yr, yi, tr, ti, cos, sin, m: n } = this;
     const p = this.factors[level], m = nl / p;
     if (m === 1) {
       for (let r = 0; r < p; r++) { tr[r] = xr[i0 + r * is]; ti[r] = xi[i0 + r * is]; }
@@ -58,21 +83,33 @@ export class Irfft {
       return;
     }
     for (let r = 0; r < p; r++) this.rec(i0 + r * is, is * p, o + r * m, level + 1, m);
-    const s = n / nl;   // w_nl^a = w_n^(a*s)
+    const s = n / nl;   // w_nl^a = w_n^(a*s); j0*r*s < n
+    if (p === 2) {
+      for (let j0 = 0, k = 0; j0 < m; j0++, k += s) {
+        const i = o + j0, i2 = i + m;
+        const a = yr[i2], b = yi[i2], c = cos[k], d = sin[k];
+        const wr = a * c - b * d, wi = a * d + b * c, ar = yr[i], ai = yi[i];
+        yr[i] = ar + wr; yi[i] = ai + wi;
+        yr[i2] = ar - wr; yi[i2] = ai - wi;
+      }
+      return;
+    }
     for (let j0 = 0; j0 < m; j0++) {
       tr[0] = yr[o + j0]; ti[0] = yi[o + j0];
-      for (let r = 1; r < p; r++) {
+      for (let r = 1, k = j0 * s; r < p; r++, k += j0 * s) {
         const a = yr[o + r * m + j0], b = yi[o + r * m + j0];
-        const k = (j0 * r * s) % n, c = cos[k], d = sin[k];
+        const c = cos[k], d = sin[k];
         tr[r] = a * c - b * d; ti[r] = a * d + b * c;
       }
       this.dft(p, o + j0, m);
     }
   }
 
-  /** y[o + q*stride] = Σ_r t[r] w_p^(qr), q < p. */
+  /** y[o + q*stride] = Σ_r t[r] w_p^(qr), q < p. Primes >= 5 pair r with p-r and q with p-q:
+   *  y[q] = (A - B, D + C), y[p-q] = (A + B, D - C) with A = t0r + Σ (tr[r] + tr[p-r]) c, D = t0i + Σ (ti[r] + ti[p-r]) c,
+   *  B = Σ (ti[r] - ti[p-r]) s, C = Σ (tr[r] - tr[p-r]) s over r <= (p-1)/2, c/s = cos/sin(2πqr/p). */
   private dft(p: number, o: number, stride: number): void {
-    const { yr, yi, tr, ti, cos, sin, n } = this;
+    const { yr, yi, tr, ti } = this;
     if (p === 2) {
       yr[o] = tr[0] + tr[1]; yi[o] = ti[0] + ti[1];
       yr[o + stride] = tr[0] - tr[1]; yi[o + stride] = ti[0] - ti[1];
@@ -88,15 +125,27 @@ export class Irfft {
       yr[o + 2 * stride] = ar + d * di; yi[o + 2 * stride] = ai - d * dr;
       return;
     }
-    const s = n / p;
-    for (let q = 0; q < p; q++) {
-      let ar = 0, ai = 0;
-      for (let r = 0; r < p; r++) {
-        const k = ((q * r) % p) * s, c = cos[k], d = sin[k];
-        ar += tr[r] * c - ti[r] * d;
-        ai += tr[r] * d + ti[r] * c;
+    const { ur, ui, vr, vi } = this;
+    const { c, s } = this.leaf.get(p)!;
+    const h = (p - 1) / 2;
+    let y0r = tr[0], y0i = ti[0];
+    for (let r = 1; r <= h; r++) {
+      const ar = tr[r], ai = ti[r], br = tr[p - r], bi = ti[p - r];
+      ur[r - 1] = ar + br; ui[r - 1] = ai + bi;
+      vr[r - 1] = ar - br; vi[r - 1] = ai - bi;
+      y0r += ar + br; y0i += ai + bi;
+    }
+    yr[o] = y0r; yi[o] = y0i;
+    for (let q = 1; q <= h; q++) {
+      let A = tr[0], D = ti[0], B = 0, C = 0;
+      const row = (q - 1) * h;
+      for (let r = 0; r < h; r++) {
+        const cq = c[row + r], sq = s[row + r];
+        A += ur[r] * cq; D += ui[r] * cq;
+        B += vi[r] * sq; C += vr[r] * sq;
       }
-      yr[o + q * stride] = ar; yi[o + q * stride] = ai;
+      yr[o + q * stride] = A - B; yi[o + q * stride] = D + C;
+      yr[o + (p - q) * stride] = A + B; yi[o + (p - q) * stride] = D - C;
     }
   }
 }
