@@ -228,7 +228,7 @@ the generator's conv-tail decoder is never used. The model is cached per device 
 - **Primed stream** (prefix decode with the silence prefill rows and no decode context): the vocoder decodes the
   prefill frames once as pure silence and every such request continues a fork of that stream
   (`TTSVocoderManager._prefix_stream`, `ISTFTStream.fork`: the trunk state tensors are shared, never written in
-  place; the host iSTFT/resampler state is copied), so the first chunk is the first generated frame alone. The
+  place; the head's overlap-add buffers are copied), so the first chunk is the first generated frame alone. The
   prefill frames' codebooks that fall in generated rows (frame f, codebook j with f + j >= prefill) are the LM's and
   are not decoded: the PCM moves ~1.7e-3 RMS (signal ~0.16), the same size as moving a chunk boundary
   (~1.4e-3); the codes are unchanged.
@@ -238,7 +238,12 @@ the generator's conv-tail decoder is never used. The model is cached per device 
   shape (frames, stream position up to `ISTFTStream.full_frames`) was captured replays `ChunkGraphs` (state copied
   in and out, position as a graph input); other shapes (decode context, other prefills, EOS tails) run eagerly.
   Replays are bit-identical to the eager decode; they cut the GPU half of the first chunk from ~11.8 ms of launches
-  to ~2.9 ms, leaving the host iSTFT head as the larger cost.
+  to ~2.9 ms.
+- **Device iSTFT head**: the overlap-add iSTFT, FIR mixer and resampler of a stream run on the codec's device
+  (`zonos3.codec.stream_device`, float64 like the NumPy ports in `zonos3.codec.stream_host` that the MLX server keeps,
+  and bit-identical to them), so a chunk's only host copy is its final samples. On one H100 the first chunk's
+  `decode_frames` falls from ~6.8 to ~4.3 ms (iSTFT + mixer 2.25 -> 0.60 ms, resampler 0.30 -> 0.19 ms, primed-stream
+  fork 0.60 -> 0.06 ms), leaving the trunk's graph replay (~3.1 ms) as the cost.
 - **Early partial-frame decode** (on by default in every server: `stream_codebooks` = 1 on the `first` chunk, the
   generation registry's `stream_codebooks`; k = n_codebooks waits for complete frames): a frame is decodable once its
   first k codebooks arrived (row f + k - 1 instead of f + 9; `zonos3.tts.stream.PrefixDecoder.ready`, capped at EOS

@@ -2,9 +2,11 @@
 
 `ISTFTStream.decode(codes)` takes the next undelayed code frames and returns the 44100 Hz samples that are final;
 `flush()` returns the rest. The causal trunk keeps its state between calls: one depthwise-conv history per ConvNeXt
-block (semantic head and iSTFT head) and a sliding-window KV cache per transformer layer. The host half (overlap-add
-iSTFT, FIR mixer, resampler) is `zonos3.codec.stream_host`. Concatenated outputs + flush equal `model(codes)` over the
-whole sequence: after F frames exactly 2940*F - 1470 samples are out, flush brings the total to 2940*F.
+block (semantic head and iSTFT head) and a sliding-window KV cache per transformer layer. The rest (overlap-add iSTFT,
+FIR mixer, resampler) runs on the same device, `zonos3.codec.stream_device` (the torch twins of the NumPy ports in
+`zonos3.codec.stream_host`), so a chunk's only host copy is its final samples. Concatenated outputs + flush equal
+`model(codes)` over the whole sequence: after F frames exactly 2940*F - 1470 samples are out, flush brings the total
+to 2940*F.
 """
 
 import copy
@@ -17,7 +19,7 @@ from torch.nn import functional as F
 from zonos3.codec.hybrid10_dual_encoding.base_model import MossStage, Patch
 from zonos3.codec.hybrid10_dual_encoding.model import SemanticConvNeXt
 from zonos3.codec.istft_head_a_20261002.model import ISTFTCodec, MultiResISTFTHead
-from zonos3.codec.stream_host import IstftHeadStream, ResamplerStream
+from zonos3.codec.stream_device import IstftHeadStream, ResamplerStream
 
 _CODEBOOK_SIZE = 4096
 
@@ -172,15 +174,15 @@ class ISTFTStream:
             elif isinstance(stage, MossStage):
                 keep = max(layer.context for layer in stage.layers) - 1
                 self.full_frames = max(self.full_frames, -(-keep // cpf))
-        windows = [getattr(head, f"window_{i}").detach().cpu().numpy() for i in range(len(head.n_ffts))]
+        self.device = next(model.parameters()).device
+        windows = [getattr(head, f"window_{i}").detach() for i in range(len(head.n_ffts))]
         self.head = IstftHeadStream(
-            head.n_ffts, head.hop, windows, head.mixer.weight[0].detach().cpu().numpy(), head.max_log_magnitude
+            head.n_ffts, head.hop, windows, head.mixer.weight[0].detach(), head.max_log_magnitude, self.device
         )
         rs = model.to_external
         self.resampler = ResamplerStream(
-            rs.kernel[:, 0].detach().cpu().numpy(), rs.orig_freq // rs.gcd, rs.new_freq // rs.gcd, rs.width
+            rs.kernel[:, 0].detach(), rs.orig_freq // rs.gcd, rs.new_freq // rs.gcd, rs.width, self.device
         )
-        self.device = next(model.parameters()).device
         self.graphs = graphs if self.device.type == "cuda" else None
 
     def decode(self, codes: np.ndarray) -> np.ndarray:
@@ -208,15 +210,17 @@ class ISTFTStream:
         return np.concatenate(out)
 
     def flush(self) -> np.ndarray:
-        return np.concatenate([self.resampler.push(self.head.flush()), self.resampler.flush()])
+        with torch.inference_mode():
+            out = torch.cat([self.resampler.push(self.head.flush()), self.resampler.flush()])
+        return out.cpu().numpy()
 
     def fork(self) -> "ISTFTStream":
         """An independent stream continuing from this one's state. The trunk state tensors are never written in place
-        (every chunk makes new ones), so the twins share them; the host overlap-add and resampler state is copied."""
+        (every chunk makes new ones), so the twins share them; the head's overlap-add buffers are copied."""
         twin = copy.copy(self)
         twin.sem_hist, twin.head_hist = list(self.sem_hist), list(self.head_hist)
         twin.kv = [None if layers is None else list(layers) for layers in self.kv]
-        twin.head, twin.resampler = copy.deepcopy(self.head), copy.deepcopy(self.resampler)
+        twin.head, twin.resampler = self.head.copy(), self.resampler.copy()
         return twin
 
     def _chunk(self, codes):
@@ -229,11 +233,10 @@ class ISTFTStream:
         else:
             frames = torch.full((), self.frames, dtype=torch.int64, device=self.device)
             ys, state = self._trunk(packed.to(self.device), frames, *state)
-        ys = [y.cpu().numpy() for y in ys]
         self.sem_hist, self.kv, self.head_hist = state
-        out = self.resampler.push(self.head.push(*ys))
+        out = self.resampler.push(self.head.push(*ys))  # before the next replay overwrites a graph's static ys
         self.frames += n
-        return out
+        return out.cpu().numpy()
 
     def _trunk(self, packed, frames, sem_hist, kv, head_hist):
         """The GPU half of a chunk, free of side effects (CUDA-graph capturable): codes [1, codebooks, n] int64, the
