@@ -1,10 +1,13 @@
 // Backbone parity vs zonos3-cli --cpu goldens: conditioned prefill, teacher-forced decode, alignment probe, CFG-slot
 // isolation, hidden steering and masked probe heads; plus the speech-edit LM (the edit/ adapter on the backbone's
-// weights, Backbone.withEdit) on an edit prompt.
+// weights, Backbone.withEdit) on an edit prompt, and the GPU sampler (sample.wgsl) against its host oracle (Sampler).
 import { Backbone, NCB, type ProbeInput } from '../../src/backbone';
+import { GpuSampler, type SamplingSetup } from '../../src/gpu/sampler';
 import { fetchJson, loadModel } from '../../src/gpu/weights';
+import { MT19937 } from '../../src/mt19937';
 import { locateTextSpan, probeReduce } from '../../src/probe';
-import { conditionBucketCounts, type Conditioning } from '../../src/prompt';
+import { conditionBucketCounts, TEXT_PAD, type Conditioning } from '../../src/prompt';
+import { Sampler, type Sampling } from '../../src/sampler';
 import { argmax, cosine, maxAbs, type Check, type Ctx } from './util';
 
 const W = 11;
@@ -77,6 +80,25 @@ function decode(f: Fixture): Promise<DecodeRun> {
     }
     return out;
   })();
+}
+
+/** The host oracle of one GpuSampler draw: Sampler over `cond` (CFG: twin + s * (cond - twin) in f32 ops), cold start
+ *  past `row`, the text pad. */
+function hostDraw(s: SamplingSetup, row: number, cond: Float32Array, twin: Float32Array): Int32Array {
+  const V = cond.length / NCB;
+  const smp = new Sampler({ ...s.sp }, NCB, V, s.vocab ?? {});
+  smp.minFrames = s.minFrames;
+  for (const h of s.history ?? []) smp.accept(h);
+  smp.generated = 0;
+  let src = cond;
+  if (s.cfgScale !== null) {
+    const f = Math.fround, sc = f(s.cfgScale);
+    src = cond.map((c, i) => f(twin[i] + f(sc * f(c - twin[i]))));
+  }
+  const out = new Int32Array(NCB + 1);
+  for (let cb = 0; cb < NCB; cb++) out[cb] = cb > row ? smp.padId : smp.sample(src, cb);
+  out[NCB] = TEXT_PAD;
+  return out;
 }
 
 export const checks: Record<string, Check> = {
@@ -220,6 +242,103 @@ export const checks: Record<string, Check> = {
       ok: V === 4099 && bb.hp.spanEndId === 4098 && rows.length * L === ref.length && minCos >= 0.999 && agree / total >= 0.98,
       metric: { rows: rows.length, audioVocab: V, spanEndId: bb.hp.spanEndId, textExtraTokens: bb.hp.textExtraTokens,
         minCodebookCos: minCos, argmax: agree / total, maxAbs: maxDiff },
+    };
+  },
+
+  /** sample.wgsl vs Sampler on fixed random logits (vocabulary 4098, 10 codebooks): greedy draws (repetition penalty,
+   *  CFG, the stop gate, cold start) must match exactly; sampled draws (2000 seeds per setting, the same MT19937
+   *  stream on both sides) must give per-codebook histograms within total variation 0.05. Then the backbone: the first
+   *  greedy frame from the prefill's logits must match the host sampler, and stepSample calls submitted back to back
+   *  (lookahead) must give the frames of awaited ones. */
+  async 'sampler.gpu'(ctx) {
+    const V = 4098, L = V * NCB, gpu = ctx.gpu;
+    const rng = new MT19937(1234);
+    const unif = () => (rng.next() + 0.5) / 4294967296;
+    const gauss = () => Math.sqrt(-2 * Math.log(unif())) * Math.cos(2 * Math.PI * unif());
+    // ids < 300 lead (the repetition history draws from ids < 200), EOA at 4096 is a strong candidate
+    const cond = new Float32Array(L), twin = new Float32Array(L);
+    for (let i = 0; i < L; i++) {
+      cond[i] = 1.5 * gauss() + (i % V < 300 ? 3 : 0) + (i % V === 4096 ? 6 : 0);
+      twin[i] = cond[i] + 0.7 * gauss();
+    }
+    const history = Array.from({ length: 120 }, () => Array.from({ length: NCB }, () => Math.floor(unif() * 200)));
+    const ids = gpu.buffer((NCB + 1) * 4, 'smp.ids');
+    const gs = new GpuSampler(gpu, V, NCB, gpu.upload(cond, 'smp.cond'), gpu.upload(twin, 'smp.twin'), ids);
+    const draw = async (s: SamplingSetup, row: number) => {
+      gs.start(s);
+      const p = gs.next(row);
+      const out = await gpu.submitRead(enc => p.encode(enc), [{ buf: ids, offset: 0, bytes: (NCB + 1) * 4 }]);
+      return new Int32Array(out[0].buffer);
+    };
+    const base: Sampling = { temperature: 1, top_k: 0, top_p: 1, min_p: 0, rep_penalty: 1, rep_window: 96, rep_codebooks: NCB, seed: 0, greedy: false };
+    const greedy: Sampling = { ...base, temperature: 0, greedy: true };
+    const greedyCases: [string, SamplingSetup, number][] = [
+      ['plain', { sp: greedy, minFrames: 3, cfgScale: null }, 9],
+      ['stop', { sp: greedy, minFrames: 0, cfgScale: null }, 9],
+      ['penalty', { sp: { ...greedy, rep_penalty: 2.4, rep_codebooks: 6 }, minFrames: 3, cfgScale: null, history }, 9],
+      ['cfg', { sp: { ...greedy, rep_penalty: 2.4 }, minFrames: 3, cfgScale: 1.5, history }, 9],
+      ['coldStart', { sp: greedy, minFrames: 0, cfgScale: null }, 3],
+    ];
+    const greedyBad: string[] = [];
+    for (const [name, s, row] of greedyCases) {
+      const g = await draw(s, row), h = hostDraw(s, row, cond, twin);
+      if (g.some((v, i) => v !== h[i])) greedyBad.push(`${name}: gpu ${Array.from(g)} host ${Array.from(h)}`);
+    }
+    const DRAWS = 2000;
+    const settings: [string, Partial<Sampling>, boolean][] = [
+      ['topk100', { top_k: 100 }, false], ['topp0.69', { top_p: 0.69 }, false], ['minp0.05', { min_p: 0.05 }, false],
+      ['penalty2.4', { rep_penalty: 2.4 }, true], ['defaults+cfg', { top_k: 100, rep_penalty: 2.4, rep_codebooks: 6 }, true],
+    ];
+    const tv: Record<string, number> = {}, same: Record<string, number> = {};
+    let maxTv = 0;
+    for (const [name, o, hist] of settings) {
+      const hg = new Uint32Array(L), hh = new Uint32Array(L);
+      let agree = 0;
+      for (let d = 0; d < DRAWS; d++) {
+        const s: SamplingSetup = {
+          sp: { ...base, ...o, seed: d }, minFrames: 0, cfgScale: name.endsWith('cfg') ? 1.5 : null, history: hist ? history : undefined,
+        };
+        const g = await draw(s, 9), h = hostDraw(s, 9, cond, twin);
+        for (let cb = 0; cb < NCB; cb++) {
+          hg[cb * V + g[cb]]++;
+          hh[cb * V + h[cb]]++;
+          if (g[cb] === h[cb]) agree++;
+        }
+      }
+      let worst = 0;
+      for (let cb = 0; cb < NCB; cb++) {
+        let d = 0;
+        for (let i = 0; i < V; i++) d += Math.abs(hg[cb * V + i] - hh[cb * V + i]);
+        worst = Math.max(worst, d / (2 * DRAWS));
+      }
+      tv[name] = worst;
+      same[name] = agree / (DRAWS * NCB);
+      maxTv = Math.max(maxTv, worst);
+    }
+
+    // the backbone: prefill logits -> first frame, then 12 greedy steps awaited one by one vs submitted back to back
+    const f = await load(ctx);
+    const steps = 12;
+    const run = async (lookahead: boolean) => {
+      const pre = await f.bb.prefill(0, f.ids, f.cond);
+      const s: SamplingSetup = { sp: { ...greedy, rep_penalty: 2.4, rep_codebooks: 6 }, minFrames: 0, cfgScale: null };
+      f.bb.startSampling(s);
+      const first = await f.bb.sampleFirst(9);
+      const frames = [first];
+      if (lookahead) {
+        const pending = Array.from({ length: steps }, (_, k) => f.bb.stepSample(10 + k, null, null, null));
+        for (const r of await Promise.all(pending)) frames.push(r.frame);
+      } else {
+        for (let k = 0; k < steps; k++) frames.push((await f.bb.stepSample(10 + k, null, null, null)).frame);
+      }
+      return { frames, host: hostDraw(s, 9, pre.logits, pre.logits) };
+    };
+    const serial = await run(false), ahead = await run(true);
+    const firstOk = serial.frames[0].every((v, i) => v === serial.host[i]);
+    const lookOk = serial.frames.every((fr, k) => fr.every((v, i) => v === ahead.frames[k][i]));
+    return {
+      ok: greedyBad.length === 0 && maxTv < 0.05 && firstOk && lookOk,
+      metric: { greedyMismatch: greedyBad, tv, sameDraw: same, firstFrameMatchesHost: firstOk, lookaheadMatchesSerial: lookOk },
     };
   },
 };

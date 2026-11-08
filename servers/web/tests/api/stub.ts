@@ -6,12 +6,14 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ProbeInput } from '../../src/backbone';
+import type { SamplingSetup } from '../../src/gpu/sampler';
 import type { AlignedWord } from '../../src/aligner/host';
 import type { EditModels, Engine } from '../../src/api/engine';
 import { Api } from '../../src/api/router';
 import type { EngineRequest, Sink } from '../../src/api/http';
 import { parseGguf } from '../../src/gguf';
-import { modelHp, type Conditioning, type ModelHp } from '../../src/prompt';
+import { modelHp, TEXT_PAD, type Conditioning, type ModelHp } from '../../src/prompt';
+import { Sampler } from '../../src/sampler';
 import { LaciHeads } from '../../src/request/laci';
 import { controlsDocument, loadSteer } from '../../src/request/steer';
 import { createTokenizer } from '../../src/tokenizer';
@@ -31,15 +33,24 @@ function file(path: string): ArrayBuffer {
 }
 
 /** Logits that emit code 7 for `frames` steps, then the stop (EOA, or span-end on the speech-edit vocabulary) on every
- *  codebook; code 7 stays the runner-up so a masked stop keeps the stream deterministic. */
+ *  codebook; code 7 stays the runner-up so a masked stop keeps the stream deterministic. Sampling runs the host Sampler
+ *  (the GPU sampler's oracle) over them. */
 class StubBackbone {
   steerSources: number[];
   private steps: [number, number] = [0, 0];
+  private last: [Float32Array, Float32Array];
+  private smp: Sampler | null = null;
+  private cfgScale: number | null = null;
   steered: (Float32Array | null)[] = [];
+  /** Decode steps whose sampled frame the job has read (a step submitted ahead and not yet read is not counted). */
+  consumed = 0;
   twinSteered: (Float32Array | null)[] = [];
   probes: (ProbeInput | null)[] = [];
   prefills: { slot: 0 | 1; rows: number; cond: Conditioning; ids: Int32Array }[] = [];
-  constructor(sources: number[], private frames = 14, private vocab = 4098) { this.steerSources = sources; }
+  constructor(sources: number[], private frames = 14, private vocab = 4098) {
+    this.steerSources = sources;
+    this.last = [this.logits(0), this.logits(1)];
+  }
   private logits(slot: 0 | 1): Float32Array {
     const V = this.vocab;
     const l = new Float32Array(V * NCB).fill(-10);
@@ -53,23 +64,50 @@ class StubBackbone {
   async prefill(slot: 0 | 1, ids: Int32Array, cond: Conditioning) {
     this.steps[slot] = 0;
     this.prefills.push({ slot, rows: ids.length / 11, cond, ids: ids.slice() });
-    return { logits: this.logits(slot) };
+    this.last[slot] = this.logits(slot);
+    return { logits: this.last[slot] };
   }
-  private probeOut(probe: ProbeInput | null) {
-    return probe ? new Float32Array(2048).fill(0).map((_, j) => (j === 1 ? 1 : 0)) : null;
+  startSampling(s: SamplingSetup) {
+    const smp = new Sampler({ ...s.sp }, NCB, this.vocab, s.vocab ?? {});
+    smp.minFrames = s.minFrames;
+    for (const row of s.history ?? []) smp.accept(Array.from({ length: NCB }, (_, cb) => row[cb]));
+    smp.generated = 0;
+    this.smp = smp;
+    this.cfgScale = s.cfgScale;
   }
-  async step(slot: 0 | 1, _next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null) {
-    this.steps[slot]++;
-    if (slot === 0) { this.steered.push(steer); this.probes.push(probe); } else this.twinSteered.push(steer);
-    return { logits: this.logits(slot), probe: this.probeOut(probe) };
+  private sample(row: number): Int32Array {
+    const smp = this.smp!;
+    let src = this.last[0];
+    if (this.cfgScale !== null) {
+      const s = Math.fround(this.cfgScale), c = this.last[0], t = this.last[1];
+      src = c.map((v, i) => t[i] + s * (v - t[i]));
+    }
+    const out = new Int32Array(NCB + 1);
+    for (let cb = 0; cb < NCB; cb++) out[cb] = cb > row ? smp.padId : smp.sample(src, cb);
+    out[NCB] = TEXT_PAD;
+    smp.accept(out.subarray(0, NCB));
+    return out;
   }
-  async stepPair(_next: Int32Array, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null) {
+  async sampleFirst(row: number) {
+    return this.sample(row);
+  }
+  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null) {
     this.steps[0]++;
-    this.steps[1]++;
     this.steered.push(steer);
-    this.twinSteered.push(twinSteer);
     this.probes.push(probe);
-    return { logits: this.logits(0), twinLogits: this.logits(1), probe: this.probeOut(probe) };
+    this.last[0] = this.logits(0);
+    if (this.cfgScale !== null) {
+      this.steps[1]++;
+      this.twinSteered.push(twinSteer);
+      this.last[1] = this.logits(1);
+    }
+    const frame = this.sample(row);
+    let read = false;
+    const self = this;
+    return {
+      get frame() { if (!read) { read = true; self.consumed++; } return frame; },
+      probe: probe ? new Float32Array(2048).map((_, j) => (j === 1 ? 1 : 0)) : null,
+    };
   }
 }
 
@@ -81,7 +119,7 @@ class StubCodec {
   /** Frames decoded since the last reset. */
   frames = 0;
   chunks: StubChunk[] = [];
-  /** Backbone decode steps so far (set by stubApi). */
+  /** Backbone decode steps whose frame the job has read so far (set by stubApi). */
   clock: () => number = () => 0;
   constructor(readonly partialFrames = true) {}
   reset() { this.frames = 0; this.chunks = []; }
@@ -127,7 +165,7 @@ export function stubApi(opts: { frames?: number; editFrames?: number; partialFra
   const voices = JSON.parse(readFileSync(models + 'voices/voices.json', 'utf8')) as { id: string; label: string; file: string }[];
   const backbone = new StubBackbone(steer.sources, opts.frames);
   const codec = new StubCodec(opts.partialFrames);
-  codec.clock = () => backbone.steered.length;
+  codec.clock = () => backbone.consumed;
   const edit = haveEditModels ? editStubs(steer.sources, opts.editFrames ?? 6) : null;
   const engine: Engine = {
     hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
@@ -169,7 +207,7 @@ export function bareApi(opts: { frames?: number; partialFrames?: boolean } = {})
   const hp = RELEASE_HP;
   const backbone = new StubBackbone([], opts.frames);
   const codec = new StubCodec(opts.partialFrames);
-  codec.clock = () => backbone.steered.length;
+  codec.clock = () => backbone.consumed;
   const engine: Engine = {
     hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),

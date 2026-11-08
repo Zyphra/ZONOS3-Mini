@@ -485,6 +485,14 @@ class Zonos3MLX:
             LMOutput(p.logits, None if p.probe is None else self._readout(p.probe, p.queries, p.state)) for p in pending
         ]
 
+    def finish_async(self, pending: list[PendingForward]) -> list[LMOutput]:
+        """``finish`` without waiting: queue the evaluation (``mx.async_eval``) and return the lazy outputs; forwards
+        without probes only. The host reads the logits (or anything built on them) when it needs them."""
+        if any(p.probe is not None for p in pending):
+            raise ValueError("finish_async cannot read probes")
+        mx.async_eval([p.logits for p in pending], [p.state.arrays() for p in pending])
+        return [LMOutput(p.logits, None) for p in pending]
+
     def forward_lazy(
         self,
         ids,
@@ -498,18 +506,21 @@ class Zonos3MLX:
         capture: dict | None = None,
     ) -> PendingForward:
         """``forward`` without the evaluation: the graph of the logits and of ``state``'s new arrays (``state`` is
-        updated in place, its position advanced); pass the result to ``finish``."""
+        updated in place, its position advanced); pass the result to ``finish`` (or ``finish_async``). ``ids`` may be an
+        ``mx.array`` (a lazy sampled row: the forward queues behind the sampler without a host round trip)."""
         c = self.config
-        if hasattr(ids, "numpy"):
-            ids = ids.detach().cpu().numpy()
-        ids = np.asarray(ids).astype(np.int32)
-        n = int(ids.shape[0])
+        if isinstance(ids, mx.array):
+            idx = ids.astype(mx.int32)
+        else:
+            if hasattr(ids, "numpy"):
+                ids = ids.detach().cpu().numpy()
+            idx = mx.array(np.asarray(ids).astype(np.int32))
+        n = int(idx.shape[0])
         lo = state.position
         if lo + n > c.max_seqlen:
             raise ValueError(f"{lo + n} rows exceed the model context {c.max_seqlen}")
         self._capture, self._accents = capture, accents
         try:
-            idx = mx.array(ids)
             x = self.t["audio_embd.0.weight"][idx[:, 0]]
             for cb in range(1, c.n_codebooks):
                 x = x + self.t[f"audio_embd.{cb}.weight"][idx[:, cb]]

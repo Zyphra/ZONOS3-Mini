@@ -57,6 +57,17 @@ export function kthLargest(a: Float32Array, k: number, scratch: Float32Array): n
  *  spanEnd): span-end is the stop id and EOA is never sampled (speech-edit fills, zonos3-sampler.cpp stop_id). */
 export interface SamplerVocab { spanEnd?: boolean; spanEndStop?: boolean }
 
+/** The audio vocabulary's layout: codes 0..codebookSize-1, then EOA, the audio pad and span-end (-1 without one). */
+export interface VocabIds { codebookSize: number; eoaId: number; padId: number; spanEndId: number; stopId: number }
+
+export function vocabIds(vocab: number, opts: SamplerVocab = {}): VocabIds {
+  const spanEnd = opts.spanEnd === true || opts.spanEndStop === true;
+  const codebookSize = vocab - (spanEnd ? 3 : 2);
+  if (codebookSize < 1) throw new Error(`sampler: vocabulary of ${vocab} has no audio codes`);
+  const spanEndId = spanEnd ? codebookSize + 2 : -1;
+  return { codebookSize, eoaId: codebookSize, padId: codebookSize + 1, spanEndId, stopId: opts.spanEndStop ? spanEndId : codebookSize };
+}
+
 export class Sampler {
   private rng: MT19937;
   private hist: number[][];
@@ -79,13 +90,12 @@ export class Sampler {
     this.logit = new Float32Array(vocab);
     this.kthBuf = new Float32Array(vocab);
     this.seen = new Uint32Array(vocab);
-    const spanEnd = opts.spanEnd === true || opts.spanEndStop === true;
-    this.codebookSize = vocab - (spanEnd ? 3 : 2);
-    if (this.codebookSize < 1) throw new Error(`sampler: vocabulary of ${vocab} has no audio codes`);
-    this.eoaId = this.codebookSize;
-    this.padId = this.codebookSize + 1;
-    this.spanEndId = spanEnd ? this.codebookSize + 2 : -1;
-    this.stopId = opts.spanEndStop ? this.spanEndId : this.eoaId;
+    const v = vocabIds(vocab, opts);
+    this.codebookSize = v.codebookSize;
+    this.eoaId = v.eoaId;
+    this.padId = v.padId;
+    this.spanEndId = v.spanEndId;
+    this.stopId = v.stopId;
   }
 
   accept(frame: ArrayLike<number>): void {

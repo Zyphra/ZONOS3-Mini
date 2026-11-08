@@ -13,7 +13,10 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 
 Every file is auto-detected next to the backbone. Generation runs on one worker thread that owns the LM; up to
 `--batch` requests (default 4; a CFG request takes two slots) advance one row per tick, a CFG request's two forwards in
-one MLX evaluation. Streamed audio decodes on a second (codec) thread while the backbone steps on: progressive prefix
+one MLX evaluation. Sampling runs on the GPU on the reference sampler's random stream (the host draws the
+`torch.multinomial` exponentials, so a seed gives the reference rows up to float rounding), and without a probe reader
+(LACI, span follow) the next row's forwards are queued on the lazy sample before the host reads it back. Streamed audio
+decodes on a second (codec) thread while the backbone steps on: progressive prefix
 chunks by default, the one exact decode at EOS with `ZONOS3_STREAM_DECODE_DEFAULT=whole` (as on the sgl server; a
 request's `stream_decode` wins). The first prefix chunk decodes before its frame is complete (early partial-frame
 decode, the request's `stream_codebooks` / `stream_codebooks_scope`, registry default 1 on the first chunk): the

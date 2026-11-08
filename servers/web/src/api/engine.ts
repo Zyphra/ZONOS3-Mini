@@ -1,6 +1,7 @@
 // What the API routes need from the loaded models (the worker builds it from the GPU classes; tests use stubs).
 import type { AlignedWord } from '../aligner';
 import type { Backbone, ProbeInput } from '../backbone';
+import type { SamplingSetup } from '../gpu/sampler';
 import type { Conditioning, ModelHp } from '../prompt';
 import type { LaciHeads } from '../request/laci';
 import type { SteerBundle } from '../request/steer';
@@ -8,12 +9,16 @@ import type { Tokenizer } from '../tokenizer';
 
 /** The backbone surface the generation loop drives (src/backbone.ts Backbone). */
 export type BackboneApi = Pick<Backbone, 'steerSources'> & {
+  /** Concurrent calls on the two slots are allowed (each submits all of its GPU work before awaiting). */
   prefill(slot: 0 | 1, ids: Int32Array, cond: Conditioning): Promise<{ logits: Float32Array }>;
-  step(slot: 0 | 1, next: Int32Array, steer: Float32Array | null, probe: ProbeInput | null):
-    Promise<{ logits: Float32Array; probe: Float32Array | null }>;
-  /** Both slots' decode step in one submission (CFG); `twinSteer` is `steer` or null. */
-  stepPair(next: Int32Array, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
-    Promise<{ logits: Float32Array; twinLogits: Float32Array; probe: Float32Array | null }>;
+  /** Starts a request's sampling (random stream, repetition history, CFG scale: non-null = stepSample runs both slots). */
+  startSampling(s: SamplingSetup): void;
+  /** The frame at stream row `row` sampled from the last prefill(s)' logits: ids [NCB + 1], the next decode input. */
+  sampleFirst(row: number): Promise<Int32Array>;
+  /** Decodes the last sampled frame and samples the frame at stream row `row` (ids [NCB + 1]); submits before awaiting,
+   *  so the next call may start before this one resolves. `twinSteer` is `steer` or null. */
+  stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
+    Promise<{ frame: Int32Array; probe: Float32Array | null }>;
 };
 
 /** Streaming codec decoder (src/zac.ts ZacStream). */

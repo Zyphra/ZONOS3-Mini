@@ -5,7 +5,9 @@ Each tick the worker runs the queued work items (codec decodes, speaker / refere
 free slots (``--batch``; a CFG job takes two), and advances every active job by one row (its branches' LM forwards in
 one MLX evaluation). The per-job logic is ``zonos3.reference.synth.generate_rows`` / ``_laci`` (sampling, CFG
 guidance, the EOS countdown, the probe readout to LACI and span-follow, LACI rollbacks re-prefilled in place) over the
-MLX LM, after the ggml server's scheduler (servers/ggml/src/server/scheduler.cpp ``worker_loop``).
+MLX LM, after the ggml server's scheduler (servers/ggml/src/server/scheduler.cpp ``worker_loop``). Rows are sampled on
+the device (``zonos3_mlx.sampling``); a job without a probe reader queues its next forwards on the lazy sample before
+the host reads it.
 
 Jobs report through their ``sink``: ``("row", row, eos_frame | None)`` per final row, then ``("done", laci_record |
 None)``, or ``("error", message)``. A sink hands its audio decoding to ``codec_submit`` (the codec thread: one FIFO
@@ -24,18 +26,19 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
+import mlx.core as mx
 import numpy as np
 import torch
-from zonos3.reference.synth import ProbeState, Sampling, fade_out, sample_row, steer_fn
-from zonos3.speaker_cfg import guided_logits
-from zonos3.tts.delay import apply_cold_start_delay
+from zonos3.reference.synth import ProbeState, Sampling, fade_out, steer_fn
 from zonos3.tts.laci import DurationTarget, LaciConfig, LaciSession, RateBuckets
 from zonos3.tts.plan import Branch
 from zonos3.tts.probe import locate_text_span
+from zonos3.tts.sampler import clamp_sampling
 from zonos3.tts.span_follow import FollowConfig, SpanFollower
 
 from zonos3_mlx.engine import Engine, Plan
 from zonos3_mlx.models.lm import LMState
+from zonos3_mlx.sampling import guided_logits_mx, noise_for, repetition_ids, sample_row_mx
 
 logger = logging.getLogger("zonos3_mlx.scheduler")
 
@@ -299,20 +302,59 @@ class Scheduler:
             follower=follower,
         )
 
-    def _tick(self, a: _Active) -> None:
+    def _sample(self, a: _Active) -> mx.array:
+        """The next row of ``a`` on the device (lazy, ``[n_codebooks + 1]`` int32): the CFG mix of the branches' last
+        logits and the reference sampler on the job's generator (``zonos3_mlx.sampling``)."""
         job, plan, c = a.job, a.job.plan, self.config
-        n_cb, pad = c.n_codebooks, c.audio_pad_id
-        logits = torch.from_numpy(np.array(a.outs[0].logits[-1], dtype=np.float32))
+        n_cb = c.n_codebooks
+        logits = a.outs[0].logits[-1]
         if len(a.branches) > 1:
-            uncond = torch.from_numpy(np.array(a.outs[1].logits[-1], dtype=np.float32))
-            logits = guided_logits(logits, uncond, plan.cfg_scale)
+            logits = guided_logits_mx(logits, a.outs[1].logits[-1], plan.cfg_scale)
         total_generated = len(a.rows)
-        token = sample_row(
-            c, logits, job.sampling, a.history, total_generated, a.history_rows, job.stop_id, a.generator
+        s = clamp_sampling(job.sampling, n_codebooks=n_cb, codebook_size=c.codebook_size)
+        repetition = repetition_ids(
+            s,
+            a.history,
+            min(total_generated + a.history_rows, len(a.history)),
+            n_codebooks=n_cb,
+            codebook_size=c.codebook_size,
         )
-        apply_cold_start_delay(
-            token, total_generated, n_codebooks=n_cb, pad_id=pad, has_audio_prefix=a.has_audio_prefix
+        min_frames = job.sampling.min_frames
+        stop_blocked = None
+        if min_frames > 0:
+            stop_blocked = np.array([total_generated < min_frames + cb for cb in range(n_cb)])
+        width = max(job.stop_id, c.audio_pad_id) + 1
+        return sample_row_mx(
+            logits,
+            mx.array(noise_for(a.generator, n_cb, width)),
+            s,
+            repetition,
+            codebook_size=c.codebook_size,
+            codebook_sizes=c.codebook_sizes,
+            audio_pad_id=c.audio_pad_id,
+            stop_id=job.stop_id,
+            stop_blocked=stop_blocked,
+            total_generated=total_generated,
+            has_audio_prefix=a.has_audio_prefix,
+            text_vocab=c.text_vocab,
         )
+
+    def _tick(self, a: _Active) -> None:
+        job, c = a.job, self.config
+        n_cb = c.n_codebooks
+        total_generated = len(a.rows)
+        sampled = self._sample(a)
+        ahead = None
+        if a.probe is None and a.remain > 1:
+            # Nothing the host reads steers the next row (no probe observer): queue its forwards on the lazy sample,
+            # so the GPU runs them while the host reads the token and does the bookkeeping. Dropped if the row ends
+            # the job (the EOS countdown).
+            mx.async_eval(sampled)
+            frame = total_generated + 1 + a.history_rows
+            ahead = self.engine.lm.finish_async(
+                [self._forward(a, b, state, sampled[None], frame, False) for b, state in a.branches]
+            )
+        token = torch.from_numpy(np.array(sampled))
         if a.step > 0 and a.probe is not None and a.observer is not None:
             a.probe.steps += 1
             if not a.probe.stop:
@@ -360,6 +402,9 @@ class Scheduler:
             for row in session.drain():
                 job.sink(("row", row, None))
         a.step += 1
+        if ahead is not None:
+            a.outs = ahead
+            return
         frame = len(a.rows) + a.history_rows
         ids = token[None]
         a.outs = self._run([self._forward(a, b, state, ids, frame, i == 0) for i, (b, state) in enumerate(a.branches)])

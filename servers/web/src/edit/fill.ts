@@ -3,9 +3,9 @@
 // spliced codes (decode_codes). Ports zonos3.tts.edit_runtime's EditEngine.fill / decode for the in-browser engine.
 import type { BackboneApi, CodecApi } from '../api/engine';
 import { buildPrompt, CODEBOOK_SIZE, NCB, type ModelHp, type Prompt } from '../prompt';
-import { Sampler, type Sampling } from '../sampler';
+import { vocabIds, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
-import { newSlot, sampleFrame } from '../slot';
+import { acceptFrame, newSlot, slotRow } from '../slot';
 import type { Tokenizer } from '../tokenizer';
 import { editPromptTokens, extractFill } from './frames';
 import type { Span } from './words';
@@ -41,15 +41,16 @@ export function fillPrompt(tok: Tokenizer, hp: ModelHp, job: FillJob): Prompt {
  *  delay tail or `maxFrames`, and returns the region's codec frames and whether it ended on span-end. */
 export async function runFill(bb: BackboneApi, hp: ModelHp, prompt: Prompt, job: FillJob,
                               aborted: () => boolean): Promise<{ fill: Int32Array; ended: boolean }> {
-  const smp = new Sampler({ ...job.sampling }, NCB, hp.audioVocab, { spanEndStop: true });
-  smp.minFrames = job.minFrames;
+  const stopId = vocabIds(hp.audioVocab, { spanEndStop: true }).stopId;
   const slot = newSlot(0);
-  let logits = (await bb.prefill(0, prompt.ids, prompt.cond)).logits;
+  await bb.prefill(0, prompt.ids, prompt.cond);
+  bb.startSampling({ sp: job.sampling, vocab: { spanEndStop: true }, minFrames: job.minFrames, cfgScale: null });
+  let frame = await bb.sampleFirst(slotRow(slot));
   for (;;) {
     if (aborted()) throw new Error('aborted');
-    sampleFrame(slot, smp, logits, job.maxFrames);
+    acceptFrame(slot, frame, stopId, job.maxFrames);
     if (slot.done) break;
-    logits = (await bb.step(0, Int32Array.from(slot.nextIds), job.steer, null)).logits;
+    frame = (await bb.stepSample(slotRow(slot), job.steer, null, null)).frame;
   }
   // the finishing row is not part of the fill's rows
   const rows = Int32Array.from(slot.codes.slice(0, Math.max(0, slot.codes.length - NCB)));

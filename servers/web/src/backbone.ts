@@ -3,7 +3,9 @@
 // pre-recorded single-row decode (matvec). Weights: Q4_0 experts, Q8_0 mixers, F16 spine. Mirrors build_graph in
 // zonos3-graph.cpp: speaker/condition rows replace the summed embedding before emb_norm (prefill), hidden steering
 // deltas join their Full AttnRes sources (decode), and the alignment probe reads the global layers (slot 0 decode).
-// Two state sets: slot 0 = conditional, slot 1 = CFG twin.
+// Two state sets: slot 0 = conditional, slot 1 = CFG twin. Sampling runs on the GPU (sample.wgsl, after the decode in
+// the same submission): it writes the next decode row straight into the decode input, so only the sampled ids are read
+// back and a caller may submit step k+1 before reading step k.
 // The vocabulary follows the manifest meta (hp): the release LM (backbone/, audio vocabulary 4098). Backbone.withEdit
 // runs the speech-edit LM on the same GPU weights: the edit vocabulary (4099 with span-end, infill-marker text rows) from
 // the grown rows of edit/, and the speech-edit adapter applied at runtime (scripts/export_web_models.py "speech-edit
@@ -17,6 +19,7 @@ import {
 } from './gpu/ops';
 import { Builder, type Program } from './gpu/program';
 import { ropeTable } from './gpu/rope';
+import { GpuSampler, type SamplingSetup } from './gpu/sampler';
 import { loadModel, type Model, type Progress } from './gpu/weights';
 import { clipWindow } from './probe';
 import { modelHp, type Conditioning, type ModelHp } from './prompt';
@@ -160,6 +163,7 @@ export class Backbone {
   private decodeLogits: [GPUBuffer, GPUBuffer];
   private chunkProg: [Program, Program];
   private chunkLogits: [GPUBuffer, GPUBuffer];
+  private sampler: GpuSampler;
   nPast: [number, number] = [0, 0];
 
   /** `edit`: the speech-edit adapter (model directory edit/, loadEdit) run on top of `w`; null = the release LM, whose
@@ -216,6 +220,7 @@ export class Backbone {
     this.decodeProg = [decodeProg[0], decodeProg[1]];
     this.chunkLogits = [chunkLogits[0], chunkLogits[1]];
     this.chunkProg = [chunkProg[0], chunkProg[1]];
+    this.sampler = new GpuSampler(gpu, this.hp.audioVocab, NCB, this.decodeLogits[0], this.decodeLogits[1], this.ids);
   }
 
   /**
@@ -425,7 +430,9 @@ export class Backbone {
   }
 
   /** Runs the prompt of `slot` from position 0 in chunks (absolute positions, recurrent state carried across chunks),
-   *  with the speaker/condition rows of `cond` replaced (zonos3_batch_slot_prefill). */
+   *  with the speaker/condition rows of `cond` replaced (zonos3_batch_slot_prefill). Every GPU write and submission
+   *  happens before the first await, so the two slots' prefills may run concurrently. The last row's logits also land
+   *  in the slot's decode logits, where sampleFirst reads them. */
   async prefill(slot: 0 | 1, ids: Int32Array, cond: Conditioning, opts: PrefillOpts = {}): Promise<PrefillResult> {
     const n0 = ids.length / 11;
     if (!Number.isInteger(n0) || n0 < 1) throw new Error('empty prompt');
@@ -465,6 +472,7 @@ export class Backbone {
             if (project) this.spkProg.encode(enc);
           }
           p.prog.encode(enc);
+          if (last) enc.copyBufferToBuffer(p.logits, 0, this.decodeLogits[slot], 0, this.logitsLen * 4);
         };
         if (!last) {
           const enc = gpu.device.createCommandEncoder();
@@ -574,6 +582,47 @@ export class Backbone {
     this.nPast[0]++;
     this.nPast[1]++;
     return { logits: out[0], twinLogits: out[1], probe: textLen ? out[2] : null };
+  }
+
+  /** Starts a request's GPU sampling (sample.wgsl): its random stream, repetition history and CFG scale (non-null:
+   *  stepSample runs both slots). */
+  startSampling(s: SamplingSetup): void {
+    this.sampler.start(s);
+  }
+
+  /** Samples the frame at stream row `row` from the logits the last prefill(s) left (cold start: codebooks past `row`
+   *  get the audio pad); the frame (+ text pad) becomes the next decode input. Returns the ids [NCB + 1]. */
+  async sampleFirst(row: number): Promise<Int32Array> {
+    const smp = this.sampler.next(row);
+    const out = await this.gpu.submitRead(enc => smp.encode(enc), [{ buf: this.ids, offset: 0, bytes: (NCB + 1) * 4 }]);
+    return new Int32Array(out[0].buffer);
+  }
+
+  /** One decode row on the last sampled frame (both slots under CFG, as stepPair) and the sample of the frame at stream
+   *  row `row`, in one submission; reads back the frame's ids [NCB + 1] (+ the probe readout, as step). Everything is
+   *  submitted before the first await (nPast included), so step k + 1 may start before step k resolves. */
+  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
+      Promise<{ frame: Int32Array; probe: Float32Array | null }> {
+    const pair = this.sampler.guided;
+    if (pair && twinSteer && twinSteer !== steer) throw new Error('backbone: the CFG twin shares the conditional slot\'s steering delta');
+    this.checkStep(0, steer);
+    if (pair) this.checkStep(1, twinSteer);
+    const textLen = this.writeProbe(0, probe);
+    if (steer && this.steerSources.length) this.gpu.write(this.steerBuf, 0, steer);
+    this.writeDyn(0, steer !== null);
+    if (pair) this.writeDyn(1, twinSteer !== null);
+    const smp = this.sampler.next(row);
+    const reads = [{ buf: this.ids, offset: 0, bytes: (NCB + 1) * 4 }];
+    if (textLen) reads.push({ buf: this.probeAcc, offset: 0, bytes: textLen * 4 });
+    const done = this.gpu.submitRead(enc => {
+      this.decodeProg[0].encode(enc);
+      if (pair) this.decodeProg[1].encode(enc);
+      smp.encode(enc);
+    }, reads);
+    this.nPast[0]++;
+    if (pair) this.nPast[1]++;
+    const out = await done;
+    return { frame: new Int32Array(out[0].buffer), probe: textLen ? out[1] : null };
   }
 
   /** The speech-edit LM on this backbone's GPU weights: `edit` = the speech-edit adapter (model directory edit/: the

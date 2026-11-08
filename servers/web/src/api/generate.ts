@@ -14,9 +14,9 @@ import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type Probe
 import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
 import { NO_STEERING, resolveControls, Steering, textChars, type ControlSpan } from '../request/steer';
-import { defaultSampling, Sampler, type Sampling } from '../sampler';
+import { defaultSampling, vocabIds, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
-import { newSlot, sampleFrame, type SlotState } from '../slot';
+import { acceptFrame, newSlot, type SlotState } from '../slot';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { applyFade } from '../wav';
 import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
@@ -433,16 +433,15 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
   };
 
   const slot: SlotState = newSlot(p.prompt.prefillFrames);
-  let smp = new Sampler({ ...p.sp }, ncb, e.hp.audioVocab);
+  const stopId = vocabIds(e.hp.audioVocab).stopId;
   const codes: number[] = Array.from(prefillCodes(p.prompt));   // stream rows: silence prefill first
   let eosFrame = -1;
   let attemptMax = p.maxFrames, historyRows = 0;
-  let steer: Float32Array | null = p.steering.hidden;
   const twin = p.twin;
   const twinSteered = p.twinSteered;
+  const cfgScale = twin ? p.cfgScale : null;
   let windows: Windows = laci?.probeMask() ?? [];
   const probeCtl: ProbeControl = { textLen: probe?.textLen ?? 0, mask: null, stop: false };
-  let readout: { argmax: number; centroid: number } | null = null;
   let hidden = p.steering.hidden;
 
   // codec stream state (prefix streaming: incremental; whole: decoded at the end through the same causal stream).
@@ -487,24 +486,57 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
 
   const probeInput = (): ProbeInput | null => probe ? { ...probe, windows } : null;
 
-  // admit: prefill the conditional slot (and the twin)
-  let logits = (await bb.prefill(0, p.prompt.ids, p.prompt.cond)).logits;
-  let twinLogits = twin ? (await bb.prefill(1, twin.ids, twin.cond)).logits : null;
-  const guided = twin ? new Float32Array(logits.length) : null;
+  // step_steer: the hidden steering delta of the decode that yields the attempt's frame k (k >= 1)
+  const steerAt = (k: number): Float32Array | null => {
+    const frame = historyRows + k;
+    if (follower) {
+      const span = follower.delta(frame);
+      if (!span) return hidden;
+      if (hidden) for (let i = 0; i < hidden.length && i < span.length; i++) span[i] += hidden[i];
+      return span;
+    }
+    if (p.steering.spans.length) {
+      const out = { v: null as Float32Array | null };
+      p.steering.deltaAt(frame, out);
+      return out.v;
+    }
+    return hidden;
+  };
+
+  // Sampling runs on the GPU after each decode (bb.stepSample). Without a probe readout nothing the host learns from
+  // frame k changes step k + 1, so step k + 1 is submitted before frame k is read back (one step in flight); with a
+  // probe (LACI, span follow) the readout steers the next step and the loop stays serial.
+  type StepOut = { frame: Int32Array; probe: Float32Array | null };
+  const lookahead = probe === null;
+  const inflight: Promise<StepOut>[] = [];
+  let issued = 0;   // frames of this attempt whose sample is submitted
+  const submit = () => {
+    const k = issued++;
+    const out: Promise<StepOut> = k === 0
+      ? bb.sampleFirst(slot.prefill).then(frame => ({ frame, probe: null }))
+      : (() => { const steer = steerAt(k); return bb.stepSample(slot.prefill + k, steer, twinSteered ? steer : null, probeInput()); })();
+    out.catch(() => {});   // awaited through `inflight`; a step discarded after an error is not reported
+    inflight.push(out);
+  };
+  // a finished attempt drops the step it ran ahead (its KV row lies past the attempt; the next prefill resets it)
+  const discard = async () => {
+    await Promise.allSettled(inflight);
+    inflight.length = 0;
+  };
+
+  // admit: prefill the conditional slot and the twin concurrently (each submits all of its work before awaiting)
+  await Promise.all([bb.prefill(0, p.prompt.ids, p.prompt.cond), twin ? bb.prefill(1, twin.ids, twin.cond) : null]);
+  bb.startSampling({ sp: p.sp, minFrames: 0, cfgScale });
 
   for (;;) {
-    if (aborted()) { await pcmChain; return; }
-    if (codecErr) throw codecErr;
-    // 3. sample one frame from the current logits
-    let source = logits;
-    if (twinLogits && guided) {
-      const s = Math.fround(p.cfgScale);
-      for (let i = 0; i < guided.length; i++) guided[i] = twinLogits[i] + s * (logits[i] - twinLogits[i]);
-      source = guided;
-    }
-    if (readout) {
-      const ro = readout;
-      readout = null;
+    if (aborted()) { await discard(); await pcmChain; return; }
+    if (codecErr) { await discard(); throw codecErr; }
+    // 3. the next frame (submitted now, or a step ago), then the step after it when running ahead
+    if (!inflight.length) submit();
+    if (lookahead && inflight.length < 2 && issued < attemptMax) submit();
+    const r = await inflight.shift()!;
+    if (probe && r.probe) {
+      const ro = probeReduce(r.probe, probe.textLen);
       if (laci) {
         try {
           laci.onStep(probeCtl, slot.step, ro.argmax, ro.centroid);
@@ -517,7 +549,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
       }
     }
     if (laci) {
-      sampleFrame(slot, smp, source, attemptMax);
+      acceptFrame(slot, r.frame, stopId, attemptMax);
       const eos = slot.eosFrame >= 0 ? Math.max(0, slot.eosFrame - laci.attemptStart) : null;
       laci.append(Int32Array.from(slot.nextIds), eos);
       if (probeCtl.stop) slot.done = true;
@@ -526,7 +558,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
         for (let i = r.begin; i < r.end; i++) for (let c = 0; c < ncb; c++) codes.push(laci.stream[i][c]);
       }
     } else {
-      const frame = sampleFrame(slot, smp, source, attemptMax);
+      const frame = acceptFrame(slot, r.frame, stopId, attemptMax);
       for (const c of frame) codes.push(c);
       eosFrame = slot.eosFrame;
     }
@@ -534,10 +566,12 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
 
     // 4. a finished slot: LACI rollback, or the final decode
     if (slot.done) {
+      await discard();
       if (laci) {
         const c = laci.finishAttempt();
         if (c) {
-          // laci_resume: re-prefill the prompt (without its silence rows) plus the kept stream rows
+          // laci_resume: re-prefill the prompt (without its silence rows) plus the kept stream rows; the twin keeps its
+          // state and last logits
           const base = p.prompt.nRows - p.prompt.prefillFrames;
           const ids = new Int32Array((base + c.nRows) * W);
           ids.set(p.prompt.ids.subarray(0, base * W));
@@ -546,17 +580,17 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
           if (c.conditionValues) cond.buckets = c.conditionValues.slice();
           if (c.swapDelta) hidden = c.steeringDelta;
           Object.assign(slot, newSlot(c.nRows));
-          steer = hidden;
+          issued = 0;
           windows = laci.probeMask() ?? [];
           probeCtl.mask = null;
           probeCtl.stop = false;
-          readout = null;
           historyRows = c.historyRows;
           attemptMax = c.maxTokens;
-          smp = new Sampler({ ...p.sp, seed: (c.seed ?? p.sp.seed) >>> 0 }, ncb, e.hp.audioVocab);
-          for (let r = p.prompt.prefillFrames; r < c.nRows; r++) smp.accept(laci.stream[r].subarray(0, ncb));
-          smp.generated = 0;
-          logits = (await bb.prefill(0, ids, cond)).logits;
+          await bb.prefill(0, ids, cond);
+          bb.startSampling({
+            sp: { ...p.sp, seed: (c.seed ?? p.sp.seed) >>> 0 }, minFrames: 0, cfgScale,
+            history: laci.stream.slice(p.prompt.prefillFrames, c.nRows),
+          });
           const r = laci.drain();
           for (let i = r.begin; i < r.end; i++) for (let k = 0; k < ncb; k++) codes.push(laci.stream[i][k]);
           if (p.prefix) prefixReady();
@@ -593,35 +627,6 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
       }
       return;
     }
-
-    // 5. one decode step (step_steer first)
-    const frame = historyRows + slot.step;
-    if (follower) {
-      const span = follower.delta(frame);
-      if (span) {
-        if (hidden) for (let i = 0; i < hidden.length && i < span.length; i++) span[i] += hidden[i];
-        steer = span;
-      } else {
-        steer = hidden;
-      }
-    } else if (p.steering.spans.length) {
-      const out = { v: null as Float32Array | null };
-      p.steering.deltaAt(frame, out);
-      steer = out.v;
-    }
-    const next = Int32Array.from(slot.nextIds);
-    let probeOut: Float32Array | null;
-    if (twin) {
-      const r = await bb.stepPair(next, steer, twinSteered ? steer : null, probeInput());
-      logits = r.logits;
-      twinLogits = r.twinLogits;
-      probeOut = r.probe;
-    } else {
-      const r = await bb.step(0, next, steer, probeInput());
-      logits = r.logits;
-      probeOut = r.probe;
-    }
-    if (probe && probeOut) readout = probeReduce(probeOut, probe.textLen);
   }
 }
 

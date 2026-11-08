@@ -12,9 +12,10 @@ import { parseGguf } from './gguf';
 import { Gpu, initGpu } from './gpu/device';
 import { batchProgress, fetchJson, loadModel, type LoadProgress, type Manifest } from './gpu/weights';
 import { loadReferenceCodes } from './npy';
-import { buildPrompt, modelHp, NCB, W, type ModelHp } from './prompt';
+import { buildPrompt, modelHp, NCB, type ModelHp } from './prompt';
 import { LaciHeads } from './request/laci';
 import { controlsDocument, loadSteer, type SteerBundle } from './request/steer';
+import { defaultSampling } from './sampler';
 import { SpeakerEncoder } from './speaker';
 import { RemoteSpecSink } from './spec-sink';
 import { createTokenizer } from './tokenizer';
@@ -162,8 +163,8 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
 }
 
 /** Runs every program the first request needs once (both slots' prefill tiles, the cached 256-row chunk program plus a
- *  remainder via a 309-row reference prompt, one decode step per slot, a full codec chunk) so pipeline compilation and
- *  first-use costs land before 'ready' instead of in the first request. */
+ *  remainder via a 309-row reference prompt, a sampled decode step alone and as a CFG pair, a full codec chunk) so
+ *  pipeline compilation and first-use costs land before 'ready' instead of in the first request. */
 async function warmup(backbone: Backbone, zac: ZacStream, hp: ModelHp): Promise<void> {
   const tok = createTokenizer();
   const short = buildPrompt(tok, 'Hi.', { buckets: [], silencePrefill: 3 }, hp);
@@ -171,7 +172,11 @@ async function warmup(backbone: Backbone, zac: ZacStream, hp: ModelHp): Promise<
   for (const slot of [0, 1] as const) {
     await backbone.prefill(slot, short.ids, short.cond);
     await backbone.prefill(slot, ref.ids, ref.cond);
-    await backbone.step(slot, new Int32Array(W), null, null);
+  }
+  for (const cfgScale of [null, 1.5]) {
+    backbone.startSampling({ sp: defaultSampling(), minFrames: 0, cfgScale });
+    await backbone.sampleFirst(0);
+    await backbone.stepSample(1, null, null, null);
   }
   await zac.chunk(new Int32Array(NCB * BLOCK_FRAMES), 0, BLOCK_FRAMES);
   zac.reset();
