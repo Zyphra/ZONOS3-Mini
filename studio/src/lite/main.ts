@@ -31,7 +31,8 @@ import { StreamPlayer } from './player';
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const ui = {
-  backend: $<HTMLSpanElement>('backend'),
+  backend: $<HTMLButtonElement>('backend'),
+  backendNote: $<HTMLParagraphElement>('backend-note'),
   studioLink: $<HTMLAnchorElement>('studio-link'),
   notice: $<HTMLParagraphElement>('notice'),
   download: $<HTMLDivElement>('download'),
@@ -40,6 +41,7 @@ const ui = {
   panels: { default: $('panel-default'), clip: $('panel-clip'), embedding: $('panel-embedding') },
   voiceSelect: $<HTMLSelectElement>('voice-select'),
   clipPick: $<HTMLButtonElement>('clip-pick'),
+  clipPlay: $<HTMLButtonElement>('clip-play'),
   clipFile: $<HTMLInputElement>('clip-file'),
   record: $<HTMLButtonElement>('record'),
   clipState: $<HTMLSpanElement>('clip-state'),
@@ -63,6 +65,8 @@ const ui = {
   generate: $<HTMLButtonElement>('generate'),
   stop: $<HTMLButtonElement>('stop'),
   status: $<HTMLSpanElement>('generate-status'),
+  why: $<HTMLSpanElement>('generate-why'),
+  seedUse: $<HTMLButtonElement>('seed-use'),
   error: $<HTMLParagraphElement>('generate-error'),
   result: $<HTMLDivElement>('result'),
   wave: $<HTMLDivElement>('wave'),
@@ -241,12 +245,31 @@ async function voiceAction(button: HTMLButtonElement, busy: string, run: () => P
 
 const stem = (name: string) => name.replace(/\.[^.]+$/, '');
 
-function setClip(next: typeof clip, state: string) {
+let clipUrl = '';
+const clipAudio = new Audio();
+
+function setClip(next: typeof clip, state: string, samples = 0) {
   clip = next;
-  ui.clipState.textContent = state;
+  const short = samples > 0 && samples < SAMPLE_RATE * 5;
+  ui.clipState.textContent = short ? `${state} · under 5 s: a longer clip clones better` : state;
+  ui.clipState.classList.toggle('is-warn', short);
   ui.clipUpload.disabled = !clip;
   if (clip && !ui.clipLabel.value.trim()) ui.clipLabel.placeholder = stem(clip.name);
+  clipAudio.pause();
+  if (clipUrl) URL.revokeObjectURL(clipUrl);
+  clipUrl = clip ? URL.createObjectURL(clip.blob) : '';
+  ui.clipPlay.hidden = !clip;
+  setLabel(ui.clipPlay, 'Play', 'play');
 }
+
+ui.clipPlay.addEventListener('click', () => {
+  if (!clipAudio.paused) return clipAudio.pause();
+  clipAudio.src = clipUrl;
+  void clipAudio.play();
+});
+clipAudio.addEventListener('play', () => setLabel(ui.clipPlay, 'Stop', 'stop'));
+clipAudio.addEventListener('pause', () => setLabel(ui.clipPlay, 'Play', 'play'));
+clipAudio.addEventListener('ended', () => setLabel(ui.clipPlay, 'Play', 'play'));
 
 /** A recording as a 16-bit WAV (every server reads WAV; not every one reads the browser's webm/ogg). */
 async function recordingAsWav(blob: Blob): Promise<{ blob: Blob; name: string; samples: number }> {
@@ -272,12 +295,17 @@ async function toggleRecording() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    return show(ui.voiceError, `Microphone unavailable: ${message(e)}`);
+    const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    return show(ui.voiceError, denied ? 'Allow the microphone in the browser’s site settings' : `Microphone unavailable: ${message(e)}`);
   }
   const rec = new MediaRecorder(stream);
   const parts: Blob[] = [];
   const started = performance.now();
-  const tick = setInterval(() => (ui.clipState.textContent = `Recording… ${((performance.now() - started) / 1000).toFixed(0)} s`), 250);
+  const clock = () => {
+    const s = Math.floor((performance.now() - started) / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} / 0:30`;
+  };
+  const tick = setInterval(() => (ui.clipState.textContent = `Recording… ${clock()}`), 250);
   const limit = setTimeout(() => recorder?.stop(), 30_000);
   rec.ondataavailable = (ev) => parts.push(ev.data);
   rec.onstop = async () => {
@@ -290,26 +318,29 @@ async function toggleRecording() {
     ui.record.setAttribute('aria-pressed', 'false');
     const wav = await recordingAsWav(new Blob(parts, { type: rec.mimeType }));
     ui.clipFile.value = '';
-    setClip(wav, `Recording ready${wav.samples ? ` (${seconds(wav.samples)})` : ''}`);
+    setClip(wav, `Recording ready${wav.samples ? ` (${seconds(wav.samples)})` : ''}`, wav.samples);
   };
   recorder = { stop: () => rec.state === 'recording' && rec.stop() };
   rec.start();
   ui.record.classList.add('is-recording');
   ui.record.replaceChildren(Object.assign(document.createElement('span'), { className: 'rec-dot' }), 'Stop recording');
   ui.record.setAttribute('aria-pressed', 'true');
-  ui.clipState.textContent = 'Recording… 0 s';
+  ui.clipState.textContent = 'Recording… 0:00 / 0:30';
 }
 
 // ── Generation ────────────────────────────────────────────────────────────────────────────────────
 
 function updateGenerate() {
-  ui.generate.disabled = !voice || !!generation;
+  const empty = !ui.text.value.trim();
+  ui.generate.disabled = !voice || !!generation || empty;
+  show(ui.why, generation ? null : !voice ? 'Pick a voice first' : empty ? 'Type something to say' : null);
 }
+ui.text.addEventListener('input', updateGenerate);
 
 async function generate() {
   if (!voice || generation) return;
   const text = ui.text.value.trim();
-  if (!text) return;
+  if (!text) return show(ui.why, 'Type something to say');
   const body: GenerateRequest = {
     text,
     language: ui.language.value,
@@ -356,6 +387,7 @@ async function generate() {
     ui.resultDownload.download = `${slug(voice.label)}${seed ? `-seed${seed}` : ''}.wav`;
     ui.resultDownload.hidden = false;
     ui.resultMeta.textContent = `${seconds(samples)} · seed ${seed ?? 'unknown'} · first audio after ${((firstAudio - t0) / 1000).toFixed(2)} s`;
+    ui.seedUse.hidden = seed == null;
     ui.result.dataset.samples = String(samples);
     ui.result.dataset.seed = seed ?? '';
     ui.status.textContent = `Done: ${seconds(samples)} of audio.`;
@@ -417,26 +449,46 @@ ui.clipUpload.addEventListener('click', () =>
       speaker_audio_name: clip.name,
     });
     await refreshVoices(s);
+    ui.clipFile.value = '';
+    ui.clipLabel.value = '';
+    setClip(null, `Cloned “${s.label}” — now selected`);
   }),
 );
 
 ui.embeddingPick.addEventListener('click', () => ui.embeddingFile.click());
+const EMBEDDING_MAX_BYTES = 2e6;
 ui.embeddingFile.addEventListener('change', () => {
   const file = ui.embeddingFile.files?.[0];
-  ui.embeddingUpload.disabled = !file;
-  ui.embeddingState.textContent = file?.name ?? '';
-  if (file) ui.embeddingLabel.placeholder = stem(file.name);
+  show(ui.voiceError, null);
+  const bad = file && (!/\.np[yz]$/i.test(file.name) || file.size > EMBEDDING_MAX_BYTES) ? 'Couldn’t read this embedding file: it must be a .npy or .npz under 2 MB' : null;
+  if (bad) {
+    ui.embeddingFile.value = '';
+    show(ui.voiceError, bad);
+  }
+  const ok = file && !bad;
+  ui.embeddingUpload.disabled = !ok;
+  ui.embeddingState.textContent = ok ? file.name : '';
+  if (ok) ui.embeddingLabel.placeholder = stem(file.name);
 });
 ui.embeddingUpload.addEventListener('click', () =>
   voiceAction(ui.embeddingUpload, 'Loading…', async () => {
     const file = ui.embeddingFile.files?.[0];
     if (!file) return;
-    const s = await createSpeaker({
-      label: ui.embeddingLabel.value.trim() || stem(file.name),
-      speaker_embedding_base64: bytesToBase64(await file.arrayBuffer()),
-      speaker_embedding_name: file.name,
-    });
+    let s: Speaker;
+    try {
+      s = await createSpeaker({
+        label: ui.embeddingLabel.value.trim() || stem(file.name),
+        speaker_embedding_base64: bytesToBase64(await file.arrayBuffer()),
+        speaker_embedding_name: file.name,
+      });
+    } catch (e) {
+      throw e instanceof ApiError && e.status === 400 ? new Error(`Couldn’t read this embedding file: ${e.detail}`) : e;
+    }
     await refreshVoices(s);
+    ui.embeddingFile.value = '';
+    ui.embeddingLabel.value = '';
+    ui.embeddingState.textContent = `Loaded “${s.label}” — now selected`;
+    ui.embeddingUpload.disabled = true;
   }),
 );
 
@@ -479,6 +531,10 @@ ui.stop.addEventListener('click', () => {
   generation?.abort();
   player.stop();
 });
+ui.seedUse.addEventListener('click', () => {
+  ui.seed.value = ui.result.dataset.seed ?? '';
+  ui.seed.focus();
+});
 
 // ── Start ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -501,43 +557,43 @@ async function start() {
     });
   } catch (e) {
     booting(false);
-    return disableAll(
-      usingWebEngine()
-        ? `The in-browser server could not start: ${message(e)}`
-        : `Cannot reach the server${server ? ` at ${server}` : ''}: ${message(e)}`,
-    );
+    disableAll(usingWebEngine() ? `The in-browser engine couldn’t start: ${message(e)}` : `Can’t reach the server at ${server || location.origin}: ${message(e)}`);
+    const retry = Object.assign(document.createElement('button'), { type: 'button', className: 'btn sm', textContent: 'Try again' });
+    retry.addEventListener('click', () => location.reload());
+    ui.notice.append(' ', retry);
+    return;
   }
   booting(false);
   const { kind, caps } = backend;
   ui.backend.hidden = false;
-  ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In-browser' : 'Live';
-  ui.backend.title =
-    kind === 'web'
-      ? 'ZONOS3 runs in this tab on WebGPU; models are cached in the browser (Cache Storage).'
-      : `Connected to ${server || location.origin}.`;
+  ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In this browser' : 'Live';
+  const explanation = kind === 'web' ? 'The voice engine runs in this tab on your graphics card; its models are cached in the browser.' : `Connected to ${server || location.origin}: that server renders every voice.`;
+  ui.backend.title = explanation;
   ui.backend.classList.add(`pill-${kind}`);
+  ui.backend.addEventListener('click', () => {
+    const open = ui.backendNote.hidden;
+    show(ui.backendNote, open ? explanation : null);
+    ui.backend.setAttribute('aria-expanded', String(open));
+  });
   if (kind === 'web') {
-    ui.studioLink.search = '?api=web';
+    ui.studioLink.search = server ? `?api=web&server=${encodeURIComponent(server)}` : '?api=web';
     void onEncoderProgress((d) => showDownload(d.fraction >= 1 ? null : d));
   }
   if (!caps.speaker_modes.includes('embedding')) {
-    return disableAll(
-      'This server cannot clone from a speaker embedding: its checkpoint does not take speaker embeddings ' +
-        `(speaker modes: ${caps.speaker_modes.join(', ') || 'none'}). Use a server whose checkpoint has an embedding speaker input.`,
-    );
+    return disableAll('This server can’t clone voices from a saved voice file: its model has no voice-embedding input. Use a server whose model has one.');
   }
   const languages = caps.text_norm_languages.length ? caps.text_norm_languages : ['en_us'];
   for (const code of languages) ui.language.append(new Option(langLabel(code), code, false, code === 'en_us'));
   if (!caps.speaker_audio_upload) {
     ui.clipUpload.disabled = true;
-    ui.clipState.textContent = 'This server does not take clip uploads.';
+    ui.clipState.textContent = 'This server doesn’t take clip uploads.';
     ui.clipFile.disabled = ui.clipPick.disabled = ui.record.disabled = true;
   }
   if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) ui.record.hidden = true;
   try {
     await refreshVoices();
   } catch (e) {
-    show(ui.voiceError, `Could not list voices: ${message(e)}`);
+    show(ui.voiceError, `Couldn’t list voices: ${message(e)}`);
   }
 }
 

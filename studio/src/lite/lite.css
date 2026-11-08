@@ -256,3 +256,31 @@ p.error-box {
     flex-wrap: wrap;
   }
 }
+
+.hint-inline.is-warn {
+  color: var(--warn);
+}
+#backend {
+  cursor: pointer;
+  background: none;
+}
+@media (max-width: 560px) {
+  /* Phones: no zoom on focus (16 px inputs), 40 px targets, a short pill. */
+  .lite .input,
+  .lite textarea.input,
+  .lite select.input {
+    font-size: 16px;
+    min-height: 40px;
+  }
+  .lite .btn,
+  .lite .icon-btn,
+  .lite .mode-btn,
+  .lite .link {
+    min-height: 40px;
+  }
+  #backend .pill-text {
+    max-width: 64px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

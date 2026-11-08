@@ -228,7 +228,7 @@ export function PronMarks({ text, replace, issuesOnly }: { text: string; replace
   if (!tokens) {
     return parsed.groups.length ? (
       <span class="pron-marks">
-        <span class="pron-off" title={`Pronunciation input needs the phoneme-token checkpoint: ${SERVE_HINT}`}>
+        <span class="pron-off" title="This server reads parentheses as plain text: it has no pronunciation input">
           ( ) read as text
         </span>
       </span>
@@ -270,9 +270,14 @@ export function PronHelp() {
   if (!b) return null;
   if (!pronOn.value) {
     return (
-      <p class="hint pron-help" title={SERVE_HINT}>
-        Pronunciation input (X-SAMPA in parentheses) needs the phoneme-token checkpoint; on this server parentheses are read as text.
-      </p>
+      <div class="hint pron-help">
+        <p>This server has no pronunciation input: parentheses are read as text.</p>
+        <details class="pro">
+          <summary>For whoever runs the server</summary>
+          <p>Pronunciation input (X-SAMPA in parentheses) needs the phoneme-token checkpoint and a lexicon:</p>
+          <pre class="mono">{SERVE_HINT}</pre>
+        </details>
+      </div>
     );
   }
   return (

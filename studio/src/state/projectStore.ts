@@ -112,7 +112,7 @@ export class BrowserStore implements Store {
 
   async media(hash: string): Promise<Blob> {
     const rec = await request<MediaRecord | undefined>(this.tx(['media']).objectStore('media').get(hash));
-    if (!rec) throw new Error(`media ${hash} is missing from this browser’s storage`);
+    if (!rec) throw new Error(`An audio file of this project is missing from this browser (${hash.slice(0, 8)}…)`);
     return rec.blob;
   }
 
