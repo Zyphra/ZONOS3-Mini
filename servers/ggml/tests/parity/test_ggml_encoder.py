@@ -9,7 +9,7 @@ with the reference as well as earlier frames do. Codes are not bit-exact against
 before and after the 60 s mark.
 
 Inputs (skipped when absent): the release GGUFs ``ZONOS3_ZAC_ENCODER`` / ``ZONOS3_SSL_TEACHER`` (default
-servers/ggml/models/{zac-encoder,ssl-teacher}.gguf) and CUDA for the reference. The build's encoder runs on the GPU
+servers/ggml/gguf/{zac-encoder,ssl-teacher}.gguf) and CUDA for the reference. The build's encoder runs on the GPU
 when it was configured with GGML_CUDA (a CPU build takes about 4 s per audio second).
 
     uv run --package zonos3-tools pytest servers/ggml/tests/parity/test_ggml_encoder.py --ggml-build servers/ggml/build-cuda -s
@@ -26,7 +26,7 @@ import pytest
 import torch
 
 REPO = Path(__file__).resolve().parents[4]
-MODELS = REPO / "servers" / "ggml" / "models"
+MODELS = REPO / "servers" / "ggml" / "gguf"
 ZAC_ENCODER = Path(os.environ.get("ZONOS3_ZAC_ENCODER", MODELS / "zac-encoder.gguf"))
 SSL_TEACHER = Path(os.environ.get("ZONOS3_SSL_TEACHER", MODELS / "ssl-teacher.gguf"))
 SR, HOP, FRAMES_60S = 44100, 2940, 900

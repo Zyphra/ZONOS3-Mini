@@ -10,7 +10,7 @@
 set -euo pipefail
 B=${GGML_BUILD:-/tmp/ggml-build}
 BM=${GGML_METAL_BUILD:-/tmp/ggml-build-metal}
-M=servers/ggml/models
+M=servers/ggml/gguf
 E=servers/ggml/tests/fixtures/speaker-embedding.npy
 O=servers/web/public/goldens
 TEXT="Hello from the browser engine."

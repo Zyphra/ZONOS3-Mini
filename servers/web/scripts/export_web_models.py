@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the ZONOS3 Mini GGUFs (hf download Zyphra/ZONOS3_Mini_GGUF) into the sharded web format (zonos3-web-v1).
+"""Export the ZONOS3 Mini GGUFs (the gguf/ folder of Zyphra/ZONOS3-Mini) into the sharded web format (zonos3-web-v1).
 
 Layout per model: <out>/<model>/manifest.json + shard-NNN.bin. Every tensor is 256-byte aligned, never straddles a
 shard, and is stored in ggml memory order (ne0 fastest). bf16 tensors store raw bfloat16 bits (two per u32, element 2i
@@ -763,7 +763,7 @@ def main():
         path = os.path.join(a.models, fn)
         if not os.path.isfile(path):
             raise SystemExit(
-                f"missing {path}: hf download Zyphra/ZONOS3_Mini_GGUF {fn} --local-dir servers/ggml/models"
+                f"missing {path}: hf download Zyphra/ZONOS3-Mini gguf/{fn} --local-dir servers/ggml"
             )
     m = a.models
     os.makedirs(a.out, exist_ok=True)

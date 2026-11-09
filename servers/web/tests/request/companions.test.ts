@@ -11,7 +11,7 @@ import {
 } from '../../src/request/steer';
 
 const FIX = new URL('../../../ggml/tests/fixtures/', import.meta.url);
-const MODELS = new URL('../../../ggml/models/', import.meta.url);
+const MODELS = new URL('../../../ggml/gguf/', import.meta.url);
 const gguf = (u: URL) => { const b = readFileSync(u); return parseGguf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
 const norm = (v: Float32Array) => Math.sqrt(v.reduce((s, x) => s + x * x, 0));
 

@@ -30,7 +30,7 @@ from zonos3_mlx.models.lm import LMState, Zonos3MLX
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from export_web_models import Gguf, edit_adapter  # noqa: E402
 
-MODELS = "servers/ggml/models"
+MODELS = "servers/ggml/gguf"
 TEXT = "Hello there, this is a short speech editing test sentence."
 VOICE = "assets/default_voices/AmericanFemale"
 SPANS = [(30, 20), (90, 20)]

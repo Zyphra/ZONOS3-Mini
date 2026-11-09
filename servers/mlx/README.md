@@ -28,7 +28,7 @@ the per-codebook residual biases (`res.{i}.bias`) in the decoder GGUF; with an o
 
 ```bash
 uv sync --locked --package zonos3-mlx
-hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
+hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir servers/ggml   # servers/ggml/gguf/
 servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /lite
 ```
 

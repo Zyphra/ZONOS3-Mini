@@ -1,9 +1,9 @@
 #!/bin/bash
 # MLX ZONOS3 server on 127.0.0.1:1919 (Apple Silicon). Extra flags are appended.
-# Serves the GGUF files of hf://Zyphra/ZONOS3_Mini_GGUF (the ggml server's) from MODELS_DIR, with the voices in
+# Serves the GGUF files of the gguf/ folder of hf://Zyphra/ZONOS3-Mini (the ggml server's files) from MODELS_DIR, with the voices in
 # assets/default_voices/. Companions (zac, spk-encoder, zac-encoder, ssl-teacher, steer, accents) are picked up
 # next to the backbone. Overrides:
-#   MODELS_DIR                  directory holding the GGUFs (default servers/ggml/models)
+#   MODELS_DIR                  directory holding the GGUFs (default servers/ggml/gguf)
 #   SERVE_MODEL                 backbone GGUF (default $MODELS_DIR/zonos3-ptq.gguf)
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)
 #   PHONEME_LEXICON             gold pronunciation lexicon (--tts-phoneme-lexicon: POST /v2/phonemize)
@@ -22,10 +22,10 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 serve_package=zonos3-mlx
 cd "$repo_root"
-models="${MODELS_DIR:-$repo_root/servers/ggml/models}"
+models="${MODELS_DIR:-$repo_root/servers/ggml/gguf}"
 model="${SERVE_MODEL:-$models/zonos3-ptq.gguf}"
 if [[ ! -f "$model" ]]; then
-    echo "missing $model: hf download Zyphra/ZONOS3_Mini_GGUF --local-dir $models" >&2
+    echo "missing $model: hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir servers/ggml" >&2
     exit 1
 fi
 source "$repo_root/servers/serve-common.sh"

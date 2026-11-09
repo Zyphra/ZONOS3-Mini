@@ -125,15 +125,15 @@ Frontend mean/variance use NumPy's pairwise F32 reduction ordering. Cached teach
 R=/path/to/ZONOS3_Mini_release_ckpts   # revision 4d1d9efca3fb58ca880e028586d9f98bbc002288
 T="uv run --package zonos3-tools python ../../tools/convert_gguf.py"
 mkdir -p models
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o models/zonos3-f16.gguf
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o models/zonos3-ptq.gguf   # default backbone (PTQ)
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf   # default decoder
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf               # full-size (--zac)
-$T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-encoder.gguf
-$T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/zac-encoder.gguf
-$T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf
-$T steer ../../assets/steering/studio_bundle_mect60k_x10.json -o models/steer.gguf
-$T accents ACCENT_ADAPTER_DIR -o models/accents.gguf          # when accent adapters (<accent>.pt) are available
+$T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o gguf/zonos3-f16.gguf
+$T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf   # default backbone (PTQ)
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o gguf/zac-keep2.gguf   # default decoder
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o gguf/zac.gguf               # full-size (--zac)
+$T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o gguf/spk-encoder.gguf
+$T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o gguf/zac-encoder.gguf
+$T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o gguf/ssl-teacher.gguf
+$T steer ../../assets/steering/studio_bundle_mect60k_x10.json -o gguf/steer.gguf
+$T accents ACCENT_ADAPTER_DIR -o gguf/accents.gguf          # when accent adapters (<accent>.pt) are available
 ```
 
 `tools/convert_gguf.py` has one subcommand per GGUF; each loads its weights into the PyTorch module that runs them (`zonos3.reference.lm.Zonos3LM`, `ISTFTCodec`, `MossCodec`, transformers' `Wav2Vec2BertModel`, `MECTFbankSpeakerEmbedding`) with a strict load, so a missing or unknown checkpoint tensor is an error. `--help` on a subcommand documents its GGUF layout.
@@ -180,10 +180,10 @@ Waveform decoder (the oracle loads `zonos3.codec.istft_head_a_20261002.model.IST
 ```bash
 $D codec-decoder --generator "$R/autoencoder/generator.pt" \
   --head-dir "$R/autoencoder/heads/full_mr" out/codes.npy -o out/zac-golden
-./build/zac-cli models/zac-f32.gguf out/codes.npy out/zac-cpp.npy --skip-frames 0 --headroom-db 0 --cpu
+./build/zac-cli gguf/zac-f32.gguf out/codes.npy out/zac-cpp.npy --skip-frames 0 --headroom-db 0 --cpu
 $D codec-decoder --generator "$R/autoencoder/generator.pt" \
   --head-dir "$R/autoencoder/heads/full_mr" out/codes.npy -o out/zac-golden --compare out/zac-cpp.npy
-./build/zac-cli --seam models/zac.gguf out/codes.npy --block 3 --cpu
+./build/zac-cli --seam gguf/zac.gguf out/codes.npy --block 3 --cpu
 ```
 
 Repeat with `heads/keep2_plain` and a `zac-keep2.gguf`.
@@ -193,7 +193,7 @@ Speaker encoder (the oracle is `zonos3.models.mect_speaker.MECTFbankSpeakerEmbed
 ```bash
 ffmpeg -nostdin -v error -i ../../assets/default_voices/AmericanFemale.mp3 -ac 1 -ar 44100 -c:a pcm_f32le out/af.wav
 $D speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" out/af.wav -o out/spk-golden
-./build/spk-encoder-cli models/spk-encoder.gguf --audio out/af.wav out/af-emb.npy --dump-dir out/spk-cpp --cpu
+./build/spk-encoder-cli gguf/spk-encoder.gguf --audio out/af.wav out/af-emb.npy --dump-dir out/spk-cpp --cpu
 $C out/spk-golden out/spk-cpp --cos 0.9999
 ```
 
@@ -204,7 +204,7 @@ Teacher diagnostics accept identical features/masks to separate graph difference
 ```bash
 $D ssl-teacher --teacher "$R/autoencoder/teacher" \
   --audio ../../assets/default_voices/AmericanFemale.mp3 --dtype f32 -o out/ssl-python-f32
-./build/ssl-encoder-cli models/ssl-teacher.gguf \
+./build/ssl-encoder-cli gguf/ssl-teacher.gguf \
   --features out/ssl-python-f32/features.npy \
   --mask out/ssl-python-f32/attention_mask.npy \
   --dtype f32 --cpu --out out/ssl-native-f32
@@ -217,7 +217,7 @@ The codec oracle runs the **actual frozen adapter and IndependentBatcher** (`zon
 ```bash
 $D codec-encoder --generator "$R/autoencoder/generator.pt" --audio ../../assets/default_voices/AmericanFemale.mp3 \
   --samples 2941 --batch-size 1 -o out/encoder-python
-./build/zac-encoder-cli models/zac-encoder.gguf models/ssl-teacher.gguf \
+./build/zac-encoder-cli gguf/zac-encoder.gguf gguf/ssl-teacher.gguf \
   --audio out/encoder-python/audio.npy out/reference.npy \
   --gpu --dump out/encoder-native
 $C out/encoder-python out/encoder-native
@@ -238,12 +238,12 @@ Both latent width 256 and expert hidden width 1536 are K-block-aligned. Importan
 Corpus generation replaces `out/gencal` or `out/kldcorp` and its corresponding manifest; preserve any previous run before invoking the script.
 
 ```bash
-BUILD=build-cuda MODEL=models/zonos3-f16.gguf ZAC=models/zac.gguf \
-ZAC_ENCODER=models/zac-encoder.gguf SSL_TEACHER=models/ssl-teacher.gguf \
+BUILD=build-cuda MODEL=gguf/zonos3-f16.gguf ZAC=gguf/zac.gguf \
+ZAC_ENCODER=gguf/zac-encoder.gguf SSL_TEACHER=gguf/ssl-teacher.gguf \
   bash scripts/gen_trace_corpus.sh calib
-./build/zonos3-perplexity models/zonos3-f16.gguf \
+./build/zonos3-perplexity gguf/zonos3-f16.gguf \
   --manifest out/calib.manifest --imatrix-out out/imatrix.bin --prune-stats out/prune.bin
-./build/quantize-cli models/zonos3-f16.gguf models/zonos3-q4_k-exp-imat.gguf \
+./build/quantize-cli gguf/zonos3-f16.gguf gguf/zonos3-q4_k-exp-imat.gguf \
   q4_k --experts-only --spine-f16 --imatrix out/imatrix.bin
 ```
 
@@ -282,8 +282,8 @@ The heavyweight teacher regression is optional because its frozen weights are no
 ```bash
 cmake -S . -B build -DZONOS3_TEST_SSL_TEACHER="$PWD/models/ssl-teacher.gguf"
 cmake --build build --target ssl-reference-state
-./build/ssl-reference-state models/ssl-teacher.gguf
-./build/ssl-reference-state models/ssl-teacher.gguf --gpu
+./build/ssl-reference-state gguf/ssl-teacher.gguf
+./build/ssl-reference-state gguf/ssl-teacher.gguf --gpu
 ```
 
 It checks that new inputs affect per-frame outputs, A/B/A replay is exact, and changing graph size then restoring it does not corrupt cached relative indices.

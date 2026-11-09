@@ -28,23 +28,28 @@ The optional desktop shell uses `-DZONOS3_APP=ON`, CMake >= 3.31, a compatible C
 
 ## Prepare models
 
-The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model `zonos3-ptq.gguf` (0.66 GB, `lm/rate30_20k_r2grpo`); `zonos3-qat.gguf` (0.66 GB, the previous `lm/mect_60k` QAT backbone) remains available with `--quant qat`. Download the converted files from the private [Zyphra/ZONOS3_Mini_GGUF](https://huggingface.co/Zyphra/ZONOS3_Mini_GGUF) repository (authenticate with an account that can read it):
+The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model `zonos3-ptq.gguf` (0.66 GB, `lm/rate30_20k_r2grpo`). The converted files are the `gguf/` folder of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini) (private while unreleased: authenticate with an account that can read it); run these from `servers/ggml`:
 
 ```bash
 hf auth login
-hf download Zyphra/ZONOS3_Mini_GGUF zonos3-ptq.gguf zac-keep2.gguf spk-encoder.gguf --local-dir models
-# Optional raw-reference cloning companions (the repo keeps the encoder under its previous name dac-encoder.gguf):
-hf download Zyphra/ZONOS3_Mini_GGUF dac-encoder.gguf ssl-teacher.gguf --local-dir models
-mv models/dac-encoder.gguf models/zac-encoder.gguf
+hf download Zyphra/ZONOS3-Mini gguf/zonos3-ptq.gguf gguf/zac-keep2.gguf gguf/spk-encoder.gguf --local-dir .
+# Optional raw-reference cloning companions:
+hf download Zyphra/ZONOS3-Mini gguf/zac-encoder.gguf gguf/ssl-teacher.gguf --local-dir .
 # Optional voice-direction steering bundle (request `controls`: voice design, emotion, accent directions; the
 # studio's design controls; tempo-steered speaking-rate buckets; hidden-state directions fitted on lm/mect_60k):
-hf download Zyphra/ZONOS3_Mini_GGUF steer.gguf --local-dir models
+hf download Zyphra/ZONOS3-Mini gguf/steer.gguf --local-dir .
+# Optional default voices (clips with their shipped reference codes and speaker embeddings; --tts-default-voices-dir):
+hf download Zyphra/ZONOS3-Mini --include 'gguf/voices/*' --local-dir .
 # Optional speech editing (/v2/edit; also needs spk-encoder.gguf, the encoder companions above and --worker-python):
 # the release LM with the speech-edit LoRA's vocabulary, and the LoRA as an edit adapter bank. Keep edit/accents.gguf
-# where it lands: as models/accents.gguf it would be picked up by zonos3-ptq.gguf, which refuses it.
-hf download Zyphra/ZONOS3_Mini_GGUF zonos3-ptq-edit.gguf edit/accents.gguf --local-dir models
-./build/zonos3-server models/zonos3-ptq-edit.gguf --accent-adapters models/edit/accents.gguf --worker-python <PY>
+# where it lands: as gguf/accents.gguf it would be picked up by zonos3-ptq.gguf, which refuses it.
+hf download Zyphra/ZONOS3-Mini gguf/zonos3-ptq-edit.gguf gguf/edit/accents.gguf --local-dir .
+./build/zonos3-server gguf/zonos3-ptq-edit.gguf --accent-adapters gguf/edit/accents.gguf --worker-python <PY>
 ```
+
+`hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir .` fetches the whole folder (9.3 GB, with the full-size
+decoder `zac.gguf`). `zonos3-qat.gguf` (the previous `lm/mect_60k` QAT backbone, `--quant qat`) is not published there;
+convert it as below.
 
 The server picks up every companion it finds next to the backbone. `zonos3-ptq.gguf` carries per-table condition bucket
 counts (`zonos3.condition.bucket_counts`) and needs a build that reads them. Backbones downloaded before 2026-11-01 lack
@@ -68,30 +73,30 @@ hf download Zyphra/ZONOS3_Mini_release_ckpts \
 T="uv run --package zonos3-tools python ../../tools/convert_gguf.py"   # from servers/ggml
 mkdir -p models
 # F16 reference backbone from the release:
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o models/zonos3-f16.gguf
+$T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o gguf/zonos3-f16.gguf
 # Default backbone: the same LM quantized post-training (round to nearest): Q4_0 experts, Q8_0 mixers.
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o models/zonos3-ptq.gguf
+$T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf
 # Previous backbone (--quant qat): mect_60k QAT directory (same layout as the release LM plus bake.json; step 3462).
 # Q4_0 experts and Q8_0 mixers are stored bit-exactly, so there is no outtype to choose.
 $T lm QAT/lm/mect_60k_q4q8_qat \
   --silence-frame "$R/registries/silence_frame_opus_dual_3n_600k_sched600k_r4096_step600000.json" \
-  -o models/zonos3-qat.gguf
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o models/zac-keep2.gguf
-$T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o models/spk-encoder.gguf
+  -o gguf/zonos3-qat.gguf
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o gguf/zac-keep2.gguf
+$T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o gguf/spk-encoder.gguf
 
 # Optional: raw-reference cloning companions.
-$T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o models/zac-encoder.gguf
-$T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o models/ssl-teacher.gguf
+$T codec-encoder "$R/autoencoder/generator.pt" --outtype f32 -o gguf/zac-encoder.gguf
+$T ssl-teacher "$R/autoencoder/teacher" --outtype f32 -o gguf/ssl-teacher.gguf
 
 # Optional: the steering bundle (the repo's assets/steering/).
-$T steer ../../assets/steering/studio_bundle_mect60k_x10.json -o models/steer.gguf
+$T steer ../../assets/steering/studio_bundle_mect60k_x10.json -o gguf/steer.gguf
 
-# Optional: the full-size full_mr decoder (32/12/12/12/12 layers per transformer stage; select with --zac models/zac.gguf).
-$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o models/zac.gguf
+# Optional: the full-size full_mr decoder (32/12/12/12/12 layers per transformer stage; select with --zac gguf/zac.gguf).
+$T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o gguf/zac.gguf
 ```
 
 ```text
-models/
+gguf/
   zonos3-ptq.gguf     default backbone (Q4_0 experts, Q8_0 mixers) + embedded tokenizer, condition edges and silence frame
   zonos3-qat.gguf     optional previous mect_60k QAT backbone (select with --quant qat)
   zonos3-f16.gguf     optional F16 reference backbone (select with --quant f16)
@@ -109,7 +114,7 @@ models/
 ## Launch
 
 ```bash
-ZONOS3_SERVER_BIN="$PWD/build/zonos3-server" ZONOS3_MODEL_DIR="$PWD/models" \
+ZONOS3_SERVER_BIN="$PWD/build/zonos3-server" ZONOS3_MODEL_DIR="$PWD/gguf" \
   bash ./scripts/start-zonos3.sh -y --no-browser
 ```
 
@@ -121,25 +126,25 @@ Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.ba
 
 ```bash
 # Decoder is discovered beside the backbone.
-./build/zonos3-cli models/zonos3-ptq.gguf --tts 'Hello, world.' out.wav --seed 1
+./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Hello, world.' out.wav --seed 1
 
 # Clone from audio with the speaker embedding (default) and save the embedding.
-./build/zonos3-cli models/zonos3-ptq.gguf --tts 'Hello again.' clone.wav \
+./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Hello again.' clone.wav \
   --clone ../../assets/default_voices/AmericanFemale.mp3 --save-speaker-embedding voice-emb.npy --seed 1
 
 # Reuse a saved embedding without loading the speaker encoder.
-./build/zonos3-cli models/zonos3-ptq.gguf --tts 'A cached embedding.' cached.wav \
+./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'A cached embedding.' cached.wav \
   --speaker-embedding voice-emb.npy --condition-buckets 4,3,10 --seed 1
 
 # Raw reference: encode once, save the codes, reuse them.
-./build/zonos3-cli models/zonos3-ptq.gguf --tts 'Raw reference.' ref.wav \
+./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Raw reference.' ref.wav \
   --clone ../../assets/default_voices/AmericanFemale.mp3 --speaker-mode reference \
   --save-reference voice-codes.npy --seed 1
-./build/zonos3-cli models/zonos3-ptq.gguf --tts 'Cached codes.' ref2.wav \
+./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Cached codes.' ref2.wav \
   --reference-codes voice-codes.npy --seed 1
 
 # Speaker CFG (two-slot generation; needs a speaker prompt).
-./build/zonos3-cli models/zonos3-ptq.gguf --tts 'Guided.' cfg.wav \
+./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Guided.' cfg.wav \
   --speaker-embedding voice-emb.npy --cfg-scale 1.5 --seed 1
 ```
 
@@ -170,7 +175,7 @@ For file cloning, install ffmpeg or set `ZONOS3_FFMPEG`. `--max` limits generate
 `zonos3-server` serves the v2 HTTP API of `api/openapi.yaml` (the same contract as the CUDA server in `servers/sgl`): the native routes under `/v2/`, the OpenAI-compatible `GET /v1/models` and `POST /v1/audio/speech`, and the studio build (`studio/dist` of the checkout, or `--studio-dir`): a chooser at `/`, Zonos Voice Studio at `/studio` and the lite voice-cloning page at `/lite`.
 
 ```bash
-./build/zonos3-server models/zonos3-ptq.gguf \
+./build/zonos3-server gguf/zonos3-ptq.gguf \
   --tts-default-voices-dir ../../assets/default_voices --studio-projects-dir ~/.zonos3/projects --port 1919
 curl -fsS http://127.0.0.1:1919/v2/capabilities
 curl -fsS http://127.0.0.1:1919/v2/generate \
@@ -182,7 +187,7 @@ curl -fsSN http://127.0.0.1:1919/v2/generate \
 
 Requests are validated against the spec (embedded at build time): a schema violation, an unknown field or a dropped legacy field is a 422 `{"detail": [{"loc", "msg", "type"}]}`; a state-dependent error (unknown voice, a feature this server lacks, a CFG combination, `stream: true` with `format: "wav"`) is a 400 `{"detail"}`.
 
-- **Voices** (`GET|POST /v2/speakers`, `/v2/speakers/<id>/preview`, `/v2/speakers/<id>/embedding`): default voices come from `--tts-default-voices-dir` (audio files, ids `default_<sha1[:16]>` of the relative path; `.npy`/`.npz` speaker embeddings); `POST /v2/speakers` caches a clip (`speaker_audio_base64`) or an embedding (`speaker_embedding_base64`) in the `X-TTS-Session-ID` session. An audio voice with a sibling `<stem>.codes.npy` (ordinary `[T,10]` codes as written by `zac-encoder-cli`) uses those codes in reference mode instead of loading the encoder, and one with a sibling `<stem>.embedding.npy` (float32 `[192]`, as written by `spk-encoder-cli`) uses that embedding in embedding mode instead of loading the speaker encoder; regenerate both after changing a voice: `./build/zac-encoder-cli models/zac-encoder.gguf models/ssl-teacher.gguf --audio ../../assets/default_voices/NAME.mp3 ../../assets/default_voices/NAME.codes.npy --gpu` and `./build/spk-encoder-cli models/spk-encoder.gguf --audio ../../assets/default_voices/NAME.mp3 ../../assets/default_voices/NAME.embedding.npy --cpu`. Audio cloning needs `spk-encoder.gguf` (embedding mode) or `zac-encoder.gguf` + `ssl-teacher.gguf` (reference mode); encoding is lazy per mode and cached, and the reference encoder and SSL teacher are freed after `--reference-idle-unload N` idle seconds (default 60; `0` keeps them loaded).
+- **Voices** (`GET|POST /v2/speakers`, `/v2/speakers/<id>/preview`, `/v2/speakers/<id>/embedding`): default voices come from `--tts-default-voices-dir` (audio files, ids `default_<sha1[:16]>` of the relative path; `.npy`/`.npz` speaker embeddings); `POST /v2/speakers` caches a clip (`speaker_audio_base64`) or an embedding (`speaker_embedding_base64`) in the `X-TTS-Session-ID` session. An audio voice with a sibling `<stem>.codes.npy` (ordinary `[T,10]` codes as written by `zac-encoder-cli`) uses those codes in reference mode instead of loading the encoder, and one with a sibling `<stem>.embedding.npy` (float32 `[192]`, as written by `spk-encoder-cli`) uses that embedding in embedding mode instead of loading the speaker encoder; regenerate both after changing a voice: `./build/zac-encoder-cli gguf/zac-encoder.gguf gguf/ssl-teacher.gguf --audio ../../assets/default_voices/NAME.mp3 ../../assets/default_voices/NAME.codes.npy --gpu` and `./build/spk-encoder-cli gguf/spk-encoder.gguf --audio ../../assets/default_voices/NAME.mp3 ../../assets/default_voices/NAME.embedding.npy --cpu`. Audio cloning needs `spk-encoder.gguf` (embedding mode) or `zac-encoder.gguf` + `ssl-teacher.gguf` (reference mode); encoding is lazy per mode and cached, and the reference encoder and SSL teacher are freed after `--reference-idle-unload N` idle seconds (default 60; `0` keeps them loaded).
 - **Generation** (`POST /v2/generate`, `POST /v1/audio/speech` with `voice` = a speaker id): `speaker_embedding_id` (or an inline `speaker_audio_base64` / `speaker_embedding_base64` / `speaker_reference_codes`, or a `speaker_blend_embedding_id_a/_b` slerp at `speaker_blend_t`) with `speaker_mode` `"reference"` (the checkpoint default) or `"embedding"`; `condition_buckets` / `condition_values`; `speaker_cfg_scale` (needs a speaker prompt and `--batch >= 2`); `silence_prefill_frames` (server default 3, `0..30`, larger or negative is a 400); `headroom_db` (`0..24`); `decode_context`; `max_tokens`; `seed`. Reference codes (inline, a voice's `.codes.npy` or an encoded clip) keep their first 900 frames. `max_tokens` (at most `--max`, default 2000) shrinks to the slot rows the prompt leaves; a prompt that fills the slot is a 400 `TTS input len {rows} exceeds {capacity}`. Sampling defaults and these limits come from the generation registry `model/src/zonos3/registries/generation.json`, embedded at build time. Streaming uses `stream_decode` `"prefix"` (chunks ramping from `ZONOS3_PREFIX_STREAM_FIRST_CHUNK_FRAMES`=1 frame, doubling, up to `ZONOS3_PREFIX_STREAM_CHUNK_FRAMES`=15, behind a `ZONOS3_PREFIX_STREAM_HOLD_BACK_FRAMES`=0 hold-back, the same stream continued and flushed at EOS; the default, see `--stream-decode-default`) or `"whole"` (one exact chunk at EOS). Prefix streaming decodes a frame early, once its first `stream_codebooks` codebooks arrived (default 1 from the registry's `stream_codebooks`, `1..10`, above is a 400; 10 = complete frames only), the missing residual codebooks left out of that frame (never re-decoded): `stream_codebooks_scope` `"first"` (default) does this for the first chunk only, so first audio follows the first generated row instead of the tenth, `"all"` for every chunk. It needs a decoder GGUF with the per-codebook residual biases `res.{i}.bias` (`convert_gguf.py codec-decoder` writes them); an older one streams complete frames only (logged at startup).
 - **Python workers** (`--worker-python PY`): text normalization and the Python host run as persistent workers of `model/src/zonos3/workers` under `PY` with `PYTHONPATH` = `--python-src` (default: `model/src` of the checkout holding the executable, else `python/` beside it); the Python host keeps the caller's `PYTHONPATH` after it, and `--plugins` checks at startup that each `zonos3_<name>` imports under that same environment. The Python host (`pyhost.py`) runs speech editing (`zonos3.tts.edit_runtime`, the Python implementation the other servers run) and the `--plugins` routers; it starts on first use and again after it exited, and calls back into the server for everything that needs the served model (upload decode, speaker embedding and codes of a clip, each region's infill generation, decodes, LACI takes with a duration target on the scheduler). Its word timings come from FuseAlign, so `PY` needs the workspace's packages, including `fusealign-hub` (the `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`, then `uv sync`; the checkpoint downloads from the [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) Hugging Face repository on first use, `ZONOS3_FUSEALIGN_DEVICE` picks its device); `uv run which python` from the repo root is such an interpreter. Release packages ship `fusealign_hub` (Apache-2.0) as `python/fusealign_hub` next to `python/zonos3`; `PY` there needs its dependencies (`torch`, `torchaudio`, `transformers`, `safetensors`, `huggingface_hub`, `silero-vad`), or `pip install git+https://github.com/Zyphra/fusealign-multilingual.git`.
 - **Speech recognition** (optional; speech editing and plugins): the Python host runs Qwen3-ASR (`Qwen/Qwen3-ASR-1.7B`, `model/src/zonos3/workers/asr.py`) in its own interpreter, `ZONOS3_ASR_PYTHON` (default `<repo>/.venv-asr/bin/python`, set up by `tools/setup_asr_env.sh`; `ZONOS3_ASR_DEVICE` picks its device, e.g. `cuda:1`). Without it speech editing still works when the caller sends the clip's transcript; `GET /v2/capabilities` reports it as `edit_transcribe`.
@@ -197,7 +202,7 @@ Requests are validated against the spec (embedded at build time): a schema viola
 A `steer.gguf` next to the backbone (or `--steer PATH`) enables voice-design controls. Build it from a steering bundle (the JSON plus the per-set direction directories; semantics follow the minisgl `steering.py` reference):
 
 ```bash
-uv run --package zonos3-tools python ../../tools/convert_gguf.py steer ../../assets/steering/studio_bundle_mect60k_x10.json -o models/steer.gguf
+uv run --package zonos3-tools python ../../tools/convert_gguf.py steer ../../assets/steering/studio_bundle_mect60k_x10.json -o gguf/steer.gguf
 ```
 
 Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `control_spans` (`[{"start": 0, "end": 12, "controls": {"delivery.whisper": 3}}]`, code-point offsets into the request text, answered with `X-Control-Span-Follow: rate`) and `control_span_rate`. Emotion (`mood.*`) and accent directions (`accents_en.*`, `accents_l1.*`, ...) are bundle sets like any other. `controls_cfg_scale` (default 1; needs `speaker_mode` `embedding` and `--batch >= 2`) guides a request with a hidden-space delta against a twin of the same prompt without it, `uncond + scale * (cond - uncond)`. With `--laci-heads LANG=PATH` for the request's language, `control_span_follow: "reading"` places the spans by the alignment heads' reading position instead (`control_span_lead` / `control_span_lag`; answered with `X-Control-Span-Follow: reading`), and `laci: true` runs LACI: skips, stalls and early EOS are rolled back and regenerated under an ACI attention window (no CFG). `GET /v2/controls` lists the sets (with the set's `calibration`: the doses of its `calibration.json`, when it has one), directions (raw vectors included), duration timing tables and the UI metadata; the server never applies a calibration (controls are raw doses), and every speaker object lists the `disabled_controls` its calibration doses to 0. Raw controls need `speaker_mode` `embedding`; hidden controls work in both modes. `accent` / `accent_strength` select an accent adapter of `accents.gguf` (`--accent-adapters`). The directions were fitted on the `mect_60k` backbone; other checkpoints may respond differently.
@@ -205,13 +210,13 @@ Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `co
 ## Standalone tools
 
 ```bash
-./build/zonos3-cli models/zonos3-ptq.gguf --build-prompt 'Hello.' ids.npy   # + ids.cond.json
-./build/zac-cli models/zac-keep2.gguf codes.npy decoded.wav
-./build/spk-encoder-cli models/spk-encoder.gguf --audio voice.mp3 voice-emb.npy --cpu
-./build/zac-encoder-cli models/zac-encoder.gguf models/ssl-teacher.gguf \
+./build/zonos3-cli gguf/zonos3-ptq.gguf --build-prompt 'Hello.' ids.npy   # + ids.cond.json
+./build/zac-cli gguf/zac-keep2.gguf codes.npy decoded.wav
+./build/spk-encoder-cli gguf/spk-encoder.gguf --audio voice.mp3 voice-emb.npy --cpu
+./build/zac-encoder-cli gguf/zac-encoder.gguf gguf/ssl-teacher.gguf \
   --audio voice.mp3 voice-codes.npy --cpu
-./build/quantize-cli models/zonos3-f16.gguf models/zonos3-q8_0.gguf q8_0
-./build/quantize-cli models/zonos3-f16.gguf models/zonos3-q6_k-exp.gguf \
+./build/quantize-cli gguf/zonos3-f16.gguf gguf/zonos3-q8_0.gguf q8_0
+./build/quantize-cli gguf/zonos3-f16.gguf gguf/zonos3-q6_k-exp.gguf \
   q6_k --experts-only --spine-f16
 ```
 

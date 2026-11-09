@@ -20,3 +20,5 @@ __pycache__/
 
 # Personal Claude Code instructions (private)
 CLAUDE.local.md
+# hf download Zyphra/ZONOS3-Mini --include "gguf/*" --local-dir servers/ggml
+/gguf/

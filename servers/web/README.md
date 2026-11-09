@@ -34,7 +34,10 @@ its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted fr
 ## Build and run
 
 ```bash
-hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
+# Prebuilt shards (the web/ folder of Zyphra/ZONOS3-Mini, ~4.2 GB) into public/models/:
+hf download Zyphra/ZONOS3-Mini --include 'web/*' --local-dir /tmp/zonos3-mini && mv /tmp/zonos3-mini/web servers/web/public/models
+# Or export them from the GGUFs (needs the FuseAlign GGUF in the Hugging Face cache for aligner/):
+hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir servers/ggml
 pnpm --dir servers/web export          # public/models/ (~4.5 GB; first load fetches backbone + zac (zac-keep2.gguf), ~1.0 GB; uploads add encoder + teacher, ~2.8 GB, and spk; speech editing adds edit (the speech-edit adapter on the backbone's weights, ~0.13 GB) and aligner (~0.5 GB))
 pnpm --dir servers/web build           # dist/engine.js + dist/worker.js + dist/codec-worker.js
 pnpm --dir studio dev                  # http://localhost:5173/studio?api=web (or /lite?api=web)

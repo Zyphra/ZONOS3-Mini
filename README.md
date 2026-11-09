@@ -24,7 +24,8 @@ Every server implements the same HTTP API and serves the same studio.
   `hf auth login`.
   - CUDA server: [`Zyphra/ZONOS3_Mini_release_ckpts`](https://huggingface.co/Zyphra/ZONOS3_Mini_release_ckpts) (LM,
     codec and speaker encoder weights, about 15 GB, downloaded into the Hugging Face cache on first use).
-  - MLX, ggml and in-browser servers: [`Zyphra/ZONOS3_Mini_GGUF`](https://huggingface.co/Zyphra/ZONOS3_Mini_GGUF).
+  - MLX, ggml and in-browser servers: the `gguf/` and `web/` folders of
+    [`Zyphra/ZONOS3-Mini`](https://huggingface.co/Zyphra/ZONOS3-Mini).
 - CUDA server: the CUDA 12.8 toolkit (`CUDA_HOME`, default `/usr/local/cuda-12.8`).
 
 ### 3. Install
@@ -45,8 +46,8 @@ the FuseAlign aligner and ggml.
 # Linux with an NVIDIA GPU: the release LM on 127.0.0.1:1919
 servers/sgl/scripts/serve.sh
 
-# Apple Silicon: fetch the GGUF files once, then serve on 127.0.0.1:1919
-hf download Zyphra/ZONOS3_Mini_GGUF --local-dir servers/ggml/models
+# Apple Silicon: fetch the GGUF files once (servers/ggml/gguf/), then serve on 127.0.0.1:1919
+hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir servers/ggml
 servers/mlx/scripts/serve.sh
 ```
 
@@ -136,7 +137,7 @@ portable Triton experts and gated-DeltaNet kernels instead, see
 `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo` on `127.0.0.1:1919` with `--attention-backend fa
 --cache-type naive`, two running requests and CUDA graphs. Extra server flags are appended (e.g.
 `servers/sgl/scripts/serve.sh --port 1920`). `servers/mlx/scripts/serve.sh` serves the GGUF files of
-`Zyphra/ZONOS3_Mini_GGUF` with the same variables:
+the `gguf/` folder of `Zyphra/ZONOS3-Mini` with the same variables:
 
 | Variable | Effect |
 | --- | --- |
