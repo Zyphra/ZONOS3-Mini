@@ -119,7 +119,7 @@ function BenchHeader() {
       </div>
       <IdentityMeter />
       <div class="row gap-s">
-        <button class="btn" onClick={roll} title="A random voice inside every control’s natural range">
+        <button class="btn" onClick={roll} title="A random new person: base voice, who, a touch of texture or room (delivery and mood stay as they are)">
           <Icon name="dice" size={14} /> Roll a voice
         </button>
         <button class="icon-btn" onClick={resetDesign} title={clone ? 'Reset delivery and mood (Who, Accent, Texture and Room are kept for Shape it)' : 'Reset: back to the plain base voice'} aria-label="Reset the controls">

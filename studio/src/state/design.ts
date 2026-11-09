@@ -136,23 +136,41 @@ export function resetDesign() {
 
 const pick = <T,>(xs: T[], r: () => number) => xs[Math.floor(r() * xs.length)];
 
+/** A random value inside the natural range, `scale` of the way out at most, rounded to a tenth. */
 function randomSafe(c: ControlSpec, r: () => number, scale: number): number {
   const [lo, hi] = c.safe;
   return Math.round((lo + (hi - lo) * r()) * scale * 10) / 10;
 }
 
-/** A random point inside the natural range of every control (and a random accent half the time). */
+/** The control groups Roll touches: who the voice is, never how it performs (delivery and mood stay neutral). */
+const ROLL_GROUPS: Record<string, true> = { who: true, texture: true, room: true };
+
+/** `n` distinct random picks from `xs`. */
+function sample<T>(xs: T[], n: number, r: () => number): T[] {
+  const pool = [...xs];
+  for (let i = 0; i < Math.min(n, pool.length); i++) {
+    const j = i + Math.floor(r() * (pool.length - i));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, Math.min(n, pool.length));
+}
+
+/**
+ * A random new person: a random base voice, the who controls nudged a little, one or two texture / room moves,
+ * and an accent a third of the time (mild). Delivery and mood are left alone: a rolled voice should sound like
+ * someone else, not like someone upset.
+ */
 export function rollDesign(r: () => number = Math.random): Design {
   const s = spec.value;
   const defaults = speakers.value.filter((x) => x.is_default);
   const values: Values = {};
-  for (const c of s.ui.controls) {
-    if (c.group === 'who' || r() < 0.45) values[c.id] = randomSafe(c, r, 0.7);
-  }
+  for (const c of s.ui.controls) if (c.group === 'who') values[c.id] = randomSafe(c, r, 0.5);
+  const others = s.ui.controls.filter((c) => ROLL_GROUPS[c.group] && c.group !== 'who');
+  for (const c of sample(others, 1 + Math.floor(r() * 2), r)) values[c.id] = randomSafe(c, r, 0.5);
   let pin = homePin(design.value.pin.tab);
-  if (r() < 0.6) {
+  if (r() < 0.33) {
     const a = pick(s.ui.accents, r);
-    pin = placeFor(a, a.safe[1] * (0.4 + 0.6 * r()), s.ui.accents);
+    pin = placeFor(a, a.safe[1] * (0.3 + 0.4 * r()), s.ui.accents);
   }
   return { baseId: (pick(defaults, r) ?? speakers.value[0])?.id ?? design.value.baseId, mode: 'embedding', values, pin };
 }
