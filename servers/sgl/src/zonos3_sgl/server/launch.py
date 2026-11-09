@@ -135,6 +135,7 @@ def launch_server(run_shell: bool = False) -> None:
                     "addr": server_args.zmq_tokenizer_addr,
                     "create": server_args.tokenizer_create_addr,
                     "tokenizer_id": i,
+                    "decodes_audio": False,
                 },
                 daemon=False,
                 name=f"zonos3-tokenizer-{i}",

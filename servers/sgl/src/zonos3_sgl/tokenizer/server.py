@@ -114,6 +114,7 @@ def tokenize_worker(
     condition_count: int = 0,
     condition_bucket_counts: Sequence[int] = (),
     text_tokenizer_spec: dict | None = None,  # the served spec (EngineConfig.text_tokenizer_spec)
+    decodes_audio: bool = True,  # the detokenizer: the scheduler's rows come here (--num-tokenizer > 0: one of N + 1)
 ) -> None:
     send_backend = ZmqPushQueue(backend_addr, create=False, encoder=BaseBackendMsg.encoder)
     send_frontend = ZmqPushQueue(frontend_addr, create=False, encoder=BaseFrontendMsg.encoder)
@@ -146,7 +147,10 @@ def tokenize_worker(
         audio_pad_id=audio_pad_id,
         audio_codec=audio_codec,
     )
-    tts_vocoder_manager.warm_prefix_stream()
+    # The prefix codec stream (primed + CUDA-graphed) serves the rows of streaming requests, which only the detokenizer
+    # receives: the tokenize-only processes of --num-tokenizer N would hold N more copies of the codec and its graphs.
+    if decodes_audio:
+        tts_vocoder_manager.warm_prefix_stream()
     # inline reference codes keep their first frames: the checkpoint's speaker_reference_max_seconds at the codec hop
     reference_limit = plan.reference_frame_limit(
         speaker_reference_max_seconds, tts_vocoder_manager.hop_length, SAMPLE_RATE
