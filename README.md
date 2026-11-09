@@ -62,7 +62,8 @@ servers/sgl/scripts/serve.sh
 ```
 
 The launcher sources `servers/sgl/scripts/env.sh` (CUDA toolchain, the TileLang gated-DeltaNet backend and the five
-`ZONOS3_USE_TRAINING_*` exact-mode kernels) and serves the release LM
+`ZONOS3_USE_TRAINING_*` exact-mode kernels; on a pre-Hopper GPU such as the A100 it selects the portable Triton experts
+and gated-DeltaNet kernels instead, see [docs/tts_architecture.md](docs/tts_architecture.md#gdn--full-attnres-family-2026-10)) and serves the release LM
 `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo` on `127.0.0.1:1919` with `--attention-backend fa --cache-type
 naive`, two running requests and CUDA graphs. Extra server flags are appended (e.g. `servers/sgl/scripts/serve.sh --port 1920`).
 The first start JIT-compiles kernels and builds the text-normalization grammar cache, which takes several minutes.

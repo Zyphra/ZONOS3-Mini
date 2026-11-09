@@ -236,7 +236,7 @@ w2 `[64, 256, 1536]`. The experts sit in the 256-wide latent between
 `latent_down` and `latent_up`, top-2, on layers 1-10. The non-expert entries
 and the router bias shifts are as in `/1`. Expert factors are served on the
 exact SonicMoE path only (`ZONOS3_USE_TRAINING_SONIC_EXPERTS=1`, which
-`servers/sgl/scripts/env.sh` sets); elsewhere they are refused, as are expert entries in a
+`servers/sgl/scripts/env.sh` sets on Hopper; SonicMoE has no A100 build); elsewhere they are refused, as are expert entries in a
 `/1` file, expert weights other than w13 / w2, mismatched shapes or expert
 counts, and an adapter whose w13 and w2 ranks differ.
 
