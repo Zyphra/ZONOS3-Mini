@@ -4,6 +4,12 @@ Inference runtime for **ZONOS3 Mini**, Zyphra's multilingual text-to-speech mode
 Voice Studio, an in-browser WebGPU build and an offline Python API. Model details are in
 [About ZONOS3 Mini](#about-zonos3-mini).
 
+[Blog post](https://www.zyphra.com/our-work/zonos3-mini) ·
+[Weights](https://huggingface.co/Zyphra/ZONOS3-Mini) ·
+[Run in your browser](https://zyphra.com/zonos3-mini/localplayground) (no install) ·
+[Zyphra Cloud](https://cloud.zyphra.com/models/zyphra/ZONOS3-Mini) ·
+[ZTTS2-Eval](https://zyphra.github.io/ZTTS2-Eval/)
+
 ## Quick start
 
 ### 1. Choose a backend
@@ -187,6 +193,13 @@ in four), uses Full AttnRes residuals and a latent mixture-of-experts. It reads 
 10 × 4096 dual-codec audio codes at 15 Hz. A causal multi-resolution iSTFT decoder turns the codes into 44.1 kHz
 audio. Voices are cloned from a raw reference clip (encoded into the same codes) or from a 192-d MECT-B2 speaker
 embedding.
+
+The [blog post](https://www.zyphra.com/our-work/zonos3-mini) covers
+[training and architecture](https://www.zyphra.com/our-work/zonos3-mini#training-and-architecture-details) (the ZAC-1
+codec, DPO and GRPO post-training), the [ZTTS2-Eval results](https://www.zyphra.com/our-work/zonos3-mini#evaluation),
+[comparisons](https://www.zyphra.com/our-work/zonos3-mini#model-comparisons) with other TTS models, and
+[control examples](https://www.zyphra.com/our-work/zonos3-mini#control-examples) (voice design, accents, span
+whispering, emotion, pace, projection, liveliness) with their control values.
 
 | Feature | Where |
 | --- | --- |
