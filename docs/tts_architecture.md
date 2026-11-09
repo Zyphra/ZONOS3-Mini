@@ -319,6 +319,16 @@ training kernel's setting) because FA3's automatic KV split rounds differently f
 `Engine._check_head_batch_invariance()` verifies the head property at load. Every other kernel in the exact path (all
 other linears, the FLA chunk kernel, SonicMoE, the training RMSNorm and AttnRes kernels) is batch-invariant as is.
 
+Two exact-mode kernels are Hopper-only: SonicMoE's quack grouped GEMM ("Gemm Sm80 is not implemented yet") and FLA's
+TileLang chunk kernels. On a GPU below sm_90 (A100) `servers/sgl/scripts/env.sh` leaves
+`ZONOS3_USE_TRAINING_SONIC_EXPERTS` and `FLA_TILELANG` off, so the experts run the Triton `FusedMoE` and the GDN chunks
+FLA's Triton kernels; the rest of exact mode (RMSNorm, router weights, AttnRes, RoPE) is portable, and the `fa` backend's
+sgl-kernel FA3 has an sm_80 build (head_dim 32 runs on its 64-wide kernels, as on Hopper). The forward is no longer
+bit-exact with training. Forced on an H100 (`FLA_TILELANG=0 ZONOS3_USE_TRAINING_SONIC_EXPERTS=0`), the profile measured:
+the expert layer 20 vs 42 us at 1 token and 97 vs 204 us at 1024 (SonicMoE is a training kernel), TTFA p50 13.7 vs 14.7 ms,
+1700 CV3 / MiniMax samples at 256 running requests in 110 vs 115 s, and the same WER / SIM within seed noise (pooled word
+errors -1.6 %).
+
 Text uses the SuperBPE convention in `zonos3/tts/superbpe.py` (`[2] + (ids + 4) + [3]`, artifact pinned by SHA-256 through
 `params.json`). Audio uses 10 codebooks of 4096 (`eoa_id` 4096, `audio_pad_id` 4097) from the dual codec; the matched
 codec registry (`zonos3/tokenizer/matched_codec.py`) provides both the encoder for reference audio
