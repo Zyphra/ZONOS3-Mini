@@ -45,9 +45,11 @@ describe.skipIf(!haveEditModels)('speech editing without speech recognition', ()
     expect(body.words.map(w => [w.word, w.tokens, w.confidence])).toEqual([
       ['Hello,', ['HELLO'], 0.9], ['there', ['THERE'], 0.9], ['friend!', ['FRIEND'], 0.9],
     ]);
-    // ja: one unit per CJK character
-    const ja = await call(api, 'POST', '/v2/edit/align', { audio_base64: b64('wav'), text: '今日は。', language: 'ja' }, {}, clip(1));
-    expect(ja.json<{ words: { word: string }[] }>().words.map(w => w.word)).toEqual(['今', '日', 'は。']);
+    // ja: one unit per ICU word of each Han / kana run, punctuation attached
+    const ja = await call(api, 'POST', '/v2/edit/align', { audio_base64: b64('wav'), text: '今日は学校。', language: 'ja' }, {}, clip(1));
+    expect(ja.json<{ words: { word: string; tokens: string[] }[] }>().words.map(w => [w.word, w.tokens])).toEqual([
+      ['今日', ['今日']], ['は', ['は']], ['学校。', ['学校']],
+    ]);
   });
 
   it('align and edit limits', async () => {

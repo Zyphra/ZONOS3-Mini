@@ -13,7 +13,6 @@ FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "textmatch_zsa.json"
 @pytest.mark.parametrize("text, expected", FIXTURES["normalize"])
 def test_normalize_matches_zsa(text, expected):
     assert textmatch.normalize(text) == expected
-    assert textmatch.tokens(text) == expected.split()
 
 
 @pytest.mark.parametrize("reference, hypothesis, expected", FIXTURES["char_error_rate"])

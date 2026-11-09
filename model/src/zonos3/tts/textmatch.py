@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from zonos3.tts.align_text import split_cjk
+
 # Curly quotes are folded so "don't" and "don’t" are one token. Every letter
 # or digit of any script is kept: libriheavy's ``[A-Z0-9']`` rule reduced a
 # Mandarin token to the empty string, so a guide in an unspaced script
@@ -59,8 +61,9 @@ def char_error_rate(reference: str, hypothesis: str) -> float:
 
 
 def tokens(text: str) -> list[str]:
-    """The edit tokens of a text: the whitespace words of its ``normalize``."""
-    return normalize(text).split()
+    """The edit tokens of a text: the whitespace words of its ``normalize``, each Han / kana run cut into its words
+    (``zonos3.tts.align_text.split_cjk``: the units FuseAlign aligns unspaced text by)."""
+    return [token for word in normalize(text).split() for token in split_cjk(word)]
 
 
 def word_errors(reference: list[str], hypothesis: list[str]) -> int:

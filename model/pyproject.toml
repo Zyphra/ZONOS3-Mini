@@ -41,6 +41,9 @@ dependencies = [
     "pydantic>=2",
     # FuseAlign forced aligner (third_party/fusealign-multilingual) behind workers/fusealign.py.
     "fusealign-hub",
+    # ICU word break for the Han / kana words FuseAlign aligns and speech edits diff (zonos3.tts.align_text); the same
+    # dictionaries as the browser's Intl.Segmenter. 2.14 (ICU 76.1) is the last release with macOS 13/14 wheels.
+    "pyicu-wheels>=2.14,<2.15",
 ]
 
 [tool.setuptools]

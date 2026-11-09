@@ -14,7 +14,7 @@
 // cache under it). clients.claim on activate only takes over pages nothing controls yet (the first visit), which then
 // read this version's cache; a cache miss still falls back to the network.
 
-const VERSION = "2b711844569f";
+const VERSION = "a8c24f17068f";
 const PRECACHE = [
   "/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2",
   "/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2",
@@ -29,8 +29,8 @@ const PRECACHE = [
   "/assets/jetbrains-mono-latin-500-normal-CJOVTJB7.woff",
   "/assets/latin-500-DKfSw4PI.css",
   "/assets/latin-500-DPgjq1zP.js",
+  "/assets/studio-CUnPlHU1.js",
   "/assets/studio-Cxzv5JLi.css",
-  "/assets/studio-DPZpMNxJ.js",
   "/assets/web-engine-DLmQsyPj.js",
   "/assets/web-engine-xKv10YAh.css",
   "/studio.html",

@@ -40,12 +40,56 @@ export interface PlannedRegion {
 export const MIN_GAP_FRAMES = 5;
 
 // The server's edit tokens (zonos3.tts.textmatch.tokens): curly quotes fold to ', '_' separates, everything but letters, digits and '
-// is a separator.
+// is a separator, and each Han / kana run is cut into its words.
 const QUOTES = /[\u2018\u2019\u201b\u02bc]/g;
 const NON_TOKEN = /[^\p{L}\p{N}']+/gu;
 
+// zonos3.tts.align_text: Han / kana runs are cut by ICU's word break (root locale; the server runs ICU too, with the
+// same dictionaries as Intl.Segmenter). FuseAlign aligns unspaced text by these words, and the edit diffs them.
+const CJK_RUN = /[\u3005\u3007\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+/gu;
+const WORDS = new Intl.Segmenter('und', { granularity: 'word' });
+const WORDY = /[\p{L}\p{N}']/u;
+
+/** Offsets in `text` where a word of one of its Han / kana runs starts (align_text.cjk_words; non-words like ・ skipped). */
+function cjkWordStarts(text: string): number[] {
+  const out: number[] = [];
+  for (const m of text.matchAll(CJK_RUN)) for (const s of WORDS.segment(m[0])) if (s.isWordLike) out.push(m.index + s.index);
+  return out;
+}
+
 function plainTokens(text: string): string[] {
-  return text.replace(QUOTES, "'").replace(/_/g, ' ').toUpperCase().replace(NON_TOKEN, ' ').trim().split(/\s+/).filter(Boolean);
+  const words = text.replace(QUOTES, "'").replace(/_/g, ' ').toUpperCase().replace(NON_TOKEN, ' ').trim().split(/\s+/).filter(Boolean);
+  return words.flatMap((w) => {
+    // align_text.split_cjk: cut where each run word starts and where a run ends.
+    const cuts = new Set([0, w.length, ...cjkWordStarts(w)]);
+    for (const m of w.matchAll(CJK_RUN)) cuts.add(m.index + m[0].length);
+    const at = [...cuts].sort((a, b) => a - b);
+    return at.slice(1).map((end, k) => w.slice(at[k], end));
+  });
+}
+
+/**
+ * A whitespace word as the server's alignment units (align_text.text_units): cut where a word of its Han / kana runs
+ * starts and where letters resume after a run; punctuation stays with the word before it (leading punctuation with
+ * the first). A word without Han / kana is one chunk.
+ */
+function wordChunks(word: string, from: number): Chunk[] {
+  const cuts = new Set(cjkWordStarts(word));
+  for (const m of word.matchAll(CJK_RUN)) {
+    const end = m.index + m[0].length;
+    const resume = word.slice(end).search(WORDY);
+    if (resume >= 0) cuts.add(end + resume);
+  }
+  const at = [...new Set([0, ...cuts, word.length])].sort((a, b) => a - b);
+  const out: Chunk[] = [];
+  for (let k = 0; k + 1 < at.length; k++) {
+    const piece: Chunk = { from: from + at[k], to: from + at[k + 1], tokens: plainTokens(word.slice(at[k], at[k + 1])) };
+    const prev = out[out.length - 1];
+    if (prev && !prev.tokens.length) Object.assign(prev, { to: piece.to, tokens: piece.tokens });
+    else if (prev && !piece.tokens.length) prev.to = piece.to;
+    else out.push(piece);
+  }
+  return out;
 }
 
 const OPEN = '\ue000';
@@ -63,7 +107,7 @@ const TAG = '\ue002';
 export const isTagToken = (t: string) => t.startsWith(TAG);
 
 interface Chunk {
-  /** [from, to): a whitespace-separated word of the text (a group may hold spaces). */
+  /** [from, to): a whitespace-separated word of the text, or one word of a Han / kana run (a group may hold spaces). */
   from: number;
   to: number;
   tokens: string[];
@@ -75,7 +119,7 @@ function chunks(text: string, groups: boolean): Chunk[] {
   for (const t of parseTags(text).tokens) atoms.set(t.start, { end: t.end, token: TAG + text.slice(t.start, t.end) });
   if (groups) for (const g of parsePron(text, null).groups) if (!g.empty) atoms.set(g.start, { end: g.end, token: OPEN + g.ipa + CLOSE });
   if (text.includes(OPEN)) for (const m of text.matchAll(SENT_GROUP)) atoms.set(m.index ?? 0, { end: (m.index ?? 0) + m[0].length, token: m[0] });
-  if (!atoms.size) return [...text.matchAll(/\S+/g)].map((m) => ({ from: m.index ?? 0, to: (m.index ?? 0) + m[0].length, tokens: plainTokens(m[0]) }));
+  if (!atoms.size) return [...text.matchAll(/\S+/g)].flatMap((m) => wordChunks(m[0], m.index ?? 0));
   const out: Chunk[] = [];
   let i = 0;
   while (i < text.length) {
@@ -104,6 +148,11 @@ function chunks(text: string, groups: boolean): Chunk[] {
 /** Edit tokens; with `groups`, each "(X-SAMPA)" group is one token (sent-form groups always are). */
 export function normalizeTokens(text: string, groups = false): string[] {
   return chunks(text, groups).flatMap((c) => c.tokens);
+}
+
+/** The text's words: whitespace words, Han / kana runs cut into words (the units the server aligns). */
+export function textWords(text: string): string[] {
+  return chunks(text, false).map((c) => text.slice(c.from, c.to));
 }
 
 /** difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes(), non-equal ones, plus a → b matches. */

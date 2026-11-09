@@ -52,14 +52,8 @@ def serve(requests, loads=None, load=None, speech_regions=None):
 
 def test_align_tokens_split_spaced_text_and_segment_unspaced_text():
     assert align_tokens(" Hello,  world — again. ", "en") == ["Hello,", "world", "—", "again."]
-    assert align_tokens("我们 去公园。OK go", "zh") == ["我", "们", "去", "公", "园。", "OK", "go"]
-    assert align_tokens("「今日は」 いい 。", "ja") == [
-        "「今",
-        "日",
-        "は」",
-        "い",
-        "い。",
-    ]  # whitespace inside a unit dropped
+    assert align_tokens("我们 去公园。OK go", "zh") == ["我们", "去", "公园。", "OK", "go"]
+    assert align_tokens("「今日は」 いい 。", "ja") == ["「今日", "は」", "いい。"]  # whitespace inside a unit dropped
     assert align_tokens("佢哋 走咗", "yue") == ["佢", "哋", "走", "咗"]
     assert align_tokens("  ", "en") == [] and align_tokens("。", "zh") == []
 
@@ -89,7 +83,7 @@ def test_worker_places_one_word_per_token(tmp_path):
     assert aligned["id"] == 2 and aligned["status"] == "ok" and loads == [1]
     first, second, empty = (r["words"] for r in aligned["results"])
     assert [w["word"] for w in first] == ["Hello,", "world", "—"]
-    assert [w["word"] for w in second] == ["我", "们", "去。"]
+    assert [w["word"] for w in second] == ["我们", "去。"]
     assert empty == []
     for words, duration in ((first, 2.0), (second, 1.0)):
         for w in words:

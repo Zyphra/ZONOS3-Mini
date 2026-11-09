@@ -2381,6 +2381,33 @@ wheels = [
 ]
 
 [[package]]
+name = "pyicu-wheels"
+version = "2.14"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/91/fd85ef4fb8f573043350ad8c6bbfd2577ba859a3bac687518763d0408bdb/pyicu_wheels-2.14-cp312-cp312-macosx_13_0_x86_64.whl", hash = "sha256:6f77a1a095f8c8b9cef13755b68f795c0603dd570bd159118ba4d113fc4538c9", size = 15018214, upload-time = "2025-04-26T18:08:16.587Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/d4/e63dab78d0ee85da271711f7ca4ac33c9430df87dd0823b058c23d04816d/pyicu_wheels-2.14-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:83dd3d5c25bba6669719497751b632149e3d69ce6a7ef2c7adba27df0f38d43f", size = 14885215, upload-time = "2025-04-26T18:08:19.167Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/07/523ada836a2d60964e61c513569a4d74c39c00187077024c0b084b4929db/pyicu_wheels-2.14-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:cbce9285415558d58da8c7510467fef9ba3e115bd72a4ccf2356552144c26118", size = 17189659, upload-time = "2025-04-26T18:08:21.86Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/61/a8781cd7b16f68dc4288ccddd049b72c17da36e1dfe591b1dd2bb539fecf/pyicu_wheels-2.14-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:3ca054c9daf299588e797ad3b1242b48e8adc9ed6754c76d49123c672ebb7f14", size = 16960620, upload-time = "2025-04-26T18:08:24.565Z" },
+    { url = "https://files.pythonhosted.org/packages/44/ac/4372cc045cc2d03fd91300c8b7e6cea8a494a116292f60afeec5fef4c4ed/pyicu_wheels-2.14-cp312-cp312-manylinux_2_28_ppc64le.whl", hash = "sha256:267bd1ca97b93c3f7d8dfe7f212e812709652ab8b79b009a0c2c7090b0028269", size = 17514797, upload-time = "2025-04-26T18:08:27.216Z" },
+    { url = "https://files.pythonhosted.org/packages/99/7c/2d42486304530c11c127a0ead59660b02a1e93f29710114fcdfb7e1c0ad4/pyicu_wheels-2.14-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:009112ef74709f7123856700609e2ac2a8b838d56a4404cef7410278053bdb28", size = 17200920, upload-time = "2025-04-26T18:08:30.435Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/9d/721c3466f108e9fd76a16d0a6e282053a53f13d31acd2eac4f8ff62d3c8a/pyicu_wheels-2.14-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:e8cdce6631f7e7818fcf0670ce0a6ed9294bb372c33dda5c1f54796b3e458495", size = 17951686, upload-time = "2025-04-26T18:08:33.239Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/1b/7d9cd56ec095881fc83b9d94e2c87010b624d3cfd66c3cf01414069ffc15/pyicu_wheels-2.14-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:97060ce4c8bdc17f94e5d0a32a5d685642db78f51968002c476a6419fe1e59d2", size = 18286963, upload-time = "2025-04-26T18:08:35.945Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/6f/31ccea77c3ce1f22987788564045d419ea26d00646c63ef613434641f827/pyicu_wheels-2.14-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:c264737f68f49c28605f601f234435a336cafb92691bbed13dfafa6e103b3c6d", size = 18559356, upload-time = "2025-04-26T18:08:38.727Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/8b/787e868335f09d59c0c04c360fd6cbff68403fd01580b360e5bcf9d7ed12/pyicu_wheels-2.14-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:3c3c965b60c13b84b8a53535937c06754ab79c7e10021da50f8e7142faf7635a", size = 18158140, upload-time = "2025-04-26T18:08:41.445Z" },
+    { url = "https://files.pythonhosted.org/packages/67/00/c39c0d6e0aa99dc3d2a5bde43465374e34e41f1ed857ca12aa821f124198/pyicu_wheels-2.14-cp313-cp313-macosx_13_0_x86_64.whl", hash = "sha256:a3767c9a8ff96574424bf030deff0dcdf993337dd9e9e18d3242eb4a0e0f321f", size = 15018144, upload-time = "2025-04-26T18:08:45.221Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/3a/ea6f607162e3a2e87f9ec4ba5d3e045d59eafa518676e0e847efd9407619/pyicu_wheels-2.14-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:db57cae618d5344794390121f51137bae94d141b2db2032c33e197d859719177", size = 14885177, upload-time = "2025-04-26T18:08:47.886Z" },
+    { url = "https://files.pythonhosted.org/packages/87/04/a1af5935731801c77d22c957759d90dcfdcdfbeffb84fe4dc13e9f9643dd/pyicu_wheels-2.14-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:c3b31e29a965b324e6fe7e42f307d18e3dc2fb56131f9a3079ad8197f11941c9", size = 17189704, upload-time = "2025-04-26T18:08:50.508Z" },
+    { url = "https://files.pythonhosted.org/packages/57/49/39a3d0789aeb9082d808ab0764f9362176e85618c020b22b03003741d4a0/pyicu_wheels-2.14-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:436920e2c3d223c74a9e96281265d57f3a8334508183884cebdc4614a3f4272a", size = 16961751, upload-time = "2025-04-26T18:08:53.736Z" },
+    { url = "https://files.pythonhosted.org/packages/26/cb/53ef776f5682e12b04ea07aef55257074c98e0c293dbbfb1598bcb78e620/pyicu_wheels-2.14-cp313-cp313-manylinux_2_28_ppc64le.whl", hash = "sha256:7f61cb8805acb9dd3fc6a8b6c29145959720ad94c44f524bfe0d9b13df280709", size = 17515504, upload-time = "2025-04-26T18:08:56.48Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/c8/c675bc188784afbf073aa58347fbb803f298d4b1c24d71d81c8f3133cf0a/pyicu_wheels-2.14-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:7f78a6d3ac66e118773f49c8394c0222cb495bfdb9107eee3e49a890cc0b8794", size = 17201923, upload-time = "2025-04-26T18:09:00.024Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/4e/657ec588b77f72341d54e07f3877d84d697fb1baa1bd45c32c48b6bdd536/pyicu_wheels-2.14-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:8bc8177824096c38d07cc724b05a1cab51302e90b59df0e3801fd6a1780e9b88", size = 17951868, upload-time = "2025-04-26T18:09:03.224Z" },
+    { url = "https://files.pythonhosted.org/packages/49/f7/393f52524edb1d4a4a089d25713bcdbffca7741a98e8e02f959f79f1dfde/pyicu_wheels-2.14-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:2b593ddef3b339a8a97cbfb3d5b264be0b45a6e65b62900163c27e4dec182ef4", size = 18289241, upload-time = "2025-04-26T18:09:07.564Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/4d/c5b24a0d9d68b75c4ecb85c75191003087facfb43cb4bb10b78866b9aca5/pyicu_wheels-2.14-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:a9968d13f6f3db7cb5d626b266914c82a192a905c7efa9eb15c08d1a71e61fef", size = 18559471, upload-time = "2025-04-26T18:09:10.268Z" },
+    { url = "https://files.pythonhosted.org/packages/22/b3/ad231e0552d2141beb1b1ae51935974d913f5bd21d5e13ae578861341b8e/pyicu_wheels-2.14-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:4acfd92cbccdcff52dca0380a30b00f071e0d57d8344ce42d3e1f71aadb3e66f", size = 18159569, upload-time = "2025-04-26T18:09:13.437Z" },
+]
+
+[[package]]
 name = "pyloudnorm"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3552,6 +3579,7 @@ dependencies = [
     { name = "numpy" },
     { name = "omegaconf" },
     { name = "pydantic" },
+    { name = "pyicu-wheels" },
     { name = "pynini", marker = "sys_platform == 'linux'" },
     { name = "pyyaml" },
     { name = "sacremoses" },
@@ -3574,6 +3602,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "omegaconf" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "pyicu-wheels", specifier = ">=2.14,<2.15" },
     { name = "pynini", marker = "sys_platform == 'linux'", specifier = "==2.1.6" },
     { name = "pyyaml" },
     { name = "sacremoses", specifier = ">=0.1.1" },

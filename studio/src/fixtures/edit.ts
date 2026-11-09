@@ -8,7 +8,7 @@
 import { ApiError } from '../lib/http';
 import { type Alignment, type ControlsSpec, type Dose, type EditCaps, type EditRequest, type EditResponse, type EditTake, type EditWord } from '../api';
 import { resample } from '../audio/mix';
-import { contextWindows, diffOpcodes, isTagToken, normalizeTokens, tokenOwners, wordDiff } from '../edit/regions';
+import { contextWindows, diffOpcodes, isTagToken, normalizeTokens, textWords, tokenOwners, wordDiff } from '../edit/regions';
 import { base64ToBytes, bytesToBase64 } from '../lib/files';
 import { parseWav, wavBytes } from '../lib/wav';
 import { ipaGloss } from '../lib/pron';
@@ -92,7 +92,7 @@ function energyAlign(pcm: Float32Array, sr: number, text: string): EditWord[] {
   while (first < n - 1 && rms[first] < thr) first++;
   let last = n - 1;
   while (last > first && rms[last] < thr) last--;
-  const raw = [...text.matchAll(/\S+/g)].map((m) => m[0]);
+  const raw = textWords(text);
   if (!raw.length) return [];
   const weights = raw.map((w) => normalizeTokens(w).join('').length + 0.6);
   const total = weights.reduce((a, b) => a + b, 0);
@@ -174,7 +174,7 @@ export async function align(b64: string, text: string, language = 'en_us', signa
   if (!normalizeTokens(text).length) throw new ApiError(400, 'text has no words to align.');
   await wait(300 + duration * 25, signal);
   const k = lookup(known, duration);
-  const raw = [...text.trim().matchAll(/\S+/g)].map((m) => m[0]);
+  const raw = textWords(text.trim());
   let words: EditWord[];
   if (k && k.words.length === raw.length) {
     words = asWords(k.words, () => 0.95).map((w, i) => ({ ...w, word: raw[i], tokens: normalizeTokens(raw[i]) }));
