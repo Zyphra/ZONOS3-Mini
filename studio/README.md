@@ -258,7 +258,8 @@ gets the palette with a note that only the NV checkpoint reads tags). Markers ta
 **Tag strength** (Direct rail; per project, default 1.5, range from the capabilities) is tag guidance:
 a line with tags renders with `tag_cfg_scale` = the strength, and since the server allows one guidance per render
 its voice guidance is off (`speaker_cfg_scale` 1); such takes show **tags** (“tag guidance on · voice guidance off”).
-Strength 1, or a line without tags, renders as before (speaker CFG 1.5). Edit texts go out at scale 1 (the server
+Strength 1, or a line without tags, renders as before (the bundle's `request_defaults`: speaker embedding, no speaker
+CFG — CFG 1.5 and top-k 40 made the rate30 LM run on past the text). Edit texts go out at scale 1 (the server
 refuses tag guidance there): the markers reach the model but stay out of recognition, so a
 tag is its own token in the word diff (inserting one between unchanged words plans a region there, which the server
 then fills) and is never “not heard”; a region that only adds tags skips the length warnings. Offline (and with

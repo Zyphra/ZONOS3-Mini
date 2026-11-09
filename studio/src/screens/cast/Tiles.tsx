@@ -84,7 +84,7 @@ export function RoomTile() {
 
 export function DeliveryTile() {
   const values = design.value.values;
-  const on = spec.value.ui.controls.filter((c) => c.group === 'delivery' && moved(values[c.id]));
+  const on = spec.value.ui.controls.filter((c) => c.group === 'delivery' && !c.span_only && moved(values[c.id]));
   if (!on.length) {
     return (
       <div class="tile-sum">

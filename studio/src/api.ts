@@ -53,6 +53,8 @@ export interface ControlSpec {
   /** [lo, hi]: v ≤ lo or v ≥ hi collapses renders; either side may be null. */
   collapse: [number | null, number | null] | null;
   spannable: boolean;
+  /** Painted on a word or a few, never on a whole voice or line (emphasis: the line's prominent word). */
+  span_only?: boolean;
   /** Measured identity kept vs |v| (piecewise linear); null = not measured. */
   identity: [number, number][] | null;
   effect?: string;

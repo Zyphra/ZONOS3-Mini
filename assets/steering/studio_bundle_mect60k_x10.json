@@ -1979,8 +1979,6 @@
   "preview_text": "Hello there. It's lovely to finally meet you, how have you been?",
   "request_defaults": {
    "speaker_mode": "embedding",
-   "speaker_cfg_scale": 1.5,
-   "topk": 40,
    "stream_decode": "prefix"
   },
   "identity_threshold": 0.8

@@ -62,11 +62,16 @@ export function mergeValues(s: ControlsSpec, base: Values, extra: Values | undef
   return out;
 }
 
-export function spanDoses(s: ControlsSpec, span: Span, d: Design): Dose {
+/** `[start, end)` covers every word of a text of two or more words: no place for a span-only control. */
+export function coversLine(text: string, start: number, end: number): boolean {
+  return !/\S/.test(text.slice(0, start)) && !/\S/.test(text.slice(end)) && /\S\s+\S/.test(text);
+}
+
+export function spanDoses(s: ControlsSpec, span: Span, d: Design, wholeLine = false): Dose {
   const out: Dose = {};
   for (const c of s.ui.controls) {
     const v = span.values[c.id];
-    if (v && c.spannable && controlUsable(s, c, d.mode)) controlDose(c, v, out);
+    if (v && c.spannable && !(wholeLine && c.span_only) && controlUsable(s, c, d.mode)) controlDose(c, v, out);
   }
   return out;
 }
@@ -74,14 +79,14 @@ export function spanDoses(s: ControlsSpec, span: Span, d: Design): Dose {
 /**
  * Painted spans → `control_spans` on the SENT text: `map` turns display offsets into sent offsets (a boundary
  * inside a pronunciation group takes in the whole group); a span starting inside the group the previous one took
- * starts after it.
+ * starts after it. Span-only controls painted over the whole line are dropped.
  */
-export function controlSpans(s: ControlsSpec, spans: Span[] | undefined, d: Design, textLength: number, map: Sent['map'] = (at) => at): ControlSpan[] {
+export function controlSpans(s: ControlsSpec, spans: Span[] | undefined, d: Design, text: string, map: Sent['map'] = (at) => at): ControlSpan[] {
   const out: ControlSpan[] = [];
   for (const sp of [...(spans ?? [])].sort((a, b) => a.start - b.start)) {
-    const controls = spanDoses(s, sp, d);
-    let start = map(clamp(sp.start, 0, textLength), -1);
-    const end = map(clamp(sp.end, 0, textLength), 1);
+    const controls = spanDoses(s, sp, d, coversLine(text, sp.start, sp.end));
+    let start = map(clamp(sp.start, 0, text.length), -1);
+    const end = map(clamp(sp.end, 0, text.length), 1);
     const prev = out[out.length - 1];
     if (prev && start < prev.end) start = prev.end;
     if (end > start && Object.keys(controls).length) out.push({ start, end, controls });
@@ -110,7 +115,7 @@ export function buildRequest(s: ControlsSpec, ctx: RequestContext, d: Design, te
   }
   const controls = toDoses(s, mergeValues(s, d.values, x.extra), mixAt(d.pin, s.ui.accents), d.mode);
   if (Object.keys(controls).length) req.controls = controls;
-  const spans = controlSpans(s, x.spans, d, text.length, sent.map);
+  const spans = controlSpans(s, x.spans, d, text, sent.map);
   if (spans.length) {
     req.control_spans = spans;
     // Spans follow the model's reading position; the server falls back to the rate where it has no heads.

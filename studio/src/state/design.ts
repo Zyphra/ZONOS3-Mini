@@ -178,7 +178,7 @@ function accentLabel(mix: AccentMix): string {
 /** Five safe random moves around `d`: 1-3 controls nudged inside their safe ranges, sometimes the accent. */
 export function neighbours(d: Design, n = 5, r: () => number = Math.random): Variation[] {
   const s = spec.value;
-  const candidates = s.ui.controls.filter((c) => controlUsable(s, c, d.mode));
+  const candidates = s.ui.controls.filter((c) => !c.span_only && controlUsable(s, c, d.mode));
   const accentsUsable = s.ui.accents.filter((a) => controlUsable(s, a, d.mode));
   const out: Variation[] = [];
   for (let i = 0; i < n; i++) {

@@ -43,12 +43,12 @@ export function isRaw(spec: ControlsSpec, dirId: string) {
   return spec.directions[dirId]?.space === 'raw';
 }
 
-/** All UI values + accent mix → primitive `controls` for a request in `mode` (unusable ones dropped). */
+/** All UI values + accent mix → primitive `controls` for a request in `mode` (unusable and span-only ones dropped). */
 export function toDoses(spec: ControlsSpec, values: Values, accents: AccentMix, mode: SpeakerMode): Dose {
   const out: Dose = {};
   for (const c of spec.ui.controls) {
     const v = values[c.id] ?? 0;
-    if (v && controlUsable(spec, c, mode)) controlDose(c, v, out);
+    if (v && !c.span_only && controlUsable(spec, c, mode)) controlDose(c, v, out);
   }
   for (const a of spec.ui.accents) {
     const s = accents[a.id] ?? 0;

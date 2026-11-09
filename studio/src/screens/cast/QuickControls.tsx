@@ -65,7 +65,7 @@ export function RoomAxis({ b, large }: { b: Binding; large?: boolean }) {
 
 export function SliderGroup({ group, b, only, compact, detailed }: { group: string; b: Binding; only?: (c: ControlSpec) => boolean; compact?: boolean; detailed?: boolean }) {
   const color = hue(group);
-  const controls = spec.value.ui.controls.filter((c) => c.group === group && (!only || only(c)));
+  const controls = spec.value.ui.controls.filter((c) => c.group === group && !c.span_only && (!only || only(c)));
   return (
     <div class={`slider-group${detailed ? ' is-detailed' : ''}`}>
       {controls.map((c) => (

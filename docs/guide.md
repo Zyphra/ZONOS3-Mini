@@ -459,7 +459,7 @@ twin N rows` from the scheduler).
   (the twin differs in its text rows only), as under speaker CFG: steering is part of the generation, so the
   guidance amplifies only the tag contrast; a steered request with tag CFG is the steered request with stronger tags.
   The reading-position follower's per-frame decisions (from the tagged branch's LACI heads) are shared with the twin.
-  Tag CFG and Direct's speaker CFG 1.5 are exclusive (one twin per request): a client picks one per render.
+  Tag CFG and speaker CFG are exclusive (one twin per request): a client picks one per render.
 - *Span offsets*: `control_spans` characters index the text as sent, markup included. The character-rate schedule
   gives markers no time (`control_span_rate` is frames per spoken character; a client measuring it from a take
   divides by the length without markers). Reading position: a span maps to the text tokens that spell it; tokens

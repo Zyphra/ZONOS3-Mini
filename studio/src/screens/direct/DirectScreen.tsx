@@ -21,6 +21,7 @@ import { design } from '../../state/design';
 import type { History } from '../../state/history';
 import { cast, savePersona, speakers, type Persona } from '../../state/library';
 import { current } from '../../state/projects';
+import { coversLine } from '../../state/requests';
 import { failedLines, GAP_RANGE, playingLineId, restoreLine, scriptDraft, scriptTextDirty, setVoiceColor } from '../../state/script';
 import {
   addLine,
@@ -406,7 +407,8 @@ function BrushBar() {
     },
     end: () => scripts.end(),
   };
-  const brushes = spec.value.ui.controls.filter((c) => c.spannable && c.group !== 'mood');
+  const whole = coversLine(line.text, b.start, b.end);
+  const brushes = spec.value.ui.controls.filter((c) => c.spannable && c.group !== 'mood' && !(whole && c.span_only));
   const hasMood = spec.value.ui.controls.some((c) => c.spannable && c.group === 'mood');
   const families = spec.value.ui.groups.filter((g) => spec.value.ui.controls.some((c) => c.group === g.id && c.spannable));
   // Desktop: the bar sits inside its line (`.line-main`, position: relative), under the text; phone: a bottom sheet.

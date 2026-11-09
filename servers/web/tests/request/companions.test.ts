@@ -63,7 +63,7 @@ describe('steer', () => {
     expect(b.sources).toEqual([15, 19]);
     expect(b.rateExtension?.direction).toBe('delivery.tempo');
     const doc = controlsDocument(b, 192) as Record<string, any>;
-    expect(doc.ui.request_defaults).toEqual({ speaker_mode: 'embedding', speaker_cfg_scale: 1.5, topk: 40, stream_decode: 'prefix' });
+    expect(doc.ui.request_defaults).toEqual({ speaker_mode: 'embedding', stream_decode: 'prefix' });
     expect(Object.entries(doc.sets).filter(([, s]: [string, any]) => s.calibration).map(([k]) => k)).toEqual(['mood']);
     expect(doc.sets.mood.calibration).toMatchObject({ by_speaker: {}, global_default: 4 });
     expect(disabledControls(b, 'default_0123456789abcdef')).toEqual([]);
