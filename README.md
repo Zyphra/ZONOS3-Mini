@@ -1,8 +1,8 @@
-# ZONOS3
+# ZONOS3-Mini
 
-Inference runtime for **ZONOS3 Mini**, Zyphra's multilingual text-to-speech model: HTTP servers that serve the Zonos
+Inference runtime for **ZONOS3-Mini**, Zyphra's multilingual text-to-speech model: HTTP servers that serve the Zonos
 Voice Studio, an in-browser WebGPU build and an offline Python API. Model details are in
-[About ZONOS3 Mini](#about-zonos3-mini).
+[About ZONOS3-Mini](#about-zonos3-mini).
 
 [Blog post](https://www.zyphra.com/our-work/zonos3-mini) ·
 [Weights](https://huggingface.co/Zyphra/ZONOS3-Mini) ·
@@ -186,9 +186,9 @@ The studio's steering controls come from `STEER_BUNDLE`.
 - **Nonverbal tags** need a checkpoint with the NV rows.
 - **Accent adapters** need `--accent-adapters <dir>`.
 
-## About ZONOS3 Mini
+## About ZONOS3-Mini
 
-ZONOS3 Mini is an 11-layer language model that mixes gated-DeltaNet layers with global attention (one global layer
+ZONOS3-Mini is an 11-layer language model that mixes gated-DeltaNet layers with global attention (one global layer
 in four), uses Full AttnRes residuals and a latent mixture-of-experts. It reads SuperBPE text tokens and predicts
 10 × 4096 dual-codec audio codes at 15 Hz. A causal multi-resolution iSTFT decoder turns the codes into 44.1 kHz
 audio. Voices are cloned from a raw reference clip (encoded into the same codes) or from a 192-d MECT-B2 speaker
