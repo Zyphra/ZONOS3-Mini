@@ -3,8 +3,8 @@
 ZONOS3 Mini running in the browser on hand-written WebGPU (WGSL) inside a Web Worker, serving the v2 API of
 [`servers/api/openapi.yaml`](../api/openapi.yaml) through a fetch-compatible in-process transport. The studio uses it as
 its `web` backend (`?api=web`, and in `auto` when no server answers). Adapted from web-zonos3. The hosted build runs
-at [zyphra.com/zonos3mini/localplayground](https://zyphra.com/zonos3mini/localplayground) (the studio;
-[`/lite`](https://zyphra.com/zonos3mini/localplayground/lite) for
+at [zyphra.com/zonos3-mini/localplayground](https://zyphra.com/zonos3-mini/localplayground) (the studio;
+[`/lite`](https://zyphra.com/zonos3-mini/localplayground/lite) for
 the lite page).
 
 | Served | Off (capabilities say so; the browser cannot run their Python workers) |

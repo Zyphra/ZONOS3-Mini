@@ -6,7 +6,7 @@ Voice Studio, an in-browser WebGPU build and an offline Python API. Model detail
 
 [Blog post](https://www.zyphra.com/our-work/zonos3-mini) ·
 [Weights](https://huggingface.co/Zyphra/ZONOS3-Mini) ·
-[Run in your browser](https://zyphra.com/zonos3mini/localplayground) (no install) ·
+[Run in your browser](https://zyphra.com/zonos3-mini/localplayground) (no install) ·
 [Zyphra Cloud](https://cloud.zyphra.com/models/zyphra/ZONOS3-Mini) ·
 [ZTTS2-Eval](https://zyphra.github.io/ZTTS2-Eval/)
 
@@ -19,7 +19,7 @@ Voice Studio, an in-browser WebGPU build and an offline Python API. Model detail
 | Linux x86_64 with an NVIDIA GPU (tested on H100) | CUDA server on [Mini-SGLang](https://github.com/sgl-project/mini-sglang) (`servers/sgl`) | below |
 | Apple Silicon Mac | MLX server (`servers/mlx`) | below; details in [servers/mlx/README.md](servers/mlx/README.md) |
 | CPU, CUDA, Metal or Vulkan, no Python at runtime | C++/ggml server and CLI (`servers/ggml`) | [servers/ggml/README.md](servers/ggml/README.md) |
-| A browser with WebGPU, no server | In-browser server (`servers/web`, the studio's `?api=web`) | nothing to install: [run it in your browser](https://zyphra.com/zonos3mini/localplayground); to build it, [servers/web/README.md](servers/web/README.md) |
+| A browser with WebGPU, no server | In-browser server (`servers/web`, the studio's `?api=web`) | nothing to install: [run it in your browser](https://zyphra.com/zonos3-mini/localplayground); to build it, [servers/web/README.md](servers/web/README.md) |
 
 Every server implements the same HTTP API and serves the same studio.
 
