@@ -40,7 +40,8 @@ class CapabilityFacts:
     silence_hop: int | None  # the codec's hop when codec-matched silence frames can be prefilled, else None
     tag_cfg_available: bool
     tag_cfg_trained: bool  # zonos3.tts.markup.trained_on_tags
-    decoder: dict | None  # the audio decoder (decoder_capability for the matched codecs)
+    decoder: dict | None  # the default audio decoder (decoder_capabilities for the matched codecs)
+    decoders: list[dict]  # every decoder a request may pick, the default first
     condition_tokens: dict | None  # condition_spec; None without condition rows
     speaker_audio_upload: bool  # uploaded clips can condition (an encoder for them is loaded)
     speaker_cfg_available: bool
@@ -123,17 +124,20 @@ def tag_cfg_capabilities(available: bool, trained: bool) -> dict:
     }
 
 
-def decoder_capability(audio_codec: str) -> dict | None:
-    """The audio decoder behind a matched codec (the causal iSTFT head), with its default headroom; None otherwise."""
-    from zonos3.tokenizer.matched_codec import codec_names, decoder_info
+def decoder_capabilities(audio_codec: str, served=None) -> tuple[dict | None, list[dict]]:
+    """(Capabilities.decoder, Capabilities.decoders) of a matched codec: its default iSTFT head with its headroom, and
+    every decoder a request may pick (``served``: those ids, default first; None = every registry decoder). Not a
+    matched codec: (None, []); a broken registry entry: ({codec, error}, [])."""
+    from zonos3.tokenizer.matched_codec import codec_names, decoder_ids, decoder_info
 
     codec = str(audio_codec)
     if codec not in codec_names():
-        return None
+        return None, []
     try:
-        return dict(decoder_info(codec), codec=codec)
+        infos = [dict(decoder_info(codec, name), codec=codec) for name in (served or decoder_ids(codec))]
     except Exception as exc:  # noqa: BLE001
-        return {"codec": codec, "error": str(exc)}
+        return {"codec": codec, "error": str(exc)}, []
+    return infos[0], infos
 
 
 def phoneme_capabilities(text_tokenizer_spec: dict | None, lexicon) -> dict:
@@ -189,6 +193,7 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         "speaker_modes": modes,
         "speaker_mode_default": modes[0] if modes else None,
         "decoder": f.decoder,
+        "decoders": list(f.decoders),
         "condition_tokens": f.condition_tokens,
         "speaker_audio_upload": f.speaker_audio_upload,
         "speaker_cfg_supported": cfg,

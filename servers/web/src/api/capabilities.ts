@@ -9,13 +9,20 @@ import {
   TAG_CFG_MIN_SCALE,
 } from '../generation';
 import { NONVERBAL_MARKUP_TAGS } from '../request/markup';
-import type { Engine } from './engine';
+import type { Decoder, Engine } from './engine';
 
 const AUDIO_CODEC = 'opus_dual_3n_600k_sched600k_r4096_step600000';
 const SPEAKER_EMBEDDING_CODEC = 'ownmect_s2';
 /** The server language codes (zonos3.languages SERVER), in order. */
 export const TEXT_NORM_LANGUAGES = languages.server.map((l) => l.code);
-const DECODER_CHECKPOINT = 'zac-keep2.gguf';
+
+/** DecoderInfo of a decoder (servers/ggml/src/server/capabilities.cpp). */
+function decoderInfo(d: Decoder): Record<string, unknown> {
+  return {
+    id: d.id, kind: 'istft_mr', label: `Multi-resolution iSTFT head (${d.checkpoint}); causal`, checkpoint: d.checkpoint,
+    expect_step: null, headroom_db: d.headroomDb, causal: true, codec: AUDIO_CODEC,
+  };
+}
 
 /** float_decimal: a float32 metadata value as the shortest decimal that round-trips it. */
 export function floatDecimal(v: number): number {
@@ -111,10 +118,8 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     },
     speaker_modes: speakerModes,
     speaker_mode_default: speakerModes.length ? speakerModes[0] : null,
-    decoder: {
-      kind: 'istft_mr', label: `Multi-resolution iSTFT head (${DECODER_CHECKPOINT}); causal`, checkpoint: DECODER_CHECKPOINT,
-      expect_step: null, headroom_db: e.headroomDb, causal: true, codec: AUDIO_CODEC,
-    },
+    decoder: decoderInfo(e.decoders[0]),
+    decoders: e.decoders.map(decoderInfo),
     condition_tokens: conditionTokens(e),
     speaker_audio_upload: speakerModes.length > 0,
     speaker_cfg_supported: cfg,

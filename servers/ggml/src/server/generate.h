@@ -84,6 +84,10 @@ std::vector<std::string> server_accents(const ServerState & s);
 // Request rules shared with /v2/edit (fail() with the rules' 400 / 500 details):
 // R4 zonos3.languages.normalize (body["language"], default en_us).
 std::string resolve_language(const nlohmann::json & body);
+// The request's `decoder` (Capabilities.decoders): absent / null = the default (s.decoders[0]; nullptr when no decoder
+// is loaded, zonos3-cli --request); an id the server does not serve is a 400 "Unknown decoder 'X'; this server serves:
+// a, b.".
+Decoder * resolve_decoder(const ServerState & s, const nlohmann::json & body);
 // R3 zonos3.tts.plan.resolve_condition_buckets (condition_buckets / condition_values): one bucket per condition row,
 // hp.cond_bucket_counts[i] = unknown.
 std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const nlohmann::json & body);

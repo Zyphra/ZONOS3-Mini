@@ -50,8 +50,9 @@ struct ServerState {
     // ---- models
     zonos3_model model;
     std::string model_path;
-    zac_model zac;        // owns the ZAC weights shared by every lane
-    std::string zac_name; // zac.gguf file name (capabilities.decoder)
+    // Decoders (--zac, repeatable; Decoder in scheduler.h): the first is the default (capabilities.decoder), every one a
+    // request may pick with `decoder` (capabilities.decoders, in this order).
+    std::vector<std::unique_ptr<Decoder>> decoders;
     zac_encoder_model encoder;
     ssl_model teacher;
     std::string encoder_path, teacher_path;
@@ -75,7 +76,7 @@ struct ServerState {
     int max_frames = zonos3_generation().max_frames; // --max: the frame budget of a request (R5's server_max)
     int context_capacity = 0;                        // rows of a slot (configure_frame_budget)
     int batch_slots = 8;
-    int zac_threads = 4;
+    int zac_threads = 4; // lanes per decoder
     bool use_gpu = ZONOS3_DEFAULT_USE_GPU;
     bool prof = false;
     std::string stream_decode_default = "prefix";
@@ -108,8 +109,6 @@ struct ServerState {
     std::condition_variable sched_cv;
     std::deque<std::shared_ptr<ReqJob>> incoming;
     bool worker_ready = false, worker_failed = false;
-    std::vector<ZacLane> zac_lanes;
-    std::atomic<uint64_t> next_lane{0}; // the backbone worker and submit_decode (handler threads) pick lanes
 
     // ---- speakers (speakers.cpp)
     std::mutex reference_mtx;                                       // guards sessions / default_speakers
@@ -123,5 +122,10 @@ struct ServerState {
 
     ~ServerState();
 };
+
+// The default decoder (the first --zac).
+inline Decoder & default_decoder(const ServerState & s) {
+    return *s.decoders.front();
+}
 
 } // namespace zs

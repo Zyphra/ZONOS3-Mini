@@ -59,5 +59,6 @@ export function staleReason(stored: GenerateRequest, fresh: GenerateRequest, opt
   // The whole-line controls: the voice's design edited since, or the script baseline.
   if (JSON.stringify(stored.controls ?? {}) !== JSON.stringify(fresh.controls ?? {})) return opts.voiceEdited ? 'voice edited' : 'baseline changed';
   if (stored.tag_cfg_scale !== fresh.tag_cfg_scale) return 'tag strength changed';
+  if ((stored.decoder ?? null) !== (fresh.decoder ?? null)) return 'decoder changed';
   return null;
 }

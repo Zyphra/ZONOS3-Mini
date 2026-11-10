@@ -40,13 +40,9 @@ def test_hf_file_download_is_routed_to_hub(monkeypatch, tmp_path):
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake)
     release.resolve_file.cache_clear()
-    out = release.resolve_file("hf://Zyphra/R/registries/codec_registry_keep2_plain.json")
-    assert Path(out).read_text() == "ok" and calls == [
-        ("Zyphra/R", "registries/codec_registry_keep2_plain.json", "model")
-    ]
-    assert (
-        release.resolve_file("hf://Zyphra/R/registries/codec_registry_keep2_plain.json") == out and len(calls) == 1
-    )  # cached
+    out = release.resolve_file("hf://Zyphra/R/registries/codec_registry.json")
+    assert Path(out).read_text() == "ok" and calls == [("Zyphra/R", "registries/codec_registry.json", "model")]
+    assert release.resolve_file("hf://Zyphra/R/registries/codec_registry.json") == out and len(calls) == 1  # cached
 
 
 def test_tokenizer_path_resolution(tmp_path):
@@ -65,11 +61,13 @@ def test_tokenizer_path_resolution(tmp_path):
 def test_release_registries_are_consistent():
     """The repo registries and the default LM point at the release repo."""
     root = Path(release.__file__).resolve().parents[1] / "registries"
-    codec = json.loads((root / "codec_registry_keep2_plain.json").read_text())
+    codec = json.loads((root / "codec_registry.json").read_text())
     ((key, e),) = codec.items()
     assert e["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/generator.pt")
     assert e["teacher"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/")
-    assert e["decoder"]["campaign"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/heads/")
+    assert e["decoder_default"] == "keep2_plain" and set(e["decoders"]) == {"keep2_plain", "full_mr"}
+    for name, spec in e["decoders"].items():
+        assert spec["campaign"] == f"hf://{release.RELEASE_REPO}/autoencoder/heads/{name}"
     spk = json.loads((root / "speaker_encoder_registry.json").read_text())
     assert spk["ownmect_s2"]["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/speaker_encoders/ownmect_s2/")
     assert release.RELEASE_LM.startswith(f"hf://{release.RELEASE_REPO}/lm/")

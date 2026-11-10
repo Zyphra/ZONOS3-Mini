@@ -209,6 +209,7 @@ class CodecDecoder:
         k = lambda key: f.meta(f"{ARCH}.{key}")  # noqa: E731
         self.path = str(path)
         self.name = Path(path).name
+        self.id = str(k("head.variant"))  # the decoder id of the servers (keep2_plain | full_mr)
         self.sample_rate = int(k("sample_rate"))
         self.hop = int(k("hop"))
         self.internal_hop = int(k("internal_hop"))

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from zonos3.server.capabilities import (
@@ -35,17 +34,21 @@ def condition_tokens(state: ServerState) -> dict | None:
     )
 
 
-def decoder(state: ServerState) -> dict:
-    name = Path(state.engine.paths["zac"]).name
-    return {
-        "kind": "istft_mr",
-        "label": f"Multi-resolution iSTFT head ({name}); causal",
-        "checkpoint": name,
-        "expect_step": None,
-        "headroom_db": float(state.engine.decoder.headroom_db),
-        "causal": True,
-        "codec": state.config.audio_codec,
-    }
+def decoders(state: ServerState) -> list[dict]:
+    """Capabilities.decoders: every loaded decoder GGUF, the default first."""
+    return [
+        {
+            "id": dec.id,
+            "kind": "istft_mr",
+            "label": f"Multi-resolution iSTFT head ({dec.name}); causal",
+            "checkpoint": dec.name,
+            "expect_step": None,
+            "headroom_db": float(dec.headroom_db),
+            "causal": True,
+            "codec": state.config.audio_codec,
+        }
+        for dec in state.engine.decoders.values()
+    ]
 
 
 def edit_model(state: ServerState) -> EditModel:
@@ -63,6 +66,7 @@ def facts(state: ServerState) -> CapabilityFacts:
     c, engine = state.config, state.engine
     modes = list(engine.speaker_modes)
     twin = state.options.batch >= 2
+    infos = decoders(state)
     return CapabilityFacts(
         text_tokenizer_spec=c.text_tokenizer_spec or None,
         text_normalization_enabled=engine.normalizer is not None,
@@ -78,7 +82,8 @@ def facts(state: ServerState) -> CapabilityFacts:
         silence_hop=engine.decoder.hop if engine.silence_available else None,
         tag_cfg_available=twin,
         tag_cfg_trained=bool(c.tag_cfg_trained),
-        decoder=decoder(state),
+        decoder=infos[0],
+        decoders=infos,
         condition_tokens=condition_tokens(state),
         speaker_audio_upload=bool(modes) and (engine.speaker_encoder is not None or engine.has_reference_encoder),
         speaker_cfg_available=bool(modes) and twin,

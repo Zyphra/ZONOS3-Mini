@@ -455,12 +455,16 @@ def is_zac_mat(n):
     )
 
 
-def export_zac(path, out):
+def export_zac(path, out, name="zac"):
+    """A mossdual_istft decoder GGUF into model directory `name` (the default keep2_plain head: `zac`; the full-size
+    head: `zac-full_mr`). The engine reads the decoder id from the meta `head.variant`."""
     g = Gguf(path)
     g.check_types()
     if g.kv.get("general.architecture") != "mossdual_istft":
         raise SystemExit(f"{path}: not a mossdual_istft codec GGUF")
-    w = Writer(os.path.join(out, "zac"), "zac", g.meta())
+    if "mossdual_istft.head.variant" not in g.kv:
+        raise SystemExit(f"{path}: no mossdual_istft.head.variant (decoder id)")
+    w = Writer(os.path.join(out, name), name, g.meta())
     sem = g.arr("sem.table").astype(np.float16)
     w.add("sem.table", sem, "f16", [sem.shape[1], sem.shape[0]])
     del sem
@@ -748,6 +752,8 @@ MODEL_FILES = (
     + COMPANIONS
     + EDIT_FILES
 )
+# The optional full-size decoder GGUF and its model directory (servers/web/src/worker.ts EXTRA_DECODERS).
+FULL_DECODER = ("zac.gguf", "zac-full_mr")
 
 
 def main():
@@ -772,6 +778,11 @@ def main():
         os.path.join(m, "zonos3-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out
     )
     export_zac(os.path.join(m, "zac-keep2.gguf"), a.out)
+    # The full-size decoder (full_mr), when the models directory has it: a request picks it with `decoder`.
+    if os.path.isfile(os.path.join(m, FULL_DECODER[0])):
+        export_zac(os.path.join(m, FULL_DECODER[0]), a.out, FULL_DECODER[1])
+    elif os.path.isdir(os.path.join(a.out, FULL_DECODER[1])):
+        shutil.rmtree(os.path.join(a.out, FULL_DECODER[1]))
     export_encoder(os.path.join(m, "zac-encoder.gguf"), a.out)
     export_teacher(os.path.join(m, "ssl-teacher.gguf"), a.out)
     export_spk(os.path.join(m, "spk-encoder.gguf"), a.out)

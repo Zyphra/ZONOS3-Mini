@@ -27,7 +27,7 @@ from zonos3.server.capabilities import (
     CapabilityFacts,
     capabilities_document,
     condition_spec,
-    decoder_capability,
+    decoder_capabilities,
     dual_codec_hop,
     models_document,
 )
@@ -44,7 +44,13 @@ from zonos3.server.schemas import (
     SpeakerCreateRequest,
     SpeechRequest,
 )
-from zonos3.server.speech import check_format, prefix_stream_supported, resolve_stream_decode, speech_headers
+from zonos3.server.speech import (
+    check_format,
+    prefix_stream_supported,
+    resolve_decoder,
+    resolve_stream_decode,
+    speech_headers,
+)
 from zonos3.server.studio import install_studio
 from zonos3.server.voices import (
     DefaultVoice,
@@ -215,6 +221,15 @@ def _audio_codec(config: ServerArgs) -> str:
     return str(getattr(config.model_config, "audio_codec", "") or "")
 
 
+def _decoders(config: ServerArgs) -> list[str]:
+    """The decoder ids a request may pick (--decoders; default: every registry decoder of the codec), the default
+    first; [] without a matched codec."""
+    from zonos3.tokenizer.matched_codec import codec_names, served_decoders
+
+    codec = _audio_codec(config)
+    return served_decoders(codec, getattr(config, "tts_decoders", None)) if codec in codec_names() else []
+
+
 def _model_speaker_dim(config: ServerArgs) -> int:
     return int(getattr(config.model_config, "speaker_embedding_dim", 128))
 
@@ -356,13 +371,14 @@ def _output_pcm_bytes(audio_bytes: bytes, gain: float) -> bytes:
     return output_pcm(np.frombuffer(audio_bytes, dtype=np.float32), gain).tobytes()
 
 
-def _output_gain(config: ServerArgs, headroom_db: float | None) -> float:
-    """Linear gain for a request: its headroom_db, else the matched decoder's registry default (0 dB otherwise)."""
+def _output_gain(config: ServerArgs, headroom_db: float | None, decoder: str | None) -> float:
+    """Linear gain for a request: its headroom_db, else its matched decoder's registry default (``decoder``: a served
+    id, None = the default; 0 dB without a matched codec)."""
     if headroom_db is None:
-        codec = str(getattr(config.model_config, "audio_codec", ""))
+        codec = _audio_codec(config)
         from zonos3.tokenizer.matched_codec import codec_names, decoder_headroom_db
 
-        headroom_db = decoder_headroom_db(codec) if codec in codec_names() else 0.0
+        headroom_db = decoder_headroom_db(codec, decoder) if codec in codec_names() else 0.0
     return float(10.0 ** (-float(headroom_db) / 20.0))
 
 
@@ -1115,6 +1131,7 @@ async def _tts_generate_msg(
             streaming=bool(req.stream),
             prefix_supported=prefix_stream_supported(_audio_codec(state.config)),
         )
+        decoder = resolve_decoder(req.decoder, _decoders(state.config))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # sgl's own LACI rule: a retake in another speaking-rate bucket changes the condition rows, which only the naive
@@ -1148,6 +1165,7 @@ async def _tts_generate_msg(
             stream_decode=stream_decode,
             stream_codebooks=req.stream_codebooks,
             stream_codebooks_scope=req.stream_codebooks_scope,
+            decoder=decoder,
         ),
         speaker_embedding=rules.embedding,
         speaker_reference_audio=speaker_reference_audio,
@@ -1183,8 +1201,9 @@ async def _generate_response(state: FrontendManager, req: GenerateRequest, sessi
         seed=msg.sampling_params.seed,
         control_spans=bool(req.control_spans),
         follows_reading=msg.steer_follow_chars is not None,
+        decoder=msg.sampling_params.decoder,
     )
-    gain = _output_gain(state.config, req.headroom_db)
+    gain = _output_gain(state.config, req.headroom_db, msg.sampling_params.decoder)
     if req.stream:
         return StreamingResponse(
             state.stream_tts_audio(uid, fade_out_ms=req.fade_out_ms, gain=gain),
@@ -1405,6 +1424,7 @@ def _capability_facts(config: ServerArgs) -> CapabilityFacts:
     from zonos3.tokenizer.textnorm import normalization_enabled
 
     modes, codec = _speaker_modes(config), _audio_codec(config)
+    default_decoder, decoders = decoder_capabilities(codec, getattr(config, "tts_decoders", None))
     store = _project_store()
     return CapabilityFacts(
         text_tokenizer_spec=_text_tokenizer_spec(config),
@@ -1421,7 +1441,8 @@ def _capability_facts(config: ServerArgs) -> CapabilityFacts:
         silence_hop=dual_codec_hop(codec),
         tag_cfg_available=True,
         tag_cfg_trained=_model_trained_on_tags(str(config.model_path)),
-        decoder=decoder_capability(codec),
+        decoder=default_decoder,
+        decoders=decoders,
         condition_tokens=_condition_spec(config),
         speaker_audio_upload=bool(modes),
         speaker_cfg_available=bool(modes),
@@ -1595,18 +1616,19 @@ class _SglEditEngine:
         )
         return np.asarray(reply.codes), -1 if reply.eos_frame is None else int(reply.eos_frame)
 
-    async def decode(self, codes: np.ndarray) -> np.ndarray:
+    async def decode(self, codes: np.ndarray, decoder: str | None) -> np.ndarray:
         reply = await _backend_reply(
-            get_global_state(), lambda uid: TTSDecodeCodesMsg(uid=uid, codes=torch.as_tensor(codes, dtype=torch.int32))
+            get_global_state(),
+            lambda uid: TTSDecodeCodesMsg(uid=uid, codes=torch.as_tensor(codes, dtype=torch.int32), decoder=decoder),
         )
         return output_pcm(
-            np.frombuffer(reply.audio_data, dtype=np.float32), _output_gain(get_global_state().config, None)
+            np.frombuffer(reply.audio_data, dtype=np.float32), _output_gain(get_global_state().config, None, decoder)
         )
 
 
 # The server's speech editing, over the ASR and FuseAlign workers it shares with plugins.
 _EDIT_RUNTIME = EditRuntime(_SglEditEngine(), _ASR, _FUSEALIGN)
-app.include_router(_edit_router(lambda: _EDIT_RUNTIME))
+app.include_router(_edit_router(lambda: _EDIT_RUNTIME, lambda: _decoders(get_global_state().config)))
 
 
 # ----------------------------------------------------------------------------- plugins (zonos3.server.plugins)
@@ -1642,7 +1664,6 @@ class _SglHost:
         state = get_global_state()
         if _LACI_TAKE_SLOTS is None:
             _LACI_TAKE_SLOTS = laci_slots(getattr(state.config, "max_running_req", 1))
-        gain = _output_gain(state.config, None)
         msgs = []
         try:
             for take in takes:
@@ -1680,7 +1701,9 @@ class _SglHost:
         async def run(msg: TTSTokenizeMsg):
             async with _LACI_TAKE_SLOTS:
                 await state.send_one(msg)
-                data, record = await state.wait_for_tts_reply(msg.uid, gain=gain)
+                data, record = await state.wait_for_tts_reply(
+                    msg.uid, gain=_output_gain(state.config, None, msg.sampling_params.decoder)
+                )
             if record is None:
                 raise RuntimeError(f"LACI take uid={msg.uid}: the scheduler sent no LACI record")
             audio = np.frombuffer(data, dtype=np.float32).copy() if data else None

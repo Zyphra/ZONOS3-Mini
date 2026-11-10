@@ -18,7 +18,7 @@ export interface EngineProgress {
 
 interface WebEngine {
   init(progress: (p: EngineProgress) => void, opts?: { base?: string; cache?: boolean }): Promise<void>;
-  /** Progress of the models loaded after init, on a clip voice's first use (speaker / reference encoders). */
+  /** Progress of the models loaded after init, on first use (a clip voice's speaker / reference encoders, the full-size decoder). */
   onEncoderProgress(cb: (p: EngineProgress) => void): void;
 }
 
@@ -103,7 +103,7 @@ function tracker(): (p: EngineProgress) => Download {
 
 /** Picks the in-browser server and loads its models; `progress` gets the download as it goes. */
 /** Model file names as the reader knows them. */
-const MODEL_NAMES: Record<string, string> = { backbone: 'voice model', zac: 'audio codec', encoder: 'voice encoder', encoders: 'voice encoders' };
+const MODEL_NAMES: Record<string, string> = { backbone: 'voice model', zac: 'audio codec', 'zac-full_mr': 'full-size audio decoder', encoder: 'voice encoder', encoders: 'voice encoders' };
 const modelName = (m: string) => MODEL_NAMES[m] ?? m;
 
 export async function startWebEngine(progress: (d: Download) => void): Promise<void> {
@@ -113,7 +113,7 @@ export async function startWebEngine(progress: (d: Download) => void): Promise<v
   await engine.init((p) => progress(track(p)));
 }
 
-/** The download of the encoder models a clip voice's first use loads (only once the in-browser server is started). */
+/** The download of the models the in-browser server loads on first use (a clip voice's encoders, the full-size decoder); only once it is started. */
 export async function onEncoderProgress(progress: (d: Download) => void): Promise<void> {
   const { engine } = await loadWebEngine();
   const track = tracker();

@@ -437,10 +437,12 @@ class Scheduler:
         state = LMState()
         self.engine.lm.forward(ids, state)
         self.engine.lm.forward(ids[:1], state)
-        self.engine.decoder.decode(np.zeros((4, c.n_codebooks), dtype=np.int64))
+        for dec in self.engine.decoders.values():
+            dec.decode(np.zeros((4, c.n_codebooks), dtype=np.int64))
 
     def _warmup_codec(self) -> None:
-        self.engine.decoder.decode(np.zeros((4, self.config.n_codebooks), dtype=np.int64))
+        for dec in self.engine.decoders.values():
+            dec.decode(np.zeros((4, self.config.n_codebooks), dtype=np.int64))
 
     # ------------------------------------------------------------------------------------------------- offline
     def synthesize(self, request: dict, speaker=None):
@@ -462,7 +464,7 @@ class Scheduler:
                 break
             else:
                 raise RuntimeError(rest[0])
-        dec = self.engine.decoder
+        dec = self.engine.decoder_of(plan.request.decoder)
         pcm = self.submit(
             dec.decode_rows,
             rows,
@@ -471,9 +473,7 @@ class Scheduler:
             context_codes=None if plan.context_codes is None else plan.context_codes.numpy(),
             audio_pad_id=self.config.audio_pad_id,
         ).result()
-        pcm = fade_out(
-            output_pcm(pcm, self.engine.output_gain(plan.request.headroom_db)), float(plan.request.fade_out_ms)
-        )
+        pcm = fade_out(output_pcm(pcm, dec.output_gain(plan.request.headroom_db)), float(plan.request.fade_out_ms))
         return _Result(pcm.astype(np.float32), plan.seed, record, rows, eos, plan, job)
 
 

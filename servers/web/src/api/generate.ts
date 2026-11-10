@@ -21,7 +21,7 @@ import { acceptFrame, newSlot, type SlotState } from '../slot';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { applyFade } from '../wav';
 import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
-import type { Engine } from './engine';
+import type { Decoder, Engine } from './engine';
 import {
   bool, fail, HttpError, isSet, num, parseBody, pyFloat, pyList, pyRepr, sessionId, str, truthy, type EngineRequest,
   type Sink,
@@ -48,7 +48,8 @@ interface Plan {
   cfgScale: number;
   cfgKind: '' | 'speaker' | 'tag' | 'controls';
   twinSteered: boolean;
-  headroomDb: number;
+  decoder: Decoder;
+  headroomDb: number;                 // -1 = the decoder's
   fadeOutMs: number;
   stream: boolean;
   wav: boolean;
@@ -141,6 +142,15 @@ export function resolveConditionBuckets(e: Engine, body: Body): number[] {
   });
 }
 
+/** The request's `decoder` (null = the default; an id this server does not serve is a 400). */
+export function resolveDecoder(e: Engine, body: Body): Decoder {
+  if (!isSet(body, 'decoder')) return e.decoders[0];
+  const id = str(body, 'decoder')!;
+  const d = e.decoders.find(x => x.id === id);
+  if (!d) fail(400, `Unknown decoder '${id}'; this server serves: ${e.decoders.map(x => x.id).join(', ')}.`);
+  return d;
+}
+
 /** zonos3.languages normalize (R4). */
 export function resolveLanguage(body: Body): string {
   const given = str(body, 'language') ?? 'en_us';
@@ -221,6 +231,7 @@ function resolveFollowTokens(e: Engine, p: Plan): void {
 export async function planGenerate(e: Engine, spk: Speakers, body: Body, session: string | null,
                                    pcm: Float32Array | undefined): Promise<Plan> {
   const text = str(body, 'text')!;
+  const decoder = resolveDecoder(e, body);
   const speakerCfg = num(body, 'speaker_cfg_scale', 1), controlsCfg = num(body, 'controls_cfg_scale', 1);
   validateTagCfg(text, num(body, 'tag_cfg_scale', 1), speakerCfg, controlsCfg);
   // zonos3.tts.plan resolve_speaker_mode (R2)
@@ -237,7 +248,8 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     text, rawText: text, language: 'en_us', sp: defaultSampling(), maxFrames: MAX_FRAMES, speakerMode: rs.mode,
     referenceCodes: rs.codes, speakerEmbedding: rs.embedding ? Float32Array.from(rs.embedding) : null,
     conditionBuckets, silencePrefill: 0, decodeContext: null,
-    cfgScale: 1, cfgKind: '', twinSteered: true, headroomDb: -1, fadeOutMs: 0, stream: true, wav: false, prefix: false,
+    cfgScale: 1, cfgKind: '', twinSteered: true, decoder, headroomDb: -1, fadeOutMs: 0, stream: true, wav: false,
+    prefix: false,
     streamCodebooks: STREAM_CODEBOOKS, streamFirstOnly: STREAM_CODEBOOKS_SCOPE === 'first',
     steering: new Steering(), spanFollow: '', laci: null, follow: null, followTokens: [],
     followLead: 1, followLag: 0, prompt: null!, twin: null,
@@ -414,7 +426,7 @@ function decodeRows(codes: number[], H: number, ctx: Int32Array | null, K: numbe
  *  soft limiter). */
 export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => void, aborted: () => boolean): Promise<void> {
   const { probe, follower, laci } = attachProbe(e, p);
-  const bb = e.backbone, codec = e.codec;
+  const bb = e.backbone, codec = await p.decoder.codec();
   const ncb = NCB, W = ncb + 1;
   const ctxFrames = p.decodeContext ? p.decodeContext.length / ncb : 0;
   let skip = (p.prompt.prefillFrames + ctxFrames) * HOP;
@@ -640,6 +652,7 @@ async function generate(e: Engine, spk: Speakers, body: Body, req: EngineRequest
     'x-audio-channels': '1',
     'x-audio-format': wav ? 'pcm16' : 'float32',
     'x-seed': String(p.sp.seed),
+    'x-decoder': p.decoder.id,
   };
   if (p.spanFollow) headers['x-control-span-follow'] = p.spanFollow;
   if (p.stream) {

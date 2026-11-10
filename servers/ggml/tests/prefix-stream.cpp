@@ -239,7 +239,8 @@ static void test_server(const char * model_path, const char * zac_path) {
     CHECK(zonos3_model_load(s.model, model_path, /*use_gpu=*/false), "load the dummy backbone");
     s.max_frames = 40;
     CHECK(zs::configure_frame_budget(s, err), "frame budget");
-    CHECK(zac_load(s.zac, zac_path, /*use_gpu=*/false), "load the dummy codec");
+    CHECK(zs::load_decoder(s, zac_path, /*use_gpu=*/false, err), "load the dummy codec");
+    zac_model & zac = zs::default_decoder(s).zac;
     const int ncb = (int) s.model.hp.n_codebooks;
 
     // Request fields: registry defaults, both fields, 400 above n_codebooks.
@@ -258,9 +259,14 @@ static void test_server(const char * model_path, const char * zac_path) {
     CHECK(plan_status(s, b, detail) == 400 && detail == "stream_codebooks must be 1.." + std::to_string(ncb), "k > ncb: 400");
     b["stream_codebooks"] = 0;
     CHECK(plan_status(s, b, detail) == 400, "k = 0: 400");
+    // decoder: the default when unset (the dummy codec's head variant), an id the server does not serve a 400.
+    CHECK(zs::plan_generate(s, base, std::nullopt).gr.decoder == &zs::default_decoder(s), "default decoder");
+    b = base;
+    b["decoder"] = "nope";
+    CHECK(plan_status(s, b, detail) == 400 &&
+              detail == "Unknown decoder 'nope'; this server serves: " + zs::default_decoder(s).id + ".",
+          "unknown decoder: 400");
 
-    s.zac_lanes = std::vector<zs::ZacLane>(1);
-    CHECK(zac_clone(s.zac_lanes[0].zac, s.zac), "lane");
     zs::start_scheduler(s);
     CHECK(!s.worker_failed, "scheduler");
 
@@ -291,7 +297,7 @@ static void test_server(const char * model_path, const char * zac_path) {
     CHECK(max_diff(all, first, first.size()) > 0, "scope all: later chunks partial too");
 
     // A codec without res.{i}.bias: every request streams complete frames.
-    s.zac.res_cb_bias.clear();
+    zac.res_cb_bias.clear();
     gr = plan(s, base);
     CHECK(gr.stream_codebooks == ncb, "no res.{i}.bias: k = ncb");
     zs::stop_scheduler(s);

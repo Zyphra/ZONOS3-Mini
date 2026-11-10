@@ -52,7 +52,6 @@ class MlxHost:
         state = self.state
         if state.laci_slots is None:
             state.laci_slots = laci_slots(state.options.batch)
-        gain = state.engine.output_gain(None)
         engine = state.engine
         plans = []
         for take in takes:
@@ -88,6 +87,7 @@ class MlxHost:
                     job.abort()
             if job.record is None:
                 raise RuntimeError("LACI take: the scheduler sent no LACI record")
+            gain = engine.output_gain(None, plan.request.decoder)
             audio = output_pcm(np.frombuffer(data, dtype=np.float32), gain) if data else None
             return audio, job.record
 

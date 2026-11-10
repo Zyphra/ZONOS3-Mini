@@ -65,6 +65,8 @@ export interface Generated {
   wav: Uint8Array;
   seed: number;
   spanFollow?: SpanFollow;
+  /** X-Decoder: the decoder that made the audio. */
+  decoder?: string;
   ttfbMs: number;
   totalMs: number;
 }
@@ -79,7 +81,8 @@ export async function generate(req: GenerateRequest): Promise<Generated> {
   const wav = new Uint8Array(await res.arrayBuffer());
   const spanFollow: SpanFollow | undefined = body.control_spans?.length ? (res.headers.get('X-Control-Span-Follow') === 'reading' ? 'reading' : 'rate') : undefined;
   const seed = Number(res.headers.get('X-Seed') ?? req.seed ?? 0);
-  return { wav, seed, ttfbMs: Math.round(ttfbMs), totalMs: Math.round(performance.now() - t0), ...(spanFollow ? { spanFollow } : {}) };
+  const decoder = res.headers.get('X-Decoder');
+  return { wav, seed, ttfbMs: Math.round(ttfbMs), totalMs: Math.round(performance.now() - t0), ...(spanFollow ? { spanFollow } : {}), ...(decoder ? { decoder } : {}) };
 }
 
 export const transcribe = (audio_base64: string, language: string) => ok<Alignment>(client.POST('/v2/edit/transcribe', { body: { audio_base64, language } }));

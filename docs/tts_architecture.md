@@ -179,13 +179,13 @@ seed as its weights without the span-end row.
 ## Vocoder (matched dual codec)
 
 `TTSVocoderManager` in `zonos3_sgl/tokenizer/vocoder.py` decodes with the codec the LM's training data was tokenized with (the
-checkpoint's `audio_codec`). Only matched codecs of the codec registry are accepted.
+checkpoint's `audio_codec`). Only matched codecs of the codec registry are accepted. Each request decodes through the
+decoder it names (`decoder`, a served decoder id; null = the default `keep2_plain`), carried on its sampling params to
+every `TTSDetokenizeMsg` and on `TTSDecodeCodesMsg` (edits).
 
 ### Codec registry
 
-`zonos3/registries/codec_registry_keep2_plain.json` (the pruned `keep2_plain` decoder head of the Python servers; the
-full-size `full_mr` head is a GGUF option of the ggml and MLX servers, `zac.gguf`) holds one entry
-per codec. The ZONOS3 Mini entry
+`zonos3/registries/codec_registry.json` holds one entry per codec. The ZONOS3 Mini entry
 (`opus_dual_3n_600k_sched600k_r4096_step600000`, family `dual`) declares:
 
 - `codebooks` 10, `codebook_sizes` 10 × 4096, `hop` 2940 samples at 44.1 kHz (`frame_rate` 15), `codec_step`;
@@ -193,18 +193,32 @@ per codec. The ZONOS3 Mini entry
   before the first decode;
 - `teacher`: the semantic SSL teacher the encoder needs (`hf://…/autoencoder/teacher`);
 - `silence_frame`: the steady-state codes of digital silence, used for the silence prefill;
-- `decoder`: `kind: "istft_mr"`, the decoder `campaign` folder with its `config` and `checkpoint`, `expect_step`, and
-  `headroom_db` (3.0: the default output gain of −3 dB, overridable per request with `headroom_db`; the iSTFT head
-  is unbounded).
+- `decoders`: the decoders a request may pick by id, and `decoder_default` (`keep2_plain`). Each is `kind:
+  "istft_mr"` with its `campaign` folder, `config` and `checkpoint`, `expect_step`, and `headroom_db` (3.0: the default
+  output gain of −3 dB, overridable per request with `headroom_db`; the iSTFT head is unbounded):
+  - `keep2_plain` (the default): the KEEP-2 pruned head (`autoencoder/heads/keep2_plain`,
+    `config_full_unfreezeall_mr_drop30_4x10.json`: two layers per transformer stage);
+  - `full_mr`: the full-size head (`autoencoder/heads/full_mr`, `config_full_unfreezeall_mr.json`, decoder.0-8
+    unfrozen).
+
+  Both share the codec, its frame rate, codebooks and the stream / flush semantics; they differ only in layer counts.
+  The GGUF servers serve the same two heads as `zac-keep2.gguf` and `zac.gguf` (the id is the GGUF's
+  `mossdual_istft.head.variant`), the web engine as its exported model directories.
 
 ### Decoder
 
 `zonos3.tokenizer.matched_codec.load_model` builds `zonos3.codec.istft_head_a_20261002.model.ISTFTCodec` from the
 decoder config, loads the generator's pretrained weights (`generator.pt`: quantizer and the initial decoder stages),
 then the MR head's trainable state (decoder stages + causal multi-resolution iSTFT head) from the decoder checkpoint;
-the generator's conv-tail decoder is never used. The model is cached per device (`ZONOS3_AUDIO_CODEC_DEVICE`, default
-`cuda:0`). `decode_model` runs `[B, frames, 10]` codes in fp32 with TF32 off and checks the output length
-(`frames × hop`) and finiteness.
+the generator's conv-tail decoder is never used. The model is cached per decoder id and device
+(`ZONOS3_AUDIO_CODEC_DEVICE`, default `cuda:0`); `decode`, `stream`, `capture_stream_graphs`, `decoder_info` and
+`decoder_headroom_db` take the decoder id (None = the default). `decode_model` runs `[B, frames, 10]` codes in fp32 with
+TF32 off and checks the output length (`frames × hop`) and finiteness.
+
+The sgl server loads every decoder of the registry entry at startup (`--decoders keep2_plain,full_mr` restricts the
+set; the registry default stays the default when listed, else the first listed is); `GET /v2/capabilities` lists them
+in `decoders` (default first, also `decoder`), a request picks one with `decoder` (unknown id: 400) and audio
+responses name it in `X-Decoder`. Everything below runs per decoder exactly as for the default.
 
 ### Streaming decode
 
@@ -227,12 +241,13 @@ the generator's conv-tail decoder is never used. The model is cached per device 
   (>= chunk) but unused.
 - **Primed stream** (prefix decode with the silence prefill rows and no decode context): the vocoder decodes the
   prefill frames once as pure silence and every such request continues a fork of that stream
-  (`TTSVocoderManager._prefix_stream`, `ISTFTStream.fork`: the trunk state tensors are shared, never written in
-  place; the head's overlap-add buffers are copied), so the first chunk is the first generated frame alone. The
+  (`TTSVocoderManager._prefix_stream`, one primed stream per decoder; `ISTFTStream.fork`: the trunk state tensors are
+  shared, never written in place; the head's overlap-add buffers are copied), so the first chunk is the first
+  generated frame alone. The
   prefill frames' codebooks that fall in generated rows (frame f, codebook j with f + j >= prefill) are the LM's and
   are not decoded: the PCM moves ~1.7e-3 RMS (signal ~0.16), the same size as moving a chunk boundary
   (~1.4e-3); the codes are unchanged.
-- **Codec CUDA graphs**: at tokenizer start `warm_prefix_stream` primes the default prefill's stream and captures the
+- **Codec CUDA graphs**: at tokenizer start `warm_prefix_stream` primes, for every served decoder, the default prefill's stream and captures the
   chunk shapes of the primed ramp (3, then 1, 2, 4, 8, 15 ... until every KV cache is full at 150 frames, then the
   steady 15-frame chunk; `zonos3.tts.stream.prefix_chunks`, `matched_codec.capture_stream_graphs`). A chunk whose
   shape (frames, stream position up to `ISTFTStream.full_frames`) was captured replays `ChunkGraphs` (state copied
@@ -264,7 +279,7 @@ the generator's conv-tail decoder is never used. The model is cached per device 
 delayed rows (seq_len, 10)
   → shear_up(): remove inter-codebook delay, fill with audio_pad_id
   → slice to the complete pre-EOS frames
-  → matched_codec.decode(): sha256 check, ISTFTCodec (fp32, TF32 off)
+  → matched_codec.decode(codes, codec, decoder): sha256 check, ISTFTCodec of that decoder (fp32, TF32 off)
   → waveform (float32, 44.1 kHz, frames × 2940 samples)
 ```
 
@@ -388,7 +403,7 @@ Model-level config is loaded from checkpoint via `cached_load_checkpoint_config(
 | `zonos3/tts/prompt.py` | Prompt rows (speaker, condition, reference prefix, text), shear, silence prefill rows |
 | `zonos3/tts/superbpe.py` | SuperBPE text convention, phoneme groups |
 | `zonos3_sgl/tokenizer/vocoder.py` | `TTSVocoderManager`: undelay, whole / prefix decode |
-| `zonos3/tokenizer/matched_codec.py` | Codec registry, `ISTFTCodec` decoder load and decode |
+| `zonos3/tokenizer/matched_codec.py` | Codec registry, `ISTFTCodec` decoder load and decode, per decoder id |
 | `zonos3/tokenizer/dual_reference.py` | Reference-audio encoder (`MossAutoencoder`) |
 | `zonos3/codec/` | Vendored dual codec: encoder adapter, quantizer, causal MR iSTFT decoder |
 | `zonos3_sgl/engine/engine.py` | `Engine.forward_batch_tts()` |

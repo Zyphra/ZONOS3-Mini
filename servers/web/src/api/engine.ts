@@ -32,6 +32,19 @@ export interface CodecApi {
   flush(): Promise<Float32Array>;
 }
 
+/** An audio decoder a request may pick with `decoder` (Capabilities.decoders). */
+export interface Decoder {
+  /** The decoder head variant (manifest meta `head.variant`): `keep2_plain` or `full_mr`. */
+  id: string;
+  /** The decoder GGUF the model directory was exported from. */
+  checkpoint: string;
+  /** Meta headroom_db: the output gain of a request without headroom_db. */
+  headroomDb: number;
+  /** The streaming decoder: loaded at startup for the default, on the first request that picks it otherwise (its
+   *  download reported like the encoders'). */
+  codec(): Promise<CodecApi>;
+}
+
 /** A shipped default voice: its clip decoded to 44.1 kHz mono by the client, its shipped reference codes and its
  *  shipped speaker embedding (so neither encoder loads for a default voice). */
 export interface DefaultVoice {
@@ -59,13 +72,13 @@ export interface Engine {
   hp: ModelHp;
   modelFile: string;                       // GET /v1/models root
   backbone: BackboneApi;
-  codec: CodecApi;
+  /** Every decoder a request may pick, the default (the one a request without `decoder` gets) first. */
+  decoders: Decoder[];
   tokenizer: Tokenizer;
   steer: SteerBundle | null;               // companions/steer.gguf
   controlsDoc: unknown;                    // GET /v2/controls body (null without steer)
   laci: Map<string, LaciHeads>;            // language -> alignment heads (laci/index.json)
   voices: DefaultVoice[];
-  headroomDb: number;                      // zac meta headroom_db
   /** Speaker encoder (lazy-loaded): 44.1 kHz mono -> [speakerDim]. Throws HttpError-compatible messages. */
   embedSpeaker(pcm44k: Float32Array): Promise<Float32Array>;
   /** Reference encoder (lazy-loaded): 44.1 kHz mono -> ordinary codes [T][10]. */

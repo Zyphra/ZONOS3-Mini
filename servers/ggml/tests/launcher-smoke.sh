@@ -14,7 +14,8 @@ cd "$ROOT"
 
 LAUNCHER="scripts/start-zonos3.sh"
 MODEL="tests/fixtures/dummy-zonos3.gguf"
-ZAC="tests/fixtures/dummy-zac.gguf"
+ZAC="tests/fixtures/dummy-zac.gguf"             # head variant full_mr
+ZAC_KEEP2="tests/fixtures/dummy-zac-keep2.gguf" # the same weights, head variant keep2_plain
 
 find_bin() {
   if [ -n "${1:-}" ]; then echo "$1"; return; fi
@@ -24,6 +25,7 @@ SRV="$(find_bin "${1:-}")"
 [ -x "$SRV" ]     || { echo "FAIL: zonos3-server not found (pass it as \$1)"; exit 1; }
 [ -f "$MODEL" ]   || { echo "FAIL: missing $MODEL"; exit 1; }
 [ -f "$ZAC" ]     || { echo "FAIL: missing $ZAC"; exit 1; }
+[ -f "$ZAC_KEEP2" ] || { echo "FAIL: missing $ZAC_KEEP2"; exit 1; }
 command -v curl    >/dev/null 2>&1 || { echo "SKIP: curl not available"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit 0; }
 
@@ -76,9 +78,14 @@ stop_launcher() {
 echo "== launcher: local models =="
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-ptq.gguf"
-cp "$ZAC"   "$WORK/models/zac-keep2.gguf"
+cp "$ZAC_KEEP2" "$WORK/models/zac-keep2.gguf"
+cp "$ZAC" "$WORK/models/zac.gguf"
 run_launcher
 pass "local models -> server up"
+# zac-keep2.gguf is the default decoder, zac.gguf an extra one
+curl -fsS "$BASE/v2/capabilities" | grep -Eq '"decoders": ?\[[^]]*"id": ?"keep2_plain"[^]]*"id": ?"full_mr"' \
+  || fail "the launcher must serve zac-keep2.gguf (default) and zac.gguf"
+pass "decoders keep2_plain (default) + full_mr"
 curl -fsS "$BASE/v2/generate" \
   -d '{"text":"launcher smoke","stream":false,"format":"wav","seed":1,"max_tokens":16}' \
   -o "$WORK/smoke.wav" || fail "/v2/generate request failed"

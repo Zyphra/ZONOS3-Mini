@@ -1,6 +1,6 @@
 // Continuous-batching scheduler: one worker thread owns the backbone and a zonos3_batch_ctx and only produces codes;
-// ZAC decode runs on a pool of lanes (each its own zac_model sharing the weights). HTTP handlers enqueue a ReqJob and
-// read PCM blocks back through its channel.
+// ZAC decode runs on each decoder's pool of lanes (each its own zac_model sharing that decoder's weights). HTTP
+// handlers enqueue a ReqJob and read PCM blocks back through its channel.
 #pragma once
 
 #include "zonos3.h"
@@ -10,6 +10,7 @@
 #include "zonos3-laci.h"
 #include "zonos3-span-follow.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -25,6 +26,7 @@
 namespace zs {
 
 struct ServerState;
+struct Decoder;
 
 // A generation request resolved against the loaded model (generate.cpp builds it from a GenerateRequest).
 struct GenReq {
@@ -44,6 +46,7 @@ struct GenReq {
                                             // whose twin is the same prompt without the steering)
     int accent = -1;                        // accent adapter of model.accents (-1 = none), on both CFG branches
     float accent_strength = 0.0f;
+    Decoder * decoder = nullptr;            // the decoder of the audio (resolve_decoder; null only without decoders)
     double headroom_db = -1.0;              // < 0: the decoder's own headroom
     double fade_out_ms = 0;
     bool stream = true;
@@ -99,6 +102,17 @@ struct ZacLane {
     std::deque<ZacTask> q;
 };
 
+// A loaded decoder (one zac.gguf), identified by its head variant: its weights and its decode pool, one backend +
+// thread per lane (ggml backends are not reentrant) sharing the weights. Each lane keeps its own graph caches.
+struct Decoder {
+    std::string id;   // mossdual_istft.head.variant (keep2_plain | full_mr)
+    std::string path; // the zac.gguf
+    zac_model zac;    // owns the weights shared by every lane
+    std::vector<ZacLane> lanes;
+    std::atomic<uint64_t> next_lane{0}; // the backbone worker and submit_decode (handler threads) pick lanes
+    ~Decoder();
+};
+
 struct ReqJob {
     // request (handler-filled, read-only to the worker)
     GenReq gr;
@@ -121,7 +135,7 @@ struct ReqJob {
     std::vector<int32_t> codes;          // delayed audio-stream rows (silence prefill first)
     int eos_frame = -1;
     int emitted = 0;                     // prefix streaming: frames handed to the lane
-    int lane = 0;
+    int lane = 0;                        // of gr.decoder
     zac_stream dst;                      // lane-owned incremental decoder state (prefix streaming)
 
     std::chrono::steady_clock::time_point t_decode0;
@@ -166,12 +180,15 @@ int prefix_ready(const int32_t * rows, int H, int ncb, int32_t audio_pad_id, int
 // The next prefix chunk's end frame (> emitted), or -1 while fewer than `need` new frames are decodable behind the
 // hold-back.
 int prefix_chunk_end(const PrefixStreamSettings & ps, int ready, int emitted, int prefill);
-
-void start_scheduler(ServerState & s);   // ZAC lanes + backbone worker; waits until the worker is ready
+void start_scheduler(ServerState & s);   // every decoder's ZAC lanes + backbone worker; waits until the worker is ready
 void stop_scheduler(ServerState & s);
+// Loads the decoder at `path` (zac_load, on the GPU backend when use_gpu) with s.zac_threads lanes and appends it to
+// s.decoders (the first loaded is the default). False with the reason in `err`: unreadable GGUF, or a head variant
+// already loaded. Call before start_scheduler.
+bool load_decoder(ServerState & s, const std::string & path, bool use_gpu, std::string & err);
 void submit_job(ServerState & s, const std::shared_ptr<ReqJob> & job);
-// Whole-decode the job's delayed code rows (job->codes; eos_frame < 0 = every complete frame) on a ZAC lane without
-// the backbone; the PCM arrives on the job's channel like a generation's.
+// Whole-decode the job's delayed code rows (job->codes; eos_frame < 0 = every complete frame) on a lane of
+// job->gr.decoder without the backbone; the PCM arrives on the job's channel like a generation's.
 void submit_decode(ServerState & s, const std::shared_ptr<ReqJob> & job);
 
 // The alignment probe of a job whose prompt is built (gr.laci / gr.follow): the probed text span, the span follower and

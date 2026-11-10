@@ -91,7 +91,8 @@ json rows_json(const std::vector<int32_t> & flat, int k) {
 }
 
 double frame_rate(const ServerState & s) {
-    return (double) s.zac.sample_rate / zac_samples_per_frame(s.zac);
+    const zac_model & zac = default_decoder(s).zac;
+    return (double) zac.sample_rate / zac_samples_per_frame(zac);
 }
 
 // ---------------------------------------------------------------------------------------------------- init facts
@@ -179,8 +180,8 @@ Generated generate_fill(ServerState & s, const std::string & text, const std::ve
     gr.stream = false;
     gr.steering = steering;
     gr.stop_id = hp.span_end_id;
-    gr.min_frames = min_frames;
     gr.codes_only = true;
+    gr.decoder = &default_decoder(s); // decodes nothing; the scheduler still pins a lane
     submit_job(s, job);
     Generated out;
     {
@@ -194,8 +195,8 @@ Generated generate_fill(ServerState & s, const std::string & text, const std::ve
     return out;
 }
 
-// The whole decode of ordinary codes [frames, K] on a ZAC lane, with the decoder's output gain.
-std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & frames) {
+// The whole decode of ordinary codes [frames, K] on a lane of `decoder`, with the decoder's output gain.
+std::vector<float> decode_codes(ServerState & s, Decoder & decoder, const std::vector<int32_t> & frames) {
     const int K = (int) s.model.hp.n_codebooks;
     const int n = (int) (frames.size() / K), H = n + K - 1;
     auto job = std::make_shared<ReqJob>();
@@ -203,7 +204,8 @@ std::vector<float> decode_codes(ServerState & s, const std::vector<int32_t> & fr
     for (int r = 0; r < H; ++r)
         for (int c = 0; c < K; ++c)
             if (r - c >= 0 && r - c < n) job->codes[(size_t) r * K + c] = frames[(size_t) (r - c) * K + c];
-    job->gain = zac_output_gain(s.zac, -1.0);
+    job->gr.decoder = &decoder;
+    job->gain = zac_output_gain(decoder.zac, -1.0);
     submit_decode(s, job);
     std::vector<float> audio;
     std::unique_lock<std::mutex> lk(job->m);
@@ -304,10 +306,12 @@ json call_fill(ServerState & s, const json & c) {
     return {{"rows", rows_json(g.rows, K)}, {"eos_frame", g.eos_frame}};
 }
 
-// EditEngine.decode: the codes' audio with the output gain as float WAV at `out`.
+// EditEngine.decode: the codes' audio on the edit's decoder (`decoder`: an id of Capabilities.decoders, null = the
+// default) with the output gain as float WAV at `out`.
 json call_decode(ServerState & s, const json & c) {
-    const std::vector<float> audio = decode_codes(s, flat_rows(c.at("codes"), (int) s.model.hp.n_codebooks));
-    write_float_wav(c.at("out").get<std::string>(), audio, s.zac.sample_rate);
+    Decoder & decoder = *resolve_decoder(s, c);
+    const std::vector<float> audio = decode_codes(s, decoder, flat_rows(c.at("codes"), (int) s.model.hp.n_codebooks));
+    write_float_wav(c.at("out").get<std::string>(), audio, decoder.zac.sample_rate);
     return json::object();
 }
 

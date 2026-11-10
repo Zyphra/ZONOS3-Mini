@@ -49,7 +49,7 @@ static json condition_tokens(const ServerState & s) {
 
 // zonos3.server.capabilities.silence_prefill_spec (the matched dual codec has codec-matched silence frames).
 static json silence_prefill(const ServerState & s) {
-    const int hop = zac_samples_per_frame(s.zac);
+    const int hop = zac_samples_per_frame(default_decoder(s).zac); // every decoder shares the codec's frame
     const double rate = zonos3_generation().sample_rate;
     const int frames = s.silence_prefill_frames;
     return {{"available", true}, {"default_frames", frames}, {"default_on", s.silence_prefill_on}, {"default_seconds", std::round(frames * hop / rate * 1000.0) / 1000.0}, {"frame_seconds", hop / rate}, {"codec", AUDIO_CODEC}, {"note", "codec-matched silence frames open the audio stream before the model starts (their audio is not "
@@ -57,9 +57,11 @@ static json silence_prefill(const ServerState & s) {
                                                                                                                                                                                                                                            "turns it off and silence_prefill_frames=N sets the length"}};
 }
 
-// zonos3.server.capabilities.decoder_capability: the iSTFT head decoder (zac.gguf) behind the matched codec.
-static json decoder(const ServerState & s, const std::string & zac_name) {
-    return {{"kind", "istft_mr"}, {"label", "Multi-resolution iSTFT head (" + zac_name + "); causal"}, {"checkpoint", zac_name}, {"expect_step", nullptr}, {"headroom_db", (double) s.zac.headroom_db}, {"causal", true}, {"codec", AUDIO_CODEC}};
+// zonos3.server.capabilities.decoder_capability: an iSTFT head decoder (its zac.gguf) behind the matched codec, by its
+// head variant.
+static json decoder(const Decoder & d) {
+    const std::string file = std::filesystem::path(d.path).filename().string();
+    return {{"id", d.id}, {"kind", "istft_mr"}, {"label", "Multi-resolution iSTFT head (" + file + "); causal"}, {"checkpoint", file}, {"expect_step", nullptr}, {"headroom_db", (double) d.zac.headroom_db}, {"causal", true}, {"codec", AUDIO_CODEC}};
 }
 
 json capabilities(const ServerState & s) {
@@ -68,6 +70,8 @@ json capabilities(const ServerState & s) {
     const bool embedding = hp.speaker_dim > 0;
     const bool cfg = !modes.empty() && s.batch_slots >= 2;
     const zonos3_generation_registry & limits = zonos3_generation();
+    json decoders = json::array(); // the default first
+    for (const auto & d : s.decoders) decoders.push_back(decoder(*d));
     json caps = {
         {"text_tokenizer_spec", json::parse(s.model.tok.spec_json)},
         {"text_normalization_enabled", s.text_normalizer != nullptr},
@@ -91,7 +95,8 @@ json capabilities(const ServerState & s) {
                                                                                                                                  "no-op without a reference prompt"}}},
         {"speaker_modes", modes},
         {"speaker_mode_default", modes.empty() ? json(nullptr) : json(modes[0])},
-        {"decoder", decoder(s, s.zac_name)},
+        {"decoder", decoder(default_decoder(s))},
+        {"decoders", decoders},
         {"condition_tokens", condition_tokens(s)},
         {"speaker_audio_upload", !modes.empty() && (speaker_encoder_available(s) || reference_audio_available(s))},
         {"speaker_cfg_supported", cfg},

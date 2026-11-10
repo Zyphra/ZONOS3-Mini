@@ -30,6 +30,9 @@ class ServerArgs(SchedulerConfig):
     tts_sample_rate: int = SAMPLE_RATE
     tts_audio_codec: str = "opus_dual_3n_600k_sched600k_r4096_step600000"
     tts_speaker_reference_max_seconds: float = 30.0
+    # The audio decoders requests may pick (--decoders, zonos3.tokenizer.matched_codec.served_decoders: default first);
+    # None = every decoder of the codec registry entry.
+    tts_decoders: Tuple[str, ...] | None = None
     tts_speaker_background_token_enabled: bool = False
     tts_accurate_mode_token_enabled: bool = False
     tts_speaking_rate_num_buckets: int = 0
@@ -398,6 +401,15 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         help="Text tokens per request the decode CUDA graphs read for alignment probes (default 2048 with "
         "--laci-heads, else 0); a LACI request with a longer text decodes its steps eagerly.",
     )
+    parser.add_argument(
+        "--decoders",
+        type=str,
+        default=None,
+        metavar="ID,ID",
+        help="Audio decoders to load, comma-separated decoder ids of the codec registry (keep2_plain, full_mr); "
+        "requests pick one with 'decoder'. Default: every decoder of the checkpoint's codec. The registry default "
+        "(keep2_plain) stays the server default when listed, else the first id listed is.",
+    )
 
     # Parse arguments
     kwargs = parser.parse_args(args).__dict__.copy()
@@ -462,6 +474,16 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     kwargs["tts_speaker_reference_max_seconds"] = float(
         getattr(checkpoint_config, "speaker_reference_max_seconds", 30.0)
     )
+    from zonos3.tokenizer.matched_codec import codec_names, served_decoders
+
+    decoders = kwargs.pop("decoders")
+    if decoders is not None:
+        if kwargs["tts_audio_codec"] not in codec_names():
+            parser.error(f"--decoders needs a matched codec (the checkpoint's is {kwargs['tts_audio_codec']!r})")
+        try:
+            kwargs["tts_decoders"] = tuple(served_decoders(kwargs["tts_audio_codec"], decoders.split(",")))
+        except ValueError as exc:
+            parser.error(f"--decoders: {exc}")
 
     if (dtype_str := kwargs["dtype"]) != "auto":
         kwargs["dtype"] = DTYPE_MAP[dtype_str]

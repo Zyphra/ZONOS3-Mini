@@ -1,6 +1,7 @@
 /** What the server offers, cached for 30 s: capabilities, the steering spec, and the request context. */
 import type { ControlsSpec, GenerateRequest } from '../../src/api';
 import fixtureSpec from '../../src/fixtures/controls.json';
+import { requestDecoder } from '../../src/lib/decoders';
 import type { ProjectDoc } from '../../src/state/projectSchema';
 import { DEFAULT_SETTINGS } from '../../src/state/projectSchema';
 import type { RequestContext } from '../../src/state/requests';
@@ -49,6 +50,8 @@ export function requestContext(c: zonos.Capabilities, doc: ProjectDoc | null): R
     phonemeTokens: c.phoneme_tokens ?? null,
     tags: t.available && t.trained ? { min_scale: t.min_scale, max_scale: t.max_scale } : null,
     tagStrength: doc?.settings.tagStrength ?? DEFAULT_SETTINGS.tagStrength,
+    // The project's decoder (set in the Studio's project settings) where this server serves it, else the default.
+    decoder: requestDecoder(c.decoders ?? [], doc?.settings.decoder),
   };
 }
 

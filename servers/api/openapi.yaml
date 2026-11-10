@@ -42,7 +42,7 @@ info:
     responses `Referrer-Policy: no-referrer`.
 
     **CORS.** Every origin is allowed (`*`); the exposed response headers are `X-Audio-Sample-Rate`,
-    `X-Audio-Channels`, `X-Audio-Format`, `X-Control-Span-Follow` and `X-Seed`.
+    `X-Audio-Channels`, `X-Audio-Format`, `X-Control-Span-Follow`, `X-Seed` and `X-Decoder`.
 
     **Plugins.** A server started with `--plugins N...` mounts each plugin's routes (listed in
     `Capabilities.plugins`). Plugin `N` serves only `/v2/N/*` and `/N`, `/N/*` (ahead of the studio serving rule);
@@ -492,6 +492,9 @@ components:
     Seed:
       description: The seed used.
       schema: {type: integer}
+    Decoder:
+      description: The id of the decoder that made the audio (`Capabilities.decoders`).
+      schema: {type: string}
     SpanFollow:
       description: Which schedule placed `control_spans`.
       schema: {type: string, enum: [rate, reading]}
@@ -504,6 +507,7 @@ components:
         X-Audio-Channels: {$ref: "#/components/headers/Channels"}
         X-Audio-Format: {$ref: "#/components/headers/AudioFormat"}
         X-Seed: {$ref: "#/components/headers/Seed"}
+        X-Decoder: {$ref: "#/components/headers/Decoder"}
         X-Control-Span-Follow: {$ref: "#/components/headers/SpanFollow"}
       content:
         audio/pcm:
@@ -696,6 +700,10 @@ components:
           type: [number, "null"]
           minimum: 0
           maximum: 24
+          default: null
+        decoder:
+          description: The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.
+          type: [string, "null"]
           default: null
         speaker_audio_base64:
           description: A reference clip (any container ffmpeg reads; data URLs accepted).
@@ -916,19 +924,23 @@ components:
         default_frames: {type: integer}
         max_frames: {type: integer}
         note: {type: string}
+    DecoderInfo:
+      description: "An audio decoder of the matched codec. `id` is the decoder head (`keep2_plain`: the default, two layers per transformer stage; `full_mr`: the full-size head)."
+      type: object
+      required: [id, kind, label, checkpoint, expect_step, headroom_db, causal, codec]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        label: {type: string}
+        checkpoint: {type: string}
+        expect_step: {type: [integer, "null"]}
+        headroom_db: {type: number}
+        causal: {type: boolean}
+        codec: {type: string}
     Decoder:
-      description: The audio decoder behind the matched codec (null when the codec has none).
+      description: The default audio decoder behind the matched codec (null when the codec has none).
       oneOf:
-        - type: object
-          required: [kind, label, checkpoint, expect_step, headroom_db, causal, codec]
-          properties:
-            kind: {type: string}
-            label: {type: string}
-            checkpoint: {type: string}
-            expect_step: {type: [integer, "null"]}
-            headroom_db: {type: number}
-            causal: {type: boolean}
-            codec: {type: string}
+        - {$ref: "#/components/schemas/DecoderInfo"}
         - type: object
           required: [codec, error]
           properties:
@@ -991,7 +1003,7 @@ components:
       required: [text_tokenizer_spec, text_normalization_enabled, text_norm_languages, accents,
                  speaker_enabled, speaker_conditioning_type, speaker_embedding_dim, speaker_embedding_codec,
                  n_codebooks, codebook_sizes, audio_codec, max_tokens, stream_decode_modes, stream_decode_default,
-                 silence_prefill, tag_cfg, decode_context, speaker_modes, speaker_mode_default, decoder,
+                 silence_prefill, tag_cfg, decode_context, speaker_modes, speaker_mode_default, decoder, decoders,
                  condition_tokens, speaker_audio_upload, speaker_cfg_supported, speaker_cfg_modes,
                  speaker_cfg_unconditional, speaker_cfg_formula, laci_languages, plugins, speaker_embedding_upload,
                  speaker_embedding_cache, speaker_embedding_blend, default_voices_enabled, speech_editing,
@@ -1032,6 +1044,10 @@ components:
           items: {type: string, enum: [embedding, reference]}
         speaker_mode_default: {enum: [embedding, reference, null]}
         decoder: {$ref: "#/components/schemas/Decoder"}
+        decoders:
+          description: Every decoder a request may pick with `decoder`, the default (`decoder`) first; empty when the codec has none.
+          type: array
+          items: {$ref: "#/components/schemas/DecoderInfo"}
         condition_tokens: {$ref: "#/components/schemas/ConditionTokens"}
         speaker_audio_upload: {type: boolean}
         speaker_cfg_supported: {type: boolean}
@@ -1285,6 +1301,10 @@ components:
           description: Tag CFG is not offered for edits; only 1.0 is accepted.
           type: number
           default: 1.0
+        decoder:
+          description: The audio decoder of the edited clip, by id (`Capabilities.decoders`; null = the server default). An id the server does not serve is a 400.
+          type: [string, "null"]
+          default: null
     EditVerify:
       type: [object, "null"]
       required: [asr_text, wer, cer]

@@ -49,6 +49,8 @@ def test_unknown_modes_fail_the_schema():
 
 def test_output_gain_from_headroom():
     c = cfg(True, False)
-    assert api_server._output_gain(c, 0.0) == 1.0
-    assert abs(api_server._output_gain(c, 6.0) - 0.5012) < 1e-3
-    assert abs(api_server._output_gain(c, None) - 10 ** (-3.0 / 20)) < 1e-9  # the registry decoder's headroom_db 3.0
+    assert api_server._output_gain(c, 0.0, None) == 1.0
+    assert abs(api_server._output_gain(c, 6.0, "full_mr") - 0.5012) < 1e-3
+    # null headroom_db: the chosen registry decoder's headroom_db (3.0 for both heads)
+    for decoder in (None, "keep2_plain", "full_mr"):
+        assert abs(api_server._output_gain(c, None, decoder) - 10 ** (-3.0 / 20)) < 1e-9

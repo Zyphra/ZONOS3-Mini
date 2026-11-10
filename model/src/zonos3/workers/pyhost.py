@@ -39,7 +39,7 @@ process), answered ``{"call": N, "status": "ok", ...}`` or ``{"call": N, "status
   encode {audio, max_seconds}                     -> {codes: [[int] * K] * T}
   check {target_text, doses, condition_buckets, condition_values}                   -> {raw: [id]}
   fill {every FillJob field}                      -> {rows: [[int] * K] * n, eos_frame (-1: none)}
-  decode {codes, out}                             -> {}; float32 44.1 kHz WAV at out
+  decode {codes, out, decoder}                    -> {}; float32 44.1 kHz WAV at out (decoder: id, null = default)
   laci_takes {takes: [{request: GenerateRequest body, target_frames, adjust_rate,
               scale: {edges, first, bucket, doses: {"<bucket>": dose}} | null, out}], session}
                                                   -> {takes: [{audio: bool, record: LACI record}]}; WAV at out if audio
@@ -187,10 +187,10 @@ class RpcEditEngine:
         reply = await self.pipe.call("fill", **payload)
         return np.asarray(reply["rows"], dtype=np.int64).reshape(-1, self.model.n_codebooks), int(reply["eos_frame"])
 
-    async def decode(self, codes: np.ndarray) -> np.ndarray:
+    async def decode(self, codes: np.ndarray, decoder: str | None) -> np.ndarray:
         with tempfile.TemporaryDirectory(prefix="zonos3-pyhost-") as tmp:
             out = os.path.join(tmp, "decoded.wav")
-            await self.pipe.call("decode", codes=np.asarray(codes).tolist(), out=out)
+            await self.pipe.call("decode", codes=np.asarray(codes).tolist(), out=out, decoder=decoder)
             return read_wav(out)
 
 

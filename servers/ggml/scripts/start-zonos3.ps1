@@ -37,7 +37,8 @@ if ($Help) {
     Write-Host @"
 usage: start-zonos3.bat [options] [extra zonos3-server args]
   -Quant Q     backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
-  -Zac Z       decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one)
+  -Zac Z       default decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one);
+               the other of zac-keep2.gguf / zac.gguf, when present, is served too (requests pick it by id)
   -Cpu | -Gpu  backend (archive default: $GPU_DEFAULT)
   -BindHost H  bind address (default 127.0.0.1)
   -Port P      port (default 1919)
@@ -140,6 +141,12 @@ function Get-Sibling([string]$name) {
 $srvArgs = @((Join-Path $ModelDir $Backbone),
              '--zac', (Join-Path $ModelDir $Decoder),
              '--host', $BindHost, '--port', $Port)
+# The other decoder (keep2_plain / full_mr), when present: an extra decoder a request may pick (`decoder`).
+foreach ($extra in @('zac-keep2.gguf', 'zac.gguf')) {
+    if ($extra -ne $Decoder -and (Test-Path (Join-Path $ModelDir $extra))) {
+        $srvArgs += @('--zac', (Join-Path $ModelDir $extra))
+    }
+}
 if (Test-Path (Get-Sibling 'default_voices')) {
     $srvArgs += @('--tts-default-voices-dir', (Get-Sibling 'default_voices'))
 }

@@ -94,6 +94,7 @@ def launch_server(run_shell: bool = False) -> None:
             "codebook_sizes": list(server_args.model_config.codebook_sizes),
             "audio_pad_id": server_args.tts_audio_pad_id,
             "audio_codec": server_args.tts_audio_codec,
+            "decoders": server_args.tts_decoders,
             "text_vocab": server_args.tts_text_vocab,
             "speaking_rate_num_buckets": server_args.tts_speaking_rate_num_buckets,
             "quality_bucket_counts": quality_bucket_counts,

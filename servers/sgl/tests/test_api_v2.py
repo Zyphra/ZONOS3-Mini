@@ -126,7 +126,7 @@ def test_meta_routes(client, frontend):
         "data": [{"id": "zonos3", "object": "model", "created": 0, "owned_by": "zyphra", "root": "lm"}],
     }
     exposed = client.get("/v2/health", headers={"Origin": "https://x.example"}).headers["access-control-expose-headers"]
-    assert "X-Seed" in exposed
+    assert "X-Seed" in exposed and "X-Decoder" in exposed
 
 
 @pytest.mark.parametrize(
@@ -190,6 +190,47 @@ def test_generate_streams_pcm_with_the_drawn_seed(client, frontend):
     (msg,) = frontend.sent
     assert r.headers["x-seed"] == str(msg.sampling_params.seed) and 0 <= msg.sampling_params.seed < 2**31
     assert np.frombuffer(r.content, dtype="<f4").tolist() == [0.25] * 8
+
+
+def test_generate_without_decoder_uses_the_default(client, frontend):
+    r = client.post("/v2/generate", json={"text": "hi"})
+    (msg,) = frontend.sent
+    assert r.status_code == 200 and r.headers["x-decoder"] == "keep2_plain"
+    assert msg.sampling_params.decoder == "keep2_plain"
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_generate_routes_the_requested_decoder(client, frontend, stream):
+    r = client.post("/v2/generate", json={"text": "hi", "stream": stream, "decoder": "full_mr"})
+    (msg,) = frontend.sent
+    assert r.status_code == 200 and r.headers["x-decoder"] == "full_mr"
+    assert msg.sampling_params.decoder == "full_mr"
+
+
+def test_unknown_decoder_is_400(client, frontend):
+    r = client.post("/v2/generate", json={"text": "hi", "decoder": "nope"})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "Unknown decoder 'nope'; this server serves: keep2_plain, full_mr."
+    assert not frontend.sent
+    r = client.post("/v1/audio/speech", json={"model": "m", "input": "hi", "decoder": "nope"})
+    assert r.status_code == 400 and r.json()["detail"].startswith("Unknown decoder 'nope'")
+    r = client.post("/v2/edit", json={"audio_base64": "AAAA", "target_text": "hi", "decoder": "nope"})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "Unknown decoder 'nope'; this server serves: keep2_plain, full_mr."
+
+
+def test_decoders_flag_restricts_the_served_decoders(client, frontend, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(frontend.config, "tts_decoders", ("keep2_plain",), raising=False)
+    r = client.post("/v2/generate", json={"text": "hi", "decoder": "full_mr"})
+    assert r.status_code == 400 and r.json()["detail"] == "Unknown decoder 'full_mr'; this server serves: keep2_plain."
+    caps = asyncio.run(api_server.tts_capabilities())
+    assert [d["id"] for d in caps["decoders"]] == ["keep2_plain"]
+    monkeypatch.setattr(frontend.config, "tts_decoders", ("full_mr",))
+    r = client.post("/v2/generate", json={"text": "hi"})
+    assert r.status_code == 200 and r.headers["x-decoder"] == "full_mr"
+    assert asyncio.run(api_server.tts_capabilities())["decoder"]["id"] == "full_mr"
 
 
 def test_generate_sends_the_text_ahead_under_the_tokenizers_normalization_key(client, frontend):
@@ -297,6 +338,7 @@ def test_speech_voice_is_a_speaker_id(client, frontend):
     assert msg.text == "hi" and msg.speaker_embedding.tolist() == [0.25, 0.5, 0.75]
     r = client.post("/v1/audio/speech", json={"model": "m", "input": "hi", "response_format": "wav", "seed": 3})
     assert r.status_code == 200 and r.content[:4] == b"RIFF" and r.headers["x-seed"] == "3"
+    assert r.headers["x-decoder"] == "keep2_plain"
 
 
 def test_speech_voice_from_the_session_cache(client, frontend):
@@ -328,10 +370,21 @@ def test_speech_refusals(client, frontend, fields, status):
     assert not frontend.sent
 
 
-def test_capabilities_drop_the_legacy_keys(frontend, monkeypatch):
+def test_capabilities_drop_the_legacy_keys(frontend):
     import asyncio
 
-    monkeypatch.setattr(api_server, "decoder_capability", lambda codec: None)
     caps = asyncio.run(api_server.tts_capabilities())
     assert set(caps) == set(SPEC["components"]["schemas"]["Capabilities"]["required"])
     assert "prepend_silence" not in json.dumps(caps["silence_prefill"])
+
+
+def test_capabilities_list_every_decoder_default_first(frontend):
+    import asyncio
+
+    caps = asyncio.run(api_server.tts_capabilities())
+    required = SPEC["components"]["schemas"]["DecoderInfo"]["required"]
+    assert [d["id"] for d in caps["decoders"]] == ["keep2_plain", "full_mr"]
+    assert caps["decoder"] == caps["decoders"][0]
+    for info in caps["decoders"]:
+        assert set(required) <= set(info) and info["codec"] == CODEC and info["causal"] and info["headroom_db"] == 3.0
+    assert caps["decoders"][1]["checkpoint"].endswith("autoencoder/heads/full_mr/step_0050000.pt")

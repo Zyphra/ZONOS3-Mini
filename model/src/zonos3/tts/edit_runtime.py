@@ -124,8 +124,9 @@ class EditEngine(Protocol):
         """The generated delay-stacked rows ``[n, n_codebooks]`` without the finishing row, and the aligned EOS frame
         (-1 = none), of one region."""
 
-    async def decode(self, codes: np.ndarray) -> np.ndarray:
-        """Float32 44.1 kHz audio (with the server's output gain) of ordinary codes ``[frames, n_codebooks]``."""
+    async def decode(self, codes: np.ndarray, decoder: str | None) -> np.ndarray:
+        """Float32 44.1 kHz audio (with the decoder's output gain) of ordinary codes ``[frames, n_codebooks]`` through
+        the decoder ``decoder`` (an id the route checked; None = the server default)."""
 
 
 def edit_capabilities(model: EditModel, available: bool, transcribe: bool) -> dict:
@@ -440,7 +441,7 @@ class EditRuntime:
                         window_fills.append(np.asarray(fill, dtype=np.int32))
                         fills[region], stopped[region] = window_fills[-1], ended
                 spliced = np.asarray(splice_edit(codes, spans, fills), dtype=np.int32)
-                edited = np.asarray(await self.engine.decode(spliced), dtype=np.float32)
+                edited = np.asarray(await self.engine.decode(spliced, req.decoder), dtype=np.float32)
                 verify, take_words = None, None
                 if req.verify:
                     import soundfile as sf

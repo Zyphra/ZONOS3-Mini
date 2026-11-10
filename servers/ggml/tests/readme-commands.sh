@@ -15,7 +15,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 MODEL="tests/fixtures/dummy-zonos3.gguf"
-ZAC="tests/fixtures/dummy-zac.gguf"
+ZAC="tests/fixtures/dummy-zac.gguf"             # head variant full_mr
+ZAC_KEEP2="tests/fixtures/dummy-zac-keep2.gguf" # the same weights, head variant keep2_plain
 
 find_bin() {  # $1 = base name; honor an explicit path arg, else search build*/
   if [ -n "${2:-}" ]; then echo "$2"; return; fi
@@ -31,6 +32,7 @@ SRV="$(find_bin zonos3-server "${2:-}")"
 [ -x "$CLI" ] || { echo "FAIL: zonos3-cli not found (pass it as \$1)"; exit 1; }
 [ -f "$MODEL" ] || { echo "FAIL: missing $MODEL"; exit 1; }
 [ -f "$ZAC" ]   || { echo "FAIL: missing $ZAC"; exit 1; }
+[ -f "$ZAC_KEEP2" ] || { echo "FAIL: missing $ZAC_KEEP2"; exit 1; }
 
 WORK="$(mktemp -d)"
 SRV_PID=""
@@ -94,7 +96,7 @@ pass "--control (raw) without --speaker-embedding -> error"
 # (README CLI section's models/ example)
 mkdir -p "$WORK/models"
 cp "$MODEL" "$WORK/models/zonos3-q6_k.gguf"
-cp "$ZAC"   "$WORK/models/zac-keep2.gguf"
+cp "$ZAC_KEEP2" "$WORK/models/zac-keep2.gguf"
 out=$("$CLI" "$WORK/models/zonos3-q6_k.gguf" --cpu --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
   || { echo "$out"; fail "--tts with sibling zac-keep2.gguf exited nonzero"; }
 is_riff "$WORK/auto.wav" || fail "--tts with sibling zac-keep2.gguf did not write a RIFF WAV"
@@ -145,9 +147,17 @@ if ! command -v curl >/dev/null 2>&1; then echo "== server: skipped (no curl) ==
 echo "== server ($SRV) =="
 PORT="${ZONOS3_TEST_PORT:-19187}"
 BASE="http://127.0.0.1:$PORT"
+# decoders: --zac is repeatable, a head variant loaded twice is a startup error
+if out="$("$SRV" "$MODEL" --cpu --zac "$ZAC" --zac "$ZAC" --port 0 --max 16 2>&1)"; then fail "a duplicate decoder must not start"; fi
+echo "$out" | grep -q 'decoder full_mr (mossdual_istft.head.variant) is already loaded' \
+  || { echo "$out"; fail "a duplicate decoder must name the head variant"; }
+pass "--zac twice with one head variant -> startup error"
+# the server below runs on the CLI section's models/ dir: zac-keep2.gguf (keep2_plain, the default) and zac.gguf
+# (full_mr, an extra decoder; the same dummy weights) auto-detected next to the backbone
+cp "$ZAC" "$WORK/models/zac.gguf"
 # default voice ci.npy = the speaker embedding fixture; dummy-steer.gguf's set calibrations disable two controls for it
 mkdir -p "$WORK/voices" && cp tests/fixtures/speaker-embedding.npy "$WORK/voices/ci.npy"
-"$SRV" "$MODEL" --cpu --zac "$ZAC" --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
+"$SRV" "$WORK/models/zonos3-q6_k.gguf" --cpu --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
   --studio-projects-dir "$WORK/projects" --tts-default-voices-dir "$WORK/voices" >"$WORK/srv.log" 2>&1 &
 SRV_PID=$!
 
@@ -167,6 +177,39 @@ for key in bucket_counts unknown_ids; do
   echo "$caps" | grep -Eq "\"$key\": ?\\{[^}]*\"speaking_rate\": ?30" || fail "/v2/capabilities $key lacks speaking_rate 30"
 done
 pass "/v2/capabilities"
+echo "$caps" | grep -Eq '"decoder": ?\{[^}]*"id": ?"keep2_plain"' || fail "/v2/capabilities decoder must be keep2_plain"
+echo "$caps" | grep -Eq '"decoders": ?\[[^]]*"id": ?"keep2_plain"[^]]*"id": ?"full_mr"[^]]*\]' \
+  || fail "/v2/capabilities decoders must list keep2_plain, then full_mr"
+pass "/v2/capabilities decoder + decoders (zac-keep2.gguf, zac.gguf auto-detected)"
+
+# decoder: the default answers X-Decoder keep2_plain, `decoder` picks full_mr (the same dummy weights: the same audio)
+DEC_REQ='"text":"decoder pick","stream":false,"format":"wav","seed":3,"temperature":0,"max_tokens":16'
+curl -fsS -D "$WORK/dk.h" "$BASE/v2/generate" -d "{$DEC_REQ}" -o "$WORK/dk.wav" || fail "/v2/generate (default decoder) failed"
+grep -qi '^x-decoder: keep2_plain' "$WORK/dk.h" || fail "the default decoder must answer X-Decoder: keep2_plain"
+grep -qi '^access-control-expose-headers:.*X-Decoder' "$WORK/dk.h" || fail "CORS must expose X-Decoder"
+curl -fsS -D "$WORK/df.h" "$BASE/v2/generate" -d "{$DEC_REQ,\"decoder\":\"full_mr\"}" -o "$WORK/df.wav" \
+  || fail "/v2/generate decoder=full_mr failed"
+grep -qi '^x-decoder: full_mr' "$WORK/df.h" || fail "decoder=full_mr must answer X-Decoder: full_mr"
+is_riff "$WORK/df.wav" && cmp -s "$WORK/dk.wav" "$WORK/df.wav" || fail "decoder=full_mr (same weights) must decode the same WAV"
+curl -fsS -N -D "$WORK/dfs.h" "$BASE/v2/generate" \
+  -d '{"text":"decoder stream","stream":true,"seed":3,"max_tokens":16,"decoder":"full_mr"}' -o "$WORK/dfs.pcm" \
+  || fail "/v2/generate (streaming, decoder=full_mr) failed"
+[ -s "$WORK/dfs.pcm" ] && grep -qi '^x-decoder: full_mr' "$WORK/dfs.h" || fail "streaming decoder=full_mr: no PCM or X-Decoder"
+curl -fsS -D "$WORK/dso.h" "$BASE/v1/audio/speech" \
+  -d '{"model":"zonos3","input":"openai decoder","response_format":"wav","seed":1,"max_tokens":16,"decoder":"full_mr"}' \
+  -o "$WORK/dso.wav" || fail "/v1/audio/speech decoder=full_mr failed"
+grep -qi '^x-decoder: full_mr' "$WORK/dso.h" || fail "/v1/audio/speech decoder=full_mr must answer X-Decoder: full_mr"
+for route in v2/generate v1/audio/speech v2/edit; do
+  case "$route" in
+    v2/generate) req='{"text":"x","decoder":"nope"}' ;;
+    v1/audio/speech) req='{"model":"zonos3","input":"x","decoder":"nope"}' ;;
+    v2/edit) req='{"audio_base64":"x","target_text":"y","decoder":"nope"}' ;;
+  esac
+  body="$(curl -sS -w '\n%{http_code}' "$BASE/$route" -d "$req")"
+  [ "${body##*$'\n'}" = 400 ] && echo "$body" | grep -qF "Unknown decoder 'nope'; this server serves: keep2_plain, full_mr." \
+    || { echo "$body"; fail "/$route: an unknown decoder must be a 400 naming the served decoders"; }
+done
+pass "decoder=full_mr -> X-Decoder: full_mr (generate, stream, speech); unknown decoder -> 400"
 
 # buffered WAV (README curl example)
 curl -fsS "$BASE/v2/generate" \

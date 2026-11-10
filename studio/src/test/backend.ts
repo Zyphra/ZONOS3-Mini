@@ -1,6 +1,7 @@
-/** An offline backend for state tests: the bundled fixture spec, no server features. */
+/** An offline backend for state tests: the bundled fixture spec and decoders, no server features. */
 import type { Backend, ControlsSpec } from '../api';
 import fixtureSpec from '../fixtures/controls.json';
+import { FIXTURE_DECODERS } from '../fixtures/decoders';
 import { backend } from '../state/app';
 
 // The fixture JSON's `ui` block is the studio's own contract (same cast api.ts makes).
@@ -16,6 +17,7 @@ export function offlineBackend(): Backend {
     pron: { phoneme_tokens: null, phonemize_enabled: false, phonemize_languages: [], phonemize_guess_languages: [], fixture: false },
     projects: null,
     tags: null,
+    decoders: FIXTURE_DECODERS,
   };
 }
 

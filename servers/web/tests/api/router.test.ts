@@ -20,6 +20,48 @@ describe.skipIf(!haveModels)('engine api', () => {
       projects: { enabled: false }, laci_languages: ['cmn', 'de', 'en_gb', 'en_us', 'es', 'fr_fr', 'it', 'ja', 'ko', 'pt_br'],
       accents: [],
     });
+    const info = (id: string, checkpoint: string) => ({
+      id, kind: 'istft_mr', label: `Multi-resolution iSTFT head (${checkpoint}); causal`, checkpoint, expect_step: null,
+      headroom_db: 3, causal: true, codec: 'opus_dual_3n_600k_sched600k_r4096_step600000',
+    });
+    expect(caps.json().decoder).toEqual(info('keep2_plain', 'zac-keep2.gguf'));
+    expect(caps.json().decoders).toEqual([info('keep2_plain', 'zac-keep2.gguf'), info('full_mr', 'zac.gguf')]);
+  });
+
+  it('decoder picks the decoder; X-Decoder names it; unknown ids are 400', async () => {
+    const { api, codec, full } = stubApi();
+    const gain = 10 ** (-3 / 20);
+    const def = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream: false, seed: 1 });
+    expect(def.headers['x-decoder']).toBe('keep2_plain');
+    expect(new Float32Array(def.body.buffer)[0]).toBeCloseTo(0.5 * gain, 6);
+    expect(full!.loads).toBe(0);
+    const picked = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream: false, seed: 1, decoder: 'full_mr' });
+    expect(picked.status).toBe(200);
+    expect(picked.headers['x-decoder']).toBe('full_mr');
+    const audio = new Float32Array(picked.body.buffer);
+    expect(audio.length).toBe(def.body.length / 4);
+    expect(audio[0]).toBeCloseTo(0.25 * gain, 6);
+    expect(full!.loads).toBe(1);
+    expect(codec.loads).toBe(1);
+    // streamed, the explicit default, null, and /v1/audio/speech
+    const streamed = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', seed: 1, decoder: 'full_mr' });
+    expect(streamed.headers).toMatchObject({ 'content-type': 'audio/pcm', 'x-decoder': 'full_mr' });
+    const fullFrames = full!.frames;
+    for (const decoder of ['keep2_plain', null]) {
+      const r = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', seed: 1, stream: false, decoder });
+      expect(r.headers['x-decoder']).toBe('keep2_plain');
+      expect(Array.from(r.body)).toEqual(Array.from(def.body));
+    }
+    expect(full!.frames).toBe(fullFrames);
+    expect(full!.loads).toBe(2);   // only the requests that picked it
+    const speech = await call(api, 'POST', '/v1/audio/speech', { model: 'zonos3', input: 'Hi.', decoder: 'full_mr' });
+    expect(speech.headers['x-decoder']).toBe('full_mr');
+    for (const [path, body] of [['/v2/generate', { text: 'Hi.' }], ['/v1/audio/speech', { model: 'zonos3', input: 'Hi.' }]] as const) {
+      const bad = await call(api, 'POST', path, { ...body, decoder: 'nope' });
+      expect(bad.status, path).toBe(400);
+      expect(bad.json()).toEqual({ detail: "Unknown decoder 'nope'; this server serves: keep2_plain, full_mr." });
+    }
+    expect((await call(api, 'POST', '/v2/generate', { text: 'Hi.', decoder: 5 })).status).toBe(422);
   });
 
   it('controls document validates and carries set calibrations', async () => {
@@ -56,7 +98,9 @@ describe.skipIf(!haveModels)('engine api', () => {
     const { api } = stubApi();
     const r = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream: false, seed: 1 });
     expect(r.status).toBe(200);
-    expect(r.headers).toMatchObject({ 'x-audio-sample-rate': '44100', 'x-audio-channels': '1', 'x-audio-format': 'float32', 'x-seed': '1' });
+    expect(r.headers).toMatchObject({
+      'x-audio-sample-rate': '44100', 'x-audio-channels': '1', 'x-audio-format': 'float32', 'x-seed': '1', 'x-decoder': 'keep2_plain',
+    });
     // 14 generated frames + 3 prefill rows: eos at stream row 17 - 9 ... decoded frames minus the 3 prefill frames
     const audio = new Float32Array(r.body.buffer);
     expect(audio.length % 2940).toBe(0);
@@ -276,5 +320,17 @@ describe('early partial-frame prefix decode (stream_codebooks / stream_codebooks
     expect((await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream_codebooks: 0 })).status).toBe(422);
     expect((await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream_codebooks_scope: 'some' })).status).toBe(422);
     expect((await call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream: false, stream_codebooks: 10 })).status).toBe(200);
+  });
+});
+
+describe('decoders without the full-size decoder', () => {
+  it('capabilities list the default only; full_mr is an unknown id', async () => {
+    const { api } = bareApi();
+    const caps = (await call(api, 'GET', '/v2/capabilities')).json<{ decoder: { id: string }; decoders: { id: string }[] }>();
+    expect(caps.decoder.id).toBe('keep2_plain');
+    expect(caps.decoders.map(d => d.id)).toEqual(['keep2_plain']);
+    const bad = await call(api, 'POST', '/v2/generate', { text: 'Hello there.', decoder: 'full_mr' });
+    expect(bad.status).toBe(400);
+    expect(bad.json()).toEqual({ detail: "Unknown decoder 'full_mr'; this server serves: keep2_plain." });
   });
 });

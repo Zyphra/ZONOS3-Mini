@@ -24,8 +24,8 @@ def delayed_rows(frames: np.ndarray, pad: int = PAD) -> list[list[int]]:
 def test_matched_decode_stops_before_the_eos_frame(monkeypatch):
     captured: list[torch.Tensor] = []
 
-    def fake_decode_matched(codes: torch.Tensor, audio_codec: str) -> torch.Tensor:
-        assert audio_codec == CODEC
+    def fake_decode_matched(codes: torch.Tensor, audio_codec: str, decoder: str) -> torch.Tensor:
+        assert audio_codec == CODEC and decoder == "keep2_plain"
         captured.append(codes.cpu().clone())
         return torch.zeros((codes.shape[0], codes.shape[1] * HOP), dtype=torch.float32)
 

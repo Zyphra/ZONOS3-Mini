@@ -1,5 +1,6 @@
 import { computed, signal } from '@preact/signals';
 import type { Backend, ControlSpec, ControlsSpec } from '../api';
+import { requestDecoder } from '../lib/decoders';
 import type { Download } from '../lib/web-engine';
 import type { History } from './history';
 import { DEFAULT_SETTINGS, type ProjectSettings } from './projectSchema';
@@ -11,7 +12,7 @@ export const bootError = signal<string | null>(null);
 export const bootProgress = signal<Download | null>(null);
 /** What boot is doing now ("Connecting to …", "Loading voices…", "Opening “x”…"). */
 export const bootStage = signal<string>('Opening the studio…');
-/** The encoder models a clip voice's first use loads on the in-browser server; null once they are in. */
+/** The models the in-browser server loads on first use (a clip voice's encoders, the full-size decoder); null once they are in. */
 export const encoderDownload = signal<Download | null>(null);
 
 export const projectSettings = signal<ProjectSettings>(DEFAULT_SETTINGS);
@@ -27,6 +28,7 @@ export const requestContext = computed<RequestContext>(() => ({
   phonemeTokens: pronTokens.value,
   tags: backend.value?.tags ?? null,
   tagStrength: projectSettings.value.tagStrength,
+  decoder: requestDecoder(backend.value?.decoders ?? [], projectSettings.value.decoder),
 }));
 
 export const controlById = computed(() => new Map<string, ControlSpec>(spec.value.ui.controls.map((c) => [c.id, c])));
@@ -52,7 +54,7 @@ export const act = signal<Act>(ACT_IDS.includes(initialAct) ? initialAct : 'cast
 export const activeHistory = signal<History<unknown> | null>(null);
 /** A dialog is open: act switching by number keys is off. */
 export const modalOpen = signal(false);
-/** The project settings dialog (language, voice mode, tag strength). */
+/** The project settings dialog (language, voice mode, tag strength, decoder). */
 export const settingsOpen = signal(false);
 /** The current act's own keys (called first; return true when handled). */
 export const screenKeys = signal<((e: KeyboardEvent) => boolean) | null>(null);

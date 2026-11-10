@@ -1,6 +1,7 @@
 // Codec worker: the host half of the codec (iSTFT + FIR mixer + resampler, src/spec-sink.ts LocalSpecSink) off the
 // engine worker's thread. The page hands it one MessagePort ({ type: 'port' }); the engine worker's RemoteSpecSink
-// talks to it over the other end. Requests are served strictly in arrival order; push and flush answer once each.
+// talks to it over the other end, and hands over one more port per further decoder (codecChannel). Requests on a port
+// are served strictly in arrival order; push and flush answer once each.
 /// <reference lib="webworker" />
 import { LocalSpecSink, type SinkMsg, type SinkReply } from './spec-sink';
 
@@ -36,6 +37,10 @@ function serve(port: MessagePort): void {
   };
   port.onmessage = (ev: MessageEvent<SinkMsg>) => {
     const m = ev.data;
+    if (m.type === 'port') {
+      if (ev.ports[0]) serve(ev.ports[0]);
+      return;
+    }
     queue = queue.then(() => handle(m));
   };
 }

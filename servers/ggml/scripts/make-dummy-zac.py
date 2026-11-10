@@ -3,7 +3,7 @@
 and iSTFT head geometry (hop 184, n_fft 736/2208, FIR 127), shrunk widths. Tensor names/shapes mirror
 `tools/convert_gguf.py codec-decoder`.
 
-Usage:  python scripts/make-dummy-zac.py -o dummy-zac.gguf [--codes-out dummy-zac-codes.npy]
+Usage:  python scripts/make-dummy-zac.py -o dummy-zac.gguf [--codes-out dummy-zac-codes.npy] [--variant full_mr]
 """
 
 from __future__ import annotations
@@ -30,6 +30,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--codes-out", help="also write deterministic delayed codes [40,10] and PATH.eos.npy = [31, 0]")
+    ap.add_argument(
+        "--variant",
+        default="full_mr",
+        choices=["full_mr", "keep2_plain"],
+        help="mossdual_istft.head.variant: the decoder id the servers report (same weights either way)",
+    )
     args = ap.parse_args()
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools"))
     import convert_gguf
@@ -66,7 +72,7 @@ def main():
     w.add_array(f"{ARCH}.head.n_fft", N_FFT)
     w.add_float32(f"{ARCH}.head.max_log_magnitude", float(np.log(100.0)))
     w.add_float32(f"{ARCH}.headroom_db", 3.0)
-    w.add_string(f"{ARCH}.head.variant", "full_mr")
+    w.add_string(f"{ARCH}.head.variant", args.variant)
     for key, vals in {
         "in_dim": IN_DIM,
         "out_dim": OUT_DIM,

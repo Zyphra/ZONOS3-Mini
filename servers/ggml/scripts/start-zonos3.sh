@@ -25,7 +25,8 @@ usage() {
     cat <<EOF
 usage: $0 [options] [-- <extra zonos3-server args>]
   --quant Q      backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
-  --zac Z        decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one)
+  --zac Z        default decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one);
+                 the other of zac-keep2.gguf / zac.gguf, when present, is served too (requests pick it by id)
   --cpu | --gpu  backend (archive default: $GPU_DEFAULT)
   --host H       bind address (default $ZONOS3_HOST)
   --port P       port (default $ZONOS3_PORT)
@@ -145,6 +146,10 @@ sibling() {  # $1 = name: echo the archive-layout path, falling back to the repo
 args=("$ZONOS3_MODEL_DIR/$BACKBONE"
       --zac "$ZONOS3_MODEL_DIR/$DECODER"
       --host "$ZONOS3_HOST" --port "$ZONOS3_PORT")
+# The other decoder (keep2_plain / full_mr), when present: an extra decoder a request may pick (`decoder`).
+for extra in zac-keep2.gguf zac.gguf; do
+    [ "$extra" != "$DECODER" ] && [ -f "$ZONOS3_MODEL_DIR/$extra" ] && args+=(--zac "$ZONOS3_MODEL_DIR/$extra")
+done
 [ -d "$(sibling default_voices)" ]     && args+=(--tts-default-voices-dir "$(sibling default_voices)")
 [ -f "$ZONOS3_MODEL_DIR/zac-encoder.gguf" ] && args+=(--zac-encoder "$ZONOS3_MODEL_DIR/zac-encoder.gguf")
 [ -f "$ZONOS3_MODEL_DIR/ssl-teacher.gguf" ] && args+=(--ssl-teacher "$ZONOS3_MODEL_DIR/ssl-teacher.gguf")

@@ -34,12 +34,14 @@ class CausalFakeDecoder:
     def __init__(self, memory: int = 3):
         self.memory = memory
         self.calls: list[int] = []
+        self.decoders: list[str | None] = []  # the decoder id of every call
 
-    def __call__(self, codes: torch.Tensor, audio_codec: str) -> torch.Tensor:
+    def __call__(self, codes: torch.Tensor, audio_codec: str, decoder: str | None = None) -> torch.Tensor:
         assert audio_codec == CODEC
         assert codes.ndim == 3 and codes.shape[-1] == N_CB
         b, frames, _ = codes.shape
         self.calls.append(int(frames))
+        self.decoders.append(decoder)
         c = codes.to(torch.float64).cpu()
         out = torch.zeros(b, frames * HOP, dtype=torch.float64)
         ramp = torch.linspace(0.5, 1.0, HOP, dtype=torch.float64)
@@ -113,10 +115,12 @@ class FakeCodecStream:
 def fake(monkeypatch):
     decoder = CausalFakeDecoder(memory=3)
     decoder.streams = []
+    decoder.stream_decoders = []  # the decoder id of every stream opened
 
-    def stream(codec):
+    def stream(codec, decoder_id=None):
         assert codec == CODEC
         decoder.streams.append(FakeCodecStream(CausalFakeDecoder(memory=3)))
+        decoder.stream_decoders.append(decoder_id)
         return decoder.streams[-1]
 
     monkeypatch.setattr(vocoder, "decode_matched", decoder)
@@ -258,6 +262,42 @@ def test_default_decodes_the_first_chunk_from_one_codebook_then_complete_frames(
     assert next(i for i, c in enumerate(chunks) if c and i > 0) == 2 + N_CB - 1
 
 
+def test_each_request_decodes_through_its_decoder(fake):
+    """A message's decoder (None = the default, keep2_plain) picks the codec model of the whole decode, the prefix
+    stream and the primed silence stream (one per decoder); an id the server does not serve is refused."""
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC)
+    assert manager.decoders == ["keep2_plain", "full_mr"]
+    frames = make_frames(20, seed=10)
+    run(manager, delayed_rows(frames), uid=1)
+    run(manager, delayed_rows(frames), uid=2, decoder="full_mr")
+    assert fake.decoders == ["keep2_plain", "full_mr"]
+    run(manager, delayed_rows(frames), uid=3, stream_decode="prefix", decoder="full_mr")
+    run(manager, delayed_rows(frames), uid=4, stream_decode="prefix")
+    assert fake.stream_decoders == ["full_mr", "keep2_plain"]
+    for uid, decoder in ((5, "full_mr"), (6, None), (7, "full_mr")):
+        _, primed = lm_completed_silence_prefill(make_frames(20, seed=uid))
+        rows = delayed_rows(primed)
+        manager.register_request_context(uid, prefill_rows=np.asarray(rows[:3]))
+        run(manager, rows[3:], uid=uid, stream_decode="prefix", stream_codebooks=N_CB, decoder=decoder)
+    assert fake.stream_decoders[2:] == ["full_mr", "keep2_plain"]  # one primed stream per decoder
+    assert not manager._decoder
+    with pytest.raises(ValueError):
+        run(manager, delayed_rows(frames), uid=8, decoder="nope")
+
+
+def test_decoders_restrict_and_order_the_served_decoders():
+    manager = vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, decoders=["full_mr"])
+    assert manager.decoders == ["full_mr"] and manager.request_decoder(None) == "full_mr"
+    with pytest.raises(ValueError):
+        manager.request_decoder("keep2_plain")
+    both = vocoder.TTSVocoderManager(
+        n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, decoders=["full_mr", "keep2_plain"]
+    )
+    assert both.decoders == ["keep2_plain", "full_mr"]  # the registry default stays the default
+    with pytest.raises(ValueError):
+        vocoder.TTSVocoderManager(n_codebooks=N_CB, audio_pad_id=PAD, audio_codec=CODEC, decoders=["nope"])
+
+
 def test_stream_decode_survives_serialization():
     detok = TTSDetokenizeMsg(uid=3, audio_codes=[1, 2, 3], finished=False, stream_decode="prefix")
     back = BaseTTSTokenizerMsg.decoder(BaseTTSTokenizerMsg.encoder(detok))
@@ -267,6 +307,11 @@ def test_stream_decode_survives_serialization():
     back = BaseTTSTokenizerMsg.decoder(BaseTTSTokenizerMsg.encoder(tok))
     assert back.sampling_params.stream_decode == "prefix" and back.sampling_params.seed == 5
     assert TTSSamplingParams().stream_decode is None
+    detok = TTSDetokenizeMsg(uid=3, audio_codes=[1], finished=False, decoder="full_mr")
+    assert BaseTTSTokenizerMsg.decoder(BaseTTSTokenizerMsg.encoder(detok)).decoder == "full_mr"
+    tok = TTSTokenizeMsg(uid=4, text="hi", sampling_params=TTSSamplingParams(decoder="full_mr"))
+    assert BaseTTSTokenizerMsg.decoder(BaseTTSTokenizerMsg.encoder(tok)).sampling_params.decoder == "full_mr"
+    assert TTSSamplingParams().decoder is None
 
 
 def test_prefix_settings_validation():

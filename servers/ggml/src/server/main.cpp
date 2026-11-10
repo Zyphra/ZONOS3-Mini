@@ -35,8 +35,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include <signal.h>
@@ -48,22 +48,26 @@ using namespace zs;
 
 void usage(const char * a0) {
     fprintf(stderr,
-            "usage: %s <model.gguf> [--zac <zac.gguf>] [--spk-encoder <spk-encoder.gguf>] [--zac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
-            "  (zac-keep2.gguf (the default keep2 decoder; --zac zac.gguf = the full-size one), spk-encoder.gguf,\n"
-            "   zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
+            "usage: %s <model.gguf> [--zac <zac.gguf>]... [--spk-encoder <spk-encoder.gguf>] [--zac-encoder <encoder.gguf>] [--ssl-teacher <teacher.gguf>] [options]\n"
+            "  (zac-keep2.gguf (the default keep2 decoder) and zac.gguf (the full-size one, an extra decoder),\n"
+            "   spk-encoder.gguf, zac-encoder.gguf, ssl-teacher.gguf, steer.gguf and accents.gguf are\n"
             "   auto-detected next to <model.gguf> when their flags are omitted)\n"
+            "  --zac PATH          a decoder (repeatable): the first is the default, every one a request may pick by\n"
+            "                      its id (`decoder`: the GGUF's head variant, keep2_plain | full_mr; duplicates are\n"
+            "                      an error). Omitted: zac-keep2.gguf (required) and zac.gguf (if present) next to\n"
+            "                      <model.gguf>\n"
             "  --spk-encoder PATH  speaker encoder for speaker-embedding cloning of audio voices (optional;\n"
             "                      raw-reference cloning needs --zac-encoder + --ssl-teacher instead)\n"
             "  --host H            bind address (default 127.0.0.1)\n"
             "  --port P            port (default 1919; 0 picks a free ephemeral port)\n"
             "  --gpu | --cpu       backend (default: gpu on Apple Silicon, cpu elsewhere)\n"
-            "  --zac-cpu           run the ZAC decoder on CPU even with --gpu (isolates the backbone graph)\n"
-            "  --zac-gpu           run the ZAC decoder on the --gpu backend (default)\n"
+            "  --zac-cpu           run the ZAC decoders on CPU even with --gpu (isolates the backbone graph)\n"
+            "  --zac-gpu           run the ZAC decoders on the --gpu backend (default)\n"
             "  --max N             max frames per request (default %d, ~%ds; shrunk to the slot rows a prompt leaves)\n"
             "  --batch N           continuous-batching width / concurrent syntheses (default 8). A decode-graph\n"
             "                      ladder runs the narrowest width covering the active slots; cache/state memory\n"
             "                      scales with slots and context capacity.\n"
-            "  --zac-threads N     ZAC decode pool lanes, parallel decode across requests (default 4)\n"
+            "  --zac-threads N     ZAC decode pool lanes per decoder, parallel decode across requests (default 4)\n"
             "  --reference-idle-unload N\n"
             "                      free the reference encoder + SSL teacher after N idle seconds\n"
             "                      (default 60; 0 keeps them loaded once used)\n"
@@ -120,14 +124,15 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
 #endif
 
     ServerState s;
-    std::string model_path = argv[1], zac_path, host = "127.0.0.1", projects_dir;
+    std::string model_path = argv[1], host = "127.0.0.1", projects_dir;
+    std::vector<std::string> zac_paths; // --zac, the default first
     int port = 1919;
     bool zac_cpu = false;
     auto value = [&](int & i) -> const char * { return i + 1 < argc ? argv[++i] : nullptr; };
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         const bool has_value = i + 1 < argc;
-        if (a == "--zac" && has_value) zac_path = value(i);
+        if (a == "--zac" && has_value) zac_paths.push_back(value(i));
         else if (a == "--zac-encoder" && has_value) s.encoder_path = value(i);
         else if (a == "--ssl-teacher" && has_value) s.teacher_path = value(i);
         else if (a == "--spk-encoder" && has_value) s.spk_path = value(i);
@@ -219,10 +224,13 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     auto companion = [&](std::string & path, const char * name) {
         if (path.empty()) path = mp_find_companion(model_path, name);
     };
-    if (zac_path.empty()) {
-        zac_path = mp_find_companion(model_path, MP_DEFAULT_ZAC);
-        if (!zac_path.empty()) fprintf(stderr, "zonos3-server: using %s found next to model: %s\n", MP_DEFAULT_ZAC, zac_path.c_str());
-    }
+    // No --zac: the default decoder (required) and, when it sits there too, the full-size one as an extra decoder.
+    if (zac_paths.empty() && !mp_find_companion(model_path, MP_DEFAULT_ZAC).empty())
+        for (const char * name : {MP_DEFAULT_ZAC, MP_FULL_ZAC})
+            if (std::string found = mp_find_companion(model_path, name); !found.empty()) {
+                fprintf(stderr, "zonos3-server: using %s found next to model: %s\n", name, found.c_str());
+                zac_paths.push_back(std::move(found));
+            }
     companion(s.encoder_path, "zac-encoder.gguf");
     companion(s.teacher_path, "ssl-teacher.gguf");
     companion(s.spk_path, "spk-encoder.gguf");
@@ -246,7 +254,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
             return 1;
         }
     }
-    if (zac_path.empty()) {
+    if (zac_paths.empty()) {
         fprintf(stderr, "error: --zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to <model.gguf>)\n");
         mp_print_missing_hint(MP_DEFAULT_ZAC, mp_parent_dir(model_path) + "/" + MP_DEFAULT_ZAC);
         return 1;
@@ -347,23 +355,22 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
     if (s.studio_dir.empty()) s.studio_dir = zonos3_find_studio_dir();
 
-    if (!zac_load(s.zac, zac_path.c_str(), s.use_gpu && !zac_cpu)) {
-        fprintf(stderr, "failed to load zac %s\n", zac_path.c_str());
-        if (!mp_file_exists(zac_path)) mp_print_missing_hint(MP_DEFAULT_ZAC, zac_path);
-        return 1;
-    }
-    s.zac_name = std::filesystem::path(zac_path).filename().string();
-    if (!zac_partial_frames(s.zac))
-        fprintf(stderr, "zonos3-server: %s has no per-codebook residual biases (res.{i}.bias): early partial-frame decode "
-                        "is off, prefix streaming decodes complete frames only (reconvert with tools/convert_gguf.py "
-                        "codec-decoder)\n", s.zac_name.c_str());
-    // ZAC decode pool: one backend + thread per lane (ggml backends are not reentrant); lanes share s.zac's weights.
-    s.zac_lanes = std::vector<ZacLane>(s.zac_threads);
-    for (int i = 0; i < s.zac_threads; ++i)
-        if (!zac_clone(s.zac_lanes[i].zac, s.zac)) {
-            fprintf(stderr, "failed to load zac for pool lane %d\n", i);
+    // Decoders (load_decoder): each with its own decode pool of --zac-threads lanes.
+    for (const std::string & zac_path : zac_paths) {
+        std::string err;
+        if (!load_decoder(s, zac_path, s.use_gpu && !zac_cpu, err)) {
+            fprintf(stderr, "%s\n", err.c_str());
+            if (!mp_file_exists(zac_path)) mp_print_missing_hint(MP_DEFAULT_ZAC, zac_path);
             return 1;
         }
+        const Decoder & d = *s.decoders.back();
+        if (!zac_partial_frames(d.zac))
+            fprintf(stderr, "zonos3-server: %s has no per-codebook residual biases (res.{i}.bias): early partial-frame "
+                            "decode is off for decoder %s, prefix streaming decodes complete frames only (reconvert with "
+                            "tools/convert_gguf.py codec-decoder)\n", zac_path.c_str(), d.id.c_str());
+    }
+    std::string decoders;
+    for (const auto & d : s.decoders) decoders += (decoders.empty() ? "" : ", ") + d->id + "=" + d->path;
 
     start_scheduler(s);
     start_reference_reaper(s);
@@ -383,8 +390,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     register_project_routes(svr, s.projects.get());
     install_studio(svr, s.studio_dir); // last: every API route matches first
 
-    fprintf(stderr, "zonos3-server: backbone=%s zac=%s spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d zac-threads=%d python-src=%s\n",
-            model_path.c_str(), zac_path.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
+    fprintf(stderr, "zonos3-server: backbone=%s decoders=[%s] spk-encoder=%s reference-encoder=%s teacher=%s steer=%s backend=%s batch=%d zac-threads=%d python-src=%s\n",
+            model_path.c_str(), decoders.c_str(), s.spk_path.empty() ? "(none)" : s.spk_path.c_str(),
             s.encoder_path.empty() ? "(none)" : s.encoder_path.c_str(), s.teacher_path.empty() ? "(none)" : s.teacher_path.c_str(),
             s.steer_path.empty() ? "(none)" : s.steer_path.c_str(), s.model.is_gpu ? "GPU" : "CPU", s.batch_slots, s.zac_threads,
             s.python_src.empty() ? "(none)" : s.python_src.c_str());

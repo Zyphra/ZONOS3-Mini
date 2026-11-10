@@ -309,7 +309,8 @@ browser.
 The release LM `hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k` (the default LM before
 `lm/rate30_20k_r2grpo`; the adapters were trained on it) serves accent adapters with
 `SERVE_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/mect_60k servers/sgl/scripts/serve.sh --accent-adapters <adapter dir>`, with the release
-decoder (full-size causal MR iSTFT head) and the speaker encoder from
+decoders (the causal MR iSTFT heads `keep2_plain`, the default, and the full-size `full_mr`, picked per request with
+`decoder`; `--decoders` restricts the set) and the speaker encoder from
 `model/src/zonos3/registries/`. The server takes the encoder named by the model's `params.json`
 (`speaker_embedding_codec: ownmect_s2`), and checks its sha256 at load.
 

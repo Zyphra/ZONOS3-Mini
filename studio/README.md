@@ -23,7 +23,7 @@ Destructive and replacing actions (reset, presets, loading a cast member, deleti
 **Direct** is one script whose every line has its own voice. A new project starts with no lines (**Paste a script** /
 **Add a line**). The left rail sets the **default voice** (a cast member, or the voice from Cast) that lines follow,
 with a “{name} says…” button per cast member that adds a line in that voice (an empty cast offers to add the Cast
-voice), plus the language and tag strength (in Project settings), baseline performance, pronunciation help and the
+voice), plus the language, tag strength and decoder (in Project settings), baseline performance, pronunciation help and the
 brushes legend. Each line has a voice select (“Default · {name}”, or any cast member; one undo step) and a colored edge
 in its voice's color (pinned per voice in the script document); select words, or focus the line and use ⇧← / ⇧→ then
 Enter, to paint delivery onto them (the paint bar opens under the line); each line keeps its takes and a **keeper**:
@@ -32,8 +32,8 @@ when Play is on. Under the lines the **timeline** lays the keepers end to end wi
 take get an estimated slot that renders on click; a playhead follows the script). The right **Script** sidebar
 counts the lines with a take, renders the missing ones (`R` renders the focused line), plays and exports the script
 (the keepers in order, the gap between lines set by its slider: one undo step per drag) and, when a line's keeper no
-longer matches its text, painting, baseline or voice (changing the default voice or a line's voice does this; a
-reshaped cast voice reads **voice edited**), offers **Regenerate N changed**; when several lines go stale at once a
+longer matches its text, painting, baseline, voice or decoder (changing the default voice or a line's voice does this; a
+reshaped cast voice reads **voice edited**, another decoder **decoder changed**), offers **Regenerate N changed**; when several lines go stale at once a
 toast says so with Regenerate at hand. Failed renders stay listed (**N failed · Show**) until the line renders again.
 Edit-as-text keeps its draft across act and project switches (asked before it is discarded). On phones the transport
 (render, regenerate, play) is a sticky bar under the lines and the right drawer is **Export**.
@@ -138,7 +138,7 @@ models the page shows a download bar (`components/DownloadBar.tsx` in the studio
 from this browser's cache), the percent, and `420 MB of 1.9 GB · 18 MB/s · about 1 min 20 s left`. The rate counts
 network bytes only, over the last 8 s, so cached shards don't skew the estimate. The form stays inert meanwhile;
 the top bar's pill then says **Server** or **In this browser** (**Demo audio** / **Server · controls off** on the offline and fixture backends, with a dismissable banner under the top bar). The encoder models a clip voice's first use downloads
-(generate or embedding download) get the same bar (in the studio, in the corner).
+(generate or embedding download), and the full-size decoder the first render that picks it downloads, get the same bar (in the studio, in the corner).
 On load it reads `GET /v2/capabilities` and, when `speaker_modes` lacks `embedding`, says the server cannot clone
 from a voice file and disables the form; a failed connection offers **Try again** and, when this browser could,
 **Run in this browser**.
@@ -167,7 +167,7 @@ client-side fixture store (`src/fixtures/projects.ts`, its own IndexedDB, shared
 (uploads, recordings, saved designs), the Direct script (lines with their voices, the gap) and its takes, the
 Edit clip with its versions, plus per-project settings (default language for new Edit clips and pronunciation
 lookups, default
-voice mode: the Cast bench takes it when it leaves an embedding-only voice). Undo history, drafts (the Edit text and
+voice mode: the Cast bench takes it when it leaves an embedding-only voice; tag strength; decoder). Undo history, drafts (the Edit text and
 regions, the last generation's takes) and in-flight work stay per session.
 
 - **Header switcher**: the open project's name and save state (dot: saved / saving / error / changed elsewhere /
@@ -266,6 +266,21 @@ then fills) and is never “not heard”; a region that only adds tags skips the
 `?nv=fixture`) the synth voices laugh, breath, sigh and panting (stronger with tag strength), barely a cough, and
 shapes shouting / crying words mildly; `?nv=0` simulates a server without tags.
 
+## Decoder
+
+When `/v2/capabilities.decoders` lists more than one audio decoder (the servers' default `keep2_plain` and the
+full-size `full_mr` head), Project settings shows a **Decoder** select (“Fast (keep2)” / “Full-size”, the default
+marked; each decoder's registry `label` is its tooltip); with one decoder or none it is hidden. The choice is per
+project (`settings.decoder`, null = the server default) and goes out as `decoder` on every render the studio plays:
+Cast previews (both A/B sides) and variation tiles, Direct lines, Edit takes (`/v2/edit`), and the MCP server's
+`zonos_speak` / `zonos_edit_speech` / voice previews. The default is never sent (`decoder` left out), and a choice the
+server does not serve (a project opened against another server) also renders on its default instead of drawing the
+400 (`src/lib/decoders.ts` `requestDecoder`). A Direct take made with another decoder reads **decoder changed**; the
+take's hover text names the decoder that made it (the `X-Decoder` response header) and the Direct rail's settings
+line shows the current one. The offline backend serves both (`src/fixtures/decoders.ts`): the synth sounds the same
+either way, takes report the decoder, and an id it does not list gets the server's 400
+(`Unknown decoder 'X'; this server serves: keep2_plain, full_mr.`).
+
 ## Pronunciation input
 
 On phoneme-token checkpoints (`/v2/capabilities.phoneme_tokens`), every text that is synthesized (Direct
@@ -340,7 +355,8 @@ Transcript-first editing:
 
 - `src/api.ts` — the only server access: contract types, backend detection, speakers / embeddings / previews /
   uploads, streaming `generate` (float32 PCM). `src/fixtures/` — `controls.json` (a snapshot of the live
-  `/v2/controls`), synthetic embeddings and the offline synthesizer.
+  `/v2/controls`), synthetic embeddings, the offline decoders (`decoders.ts`) and the offline synthesizer.
+  `src/lib/decoders.ts` — decoder names and the `decoder` a request sends (signal-free, shared with `mcp/`).
 - `src/state/engine.ts` — contract math: UI value → primitive doses (bipolar/unipolar maps, accents, presets),
   safe/strong/collapse zones, identity estimate, steered embedding `e' = (e+Σ)·|e|/|e+Σ|`, timing (duration
   factors).

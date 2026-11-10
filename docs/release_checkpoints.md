@@ -9,9 +9,10 @@ tokens, the pronunciation lexicon and `lm/mect_60k` stay in the private **Zyphra
 `4d1d9efca3fb58ca880e028586d9f98bbc002288`). `zonos3.utils.release` resolves `hf://owner/repo/path` locations (files via
 `hf_hub_download`, folders via `snapshot_download`, into `HF_HOME`; `HF_TOKEN` or a stored login for the private repo).
 Defaults: `--model-path` = `hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini` (`ZONOS3_RELEASE_REPO` / `ZONOS3_RELEASE_LM`
-override it); the registries in `model/src/zonos3/registries/` (`codec_registry_keep2_plain.json` (the keep2 decoder
-head), `speaker_encoder_registry.json`) point at the same repo (`ZONOS3_SPEAKER_ENCODER_REGISTRY` overrides the speaker
-one); the tokenizer path in a checkpoint may be relative to its folder. Local paths pass through unchanged.
+override it); the registries in `model/src/zonos3/registries/` (`codec_registry.json` (both decoder heads,
+`keep2_plain` the default), `speaker_encoder_registry.json`) point at the same repo (`ZONOS3_SPEAKER_ENCODER_REGISTRY`
+overrides the speaker one); the tokenizer path in a checkpoint may be relative to its folder. Local paths pass through
+unchanged.
 
 The codec code is vendored in `model/src/zonos3/codec`.
 

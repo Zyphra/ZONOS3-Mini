@@ -88,11 +88,13 @@ class ReferenceAssets:
             self._normalizer = load_normalizer(warmup=False)
         return self._normalizer
 
-    def decoder(self, codec: str, device: torch.device):
-        """The matched codec's iSTFT decoder on ``device`` (zonos3.tokenizer.matched_codec)."""
-        key = (codec, str(device))
+    def decoder(self, codec: str, device: torch.device, decoder: str | None = None):
+        """A matched codec's iSTFT decoder (``decoder``: its id, None = the codec's default) on ``device``
+        (zonos3.tokenizer.matched_codec)."""
+        from zonos3.tokenizer import matched_codec
+
+        key = (codec, matched_codec.decoder_id(codec, decoder), str(device))
         if key not in self._decoders:
-            from zonos3.tokenizer import matched_codec
             from zonos3.utils.hashing import sha256_file
             from zonos3.utils.release import resolve_file
 
@@ -100,7 +102,7 @@ class ReferenceAssets:
             actual = sha256_file(resolve_file(entry["checkpoint"]))
             if actual != entry["checkpoint_sha256"]:
                 raise ValueError(f"codec generator checkpoint sha256 {actual} != {entry['checkpoint_sha256']}")
-            self._decoders[key] = matched_codec.load_model(codec, device)
+            self._decoders[key] = matched_codec.load_model(codec, device, decoder=key[1])
         return self._decoders[key]
 
     def speaker_encoder(self, codec: str | None, dim: int, device: torch.device):
@@ -569,14 +571,14 @@ def generate_rows(
 # ----------------------------------------------------------------------------------------------------- decoding
 
 
-def _codec_decode(lm: Zonos3LM, assets: ReferenceAssets, device):
-    """The checkpoint's matched codec on undelayed codes [frames, n_codebooks] -> float32 PCM (ValueError for codes
-    outside the codebook)."""
+def _codec_decode(lm: Zonos3LM, assets: ReferenceAssets, device, decoder: str | None):
+    """The checkpoint's matched codec through its decoder ``decoder`` (None = the default) on undelayed codes
+    [frames, n_codebooks] -> float32 PCM (ValueError for codes outside the codebook)."""
     from zonos3.tokenizer.matched_codec import decode_model, entry
 
     c = lm.config
     codec = entry(c.audio_codec)
-    model = assets.decoder(c.audio_codec, torch.device(device))
+    model = assets.decoder(c.audio_codec, torch.device(device), decoder)
 
     def decode(codes: np.ndarray) -> np.ndarray:
         codes = torch.as_tensor(codes, dtype=torch.int64)
@@ -602,14 +604,15 @@ def decode_rows(
     eos_frame: int | None,
     context_codes: torch.Tensor | None,
     device,
+    decoder: str | None = None,
 ) -> np.ndarray:
-    """End-of-stream decode of TTSVocoderManager.decode_frames / _decode_final (a whole-mode StreamDecoder): the
-    prefill rows open the stream, the EOS boundary is the earliest of the aligned EOS frame and every row's EOA column,
-    the last overlap rows of the prefill are re-decoded with the rest, and the reference tail is decoded as left
-    context at the stream start."""
+    """End-of-stream decode of TTSVocoderManager.decode_frames / _decode_final (a whole-mode StreamDecoder) through the
+    decoder ``decoder`` (None = the default): the prefill rows open the stream, the EOS boundary is the earliest of the
+    aligned EOS frame and every row's EOA column, the last overlap rows of the prefill are re-decoded with the rest, and
+    the reference tail is decoded as left context at the stream start."""
     c = lm.config
-    decoder = StreamDecoder(
-        _codec_decode(lm, assets, device),
+    whole = StreamDecoder(
+        _codec_decode(lm, assets, device, decoder),
         n_codebooks=c.n_codebooks,
         audio_pad_id=c.audio_pad_id,
         hop=_codec_hop(lm),
@@ -618,8 +621,8 @@ def decode_rows(
         mode="whole",
     )
     for row in rows:
-        decoder.push(row, eos_frame)
-    return decoder.finish()
+        whole.push(row, eos_frame)
+    return whole.finish()
 
 
 class _Emit:
@@ -648,11 +651,13 @@ class _Emit:
         return np.concatenate(self.parts) if self.parts else np.zeros(0, dtype=np.float32)
 
 
-def output_gain(codec: str, headroom_db: float | None) -> float:
+def output_gain(codec: str, headroom_db: float | None, decoder: str | None = None) -> float:
+    """The output gain of ``headroom_db``, None = the headroom of the codec's decoder ``decoder`` (None = the default;
+    0 dB without a matched codec)."""
     if headroom_db is None:
         from zonos3.tokenizer.matched_codec import codec_names, decoder_headroom_db
 
-        headroom_db = decoder_headroom_db(codec) if codec in codec_names() else 0.0
+        headroom_db = decoder_headroom_db(codec, decoder) if codec in codec_names() else 0.0
     return float(10.0 ** (-float(headroom_db) / 20.0))
 
 
@@ -739,14 +744,14 @@ def synthesize(
             plan.follow_tokens, plan.schedule[:, 3:], FollowConfig(lead=float(lead), lag=float(lag))
         )
     text_start, text_len = locate_text_span(plan.cond.input_ids, c.n_codebooks)
-    gain = output_gain(c.audio_codec, req.headroom_db)
+    gain = output_gain(c.audio_codec, req.headroom_db, req.decoder)
     prefix = emit = on_row = None
     if on_audio is not None and plan.laci is None and req.stream_decode != "whole":
         from zonos3.codec.istft_head_a_20261002.stream import ISTFTStream
 
         prefix = StreamDecoder(
-            _codec_decode(lm, assets, device),
-            stream=ISTFTStream(assets.decoder(c.audio_codec, torch.device(device))),
+            _codec_decode(lm, assets, device, req.decoder),
+            stream=ISTFTStream(assets.decoder(c.audio_codec, torch.device(device), req.decoder)),
             n_codebooks=c.n_codebooks,
             audio_pad_id=c.audio_pad_id,
             hop=_codec_hop(lm),
@@ -795,6 +800,7 @@ def synthesize(
         eos_frame=eos_frame,
         context_codes=plan.context_codes,
         device=device,
+        decoder=req.decoder,
     )
     pcm = fade_out(output_pcm(pcm, gain), float(req.fade_out_ms)).astype(np.float32)
     if on_audio is not None:

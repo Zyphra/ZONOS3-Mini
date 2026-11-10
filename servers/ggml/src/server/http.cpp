@@ -147,7 +147,7 @@ std::string cookie_value(const httplib::Request & req, const std::string & name)
     return "";
 }
 
-const char * EXPOSED = "X-Audio-Sample-Rate, X-Audio-Channels, X-Audio-Format, X-Control-Span-Follow, X-Seed";
+const char * EXPOSED = "X-Audio-Sample-Rate, X-Audio-Channels, X-Audio-Format, X-Control-Span-Follow, X-Seed, X-Decoder";
 
 const char * reason(int status) {
     switch (status) {

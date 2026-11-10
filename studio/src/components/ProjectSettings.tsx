@@ -1,10 +1,43 @@
-/** The open project's settings in one dialog: language, voice mode, tag strength, and what opening it did to its voices. */
+/** The open project's settings in one dialog: language, voice mode, tag strength, decoder, and what opening it did to its voices. */
 import { useLayoutEffect, useRef } from 'preact/hooks';
+import { decoderName } from '../lib/decoders';
 import { LANG_LABEL } from '../lib/languages';
-import { backend, modalOpen, projectSettings, settingsOpen } from '../state/app';
+import { backend, modalOpen, projectSettings, requestContext, settingsOpen } from '../state/app';
 import { current, restoreReport, setSettings } from '../state/projects';
 import { dialogKeys } from './focusTrap';
 import { Icon } from './Icon';
+
+/**
+ * The audio decoder renders use, when the server serves a choice (two or more). It shows what requests send: a
+ * saved choice this server lacks reads as the default. The default is stored as null (requests leave it out).
+ */
+export function DecoderPicker() {
+  const decoders = backend.value?.decoders ?? [];
+  if (decoders.length < 2) return null;
+  const id = requestContext.value.decoder ?? decoders[0].id;
+  return (
+    <label class="settings-row">
+      <span>Decoder</span>
+      <select
+        class="input"
+        value={id}
+        title={decoders.find((d) => d.id === id)?.label}
+        onChange={(e) => setSettings({ decoder: e.currentTarget.value === decoders[0].id ? null : e.currentTarget.value })}
+        aria-describedby="settings-decoder-hint"
+      >
+        {decoders.map((d, i) => (
+          <option key={d.id} value={d.id} title={d.label}>
+            {decoderName(d.id)}
+            {i === 0 ? ' (default)' : ''}
+          </option>
+        ))}
+      </select>
+      <span class="hint" id="settings-decoder-hint">
+        What turns the model’s codes into sound, for every render (Cast previews, Direct lines, Edit takes). Fast (keep2) runs a pruned decoder; Full-size runs all of its layers (heavier). Direct takes rendered with another decoder read as stale.
+      </span>
+    </label>
+  );
+}
 
 export function ProjectSettings() {
   const open = settingsOpen.value;
@@ -80,6 +113,7 @@ export function ProjectSettings() {
               </span>
             </label>
           )}
+          <DecoderPicker />
         </div>
         {r.reRegistered.length > 0 && <p class="proj-note">Restored after a server restart: {r.reRegistered.join(', ')}.</p>}
         {r.issues.length > 0 && (

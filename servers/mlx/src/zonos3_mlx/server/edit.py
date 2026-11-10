@@ -4,7 +4,7 @@ MLX engine.
 The runtime (shared with the sgl and ggml servers) does the ASR / FuseAlign work, the word diff, the windows and the
 splice; this module is its ``EditEngine``: uploads are decoded with ``decode_pcm``, the clip is encoded with the MLX
 reference encoder, every region is one span-end-terminated job on the scheduler over the training edit layout
-(``plan_request(edit=...)``), and the spliced codes are decoded once.
+(``plan_request(edit=...)``), and the spliced codes are decoded once through the request's decoder.
 """
 
 from __future__ import annotations
@@ -112,10 +112,10 @@ class MlxEditEngine:
         )
         return rows, -1 if run.eos_frame is None else run.eos_frame
 
-    async def decode(self, codes: np.ndarray) -> np.ndarray:
-        engine = self.state.engine
-        audio = await self.state.run(engine.decoder.decode, np.asarray(codes, dtype=np.int64))
-        return output_pcm(audio, engine.output_gain(None))
+    async def decode(self, codes: np.ndarray, decoder: str | None) -> np.ndarray:
+        dec = self.state.engine.decoder_of(decoder)
+        audio = await self.state.run(dec.decode, np.asarray(codes, dtype=np.int64))
+        return output_pcm(audio, dec.output_gain(None))
 
 
 def runtime(state: ServerState) -> EditRuntime:

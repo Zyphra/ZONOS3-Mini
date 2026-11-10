@@ -30,6 +30,7 @@ from zonos3_mlx.engine import Engine, plan_request
 from zonos3_mlx.scheduler import Scheduler
 from zonos3_mlx.server import generate, speakers
 from zonos3_mlx.server.app import create_app
+from zonos3_mlx.server.edit import MlxEditEngine
 from zonos3_mlx.server.state import ServerOptions, ServerState
 
 HOP = 2940
@@ -55,7 +56,9 @@ def files(tmp_path_factory):
         check=True,
         capture_output=True,
     )
-    dummy_codec(root / "zac-keep2.gguf", residual_biases=False)  # early partial-frame decode off
+    # the two decoders found next to the backbone (same weights): keep2_plain, the default, and full_mr
+    dummy_codec(root / "zac-keep2.gguf", residual_biases=False, variant="keep2_plain")  # early partial-frame decode off
+    dummy_codec(root / "zac.gguf", residual_biases=False)
     lexicon = root / "lexicon.lmdb"
     env = lmdb.open(str(lexicon), map_size=1 << 24, max_dbs=8, subdir=True)
     with env.begin(write=True) as txn:
@@ -171,7 +174,7 @@ def streamed_run(client, monkeypatch, **fields) -> tuple[RecordingDecoder, np.nd
 def early(files, tmp_path_factory):
     """A server whose decoder GGUF carries the per-codebook residual biases (early partial-frame decode on)."""
     zac = dummy_codec(tmp_path_factory.mktemp("early") / "zac.gguf", residual_biases=True)
-    engine = Engine.load(files / "m.gguf", zac=str(zac))
+    engine = Engine.load(files / "m.gguf", zac=[str(zac)])
     assert engine.decoder.early_decode
     scheduler = Scheduler(engine, batch=2)
     scheduler.start(warmup=False)
@@ -252,7 +255,7 @@ def test_edit_keeps_the_unedited_audio_and_reports_the_fill(client, monkeypatch)
     assert d["spans"] == [[1.0, 1.6]] and [t["seed"] for t in d["takes"]] == [7, 8]
     client_app = client.app.state.zonos3
     original = client_app.engine.decoder.decode(CODES.astype(np.int64)) * np.float32(
-        client_app.engine.output_gain(None)
+        client_app.engine.output_gain(None, None)
     )
     original = pcm16_samples(original)
     for take in d["takes"]:
@@ -264,6 +267,51 @@ def test_edit_keeps_the_unedited_audio_and_reports_the_fill(client, monkeypatch)
         # frames before the span are the original's (the frame next to it shares the iSTFT overlap with the fill)
         keep = 14 * HOP
         assert np.abs(pcm[:keep].astype(int) - original[:keep].astype(int)).max() <= 2
+
+
+def test_decoders_are_listed_and_picked_per_request(client, monkeypatch):
+    """Both decoders found next to the backbone are served, zac-keep2.gguf (keep2_plain) the default; a request's
+    ``decoder`` picks the one its stream and whole decode run on (X-Decoder says which), an unknown id is a 400."""
+    caps = client.get("/v2/capabilities").json()
+    assert [d["id"] for d in caps["decoders"]] == ["keep2_plain", "full_mr"]
+    assert caps["decoder"] == caps["decoders"][0] and caps["decoders"][1]["checkpoint"] == "zac.gguf"
+    engine = client.app.state.zonos3.engine
+    used = []
+    for dec in engine.decoders.values():
+        monkeypatch.setattr(dec, "stream", lambda dec=dec, make=dec.stream: used.append(dec.id) or make())
+    body = {"text": "hello there", "seed": 4, "max_tokens": 40, "stream_codebooks": 10}
+    r = client.post("/v2/generate", json=body)
+    assert r.status_code == 200 and r.headers["x-decoder"] == "keep2_plain" and used == ["keep2_plain"]
+    full = client.post("/v2/generate", json={**body, "decoder": "full_mr"})
+    assert full.status_code == 200 and full.headers["x-decoder"] == "full_mr" and used[-1] == "full_mr"
+    # the dummy decoders share their weights
+    np.testing.assert_allclose(np.frombuffer(full.content, np.float32), np.frombuffer(r.content, np.float32), atol=1e-6)
+    whole = client.post("/v2/generate", json={**body, "stream": False, "decoder": "full_mr"})
+    assert whole.status_code == 200 and whole.headers["x-decoder"] == "full_mr"
+    for path, extra in (("/v2/generate", {"text": "hi"}), ("/v1/audio/speech", {"model": "m", "input": "hi"})):
+        r = client.post(path, json={**extra, "decoder": "nope"})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Unknown decoder 'nope'; this server serves: keep2_plain, full_mr."
+    r = client.post("/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hi", "decoder": "nope"})
+    assert r.status_code == 400 and r.json()["detail"].startswith("Unknown decoder 'nope'")
+
+
+def test_edit_decodes_through_its_decoder(client, monkeypatch):
+    engine = client.app.state.zonos3.engine
+    used = []
+    for dec in engine.decoders.values():
+        monkeypatch.setattr(dec, "decode", lambda codes, dec=dec, run=dec.decode: used.append(dec.id) or run(codes))
+    edit_engine = MlxEditEngine(client.app.state.zonos3)
+    asyncio.run(edit_engine.decode(CODES, "full_mr"))
+    asyncio.run(edit_engine.decode(CODES, None))
+    assert used == ["full_mr", "keep2_plain"]
+
+
+def test_duplicate_decoder_ids_are_refused(files):
+    with pytest.raises(ValueError, match="decoder full_mr .* is already loaded"):
+        Engine.load(files / "m.gguf", zac=[str(files / "zac.gguf"), str(files / "zac.gguf")])
+    engine = Engine.load(files / "m.gguf", zac=[str(files / "zac.gguf")])
+    assert list(engine.decoders) == ["full_mr"] and engine.decoder.id == "full_mr"
 
 
 def test_edit_refuses_tag_cfg(client):

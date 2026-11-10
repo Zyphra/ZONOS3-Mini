@@ -103,6 +103,7 @@ def tokenize_worker(
     codebook_sizes: list[int] | None = None,
     audio_pad_id: int = 1025,
     audio_codec: str,
+    decoders: Sequence[str] | None = None,  # the served decoder ids (ServerArgs.tts_decoders; None = every one)
     text_vocab: int | None = None,
     speaking_rate_num_buckets: int = 0,
     quality_bucket_counts: List[int] | None = None,
@@ -146,6 +147,7 @@ def tokenize_worker(
         n_codebooks=n_codebooks,
         audio_pad_id=audio_pad_id,
         audio_codec=audio_codec,
+        decoders=decoders,
     )
     # The prefix codec stream (primed + CUDA-graphed) serves the rows of streaming requests, which only the detokenizer
     # receives: the tokenize-only processes of --num-tokenizer N would hold N more copies of the codec and its graphs.
@@ -182,7 +184,9 @@ def tokenize_worker(
                 except (ValueError, RuntimeError) as exc:
                     frontend_replies.append(TTSCodesReply(uid=msg.uid, codes=None, error=str(exc)))
             for msg in decode_msgs:
-                audio = tts_vocoder_manager.decode_all(msg.codes.to(torch.int64)[None], apply_shear_up=False)[0]
+                audio = tts_vocoder_manager.decode_all(
+                    msg.codes.to(torch.int64)[None], apply_shear_up=False, decoder=msg.decoder
+                )[0]
                 frontend_replies.append(
                     TTSAudioReply(
                         uid=msg.uid,

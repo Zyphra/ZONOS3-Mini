@@ -10,13 +10,14 @@ import { Rail, RailBar, RailToggle } from '../../components/Rail';
 import { slug } from '../../lib/files';
 import { phone } from '../../lib/media';
 import { isTyping } from '../../lib/dom';
+import { decoderName } from '../../lib/decoders';
 import { langLabel } from '../../lib/languages';
 import { guessed, isPronError, lookupLanguage, openPronEditor, phonemizeOn, phonemizeRange, phonemizing, PronHelp, PronMarks, PronounceButton } from '../../components/Pron';
 import { parsePron } from '../../lib/pron';
 import { Slider } from '../../components/Slider';
 import { Waveform } from '../../components/Waveform';
 import { clamp, uid } from '../../lib/math';
-import { activeHistory, backend, controlById, hue, modalOpen, notify, primaryAction, projectSettings, pronTokens, screenKeys, settingsOpen, spec } from '../../state/app';
+import { activeHistory, backend, controlById, hue, modalOpen, notify, primaryAction, projectSettings, pronTokens, requestContext, screenKeys, settingsOpen, spec } from '../../state/app';
 import { design } from '../../state/design';
 import type { History } from '../../state/history';
 import { cast, savePersona, speakers, type Persona } from '../../state/library';
@@ -496,19 +497,23 @@ function TakeStrip({ line }: { line: Line }) {
   }, [list.length]);
   const cmp = nowPlaying.value?.id === `cmp:${line.id}` ? comparePlaying(line.id) : null;
   if (!list.length) return null;
+  const decoders = backend.value?.decoders ?? [];
   return (
     <ul class="takes" aria-label="Takes">
       {list.map((t, i) => {
         const id = `take:${t.id}`;
         const playing = nowPlaying.value?.id === id || cmp === t.id;
         const why = takeStaleReason(line, t);
+        // The decoder that made it (X-Decoder, else what the request asked for), where there is a choice or it isn't this server's default.
+        const made = t.audio.decoder ?? t.request.decoder;
+        const decoderNote = made && (decoders.length > 1 || made !== decoders[0]?.id) ? `Decoder ${decoderName(made)}` : null;
         return (
           <li class={`take${t.starred ? ' is-starred' : ''}${why ? ' is-stale' : ''}${fresh.includes(t.id) ? ' is-flash' : ''}${playing ? ' is-playing' : ''}`}>
             <button
               class="take-play"
               onClick={() => player.toggle(id, t.audio.pcm, t.audio.sr)}
               aria-label={`${playing ? 'Stop' : 'Play'} take ${i + 1}`}
-              title={[why ? `Rendered before the ${why.replace(' changed', '')} changed` : `Seed ${t.seed}`, t.audio.spanFollow ? FOLLOW_TEXT[t.audio.spanFollow] : null].filter(Boolean).join(' · ')}
+              title={[why ? `Rendered before the ${why.replace(' changed', '')} changed` : `Seed ${t.seed}`, decoderNote, t.audio.spanFollow ? FOLLOW_TEXT[t.audio.spanFollow] : null].filter(Boolean).join(' · ')}
             >
               <span class="take-n">{i + 1}</span>
               <Waveform pcm={t.audio.pcm} color={t.starred ? 'var(--o)' : 'var(--text-2)'} playId={id} height={22} />
@@ -887,7 +892,8 @@ function Sidebar() {
           )}
         </div>
         <p class="hint">
-          Language {langLabel(projectSettings.value.language)} · tag strength {backend.value?.tags ? (projectSettings.value.tagStrength > 1 ? projectSettings.value.tagStrength.toFixed(1) : 'off') : 'n/a'} —{' '}
+          Language {langLabel(projectSettings.value.language)} · tag strength {backend.value?.tags ? (projectSettings.value.tagStrength > 1 ? projectSettings.value.tagStrength.toFixed(1) : 'off') : 'n/a'}
+          {(backend.value?.decoders.length ?? 0) > 1 && ` · decoder ${decoderName(requestContext.value.decoder ?? backend.value!.decoders[0].id)}`} —{' '}
           <button class="link" onClick={() => (settingsOpen.value = true)}>
             Project settings
           </button>

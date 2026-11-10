@@ -34,6 +34,8 @@ export interface RequestContext {
   phonemeTokens: PronTokens | null;
   tags: { min_scale: number; max_scale: number } | null;
   tagStrength: number;
+  /** The `decoder` to send (`requestDecoder`): null = the server default, left out of the request. */
+  decoder: string | null;
 }
 
 /** Keep spans attached to their words across an edit (common prefix / suffix diff). */
@@ -105,6 +107,8 @@ export function buildRequest(s: ControlsSpec, ctx: RequestContext, d: Design, te
     speaker_mode: d.mode,
   };
   if (x.language && x.language !== 'en_us') req.language = x.language;
+  // The A/B reference too: the two sides differ only in their controls.
+  if (ctx.decoder) req.decoder = ctx.decoder;
   if (x.unsteered) return req;
   // Tag guidance strengthens nonverbal tags; the server takes one guidance per request, so voice guidance is off.
   const tags = ctx.tags;

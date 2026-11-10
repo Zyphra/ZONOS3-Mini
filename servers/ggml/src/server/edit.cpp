@@ -2,6 +2,7 @@
 
 #include "server/edit.h"
 
+#include "server/generate.h"
 #include "server/http.h"
 #include "server/pyhost.h"
 #include "server/schema.h"
@@ -13,9 +14,11 @@ using json = nlohmann::json;
 
 namespace {
 
-// The request (schema-checked) through the Python host.
-json forward(ServerState & s, const char * op, const httplib::Request & req, const char * schema_name) {
+// The request (schema-checked) through the Python host. `check` validates the body first (fail() for a 400).
+json forward(ServerState & s, const char * op, const httplib::Request & req, const char * schema_name,
+             void (*check)(const ServerState &, const json &) = nullptr) {
     const json body = schema::parse_body(req, schema_name);
+    if (check) check(s, body);
     if (!s.pyhost) {
         if (!zonos3_supports_editing(s.model))
             fail(400, "The loaded checkpoint does not support speech editing (needs span_end_id and marker rows).");
@@ -48,8 +51,11 @@ void register_edit_routes(httplib::Server & svr, ServerState & s) {
     svr.Post("/v2/edit/align", keepalive([&s](const httplib::Request & req, httplib::Response & res) {
         send_json(res, forward(s, "edit_align", req, "EditAlignRequest"));
     }));
+    // The edit decodes on the request's `decoder` (the Python host passes it back in its decode engine calls).
     svr.Post("/v2/edit", keepalive([&s](const httplib::Request & req, httplib::Response & res) {
-        send_json(res, forward(s, "edit", req, "EditRequest"));
+        send_json(res, forward(s, "edit", req, "EditRequest", [](const ServerState & st, const json & body) {
+                      resolve_decoder(st, body);
+                  }));
     }));
 }
 

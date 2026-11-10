@@ -54,6 +54,7 @@ struct zac_model {
     int head_depth = 0, head_hop = 0, fir_kernel = 0;
     std::array<int, 2> n_fft{};
     float max_log_mag = 0, headroom_db = 0;
+    std::string head_variant; // mossdual_istft.head.variant (keep2_plain | full_mr): the decoder id of the servers
     std::vector<float> mixer;                                                          // [2][fir_kernel]
     std::array<std::vector<float>, 2> window;                                          // periodic Hann, [n_fft[i]]
     std::array<std::shared_ptr<const pocketfft::detail::pocketfft_r<float>>, 2> irfft; // shared by clones

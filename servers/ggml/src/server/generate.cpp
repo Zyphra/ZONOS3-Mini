@@ -142,6 +142,17 @@ std::string resolve_language(const json & body) {
     return lang;
 }
 
+Decoder * resolve_decoder(const ServerState & s, const json & body) {
+    if (!set(body, "decoder")) return s.decoders.empty() ? nullptr : s.decoders.front().get();
+    const std::string id = body["decoder"].get<std::string>();
+    std::string served;
+    for (const auto & d : s.decoders) {
+        if (d->id == id) return d.get();
+        served += (served.empty() ? "" : ", ") + d->id;
+    }
+    fail(400, "Unknown decoder '" + id + "'; this server serves: " + served + ".");
+}
+
 std::string normalize_text(ServerState & s, const std::string & text, const std::string & language, bool requested) {
     if (!requested || !s.text_normalizer) return text;
     try {
@@ -306,6 +317,7 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     GeneratePlan out;
     GenReq & gr = out.gr;
     const std::string text = body["text"].get<std::string>();
+    gr.decoder = resolve_decoder(s, body);
     gr.raw_text = text;
     const double speaker_cfg = num(body, "speaker_cfg_scale", 1.0), controls_cfg = num(body, "controls_cfg_scale", 1.0);
     validate_tag_cfg(text, num(body, "tag_cfg_scale", 1.0), speaker_cfg, controls_cfg);
@@ -334,7 +346,7 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     }
     // stream_codebooks / stream_codebooks_scope (prefix streaming's early partial-frame decode): unset = the registry's
     // stream_codebooks default / scope; above n_codebooks a 400. A decoder GGUF without the per-codebook residual
-    // biases decodes complete frames only (n_codebooks).
+    // biases (or no decoder: zonos3-cli --request) decodes complete frames only (n_codebooks).
     const int ncb = (int) s.model.hp.n_codebooks;
     if (set(body, "stream_codebooks")) {
         const int64_t k = body["stream_codebooks"].get<int64_t>();
@@ -346,7 +358,7 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
         if (scope != "first" && scope != "all") fail(400, "stream_codebooks_scope must be first or all");
         gr.stream_codebooks_first_only = scope == "first";
     }
-    if (!zac_partial_frames(s.zac)) gr.stream_codebooks = ncb;
+    if (!gr.decoder || !zac_partial_frames(gr.decoder->zac)) gr.stream_codebooks = ncb;
     apply_accent(s, body, gr);
     apply_controls(s, body, gr);
     resolve_span_follow(s, body, gr);
@@ -425,11 +437,12 @@ void generate(ServerState & s, const json & body, const std::optional<std::strin
     r.gr.wav = wav;
     const std::string span_follow = r.span_follow;
     auto job = make_job(s, std::move(r));
-    const int sr = s.zac.sample_rate;
+    const int sr = job->gr.decoder->zac.sample_rate;
     res.set_header("X-Audio-Sample-Rate", std::to_string(sr));
     res.set_header("X-Audio-Channels", "1");
     res.set_header("X-Audio-Format", wav ? "pcm16" : "float32");
     res.set_header("X-Seed", std::to_string(job->gr.sp.seed));
+    res.set_header("X-Decoder", job->gr.decoder->id);
     if (!span_follow.empty()) res.set_header("X-Control-Span-Follow", span_follow);
     submit_job(s, job);
 
@@ -591,8 +604,9 @@ std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan) {
     job->idf_twin.assign(job->twin.ids.begin(), job->twin.ids.end());
     job->n0 = job->prompt.n_rows;
     job->ctx_frames = (int) (gr.decode_context.size() / s.model.hp.n_codebooks);
-    job->skip_samples = (int64_t) (job->prompt.prefill_frames + job->ctx_frames) * zac_samples_per_frame(s.zac);
-    job->gain = zac_output_gain(s.zac, gr.headroom_db);
+    const zac_model & zac = gr.decoder->zac;
+    job->skip_samples = (int64_t) (job->prompt.prefill_frames + job->ctx_frames) * zac_samples_per_frame(zac);
+    job->gain = zac_output_gain(zac, gr.headroom_db);
     job->gr = std::move(plan.gr);
     try {
         attach_probe(s, *job);

@@ -19,6 +19,16 @@ def test_pcm(client):
     assert r.headers["x-seed"] == "1"
 
 
+def test_decoder(client, caps):
+    ids = [d["id"] for d in caps["decoders"]]
+    if ids:
+        assert speech(client).headers["x-decoder"] == ids[0]
+        r = speech(client, decoder=ids[-1])
+        pcm(r)
+        assert r.headers["x-decoder"] == ids[-1]
+    error(speech(client, decoder="no_such_decoder"), 400)
+
+
 def test_wav(client):
     r = speech(client, response_format="wav")
     assert r.status_code == 200, r.text[:300]

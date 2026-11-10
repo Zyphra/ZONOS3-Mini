@@ -17,6 +17,7 @@ EXPOSED_HEADERS: tuple[str, ...] = (
     "X-Audio-Format",
     "X-Control-Span-Follow",
     "X-Seed",
+    "X-Decoder",
 )
 
 

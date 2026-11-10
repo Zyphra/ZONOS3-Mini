@@ -14,12 +14,21 @@ export interface SpecSink {
   reset(): void;
 }
 
-/** Messages on the codec port (RemoteSpecSink -> codec worker). */
+/** Messages on the codec port (RemoteSpecSink -> codec worker). `port` hands over a further codec port (its transferred
+ *  MessagePort), served alike: one per decoder, each holding its own decoder's host half. */
 export type SinkMsg =
   | ({ type: 'init' } & HostParams)
   | { type: 'push'; s0: Float32Array; s1: Float32Array; cols: number }
   | { type: 'flush' }
-  | { type: 'reset' };
+  | { type: 'reset' }
+  | { type: 'port' };
+
+/** A new codec port beside `port` (served by the same codec worker), for a further decoder's RemoteSpecSink. */
+export function codecChannel(port: MessagePort): MessagePort {
+  const ch = new MessageChannel();
+  port.postMessage({ type: 'port' } satisfies SinkMsg, [ch.port2]);
+  return ch.port1;
+}
 
 /** Replies on the codec port, one per push / flush, in order. */
 export type SinkReply = { type: 'pcm'; pcm: Float32Array } | { type: 'error'; message: string };

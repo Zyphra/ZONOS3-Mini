@@ -389,6 +389,7 @@ class TTSScheduler(SchedulerIOMixin):
                         stream_decode=getattr(req.sampling_params, "stream_decode", None),
                         stream_codebooks=req.sampling_params.stream_codebooks,
                         stream_codebooks_scope=req.sampling_params.stream_codebooks_scope,
+                        decoder=req.sampling_params.decoder,
                         # the vocoder's decode context / prefilled rows ride on the request's first row (2026-10-17)
                         decode_context_codes=None if req.context_sent else req.decode_context_codes,
                         prefill_rows=None if req.context_sent else req.prefill_rows,
@@ -597,6 +598,7 @@ class TTSScheduler(SchedulerIOMixin):
                     finished=last,
                     eos_frame=session.eos_frame() if last else None,
                     stream_decode=getattr(req.sampling_params, "stream_decode", None),
+                    decoder=req.sampling_params.decoder,
                     decode_context_codes=laci.template.decode_context_codes if first else None,
                     prefill_rows=laci.template.prefill_rows if first else None,
                     laci=record if last else None,

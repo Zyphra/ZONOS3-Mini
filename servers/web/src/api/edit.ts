@@ -24,7 +24,7 @@ import { defaultSampling, type Sampling } from '../sampler';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { editMaxSpans } from './capabilities';
 import type { EditModels, Engine } from './engine';
-import { as400, resolveConditionBuckets, resolveLanguage } from './generate';
+import { as400, resolveConditionBuckets, resolveDecoder, resolveLanguage } from './generate';
 import { bool, fail, HttpError, isSet, num, parseBody, str, type EngineRequest, type Sink, sendJson } from './http';
 
 type Body = Record<string, unknown>;
@@ -143,6 +143,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
   const body = parseBody(req, 'EditRequest');
   const edit = requireEditing(e);
   const maxSpans = editMaxSpans(e);
+  const decoder = resolveDecoder(e, body);
   if (num(body, 'tag_cfg_scale', 1) !== 1)
     fail(400, 'tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); use 1.0.');
   // Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt text and
@@ -238,6 +239,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
     : crypto.getRandomValues(new Uint32Array(1))[0] % (2 ** 31 - 8);
   const sampling = editSampling(e, body);
   const bb = await edit.backbone();
+  const codec = await decoder.codec();
 
   const takes: unknown[] = [];
   for (let k = 0; k < num(body, 'num_takes', 1); k++) {
@@ -282,7 +284,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
     const spliced = spliceEdit(codes, spans, fills, NCB);
     let edited: Float32Array;
     try {
-      edited = await decodeCodes(e.codec, spliced, e.hp.audioPad);
+      edited = await decodeCodes(codec, spliced, e.hp.audioPad);
     } catch (err) {
       console.error('edit decode:', err);
       fail(500, 'decoding the edited codes failed');

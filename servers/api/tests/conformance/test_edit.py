@@ -62,6 +62,17 @@ def test_one_word_edit_of_a_known_transcript(client, known):
     assert base64.b64decode(take["audio_base64"])[:4] == b"RIFF" and take["verify"] is None
 
 
+def test_edit_decoder(client, caps, known):
+    """An edit decodes through the decoder it names (every one the server lists); an unknown id is a 400."""
+    body = _edit_body(known["text"], known["audio_base64"])
+    for info in caps["decoders"][1:]:
+        r = client.post("/v2/edit", json={**body, "decoder": info["id"]})
+        assert r.status_code == 200, r.text[:500]
+        check(r.json(), "#/components/schemas/EditResponse")
+    detail = error(client.post("/v2/edit", json={**body, "decoder": "nope"}), 400)["detail"]
+    assert detail.startswith("Unknown decoder 'nope'")
+
+
 def test_without_speech_recognition(client, caps, editing, known):
     needs(not caps["edit_transcribe"], "the server has speech recognition")
     clip = known["audio_base64"]

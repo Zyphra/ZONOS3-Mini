@@ -6,12 +6,16 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 | Network | GGUF | Notes |
 | --- | --- | --- |
 | LM backbone | `zonos3-ptq.gguf` (default, `lm/rate30_20k_r2grpo`), `zonos3-qat.gguf` (previous `lm/mect_60k`, `SERVE_MODEL`) or `zonos3-f16.gguf` | GDN + global attention, Full AttnRes, latent MoE; Q4_0 / Q8_0 blocks become MLX affine-quantized weights, bit-exact; per-table condition bucket counts |
-| Codec decoder | `zac-keep2.gguf` (default, `keep2_plain` head) or `zac.gguf` (full-size `full_mr`, `--zac`) | causal multi-resolution iSTFT head, 44.1 kHz |
+| Codec decoders | `zac-keep2.gguf` (default, `keep2_plain` head) and `zac.gguf` (full-size `full_mr` head) | causal multi-resolution iSTFT heads, 44.1 kHz; a request picks one with `decoder` |
 | Speaker encoder | `spk-encoder.gguf` | MECT-B2 + ASTP, 192-d embeddings (`speaker_mode=embedding`) |
 | Reference encoder | `zac-encoder.gguf` + `ssl-teacher.gguf` | raw-reference cloning and speech editing; the BF16 autocast recipe of the release; loaded on first use, freed after `--reference-idle-unload` idle seconds |
 | Companions | `steer.gguf`, `accents.gguf` | the steering bundle (request `controls` / `control_spans` / `controls_cfg_scale`; `/v2/controls` with each set's calibration), accent adapters (request `accent`) |
 
-Every file is auto-detected next to the backbone. Generation runs on one worker thread that owns the LM; up to
+Every file is auto-detected next to the backbone. Every decoder found (`zac-keep2.gguf`, then `zac.gguf`) or named
+with a repeated `--zac` (the first is the default) is loaded; its id is the GGUF's `mossdual_istft.head.variant`
+(two files with one id are refused). `/v2/capabilities` lists them in `decoders`, a request's `decoder` picks one
+(an id the server does not serve is a 400; null = the default), including the decode of an edit, and audio responses
+name it in `X-Decoder`. Generation runs on one worker thread that owns the LM; up to
 `--batch` requests (default 4; a CFG request takes two slots) advance one row per tick, a CFG request's two forwards in
 one MLX evaluation. Sampling runs on the GPU on the reference sampler's random stream (the host draws the
 `torch.multinomial` exponentials, so a seed gives the reference rows up to float rounding), and without a probe reader

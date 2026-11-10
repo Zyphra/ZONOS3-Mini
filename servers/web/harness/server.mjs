@@ -16,7 +16,7 @@ const repo = path.resolve(root, '../..');
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const port = Number(arg('--port', '1920'));
 
-const EXPOSED = 'X-Audio-Sample-Rate, X-Audio-Channels, X-Audio-Format, X-Control-Span-Follow, X-Seed';
+const EXPOSED = 'X-Audio-Sample-Rate, X-Audio-Channels, X-Audio-Format, X-Control-Span-Follow, X-Seed, X-Decoder';
 const MOUNTS = [
   ['/web-engine/', path.join(root, 'dist')],
   ['/models/', path.join(root, 'public/models')],

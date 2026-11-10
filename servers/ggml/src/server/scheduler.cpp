@@ -179,7 +179,7 @@ static void prefix_submit_ready(ServerState & s, const std::shared_ptr<ReqJob> &
     t.codes = decode_rows(s, *job, H);
     t.H = (int) t.codes.size() / ncb;
     t.f_hi = end + job->ctx_frames;
-    zac_lane_submit(s.zac_lanes[job->lane], std::move(t));
+    zac_lane_submit(job->gr.decoder->lanes[job->lane], std::move(t));
     job->emitted = end;
 }
 
@@ -197,7 +197,7 @@ static void submit_finalize(ServerState & s, const std::shared_ptr<ReqJob> & job
         t.codes = decode_rows(s, *job, nf);
         t.H = (int) t.codes.size() / ncb;
     }
-    zac_lane_submit(s.zac_lanes[job->lane], std::move(t));
+    zac_lane_submit(job->gr.decoder->lanes[job->lane], std::move(t));
 }
 
 // A throwaway prefill + decode step at every ladder width JIT-compiles every backbone graph pipeline before the
@@ -403,7 +403,8 @@ static void worker_loop(ServerState & s) {
             job->slot.accent_strength = job->gr.accent_strength;
             job->codes = zonos3_prefill_codes(s.model, job->prompt);   // stream rows: silence prefill first
             job->emitted = job->prompt.prefill_frames;
-            job->lane = (int) (s.next_lane++ % s.zac_lanes.size());
+            Decoder & dec = *job->gr.decoder;
+            job->lane = (int) (dec.next_lane++ % dec.lanes.size());
             new_sampler(s, *job, job->gr.sp.seed);
             job->attempt_max = job->gr.max_frames;
             job->history_rows = 0;
@@ -597,9 +598,38 @@ static void worker_loop(ServerState & s) {
     zonos3_batch_free(bc);
 }
 
+Decoder::~Decoder() {
+    for (auto & lane : lanes) zac_free(lane.zac);
+    zac_free(zac);
+}
+
+bool load_decoder(ServerState & s, const std::string & path, bool use_gpu, std::string & err) {
+    auto d = std::make_unique<Decoder>();
+    d->path = path;
+    if (!zac_load(d->zac, path.c_str(), use_gpu)) {
+        err = "failed to load zac " + path;
+        return false;
+    }
+    d->id = d->zac.head_variant;
+    for (const auto & other : s.decoders)
+        if (other->id == d->id) {
+            err = "--zac " + path + ": decoder " + d->id + " (mossdual_istft.head.variant) is already loaded from " +
+                  other->path;
+            return false;
+        }
+    d->lanes = std::vector<ZacLane>(s.zac_threads);
+    for (int i = 0; i < s.zac_threads; ++i)
+        if (!zac_clone(d->lanes[i].zac, d->zac)) {
+            err = "failed to load zac " + path + " for pool lane " + std::to_string(i);
+            return false;
+        }
+    s.decoders.push_back(std::move(d));
+    return true;
+}
+
 void start_scheduler(ServerState & s) {
-    for (int i = 0; i < (int) s.zac_lanes.size(); ++i)
-        s.zac_lanes[i].th = std::thread(zac_lane_loop, std::ref(s), std::ref(s.zac_lanes[i]));
+    for (auto & d : s.decoders)
+        for (auto & lane : d->lanes) lane.th = std::thread(zac_lane_loop, std::ref(s), std::ref(lane));
     s.worker = std::thread(worker_loop, std::ref(s));
     std::unique_lock<std::mutex> lk(s.sched_mtx);
     s.sched_cv.wait(lk, [&] { return s.worker_ready; });
@@ -609,11 +639,12 @@ void stop_scheduler(ServerState & s) {
     s.stop.store(true);
     s.sched_cv.notify_all();
     if (s.worker.joinable()) s.worker.join();
-    for (auto & lane : s.zac_lanes) {
-        { std::lock_guard<std::mutex> lk(lane.m); }
-        lane.cv.notify_all();
-        if (lane.th.joinable()) lane.th.join();
-    }
+    for (auto & d : s.decoders)
+        for (auto & lane : d->lanes) {
+            { std::lock_guard<std::mutex> lk(lane.m); }
+            lane.cv.notify_all();
+            if (lane.th.joinable()) lane.th.join();
+        }
 }
 
 void submit_job(ServerState & s, const std::shared_ptr<ReqJob> & job) {
@@ -622,7 +653,8 @@ void submit_job(ServerState & s, const std::shared_ptr<ReqJob> & job) {
 }
 
 void submit_decode(ServerState & s, const std::shared_ptr<ReqJob> & job) {
-    job->lane = (int) (s.next_lane++ % s.zac_lanes.size());
+    Decoder & dec = *job->gr.decoder;
+    job->lane = (int) (dec.next_lane++ % dec.lanes.size());
     submit_finalize(s, job, /*dropped=*/false);
 }
 

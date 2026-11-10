@@ -1,7 +1,7 @@
 // Engine worker: owns the WebGPU device and the models, serves the v2 API (src/api/router.ts) one request at a time.
 // The codec's host half (iSTFT, mixer, resampler) runs in the codec worker behind `codecPort`.
 /// <reference lib="webworker" />
-import type { Engine, DefaultVoice, EditModels } from './api/engine';
+import type { Engine, Decoder, DefaultVoice, EditModels } from './api/engine';
 import { loadEmbeddingVector } from './api/speakers';
 import { Api } from './api/router';
 import { Aligner } from './aligner';
@@ -17,7 +17,7 @@ import { LaciHeads } from './request/laci';
 import { controlsDocument, loadSteer, type SteerBundle } from './request/steer';
 import { defaultSampling } from './sampler';
 import { SpeakerEncoder } from './speaker';
-import { RemoteSpecSink } from './spec-sink';
+import { codecChannel, RemoteSpecSink } from './spec-sink';
 import { createTokenizer } from './tokenizer';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -104,6 +104,49 @@ async function editModels(gpu: Gpu, base: string, cache: boolean, release: Backb
   };
 }
 
+/** The default decoder's model directory `zac` comes from this GGUF. */
+const DEFAULT_DECODER_CHECKPOINT = 'zac-keep2.gguf';
+/** Further decoders (model directory, the GGUF it was exported from): each is listed when the export has it (its
+ *  manifest read at startup, no weights) and loads on the first request that picks it. */
+const EXTRA_DECODERS = [{ dir: 'zac-full_mr', checkpoint: 'zac.gguf' }];
+
+/** A decoder model directory's id: its head variant. */
+function decoderId(meta: Record<string, unknown>, dir: string): string {
+  const id = meta['head.variant'];
+  if (typeof id !== 'string' || !id) throw new Error(`${dir}: no head.variant in its manifest; re-export with pnpm export`);
+  return id;
+}
+
+/** Every decoder a request may pick: the default (`zac`, loaded at startup) first, then each further decoder the export
+ *  has. A further decoder gets its own GPU weights and programs (the default's gemm plan; the matrices are the same
+ *  shapes) and its own codec port, so its host half (its mixer weights) lives beside the default's in the codec
+ *  worker. */
+async function decoderList(gpu: Gpu, base: string, cache: boolean, zac: ZacStream, zacMeta: Record<string, unknown>,
+                           codecPort: MessagePort, progress: (p: LoadProgress) => void): Promise<Decoder[]> {
+  const out: Decoder[] = [{
+    id: decoderId(zacMeta, 'zac'), checkpoint: DEFAULT_DECODER_CHECKPOINT, headroomDb: Number(zacMeta.headroom_db ?? 3),
+    codec: async () => zac,
+  }];
+  for (const { dir, checkpoint } of EXTRA_DECODERS) {
+    const meta = await manifestMeta(base, dir);
+    if (!meta) continue;
+    const id = decoderId(meta, dir);
+    if (out.some(d => d.id === id)) throw new Error(`${dir}: decoder ${id} is exported twice`);
+    let stream: Promise<ZacStream> | null = null;
+    out.push({
+      id, checkpoint, headroomDb: Number(meta.headroom_db ?? 3),
+      codec() {
+        return stream ??= batchProgress(base, [dir], progress)
+          .then(p => loadModel(gpu, base, dir, p, cache))
+          .then(w => ZacStream.create(gpu, w, p => new RemoteSpecSink(codecChannel(codecPort), p), zac.gemmPlan))
+          .then(async z => { await warmCodec(z); return z; })
+          .catch((e: unknown) => { stream = null; throw e; });
+      },
+    });
+  }
+  return out;
+}
+
 async function init(base: string, cache: boolean, voicesPcm: Record<string, Float32Array>, codecPort: MessagePort): Promise<void> {
   const device = await initGpu(message => post({ type: 'fatal', message }));
   const gpu = new Gpu(device);
@@ -142,13 +185,13 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   const tokenizer = createTokenizer();
   await warmup(backbone, zac, hp);
   const edit = await editModels(gpu, base, cache, backbone, progress);
+  const decoders = await decoderList(gpu, base, cache, zac, zacw.meta, codecPort, progress);
 
   let spk: Promise<SpeakerEncoder> | null = null;
   let ref: Promise<RefEncoder> | null = null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec: zac, tokenizer,
-    steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci,
-    voices, headroomDb: Number(zacw.meta.headroom_db ?? 3),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, decoders, tokenizer,
+    steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci, voices,
     async embedSpeaker(pcm) {
       const enc = await (spk ??= batchProgress(base, ['spk'], progress).then(p => SpeakerEncoder.load(gpu, base, p, cache)).catch((e: unknown) => { spk = null; throw e; }));
       return enc.embed(pcm);
@@ -178,6 +221,11 @@ async function warmup(backbone: Backbone, zac: ZacStream, hp: ModelHp): Promise<
     await backbone.sampleFirst(0);
     await backbone.stepSample(1, null, null, null);
   }
+  await warmCodec(zac);
+}
+
+/** A full codec chunk, then a reset: the decoder's pipelines compile before its first request. */
+async function warmCodec(zac: ZacStream): Promise<void> {
   await zac.chunk(new Int32Array(NCB * BLOCK_FRAMES), 0, BLOCK_FRAMES);
   zac.reset();
 }

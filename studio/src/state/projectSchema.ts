@@ -14,14 +14,16 @@ export const SCHEMA = 1;
 
 /**
  * Settings of the open project: the language (Direct renders, Edit clips, pronunciation lookups), the
- * default voice mode, and the tag strength (tag guidance for lines with nonverbal tags; 1 = off).
+ * default voice mode, the tag strength (tag guidance for lines with nonverbal tags; 1 = off), and the audio
+ * decoder (`/v2/capabilities.decoders` id; null = the server default; one the server lacks renders on its default).
  */
 export interface ProjectSettings {
   language: string;
   voiceMode: SpeakerMode;
   tagStrength: number;
+  decoder: string | null;
 }
-export const DEFAULT_SETTINGS: ProjectSettings = { language: 'en_us', voiceMode: 'embedding', tagStrength: 1.5 };
+export const DEFAULT_SETTINGS: ProjectSettings = { language: 'en_us', voiceMode: 'embedding', tagStrength: 1.5, decoder: null };
 
 /** A server voice the project created and the media that recreates it (WAV clip, or float32 embedding). */
 export interface VoiceRecord {

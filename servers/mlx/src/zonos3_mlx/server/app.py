@@ -50,7 +50,7 @@ def create_app(state: ServerState) -> FastAPI:
     app.include_router(projects_router(lambda: state.projects), prefix="/v2")
     for module in (capabilities, speakers, generate):
         app.include_router(module.router(state))
-    app.include_router(edit_router(lambda: edit.runtime(state)))
+    app.include_router(edit_router(lambda: edit.runtime(state), lambda: list(state.engine.decoders)))
     plugins.mount(app, state.plugins, host.MlxHost(state), keepalive)
     # Registered last, so every API route matches first (zonos3.server.studio).
     install_studio(app, lambda: state.options.studio_dir)

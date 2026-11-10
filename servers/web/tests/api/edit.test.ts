@@ -145,6 +145,24 @@ describe.skipIf(!haveEditModels)('speech editing without speech recognition', ()
     expect(ids[(rows - 1) * W + 10]).toBe(8196 + 2);
     expect(Array.from(ids).filter((v, i) => i % W < 10 && v === 4098).length).toBeGreaterThan(0);
   });
+
+  it('decoder picks the decoder of the edited clip; an unknown id is a 400 before any model work', async () => {
+    const { api, codec, full, edit } = stubApi();
+    const req = { audio_base64: b64('wav'), target_text: 'Something else.', spans: [[0.2, 0.6]], seed: 9, speaker_embedding: false };
+    const bad = await call(api, 'POST', '/v2/edit', { ...req, decoder: 'nope' }, {}, clip(2));
+    expect(bad.status).toBe(400);
+    expect(bad.json()).toEqual({ detail: "Unknown decoder 'nope'; this server serves: keep2_plain, full_mr." });
+    expect(edit!.backbone.prefills).toEqual([]);
+    expect(full!.loads).toBe(0);
+    const r = await call(api, 'POST', '/v2/edit', { ...req, decoder: 'full_mr' }, {}, clip(2));
+    expect(r.status).toBe(200);
+    expect(validate('EditResponse', r.json())).toEqual([]);
+    expect(full!.frames).toBeGreaterThan(0);
+    expect(codec.frames).toBe(0);
+    // the default when unset or null
+    expect((await call(api, 'POST', '/v2/edit', { ...req, decoder: null }, {}, clip(2))).status).toBe(200);
+    expect(codec.frames).toBeGreaterThan(0);
+  });
 });
 
 describe('speech editing unavailable', () => {

@@ -1,14 +1,15 @@
-// Deterministic stub engines for the API tests: the real tokenizer and prompt layout with the backbone, codec and
-// encoders replaced by stand-ins (EOA after a few frames, a sine per decoded frame). stubApi adds the exported models'
-// hyper-parameters, steering bundle and LACI heads (public/models) and, with the exported speech-edit backbone and
-// aligner, a stub speech-edit backbone (span-end after a few frames) and a stub aligner (words spread evenly over the
-// clip); bareApi needs no exported models.
+// Deterministic stub engines for the API tests: the real tokenizer and prompt layout with the backbone, codecs and
+// encoders replaced by stand-ins (EOA after a few frames, a constant level per decoded frame). stubApi adds the exported
+// models' hyper-parameters, steering bundle and LACI heads (public/models), both decoders (keep2_plain at level 0.5, the
+// lazily loaded full_mr at 0.25) and, with the exported speech-edit backbone and aligner, a stub speech-edit backbone
+// (span-end after a few frames) and a stub aligner (words spread evenly over the clip); bareApi needs no exported
+// models and serves the default decoder only.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ProbeInput } from '../../src/backbone';
 import type { SamplingSetup } from '../../src/gpu/sampler';
 import type { AlignedWord } from '../../src/aligner/host';
-import type { EditModels, Engine } from '../../src/api/engine';
+import type { Decoder, EditModels, Engine } from '../../src/api/engine';
 import { Api } from '../../src/api/router';
 import type { EngineRequest, Sink } from '../../src/api/http';
 import { parseGguf } from '../../src/gguf';
@@ -119,16 +120,22 @@ class StubCodec {
   /** Frames decoded since the last reset. */
   frames = 0;
   chunks: StubChunk[] = [];
+  /** Times its Decoder handed it out (Decoder.codec). */
+  loads = 0;
   /** Backbone decode steps whose frame the job has read so far (set by stubApi). */
   clock: () => number = () => 0;
-  constructor(readonly partialFrames = true) {}
+  constructor(readonly partialFrames = true, readonly level = 0.5) {}
   reset() { this.frames = 0; this.chunks = []; }
   async chunk(idx: Int32Array, p0: number, n: number) {
     this.frames += n;
     this.chunks.push({ idx: idx.slice(), p0, n, step: this.clock() });
-    return new Float32Array(n * HOP).fill(0.5);
+    return new Float32Array(n * HOP).fill(this.level);
   }
   async flush() { return new Float32Array(0); }
+}
+
+function stubDecoder(id: string, checkpoint: string, codec: StubCodec): Decoder {
+  return { id, checkpoint, headroomDb: 3, codec: async () => { codec.loads++; return codec; } };
 }
 
 /** FuseAlign stand-in: every token gets an equal share of the clip, presence 0.9. */
@@ -144,7 +151,9 @@ class StubAligner {
 
 export interface EditStubs { backbone: StubBackbone; aligner: StubAligner; models: EditModels }
 
-export interface StubSet { api: Api; engine: Engine; backbone: StubBackbone; codec: StubCodec; edit: EditStubs | null }
+export interface StubSet {
+  api: Api; engine: Engine; backbone: StubBackbone; codec: StubCodec; full: StubCodec | null; edit: EditStubs | null;
+}
 
 /** The stub speech-edit models over the exported `edit` backbone's hyper-parameters. */
 function editStubs(sources: number[], frames: number): EditStubs {
@@ -165,21 +174,22 @@ export function stubApi(opts: { frames?: number; editFrames?: number; partialFra
   const voices = JSON.parse(readFileSync(models + 'voices/voices.json', 'utf8')) as { id: string; label: string; file: string }[];
   const backbone = new StubBackbone(steer.sources, opts.frames);
   const codec = new StubCodec(opts.partialFrames);
-  codec.clock = () => backbone.consumed;
+  const full = new StubCodec(opts.partialFrames, 0.25);
+  codec.clock = full.clock = () => backbone.consumed;
   const edit = haveEditModels ? editStubs(steer.sources, opts.editFrames ?? 6) : null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, tokenizer: createTokenizer(),
+    decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec), stubDecoder('full_mr', 'zac.gguf', full)],
     steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
     voices: voices.map(v => ({
       ...v, pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5),
       embedding: new Float32Array(hp.speakerDim).fill(0.2),
     })),
-    headroomDb: 3,
     async embedSpeaker(pcm) { return new Float32Array(hp.speakerDim).fill(pcm[0] ?? 0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
     edit: edit?.models ?? null,
   };
-  return { api: new Api(engine, 1000), engine, backbone, codec, edit };
+  return { api: new Api(engine, 1000), engine, backbone, codec, full, edit };
 }
 
 /** Release-like checkpoint hyper-parameters (ZONOS3 Mini, zonos3-rate30-20k-r2grpo): condition rows of 10, 10 and 30
@@ -209,15 +219,15 @@ export function bareApi(opts: { frames?: number; partialFrames?: boolean } = {})
   const codec = new StubCodec(opts.partialFrames);
   codec.clock = () => backbone.consumed;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, codec, tokenizer: createTokenizer(),
+    hp, modelFile: 'zonos3-ptq.gguf', backbone, decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec)],
+    tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),
     voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5), embedding: null }],
-    headroomDb: 3,
     async embedSpeaker() { return new Float32Array(hp.speakerDim).fill(0.1); },
     async encodeReference(pcm) { return new Int32Array(Math.ceil(pcm.length / HOP) * NCB).fill(3); },
     edit: null,
   };
-  return { api: new Api(engine, 1000), engine, backbone, codec, edit: null };
+  return { api: new Api(engine, 1000), engine, backbone, codec, full: null, edit: null };
 }
 
 /** A response; `json<T>()` parses the body as the caller's expected shape (tests then assert on it). */

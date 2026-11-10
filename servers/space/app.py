@@ -62,7 +62,7 @@ from zonos3.server.capabilities import (
     CapabilityFacts,
     capabilities_document,
     condition_spec,
-    decoder_capability,
+    decoder_capabilities,
     dual_codec_hop,
 )
 from zonos3.server.errors import call as edit_errors
@@ -74,7 +74,7 @@ from zonos3.server.schemas import (
     PhonemizeRequest,
     SpeakerCreateRequest,
 )
-from zonos3.server.speech import check_format, prefix_stream_supported, speech_headers
+from zonos3.server.speech import check_format, prefix_stream_supported, resolve_decoder, speech_headers
 from zonos3.server.studio import resolve_studio_file, studio_cache_control
 from zonos3.server.voices import (
     DefaultVoice,
@@ -155,6 +155,8 @@ ASSETS.normalizer().warmup()
 # --------------------------------------------------------------------------------------------- capabilities
 
 
+# The Space decodes with the codec's default decoder only (zonos3.reference.synth): a request's `decoder` may name it.
+DECODERS = [matched_codec.decoder_id(CONFIG.audio_codec)]
 EDIT_MODEL = EditModel.from_config(
     CONFIG,
     hop=int(matched_codec.entry(CONFIG.audio_codec)["hop"]),
@@ -167,6 +169,7 @@ def capabilities() -> dict:
     LoRA and the gold lexicon; no plugins, no project store."""
     c = CONFIG
     modes = list(CONTEXT.speaker_modes)
+    decoder, decoders = decoder_capabilities(c.audio_codec, DECODERS)
     return capabilities_document(
         CapabilityFacts(
             text_tokenizer_spec=CONTEXT.text_tokenizer_spec or None,
@@ -183,7 +186,8 @@ def capabilities() -> dict:
             silence_hop=dual_codec_hop(c.audio_codec),
             tag_cfg_available=True,
             tag_cfg_trained=trained_on_tags(resolve_dir_or_local(SPACE_LM)),
-            decoder=decoder_capability(c.audio_codec),
+            decoder=decoder,
+            decoders=decoders,
             condition_tokens=None
             if c.condition_count == 0
             else condition_spec(
@@ -737,7 +741,8 @@ class SpaceEditEngine:
             hidden_delta=delta,
         )
 
-    async def decode(self, codes: np.ndarray) -> np.ndarray:
+    async def decode(self, codes: np.ndarray, decoder: str | None) -> np.ndarray:
+        # the edit route checked `decoder`: the default (DECODERS) or None
         return await edit_call(EDIT_REQUEST.get()[0], "decode", codes=np.asarray(codes))
 
 
@@ -779,7 +784,12 @@ async def edit_align(req: EditAlignRequest, request: Request):
 @app.post("/v2/edit")
 async def edit(req: EditRequest, request: Request):
     """Regenerate the edited regions of recorded speech (the edit LoRA on); unedited codec frames are kept exactly."""
-    return await edit_route(request, lambda rt: rt.edit(req))
+
+    async def run(rt):
+        resolve_decoder(req.decoder, DECODERS)  # 400 for an id this Space does not serve
+        return await rt.edit(req)
+
+    return await edit_route(request, run)
 
 
 @app.get("/v2/capabilities")
@@ -890,6 +900,7 @@ async def generate(
     16-bit WAV)."""
     try:
         check_format(bool(req.stream), req.format)
+        decoder = resolve_decoder(req.decoder, DECODERS)
         body = await prepare(req.model_dump(), normalize_session_id(x_tts_session_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -906,7 +917,11 @@ async def generate(
         raise HTTPException(status_code=400 if kind == "invalid" else 500, detail=payload)
     seed, reading = payload
     headers = speech_headers(
-        fmt=req.format, seed=seed, control_spans=bool(req.control_spans), follows_reading=bool(reading)
+        fmt=req.format,
+        seed=seed,
+        control_spans=bool(req.control_spans),
+        follows_reading=bool(reading),
+        decoder=decoder,
     )
     if req.stream:  # a failure mid-take ends the stream: the status line is already sent
         return StreamingResponse(

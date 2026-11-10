@@ -69,7 +69,9 @@ class GenerationOptions(_Strict):
     # Condition rows of the cond3 finetunes: bucket ids per name or raw values mapped through the checkpoint's edges.
     condition_buckets: ConditionBuckets = None
     condition_values: ConditionValues = None
-    headroom_db: Annotated[float, Field(ge=0.0, le=24.0)] | None = None  # None = the decoder's registry value
+    headroom_db: Annotated[float, Field(ge=0.0, le=24.0)] | None = None  # None = the chosen decoder's registry value
+    # The audio decoder by id (Capabilities.decoders; None = the server default): an id the server does not serve: 400.
+    decoder: str | None = None
     speaker_audio_base64: str | None = None
     speaker_audio_name: str | None = None
     # Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.
@@ -222,6 +224,8 @@ class EditRequest(_Strict):
     verify: bool = False
     # Tag CFG is not offered for edits: any value other than 1.0 is refused (400) rather than ignored.
     tag_cfg_scale: float = 1.0
+    # The audio decoder of the edited clip by id (Capabilities.decoders; None = the server default; unknown: 400).
+    decoder: str | None = None
 
 
 # ------------------------------------------------------------------------------------------------------- projects

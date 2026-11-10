@@ -8,7 +8,7 @@ import wave
 import numpy as np
 import pytest
 
-from .support import LEGACY_FIELDS, MAX_TOKENS, SAMPLES_PER_FRAME, TEXT, error, generate, pcm
+from .support import LEGACY_FIELDS, MAX_TOKENS, SAMPLES_PER_FRAME, TEXT, error, generate, needs, pcm
 
 
 def test_buffered_pcm(client):
@@ -18,6 +18,29 @@ def test_buffered_pcm(client):
     assert r.headers["x-audio-channels"] == "1"
     assert r.headers["x-audio-format"] == "float32"
     assert r.headers["x-seed"] == "1"
+
+
+def test_decoder_is_echoed_and_picked(client, caps):
+    ids = [d["id"] for d in caps["decoders"]]
+    needs(ids, "the server has no decoder list")
+    r = generate(client, {})
+    pcm(r)
+    assert r.headers["x-decoder"] == ids[0]  # no decoder: the default
+    for decoder in ids:
+        r = generate(client, {"decoder": decoder})
+        pcm(r)
+        assert r.headers["x-decoder"] == decoder
+        body = {"text": TEXT, "stream": True, "max_tokens": MAX_TOKENS, "seed": 2, "decoder": decoder}
+        with client.stream("POST", "/v2/generate", json=body) as streamed:
+            assert streamed.status_code == 200 and streamed.headers["x-decoder"] == decoder
+            assert b"".join(streamed.iter_bytes())
+
+
+def test_unknown_decoder_is_400(client, caps):
+    ids = [d["id"] for d in caps["decoders"]]
+    needs(ids, "the server has no decoder list")
+    body = error(generate(client, {"decoder": "no_such_decoder"}), 400)
+    assert body["detail"] == f"Unknown decoder 'no_such_decoder'; this server serves: {', '.join(ids)}."
 
 
 def test_streamed_pcm(client):

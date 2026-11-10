@@ -55,6 +55,7 @@ dir. Without a build, `GET /` is a 404 that names `pnpm --dir studio build`.
 | `Authorization: Bearer <token>` | request | Needed when the server runs with `ZONOS3_ACCESS_TOKEN` (alternatives: the `zonos3_access` cookie, set once by `GET /?access_token=<token>`); a failure is 403 `Access denied` |
 | `X-Audio-Sample-Rate`, `X-Audio-Channels`, `X-Audio-Format` | response | `44100`, `1`, `float32` on PCM audio |
 | `X-Seed` | response | The seed used (drawn uniformly in 0..2³¹−1 when `seed` is null) |
+| `X-Decoder` | response | The decoder that made the audio (an id of `/v2/capabilities` `decoders`) |
 | `X-Control-Span-Follow` | response | `rate` or `reading`: which schedule placed `control_spans` (sent when spans are set) |
 
 CORS allows every origin and exposes the response headers above.
@@ -84,6 +85,7 @@ CORS allows every origin and exposes the response headers above.
 | `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |
 | `tag_cfg_scale` | `1.0` | Nonverbal-tag guidance, 1–4 ([guide](guide.md#nonverbal-markup-and-tag-cfg)) |
 | `laci` | `false` | Alignment-guarded decoding ([features](features.md#laci-alignment-guarded-decoding)) |
+| `decoder` | `null` | The audio decoder by id (`/v2/capabilities` `decoders`: `keep2_plain`, the default, or the full-size `full_mr` where served); an id the server does not serve is a 400; also on `/v2/edit` |
 | `headroom_db`, `fade_out_ms`, `decode_context` | registry, `0`, `false` | Output gain (followed by every server's soft limiter above −1 dBFS, `output_limit_dbfs` in `generation.json`), tail fade, decoding behind the reference context |
 
 On a phoneme-token checkpoint `text` may carry pronunciation groups, U+E000 IPA U+E001 (see

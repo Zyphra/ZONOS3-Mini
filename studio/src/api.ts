@@ -15,6 +15,7 @@
  */
 import type { components, paths } from './api/schema';
 import fixtureSpec from './fixtures/controls.json';
+import { FIXTURE_DECODERS } from './fixtures/decoders';
 import { fixtureSpeakers, syntheticEmbedding } from './fixtures/embeddings';
 import { synthesizeWords } from './fixtures/synth';
 import * as fixtureEdit from './fixtures/edit';
@@ -22,6 +23,7 @@ import * as fixturePron from './fixtures/phonemize';
 import * as fixtureProjects from './fixtures/projects';
 import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
+import { unknownDecoder } from './lib/decoders';
 import { ApiError, bodyOf, createHttp, errorOf, MissingMedia, newSessionId, readError, readFloat32Stream, RevisionConflict } from './lib/http';
 import { wavBytes } from './lib/wav';
 import { encodeNpy, bufferToDataUrl, blobToDataUrl, slug } from './lib/files';
@@ -132,6 +134,8 @@ export interface Rendered {
   totalMs: number;
   /** How the server placed `control_spans` (X-Control-Span-Follow); absent without spans. */
   spanFollow?: SpanFollow;
+  /** The decoder that made the audio (X-Decoder); absent from servers that don't say. */
+  decoder?: string;
 }
 
 export type BackendKind = 'live' | 'fixture' | 'offline' | 'web';
@@ -148,9 +152,14 @@ export interface Backend {
   projects: ProjectCaps | null;
   /** Nonverbal markup + tag guidance (`/v2/capabilities.tag_cfg`); null: tags are plain text to this server. */
   tags: TagCaps | null;
+  /** Audio decoders a request may pick with `decoder` (`/v2/capabilities.decoders`, the default first); [] when none. */
+  decoders: DecoderInfo[];
 }
 
 type Capabilities = Schemas['Capabilities'];
+
+/** An audio decoder of the server's codec (`/v2/capabilities.decoders`). */
+export type DecoderInfo = Schemas['DecoderInfo'];
 
 /** `/v2/capabilities.tag_cfg` of a checkpoint trained on tags; `fixture`: renders run on the client-side synth. */
 export type TagCaps = Omit<Schemas['TagCfg'], 'available' | 'trained'> & { fixture: boolean };
@@ -315,7 +324,7 @@ async function startWeb(make: (kind: BackendKind, spec: ControlsSpec) => Promise
   await startWebEngine((d) => (bootProgress.value = d));
   bootProgress.value = null;
   bootStage.value = 'Starting the voice engine…';
-  // A clip voice's first use downloads the encoders: a bar in the corner until they are in.
+  // A clip voice's first use downloads the encoders, the first full-size decoder request that decoder: a bar in the corner until they are in.
   void onEncoderProgress((d) => (encoderDownload.value = d.fraction >= 1 ? null : d));
   return make('web', await getControls());
 }
@@ -330,7 +339,18 @@ export async function connect(opts: ConnectOptions = {}): Promise<Backend> {
     const caps = kind === 'offline' ? null : await ok<Capabilities>(client.GET('/v2/capabilities')).catch(() => null);
     // The in-browser server answers like a live one; its capabilities say which features are off.
     const as = kind === 'web' ? 'live' : kind;
-    return (backend = { kind, server, spec, steering: kind !== 'fixture', edit: editCaps(as, caps), pron: pronCaps(as, caps), projects: projectCaps(caps?.projects), tags: tagCaps(as, caps?.tag_cfg) });
+    return (backend = {
+      kind,
+      server,
+      spec,
+      steering: kind !== 'fixture',
+      edit: editCaps(as, caps),
+      pron: pronCaps(as, caps),
+      projects: projectCaps(caps?.projects),
+      tags: tagCaps(as, caps?.tag_cfg),
+      // Audio decoders: the server's when one answers, the fixture's two offline.
+      decoders: kind === 'offline' ? FIXTURE_DECODERS : (caps?.decoders ?? []),
+    });
   };
   if (forced === 'offline') return make('offline', fixture);
   if (forced === 'web') return startWeb(make);
@@ -477,6 +497,7 @@ export async function generate(req: GenerateRequest, opts: GenerateOptions = {})
   const res = await transport(`${server}/v2/generate`, { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body), signal: opts.signal });
   if (!res.ok) throw await readError(res);
   const spanFollow: SpanFollow | undefined = body.control_spans?.length ? (res.headers.get('X-Control-Span-Follow') === 'reading' ? 'reading' : 'rate') : undefined;
+  const decoder = res.headers.get('X-Decoder');
   const sr = Number(res.headers.get('X-Audio-Sample-Rate')) || SAMPLE_RATE;
   if (!res.body) throw new ApiError(502, 'Empty audio stream');
 
@@ -500,12 +521,13 @@ export async function generate(req: GenerateRequest, opts: GenerateOptions = {})
     pcm.set(c, o);
     o += c.length;
   }
-  return { pcm, sr, ttfbMs, totalMs: performance.now() - t0, ...(spanFollow ? { spanFollow } : {}) };
+  return { pcm, sr, ttfbMs, totalMs: performance.now() - t0, ...(spanFollow ? { spanFollow } : {}), ...(decoder ? { decoder } : {}) };
 }
 
 async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: number): Promise<Rendered> {
   const b = current();
   fixturePron.validateGroups(req.text, b.pron.phoneme_tokens);
+  const decoder = fixtureDecoder(req.decoder);
   const speakers = await getSpeakers();
   const speaker = speakers.find((s) => s.id === req.speaker_embedding_id);
   if (!speaker) throw new ApiError(400, `Unknown speaker_embedding_id '${req.speaker_embedding_id}'`);
@@ -555,7 +577,14 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
   }
   // The server's header, emulated: reading where the fixture "has heads" for the language, else the estimate.
   const spanFollow: SpanFollow | undefined = req.control_spans?.length ? (req.control_span_follow === 'reading' && FIXTURE_READING_LANGUAGES.has(req.language ?? 'en_us') ? 'reading' : 'rate') : undefined;
-  return { pcm, sr: SAMPLE_RATE, ttfbMs, totalMs: performance.now() - t0, ...(spanFollow ? { spanFollow } : {}) };
+  return { pcm, sr: SAMPLE_RATE, ttfbMs, totalMs: performance.now() - t0, ...(spanFollow ? { spanFollow } : {}), ...(decoder ? { decoder } : {}) };
+}
+
+/** The fixture's answer to `decoder`: the one served by that id (null: the default), else the server's 400. The synth sounds the same either way. */
+function fixtureDecoder(id: string | null | undefined): string | undefined {
+  const served = current().decoders;
+  if (id && !served.some((d) => d.id === id)) throw new ApiError(400, unknownDecoder(id, served));
+  return id ?? served[0]?.id;
 }
 
 // ── Speech editing ────────────────────────────────────────────────────────────────────────────────
@@ -578,6 +607,7 @@ export async function edit(req: EditRequest, signal?: AbortSignal): Promise<Edit
     const tokens = current().pron.phoneme_tokens;
     fixturePron.validateGroups(req.target_text, tokens);
     if (/[\ue000\ue001]/.test(req.original_text ?? '')) throw new ApiError(400, 'original_text describes the recorded audio: it cannot hold pronunciation groups.');
+    fixtureDecoder(req.decoder);
     return fixtureEdit.edit(current().spec, current().edit, req, signal);
   }
   return ok<EditResponse>(client.POST('/v2/edit', { body: req, signal }));

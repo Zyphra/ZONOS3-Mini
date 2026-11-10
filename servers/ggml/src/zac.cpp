@@ -139,11 +139,10 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
     m.stages.clear();
     for (int s = 0; s < NS; ++s)
         m.stages.push_back({in_dim[s], out_dim[s], d_model[s], n_head[s], n_layer[s], n_ff[s], context[s], patch[s]});
-    std::string head_variant;
     {
         const int64_t id = gguf_find_key(gguf, "mossdual_istft.head.variant");
         if (id < 0 || gguf_get_kv_type(gguf, id) != GGUF_TYPE_STRING) return reject("missing metadata");
-        head_variant = gguf_get_val_str(gguf, id);
+        m.head_variant = gguf_get_val_str(gguf, id);
     }
     m.n_fft = {n_fft_v[0], n_fft_v[1]};
     int up = m.head_hop;
@@ -355,7 +354,7 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
         if (!m.use_fattn) fprintf(stderr, "zac: flash attention unsupported on this backend, using matmul attention\n");
     }
     fprintf(stderr, "zac: loaded %zu mossdual_istft tensors on %s (%d MOSS layers, head %s)\n",
-            m.t.size(), m.is_gpu ? "GPU" : "CPU", n_moss, head_variant.c_str());
+            m.t.size(), m.is_gpu ? "GPU" : "CPU", n_moss, m.head_variant.c_str());
     return true;
 }
 

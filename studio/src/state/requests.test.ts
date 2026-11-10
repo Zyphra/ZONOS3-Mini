@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ControlsSpec } from '../api';
 import fixture from '../fixtures/controls.json';
+import { FIXTURE_DECODERS } from '../fixtures/decoders';
+import { requestDecoder, unknownDecoder } from '../lib/decoders';
 import { design } from './design';
 import { toDoses } from './engine';
-import { controlSpans, type Span } from './requests';
+import { buildRequest, controlSpans, type RequestContext, type Span } from './requests';
 
 const spec = fixture as unknown as ControlsSpec;
 const d = { ...design.value, mode: 'embedding' as const };
@@ -32,5 +34,31 @@ describe('span-only controls (emphasis)', () => {
 
   it('never apply to a whole voice', () => {
     expect(Object.keys(toDoses(spec, emphasis, {}, 'embedding')).some((k) => k.startsWith('emphasis_nv_nodur.'))).toBe(false);
+  });
+});
+
+describe('decoder', () => {
+  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null };
+
+  it('is left out for the server default', () => {
+    expect('decoder' in buildRequest(spec, ctx, d, text, 1)).toBe(false);
+    expect(requestDecoder(FIXTURE_DECODERS, null)).toBeNull();
+    expect(requestDecoder(FIXTURE_DECODERS, 'keep2_plain')).toBeNull();
+  });
+
+  it('goes out when another served one is picked, on both A/B sides', () => {
+    const picked = { ...ctx, decoder: requestDecoder(FIXTURE_DECODERS, 'full_mr') };
+    expect(buildRequest(spec, picked, d, text, 1).decoder).toBe('full_mr');
+    expect(buildRequest(spec, picked, d, text, 1, { unsteered: true }).decoder).toBe('full_mr');
+  });
+
+  it('falls back to the default when the server does not serve the pick', () => {
+    expect(requestDecoder(FIXTURE_DECODERS.slice(0, 1), 'full_mr')).toBeNull();
+    expect(requestDecoder([], 'full_mr')).toBeNull();
+    expect(requestDecoder(FIXTURE_DECODERS, 'gone_head')).toBeNull();
+  });
+
+  it('an unknown one gets the server’s 400 text', () => {
+    expect(unknownDecoder('x', FIXTURE_DECODERS)).toBe("Unknown decoder 'x'; this server serves: keep2_plain, full_mr.");
   });
 });

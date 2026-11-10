@@ -55,6 +55,8 @@ class TTSSamplingParams:
     # earlier); for the "first" chunk only (later chunks wait for complete frames) or "all" (registry defaults).
     stream_codebooks: int = STREAM_CODEBOOKS
     stream_codebooks_scope: str = STREAM_CODEBOOKS_SCOPE
+    # The audio decoder (a served decoder id, checked by the frontend; None = the server default), read by the vocoder.
+    decoder: str | None = None
 
 
 @dataclass
@@ -171,6 +173,7 @@ class TTSDecodeCodesMsg(BaseTTSTokenizerMsg):
 
     uid: int
     codes: torch.Tensor
+    decoder: str | None = None  # a served decoder id; None = the server default
 
 
 @dataclass
@@ -192,6 +195,8 @@ class TTSDetokenizeMsg(BaseTTSTokenizerMsg):
     # Request's early partial-frame decode (TTSSamplingParams.stream_codebooks / _scope), read by the vocoder.
     stream_codebooks: int = STREAM_CODEBOOKS
     stream_codebooks_scope: str = STREAM_CODEBOOKS_SCOPE
+    # Request's audio decoder (TTSSamplingParams.decoder), read by the vocoder.
+    decoder: str | None = None
     # The request's sampling_params.end_token. "span" fills are returned as
     # delayed codec rows (TTSCodesReply), never vocoded on their own.
     end_token: str = "utterance"

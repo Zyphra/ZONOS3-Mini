@@ -102,7 +102,7 @@ export function registerSpeakTool(server: McpServer) {
         const request = buildRequest(ctx.spec, ctxReq, persona.design, line.text, s, { extra: script.baseline, spans: line.spans, language: doc.settings.language });
         try {
           const g = await zonos.generate(sendable(request, ctx.steering));
-          const audio = { ttfbMs: g.ttfbMs, totalMs: g.totalMs, ...(g.spanFollow ? { spanFollow: g.spanFollow } : {}), media: '' };
+          const audio = { ttfbMs: g.ttfbMs, totalMs: g.totalMs, ...(g.spanFollow ? { spanFollow: g.spanFollow } : {}), ...(g.decoder ? { decoder: g.decoder } : {}), media: '' };
           made.push({ take: { id: uid(), text: line.text, seed: s, request, audio, createdAt: Date.now(), starred: false }, wav: g.wav });
         } catch (e) {
           error = e instanceof Error ? e.message : String(e);

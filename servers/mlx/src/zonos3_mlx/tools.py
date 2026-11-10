@@ -163,7 +163,12 @@ def main(argv=None) -> int:
     g.add_argument("model")
     g.add_argument("text")
     g.add_argument("out")
-    g.add_argument("--zac", help="decoder GGUF (default: zac-keep2.gguf next to the model)")
+    g.add_argument(
+        "--zac",
+        action="append",
+        help="decoder GGUF, repeatable, the first the default (default: zac-keep2.gguf and zac.gguf next to the "
+        'model); --request \'{"decoder": "full_mr"}\' picks another',
+    )
     g.add_argument("--seed", type=int)
     g.add_argument("--dump-codes")
     g.add_argument("--request", help="extra GenerateRequest fields as JSON")

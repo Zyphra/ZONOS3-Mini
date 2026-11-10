@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 import numpy as np
 import torch
 from zonos3.generation import SAMPLE_RATE
-from zonos3.tokenizer.matched_codec import capture_stream_graphs
+from zonos3.tokenizer.matched_codec import capture_stream_graphs, served_decoders
 from zonos3.tokenizer.matched_codec import codec_names as matched_codec_names
 from zonos3.tokenizer.matched_codec import decode as decode_matched
 from zonos3.tokenizer.matched_codec import entry as matched_codec_entry
@@ -20,9 +20,10 @@ from zonos3.tts.stream import PrefixDecoder, StreamSettings, prefix_chunks
 from zonos3_sgl.message import TTSDetokenizeMsg
 
 
-def decode_audio_codes(codes: torch.Tensor, audio_codec: str) -> torch.Tensor:
+def decode_audio_codes(codes: torch.Tensor, audio_codec: str, decoder: str | None = None) -> torch.Tensor:
+    """Decode through the codec's decoder ``decoder`` (None = its default)."""
     if audio_codec in matched_codec_names():
-        return decode_matched(codes, audio_codec)
+        return decode_matched(codes, audio_codec, decoder)
     raise ValueError(f"Unsupported audio codec: {audio_codec!r}")
 
 
@@ -32,7 +33,8 @@ class TTSVocoderManager:
     The model outputs tokens with a delay pattern where codebook j is delayed by j frames; shear_up removes this
     delay once n_codebooks - 1 later rows have arrived. The matched codecs are long-context neural decoders, so a
     request is decoded whole at EOS, unless it asks for the progressive prefix decode (stream_decode="prefix"): that
-    decodes incrementally on a stateful codec stream (zonos3.tts.stream.PrefixDecoder) and flushes it at EOS.
+    decodes incrementally on a stateful codec stream (zonos3.tts.stream.PrefixDecoder) and flushes it at EOS. Each
+    request decodes through its own decoder (``decoder`` of its messages: one of ``decoders``, None = the default).
     """
 
     def __init__(
@@ -46,6 +48,7 @@ class TTSVocoderManager:
         prefix_hold_back_frames: int | None = None,
         prefix_context_frames: int | None = None,
         prefix_first_chunk_frames: int | None = None,
+        decoders: Sequence[str] | None = None,
     ):
         """Initialize the vocoder manager.
 
@@ -55,6 +58,8 @@ class TTSVocoderManager:
             audio_codec: Matched codec name (a ``codec`` of the codec registry)
             sample_rate: Output sample rate
             overlap_frames: Already-counted rows (the silence prefill) re-decoded as left context at EOS
+            decoders: The decoder ids served (matched_codec.served_decoders; None = every decoder of the codec), the
+                default first
         """
         self.audio_codec = str(audio_codec).strip().lower().replace("-", "_")
         if self.audio_codec not in matched_codec_names():
@@ -62,6 +67,7 @@ class TTSVocoderManager:
         specification = matched_codec_entry(self.audio_codec)
         if n_codebooks != specification["codebooks"] or audio_pad_id != 4097:
             raise ValueError("Matched codec codebook/padding mismatch")
+        self.decoders = served_decoders(self.audio_codec, decoders)
         self.n_codebooks = n_codebooks
         self.audio_pad_id = audio_pad_id
         self.eoa_id = audio_pad_id - 1
@@ -95,31 +101,41 @@ class TTSVocoderManager:
         self._pending_context: Dict[int, dict] = {}
         self._prefill_len: Dict[int, int] = {}
         self._context_codes: Dict[int, np.ndarray | None] = {}
+        self._decoder: Dict[int, str] = {}  # the request's decoder id
         self._silence_frame: torch.Tensor | None = None
-        # Prefix streams that decoded P pure silence frames, and the samples that came out, per P: a request whose
-        # prefill rows are the silence prefill (no decode context) continues a fork, see _prefix_stream.
-        self._primed: Dict[int, tuple[object, int]] = {}
+        # Prefix streams that decoded P pure silence frames, and the samples that came out, per (decoder, P): a
+        # request whose prefill rows are the silence prefill (no decode context) continues a fork, see _prefix_stream.
+        self._primed: Dict[tuple[str, int], tuple[object, int]] = {}
+
+    def request_decoder(self, decoder: str | None) -> str:
+        """A message's decoder id (None = the default); ValueError for one this server does not serve."""
+        if decoder is None:
+            return self.decoders[0]
+        if decoder not in self.decoders:
+            raise ValueError(f"Unknown decoder {decoder!r}; this server serves: {', '.join(self.decoders)}")
+        return decoder
 
     def warm_prefix_stream(self) -> None:
-        """Before the first prefix request (CUDA only): prime the codec stream on the default silence prefill and
-        CUDA-graph the chunk shapes that follow it (the ramp 1, 2, 4, 8 ... until every KV cache is full, then the
-        steady chunk). Other shapes decode eagerly; a replay is bit-identical to the eager decode."""
+        """Before the first prefix request (CUDA only), for every served decoder: prime its codec stream on the default
+        silence prefill and CUDA-graph the chunk shapes that follow it (the ramp 1, 2, 4, 8 ... until every KV cache is
+        full, then the steady chunk). Other shapes decode eagerly; a replay is bit-identical to the eager decode."""
         if not torch.cuda.is_available():
             return
         prefill = self.silence_prefill_frames_for(None)
-        frames = stream_matched(self.audio_codec).full_frames + self.prefix.chunk
-        capture_stream_graphs(self.audio_codec, prefix_chunks(prefill, self.prefix, frames))
-        if prefill:
-            self._primed_stream(prefill)
+        for decoder in self.decoders:
+            frames = stream_matched(self.audio_codec, decoder).full_frames + self.prefix.chunk
+            capture_stream_graphs(self.audio_codec, prefix_chunks(prefill, self.prefix, frames), decoder)
+            if prefill:
+                self._primed_stream(decoder, prefill)
 
-    def _primed_stream(self, frames: int) -> tuple[object, int]:
-        if frames not in self._primed:
-            stream = stream_matched(self.audio_codec)
+    def _primed_stream(self, decoder: str, frames: int) -> tuple[object, int]:
+        if (decoder, frames) not in self._primed:
+            stream = stream_matched(self.audio_codec, decoder)
             silence = self.silence_frame_codes().to(torch.int64).numpy()
-            self._primed[frames] = (stream, len(stream.decode(np.repeat(silence[None], frames, 0))))
-        return self._primed[frames]
+            self._primed[decoder, frames] = (stream, len(stream.decode(np.repeat(silence[None], frames, 0))))
+        return self._primed[decoder, frames]
 
-    def _prefix_stream(self, prefill: List[List[int]], context) -> tuple[object, int]:
+    def _prefix_stream(self, decoder: str, prefill: List[List[int]], context) -> tuple[object, int]:
         """A prefix request's codec stream and the samples it already produced. With the silence prefill rows and no
         decode context the stream is a fork of one that decoded the prefill frames as pure silence, so the first chunk
         is generated frames only. Those frames' last codebooks are the LM's (row f + j > prefill): decoding them as
@@ -132,9 +148,9 @@ class TTSVocoderManager:
                 for r, row in enumerate(prefill)
                 for j in range(self.n_codebooks)
             ):
-                stream, samples = self._primed_stream(len(prefill))
+                stream, samples = self._primed_stream(decoder, len(prefill))
                 return stream.fork(), samples
-        return stream_matched(self.audio_codec), 0
+        return stream_matched(self.audio_codec, decoder), 0
 
     # ------------------------------------------------------------------ decode context / silence prefill (2026-10-17)
     def silence_prefill_frames_for(self, requested_frames: int | None) -> int:
@@ -202,11 +218,12 @@ class TTSVocoderManager:
         """decode_audio_codes with the request's context frames prepended when the slice begins at the stream
         start; the context's samples are dropped so sample 0 stays frame 0 of the slice."""
         context = self._context_codes.get(uid)
+        decoder = self._decoder[uid]
         if at_stream_start and context is not None and len(context):
             ctx = torch.as_tensor(context, dtype=codes.dtype, device=codes.device).unsqueeze(0)
-            audio = decode_audio_codes(torch.cat((ctx, codes), dim=1), self.audio_codec)
+            audio = decode_audio_codes(torch.cat((ctx, codes), dim=1), self.audio_codec, decoder)
             return audio[0].numpy().astype(np.float32)[len(context) * self.hop_length :]
-        audio = decode_audio_codes(codes, self.audio_codec)
+        audio = decode_audio_codes(codes, self.audio_codec, decoder)
         return audio[0].numpy().astype(np.float32)
 
     def decode_frames(self, msgs: List[TTSDetokenizeMsg]) -> List[bytes]:
@@ -243,10 +260,13 @@ class TTSVocoderManager:
                 prefill = [list(row) for row in (pending.get("rows") or [])]
                 self._prefill_len[uid] = len(prefill)
                 self._context_codes[uid] = pending.get("context")
+                self._decoder[uid] = self.request_decoder(getattr(msg, "decoder", None))
                 self._frame_buffers[uid] = prefill  # prefilled silence rows open the stream (never emitted)
                 self._decoded_counts[uid] = len(prefill)
                 if self.prefix_stream_supported and getattr(msg, "stream_decode", None) == "prefix":
-                    stream, primed_samples = self._prefix_stream(prefill, self._context_codes.get(uid))
+                    stream, primed_samples = self._prefix_stream(
+                        self._decoder[uid], prefill, self._context_codes.get(uid)
+                    )
                     self._prefix[uid] = PrefixDecoder(
                         stream,
                         n_codebooks=self.n_codebooks,
@@ -315,6 +335,7 @@ class TTSVocoderManager:
                 self._prefix.pop(uid, None)
                 self._prefill_len.pop(uid, None)
                 self._context_codes.pop(uid, None)
+                self._decoder.pop(uid, None)
 
         return results
 
@@ -364,12 +385,14 @@ class TTSVocoderManager:
         self,
         codes: torch.Tensor,
         apply_shear_up: bool = True,
+        decoder: str | None = None,
     ) -> torch.Tensor:
         """Decode a complete sequence of audio codes.
 
         Args:
             codes: Tensor of shape (batch, seq_len, n_codebooks)
             apply_shear_up: Whether to apply shear_up before decoding
+            decoder: A served decoder id (None = the default)
 
         Returns:
             Audio tensor of shape (batch, num_samples)
@@ -378,7 +401,7 @@ class TTSVocoderManager:
             codes = shear_up(codes, self.audio_pad_id)
 
         codes = codes.to("cuda")
-        return decode_audio_codes(codes, self.audio_codec)
+        return decode_audio_codes(codes, self.audio_codec, self.request_decoder(decoder))
 
     def reset(self, uid: int | None = None):
         """Reset frame buffers and decode state.
@@ -391,8 +414,10 @@ class TTSVocoderManager:
             self._decoded_counts.pop(uid, None)
             self._eos_frames.pop(uid, None)
             self._prefix.pop(uid, None)
+            self._decoder.pop(uid, None)
         else:
             self._frame_buffers.clear()
             self._decoded_counts.clear()
             self._eos_frames.clear()
             self._prefix.clear()
+            self._decoder.clear()

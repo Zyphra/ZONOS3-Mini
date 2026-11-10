@@ -17,7 +17,7 @@ import { levelMeter } from '../lib/level';
 import { clamp, uid } from '../lib/math';
 import { parsePron, pronProblem, spokenText, toSent } from '../lib/pron';
 import { EDIT_LANGUAGES, langLabel } from '../lib/languages';
-import { act, backend, notify, projectSettings, pronTokens, spec } from './app';
+import { act, backend, notify, projectSettings, pronTokens, requestContext, spec } from './app';
 import { controlDose, type Values } from './engine';
 import { History } from './history';
 import { load, persist } from './persist';
@@ -695,6 +695,9 @@ export function requestFor(v: Version, target: string, list: { start: number; en
     language: doc.value?.language ?? 'en_us',
   };
   if (contextSeconds.value !== DEFAULT_CONTEXT) req.context_seconds = contextSeconds.value;
+  // The project's decoder, as Direct renders with (null: the server default, left out).
+  const decoder = requestContext.value.decoder;
+  if (decoder) req.decoder = decoder;
   const whole = dosesOf(wholeValues.value);
   if (whole) req.controls = whole;
   const per = list.map((r) => dosesOf(r.values));

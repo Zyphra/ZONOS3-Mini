@@ -4,6 +4,7 @@ import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { Dose, EditRequest } from '../../../src/api';
+import { requestDecoder } from '../../../src/lib/decoders';
 import { EDIT_LANGUAGES, langLabel } from '../../../src/lib/languages';
 import { uid } from '../../../src/lib/math';
 import { parsePron } from '../../../src/lib/pron';
@@ -139,6 +140,9 @@ export function registerEditTools(server: McpServer) {
         seed: a.seed ?? null,
         language: lang,
       };
+      // The project's decoder (Studio project settings), as zonos_speak renders with.
+      const decoder = requestDecoder(c.decoders ?? [], doc.settings.decoder);
+      if (decoder) req.decoder = decoder;
       if (a.delivery) {
         const r = resolveValues(ctx.spec, a.delivery, 'delivery');
         warnings.push(...r.warnings);

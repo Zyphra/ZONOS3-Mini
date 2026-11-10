@@ -30,6 +30,7 @@ class FakeEngine:
         self.fill_frames = fill_frames
         self.codes = np.arange(FRAMES * K, dtype=np.int64).reshape(FRAMES, K)
         self.checked, self.jobs, self.decoded, self.encoded = [], [], [], 0
+        self.decoders = []  # the decoder of every decode
 
     async def decode_audio(self, audio):
         assert audio == b"an upload"
@@ -52,8 +53,9 @@ class FakeEngine:
         n = self.fill_frames
         return np.full((n + K - 1, K), 900 + len(self.jobs) - 1, dtype=np.int64), n
 
-    async def decode(self, codes):
+    async def decode(self, codes, decoder):
         self.decoded.append(np.asarray(codes))
+        self.decoders.append(decoder)
         return np.zeros(int(len(codes) * SAMPLE_RATE / FRAME_RATE), dtype=np.float32)
 
 
@@ -106,6 +108,7 @@ def test_unedited_frames_survive_the_splice_and_spans_skip_transcription():
     np.testing.assert_array_equal(job.window_codes, engine.codes)
     assert job.speaker_embedding == [0.25] * 8 and job.controls is None
     (spliced,) = engine.decoded
+    assert engine.decoders == [None]  # no decoder: the server default
     assert spliced.shape == (FRAMES - 5 + 7, K)
     np.testing.assert_array_equal(spliced[:10], engine.codes[:10])
     np.testing.assert_array_equal(spliced[10:17], np.full((7, K), 900))
@@ -117,6 +120,12 @@ def test_unedited_frames_survive_the_splice_and_spans_skip_transcription():
     assert take["seed"] == 5 and take["stopped"] == [True] and take["verify"] is None
     assert take["edited_regions"] == [[1.0, 1.7]] and take["fill_seconds"] == [pytest.approx(0.7)]
     assert take["duration"] == pytest.approx((FRAMES + 2) / FRAME_RATE)
+
+
+def test_the_edit_decodes_through_its_decoder():
+    engine = FakeEngine(fill_frames=7)
+    edit(EditRuntime(engine, FakeAsr(), FakeAligner()), spans=[[1.0, 1.5]], min_fill_ratio=0.0, decoder="full_mr")
+    assert engine.decoders == ["full_mr"]
 
 
 def test_raw_controls_need_the_speaker_row():

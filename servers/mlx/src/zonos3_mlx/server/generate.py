@@ -17,7 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 from zonos3.generation import SAMPLE_RATE
 from zonos3.reference.synth import Sampling, fade_out
 from zonos3.server.schemas import SPEAKER_INPUT_FIELDS, GenerateRequest, SpeechRequest
-from zonos3.server.speech import check_format, resolve_stream_decode, speech_headers
+from zonos3.server.speech import check_format, resolve_decoder, resolve_stream_decode, speech_headers
 from zonos3.server.voices import normalize_session_id
 from zonos3.tts.audio import output_pcm, pcm16_wav_bytes
 from zonos3.tts.plan import parse_request, request_head
@@ -36,8 +36,8 @@ PREFIX_STREAM = True
 
 
 class JobRun:
-    """One scheduler job and its audio. ``mode``: "whole" / "prefix" decode, or None for the rows only (edit fills,
-    which stop on ``stop_id``: the span-end token)."""
+    """One scheduler job and its audio. ``mode``: "whole" / "prefix" decode through the request's decoder, or None for
+    the rows only (edit fills, which stop on ``stop_id``: the span-end token)."""
 
     def __init__(
         self,
@@ -50,10 +50,11 @@ class JobRun:
         self.state, self.plan = state, plan
         self.loop = asyncio.get_running_loop()
         self.queue: asyncio.Queue = asyncio.Queue()
-        c, dec = state.config, state.engine.decoder
+        c = state.config
         self.decoder = None
         if mode is not None:
             req = plan.request
+            dec = state.engine.decoder_of(req.decoder)
             self.decoder = StreamDecoder(
                 dec.decode,
                 stream=dec.stream() if mode == "prefix" else None,
@@ -152,9 +153,10 @@ def finish_pcm(audio: bytes, gain: float, fade_out_ms: float) -> np.ndarray:
 async def plan_generate(state: ServerState, req: GenerateRequest, session_id: str | None, **plan_kwargs) -> Plan:
     """The scheduler plan of a GenerateRequest (HTTP 400 for a refused request, 500 for an encoder failure). The
     request head (tag CFG, speaker mode, condition rows) is checked before the speaker inputs are resolved, in the sgl
-    server's order."""
+    server's order; the request's decoder is one this server serves."""
     try:
         request = parse_request(req.model_dump())
+        resolve_decoder(request.decoder, state.engine.decoders)
         speaker = await speakers.resolve_speaker(state, session_id, req, request_head(state.engine, request).mode)
         return await asyncio.to_thread(plan_request, state.engine, request, speaker, **plan_kwargs)
     except ValueError as exc:
@@ -182,13 +184,15 @@ async def generate_response(state: ServerState, req: GenerateRequest, session_id
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     run = await run_plan(state, plan, mode or "whole")
+    decoder = state.engine.decoder_of(req.decoder)
     headers = speech_headers(
         fmt=req.format,
         seed=plan.seed,
         control_spans=bool(req.control_spans),
         follows_reading=plan.follow_tokens is not None,
+        decoder=decoder.id,
     )
-    gain = state.engine.output_gain(req.headroom_db)
+    gain = decoder.output_gain(req.headroom_db)
     if req.stream:
         return StreamingResponse(_stream(run, gain, float(req.fade_out_ms)), media_type="audio/pcm", headers=headers)
     try:

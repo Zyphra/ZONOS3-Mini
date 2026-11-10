@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
 import torch
 from zonos3.generation import MAX_FRAMES, REFERENCE_MAX_FRAMES
+from zonos3.server.speech import resolve_decoder
 from zonos3.tokenizer.textnorm import normalize_request_text
 from zonos3.tts.laci import LaciHeads
 from zonos3.tts.plan import PromptPlan, Speaker, plan_prompt
@@ -29,8 +30,10 @@ from zonos3_mlx import companions
 from zonos3_mlx.models.codec_decoder import CodecDecoder
 from zonos3_mlx.models.lm import LMConfig, Zonos3MLX
 
-COMPANIONS = {  # zac: the default decoder (keep2_plain head); --zac zac.gguf selects the full-size one
-    "zac": "zac-keep2.gguf",
+# Decoders found next to the backbone without --zac, in order (the first found is the default): the keep2_plain head,
+# the full-size full_mr head.
+DECODERS = ("zac-keep2.gguf", "zac.gguf")
+COMPANIONS = {
     "spk_encoder": "spk-encoder.gguf",
     "zac_encoder": "zac-encoder.gguf",
     "ssl_teacher": "ssl-teacher.gguf",
@@ -56,6 +59,17 @@ def find_companions(model_path: str | Path, given: dict[str, str | None]) -> dic
     return out
 
 
+def find_decoders(model_path: str | Path, given: Sequence[str] | None) -> list[str]:
+    """Decoder GGUF paths: the --zac flags (the first is the default), else the ``DECODERS`` next to the backbone."""
+    if given:
+        for path in given:
+            if not Path(path).is_file():
+                raise FileNotFoundError(f"decoder file {path} does not exist")
+        return [str(path) for path in given]
+    root = Path(model_path).resolve().parent
+    return [str(root / name) for name in DECODERS if (root / name).is_file()]
+
+
 class Engine:
     """The loaded networks and companions, and the ``zonos3.tts.plan.PromptContext`` of the request rules: the
     checkpoint's rows from the backbone GGUF, the loaded companions and the server limits."""
@@ -68,7 +82,7 @@ class Engine:
     def __init__(
         self,
         lm: Zonos3MLX,
-        decoder: CodecDecoder,
+        decoders: Sequence[CodecDecoder],
         *,
         paths: dict[str, str | None],
         laci_heads: dict[str, str] | None = None,
@@ -78,7 +92,16 @@ class Engine:
     ):
         self.lm = lm
         self.config: LMConfig = lm.config
-        self.decoder = decoder
+        # every decoder a request may pick, by id (mossdual_istft.head.variant), the default (``decoder``) first
+        self.decoders: dict[str, CodecDecoder] = {}
+        for dec in decoders:
+            if dec.id in self.decoders:
+                raise ValueError(
+                    f"{dec.path}: decoder {dec.id} (mossdual_istft.head.variant) is already loaded from "
+                    f"{self.decoders[dec.id].path}"
+                )
+            self.decoders[dec.id] = dec
+        self.decoder = decoders[0]
         self.paths = paths
         self.max_frames = int(max_frames)  # --max: the frame budget of a request (R5)
         self.normalizer: TextNormalizerClient | None = normalizer
@@ -154,15 +177,16 @@ class Engine:
         )
 
     @classmethod
-    def load(cls, model: str | Path, *, zac: str | None = None, **kwargs) -> "Engine":
-        given = {"zac": zac, **{k: kwargs.pop(k) for k in list(kwargs) if k in COMPANIONS}}
-        paths = find_companions(model, given)
-        if not paths.get("zac"):
+    def load(cls, model: str | Path, *, zac: Sequence[str] | None = None, **kwargs) -> "Engine":
+        """``zac``: the decoder GGUFs (the first is the default); None = those of ``DECODERS`` next to ``model``."""
+        paths = find_companions(model, {k: kwargs.pop(k) for k in list(kwargs) if k in COMPANIONS})
+        decoders = find_decoders(model, zac)
+        if not decoders:
             raise FileNotFoundError(
-                f"--zac <zac.gguf> is required (also auto-detected when zac-keep2.gguf sits next to {model})"
+                f"--zac <zac.gguf> is required (also auto-detected when {' / '.join(DECODERS)} sits next to {model})"
             )
         lm = Zonos3MLX.load(model)
-        return cls(lm, CodecDecoder.load(paths["zac"]), paths=paths, **kwargs)
+        return cls(lm, [CodecDecoder.load(path) for path in decoders], paths=paths, **kwargs)
 
     # -- companions -------------------------------------------------------------------------------------------------
 
@@ -205,8 +229,13 @@ class Engine:
         mx.clear_cache()
         return True
 
-    def output_gain(self, headroom_db: float | None) -> float:
-        return self.decoder.output_gain(headroom_db)
+    def decoder_of(self, decoder: str | None) -> CodecDecoder:
+        """A request's decoder (None = the default); ValueError (HTTP 400) for an id this server does not serve."""
+        return self.decoders[resolve_decoder(decoder, self.decoders)]
+
+    def output_gain(self, headroom_db: float | None, decoder: str | None) -> float:
+        """The output gain of ``headroom_db``, None = the headroom of the decoder ``decoder`` (None = the default)."""
+        return self.decoder_of(decoder).output_gain(headroom_db)
 
     # -- text ---------------------------------------------------------------------------------------------------------
 

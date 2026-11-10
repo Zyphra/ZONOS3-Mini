@@ -17,9 +17,10 @@ FIXTURES = REPO / "servers" / "ggml" / "tests" / "fixtures"
 sys.path.insert(0, str(REPO / "tools"))  # convert_gguf (tiny GGUFs), as servers/ggml/tests/parity does
 
 
-def dummy_codec(dst: Path, residual_biases: bool) -> Path:
+def dummy_codec(dst: Path, residual_biases: bool, variant: str | None = None) -> Path:
     """The dummy decoder fixture at ``dst``, with or without the per-codebook residual biases ``res.{i}.bias`` (seeded,
-    adding up to its ``res.bias``) that early partial-frame decode needs."""
+    adding up to its ``res.bias``) that early partial-frame decode needs; ``variant`` replaces its decoder id
+    ``mossdual_istft.head.variant`` (the fixture's: full_mr)."""
     from convert_gguf import write_gguf
     from gguf import GGUFReader, GGUFValueType, GGUFWriter
 
@@ -28,7 +29,8 @@ def dummy_codec(dst: Path, residual_biases: bool) -> Path:
     for name, f in r.fields.items():
         if not name.startswith("GGUF.") and name != "general.architecture":
             sub = f.types[-1] if f.types[0] == GGUFValueType.ARRAY else None
-            w.add_key_value(name, f.contents(), f.types[0], sub)
+            value = variant if variant is not None and name == "mossdual_istft.head.variant" else f.contents()
+            w.add_key_value(name, value, f.types[0], sub)
     tensors = {
         t.name: np.asarray(t.data).reshape(tuple(reversed(t.shape.tolist())))
         for t in r.tensors

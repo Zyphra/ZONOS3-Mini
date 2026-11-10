@@ -38,7 +38,7 @@ Handler keepalive(Handler h);
 // X-TTS-Session-ID, stripped; nullopt when absent or blank (zonos3.server.voices.normalize_session_id).
 std::optional<std::string> session_id(const httplib::Request & req);
 
-// CORS (allow every origin, expose the audio/seed headers), the access-token gate and the 404 body filler.
+// CORS (allow every origin, expose the audio/seed/decoder headers), the access-token gate and the 404 body filler.
 void install_middleware(httplib::Server & svr);
 // The studio serving rule, registered after every API route (GET|HEAD / and /<file>; any other method 404).
 void install_studio(httplib::Server & svr, const std::string & studio_dir);

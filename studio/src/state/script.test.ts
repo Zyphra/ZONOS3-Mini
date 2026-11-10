@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GenerateRequest, Rendered, Speaker } from '../api';
 import * as api from '../api';
+import { projectSettings } from './app';
 import { design, designs } from './design';
 import { speakers } from './library';
 import { addLine, failedLines, lineRequest, newScript, removeLine, renderLine, restoreLine, script, scripts, staleLines, takes, takeStaleReason, type Take } from './script';
@@ -118,5 +119,24 @@ describe('staleness', () => {
     // The voice itself was reshaped in Cast (a non-baseline control).
     designs.apply({ ...design.value, values: { ...design.value.values, husky: 1 } });
     expect(takeStaleReason(line(), takes.value[id][0])).toBe('voice edited');
+  });
+
+  it('reads a decoder switch as a settings change, and an unserved decoder as the default', () => {
+    const id = addLine(null, 'Which decoder?');
+    const line = () => script.value.lines.find((l) => l.id === id)!;
+    try {
+      takes.value = { [id]: [takeFor(id)] };
+      projectSettings.value = { ...projectSettings.value, decoder: 'full_mr' };
+      expect(lineRequest(line(), 1).decoder).toBe('full_mr');
+      expect(takeStaleReason(line(), takes.value[id][0])).toBe('decoder changed');
+      takes.value = { [id]: [takeFor(id)] };
+      expect(takeStaleReason(line(), takes.value[id][0])).toBeNull();
+      // A project saved against a server with a decoder this one lacks renders on the default: no 400.
+      projectSettings.value = { ...projectSettings.value, decoder: 'gone_head' };
+      expect('decoder' in lineRequest(line(), 1)).toBe(false);
+      expect(takeStaleReason(line(), takes.value[id][0])).toBe('decoder changed');
+    } finally {
+      projectSettings.value = { ...projectSettings.value, decoder: null };
+    }
   });
 });

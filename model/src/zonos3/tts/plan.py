@@ -66,6 +66,7 @@ GENERATE_DEFAULTS: dict = {
     "condition_buckets": None,
     "condition_values": None,
     "headroom_db": None,
+    "decoder": None,
     "speaker_audio_base64": None,
     "speaker_audio_name": None,
     "speaker_reference_codes": None,
