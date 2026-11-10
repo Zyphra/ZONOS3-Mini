@@ -1,6 +1,6 @@
 # zonos3.cpp
 
-Native ggml/GGUF inference for **ZONOS3 Mini** ([Zyphra/ZONOS3_Mini_release_ckpts](https://huggingface.co/Zyphra/ZONOS3_Mini_release_ckpts), revision `4d1d9efca3fb58ca880e028586d9f98bbc002288`), LM `lm/rate30_20k_r2grpo` (zonos3-rate30-20k-r2grpo, step **587**; the previous `lm/mect_60k`, step 60000, still loads). The 11-layer, 1024-wide backbone mixes Gated DeltaNet and global attention with Full AttnRes and top-2/64-expert latent MoE. SuperBPE-8192 text plus a speaker prompt and three condition rows produce ten delayed 4096-entry codebooks at 15 Hz; the multi-resolution iSTFT decoder renders 44.1 kHz mono audio.
+Native ggml/GGUF inference for **ZONOS3 Mini** ([Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini), LM `lm/zonos3_mini`; the previous `lm/mect_60k` still loads). The 11-layer, 1024-wide backbone mixes Gated DeltaNet and global attention with Full AttnRes and top-2/64-expert latent MoE. SuperBPE-8192 text plus a speaker prompt and three condition rows produce ten delayed 4096-entry codebooks at 15 Hz; the multi-resolution iSTFT decoder renders 44.1 kHz mono audio.
 
 Voice cloning has two modes:
 
@@ -28,10 +28,9 @@ The optional desktop shell uses `-DZONOS3_APP=ON`, CMake >= 3.31, a compatible C
 
 ## Prepare models
 
-The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model `zonos3-ptq.gguf` (0.66 GB, `lm/rate30_20k_r2grpo`). The converted files are the `gguf/` folder of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini) (private while unreleased: authenticate with an account that can read it); run these from `servers/ggml`:
+The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model `zonos3-ptq.gguf` (0.66 GB, `lm/zonos3_mini`). The converted files are the `gguf/` folder of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini); run these from `servers/ggml`:
 
 ```bash
-hf auth login
 hf download Zyphra/ZONOS3-Mini gguf/zonos3-ptq.gguf gguf/zac-keep2.gguf gguf/spk-encoder.gguf --local-dir .
 # Optional raw-reference cloning companions:
 hf download Zyphra/ZONOS3-Mini gguf/zac-encoder.gguf gguf/ssl-teacher.gguf --local-dir .
@@ -62,22 +61,21 @@ Or convert the checkpoints locally as below.
 
 ### Convert the release
 
-Download the private release (authenticate with an account that can read it) or use a local copy:
+Download the PyTorch weights of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini) or use a local copy:
 
 ```bash
-hf auth login
-R=release   # or a local copy such as /data/groups/audio/gabriel/hf_release_zonos3mini_20261020
-hf download Zyphra/ZONOS3_Mini_release_ckpts \
-  --revision 4d1d9efca3fb58ca880e028586d9f98bbc002288 --local-dir "$R"
+R=release
+hf download Zyphra/ZONOS3-Mini --include 'lm/*' --include 'autoencoder/*' --include 'speaker_encoders/*' \
+  --include 'registries/*' --local-dir "$R"
 
 T="uv run --package zonos3-tools python ../../tools/convert_gguf.py"   # from servers/ggml
-mkdir -p models
-# F16 reference backbone from the release:
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o gguf/zonos3-f16.gguf
+mkdir -p gguf
+# F16 reference backbone:
+$T lm "$R/lm/zonos3_mini" --outtype f16 -o gguf/zonos3-f16.gguf
 # Default backbone: the same LM quantized post-training (round to nearest): Q4_0 experts, Q8_0 mixers.
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf
-# Previous backbone (--quant qat): mect_60k QAT directory (same layout as the release LM plus bake.json; step 3462).
-# Q4_0 experts and Q8_0 mixers are stored bit-exactly, so there is no outtype to choose.
+$T lm "$R/lm/zonos3_mini" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf
+# Previous backbone (--quant qat): mect_60k QAT directory (same layout as the release LM plus bake.json; step 3462;
+# not published). Q4_0 experts and Q8_0 mixers are stored bit-exactly, so there is no outtype to choose.
 $T lm QAT/lm/mect_60k_q4q8_qat \
   --silence-frame "$R/registries/silence_frame_opus_dual_3n_600k_sched600k_r4096_step600000.json" \
   -o gguf/zonos3-qat.gguf

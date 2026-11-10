@@ -1,9 +1,9 @@
 """Weights-backed offline<->server parity (loads the real model; GPU).
 
-Skipped unless ZONOS3_TEST_MODEL points at a checkpoint (e.g. "hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo").
+Skipped unless ZONOS3_TEST_MODEL points at a checkpoint (e.g. "hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini").
 Run with:
 
-    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo CUDA_VISIBLE_DEVICES=2 \
+    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini CUDA_VISIBLE_DEVICES=2 \
         PYTHONPATH=.../ZONOS3-offline-paritiy/python \
         python -m pytest -o addopts="" tests/misc/test_offline_parity_gpu.py -q
 

@@ -126,7 +126,7 @@ def _load_torch_weight(path: str) -> Dict[str, torch.Tensor]:
 def load_checkpoint_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
     """Load a Zonos3 TTS checkpoint (consolidated model.pth + params.json).
 
-    Accepts a local path or a Hugging Face repo id (e.g. ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo``).
+    Accepts a local path or a Hugging Face repo id (e.g. ``hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini``).
     """
     from zonos3.utils.hf import resolve_model_path
 

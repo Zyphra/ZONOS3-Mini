@@ -107,7 +107,7 @@ from zonos3.tts.steering import (
     disabled_controls,
     resolve_controls,
 )
-from zonos3.utils.release import RELEASE_LM, resolve_dir_or_local, resolve_file
+from zonos3.utils.release import resolve_dir_or_local, resolve_file
 from zonos3.workers import asr as asr_worker
 from zonos3.workers import fusealign as fusealign_worker
 
@@ -116,6 +116,10 @@ STUDIO = ROOT / "studio"
 # One device object everywhere: synthesize() moves the LM when lm.device != device, and ReferenceAssets caches the
 # decoder by str(device). On ZeroGPU this process only emulates CUDA; the GPU exists inside @spaces.GPU calls.
 DEVICE = torch.device("cuda:0")
+# The Space serves speech editing and pronunciation groups, whose edit LoRA, phoneme tokens and lexicon are only in the
+# private release repo (the public Zyphra/ZONOS3-Mini has the plain LM): it keeps loading from there (HF_TOKEN secret).
+SPACE_RELEASE_REPO = "Zyphra/ZONOS3_Mini_release_ckpts"
+SPACE_LM = f"hf://{SPACE_RELEASE_REPO}/lm/rate30_20k_r2grpo"
 CPU = torch.device("cpu")
 
 # The edit LoRA (zonos-accent-lora/3) brings the vocabulary it was trained with: its span-end audio row and edit-marker
@@ -123,10 +127,10 @@ CPU = torch.device("cpu")
 # LoRA per request (EDIT_LORA). The phoneme tokens (zonos-text-extra/1, trained on the frozen release LM) follow the
 # edit marker rows: pronunciation groups (U+E000 IPA U+E001) read them, text without groups never does. Grown on the
 # CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with CPU ones in this process.
-EDIT_ADAPTER = load_adapter(resolve_file(f"{RELEASE_LM}/edit_lora/z3m_omni3b_edit_lora.pt"))
-PHONEME_ROWS = TextExtraRows.load(resolve_file(f"{RELEASE_LM}/phoneme_tokens/phoneme_tokens_s15000.pt"))
+EDIT_ADAPTER = load_adapter(resolve_file(f"{SPACE_LM}/edit_lora/z3m_omni3b_edit_lora.pt"))
+PHONEME_ROWS = TextExtraRows.load(resolve_file(f"{SPACE_LM}/phoneme_tokens/phoneme_tokens_s15000.pt"))
 LM = (
-    Zonos3LM.load(RELEASE_LM, device="cpu", dtype=torch.float32)
+    Zonos3LM.load(SPACE_LM, device="cpu", dtype=torch.float32)
     .grow(EDIT_ADAPTER.grown)
     .append_text_rows(PHONEME_ROWS)
     .to(DEVICE)
@@ -136,7 +140,7 @@ ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundl
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
 EDIT_LORA = AccentState.for_model(LM, EDIT_ADAPTER, 1.0)
 # The gold pronunciation lexicon behind "Phonemize selection"; espeak-ng (espeakng-loader) guesses the words it lacks.
-_LEXICON = "hf://Zyphra/ZONOS3_Mini_release_ckpts/lexicons/gold_phonemes_v1"
+_LEXICON = f"hf://{SPACE_RELEASE_REPO}/lexicons/gold_phonemes_v1"
 resolve_file(f"{_LEXICON}/manifest.json")
 LEXICON = PhonemeLexicon(str(Path(resolve_file(f"{_LEXICON}/data.mdb")).parent))
 ASSETS.decoder(CONFIG.audio_codec, DEVICE)
@@ -178,7 +182,7 @@ def capabilities() -> dict:
             prefix_stream=prefix_stream_supported(c.audio_codec),
             silence_hop=dual_codec_hop(c.audio_codec),
             tag_cfg_available=True,
-            tag_cfg_trained=trained_on_tags(resolve_dir_or_local(RELEASE_LM)),
+            tag_cfg_trained=trained_on_tags(resolve_dir_or_local(SPACE_LM)),
             decoder=decoder_capability(c.audio_codec),
             condition_tokens=None
             if c.condition_count == 0

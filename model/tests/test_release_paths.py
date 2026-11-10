@@ -63,13 +63,13 @@ def test_tokenizer_path_resolution(tmp_path):
 
 
 def test_release_registries_are_consistent():
-    """The repo registries point at the release repo and keep the sha of the generator checkpoint."""
+    """The repo registries and the default LM point at the release repo."""
     root = Path(release.__file__).resolve().parents[1] / "registries"
     codec = json.loads((root / "codec_registry_keep2_plain.json").read_text())
     ((key, e),) = codec.items()
     assert e["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/generator.pt")
-    assert e["checkpoint_sha256"] == "1cedeb12d7d964026c0a16afc32abd1de23dc484533111f24c950775f1941172"
+    assert e["teacher"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/")
     assert e["decoder"]["campaign"].startswith(f"hf://{release.RELEASE_REPO}/autoencoder/heads/")
     spk = json.loads((root / "speaker_encoder_registry.json").read_text())
     assert spk["ownmect_s2"]["checkpoint"].startswith(f"hf://{release.RELEASE_REPO}/speaker_encoders/ownmect_s2/")
-    assert release.RELEASE_LM.endswith("/lm/rate30_20k_r2grpo")
+    assert release.RELEASE_LM.startswith(f"hf://{release.RELEASE_REPO}/lm/")

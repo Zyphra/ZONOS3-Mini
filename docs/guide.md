@@ -41,7 +41,8 @@ identical codes.
 ## Speech editing
 
 Speech editing runs on the release LM with the speech-edit LoRA
-(`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt`),
+(`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt`, in the private release
+repo; the public `Zyphra/ZONOS3-Mini` ships it converted for ggml and MLX as `gguf/zonos3-ptq-edit.gguf` + `gguf/edit/accents.gguf`),
 an accent adapter in the `zonos-accent-lora/3` format (see [Accent adapters](#accent-adapters)): it
 carries the vocabulary it was trained with, three text marker rows (`text_extra_tokens: 3`) and a
 span-end audio token (`span_end_id` = `audio_pad_id + 1` = 4098: one more embedding and head row per

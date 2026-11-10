@@ -20,7 +20,7 @@ def resolve_model_path(model_path: str) -> str:
     """Resolve a model path to a local directory.
 
     Local paths are returned as-is. A Hugging Face repo id (e.g.
-    ``hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo``) is downloaded to the local HF cache first.
+    ``hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini``) is downloaded to the local HF cache first.
     """
     from zonos3.utils.release import is_hf, resolve_dir_or_local
 

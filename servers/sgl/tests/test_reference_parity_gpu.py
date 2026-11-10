@@ -2,7 +2,7 @@
 
 Skipped unless ZONOS3_TEST_MODEL points at the release LM, e.g.
 
-    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo uv run pytest -m gpu \
+    ZONOS3_TEST_MODEL=hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini uv run pytest -m gpu \
         servers/sgl/tests/test_reference_parity_gpu.py
 
 The reference's prompt plan of three fixture requests (plain, speaker embedding, reference codes) is fed to both: every

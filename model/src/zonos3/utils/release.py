@@ -2,10 +2,9 @@
 
 Registries, configs and the server's default --model-path may name files and folders in a Hugging Face repo as
 ``hf://<owner>/<repo>/<path inside the repo>``. ``resolve_file`` / ``resolve_dir_or_local`` fetch them into the local HF cache
-(``HF_HOME``; ``HF_TOKEN`` or a stored login is needed while the repo is private) and return local paths; plain local paths pass
-through unchanged, so the cluster servers keep running from their local registries. Default repo: ``ZONOS3_RELEASE_REPO``
-(Zyphra/ZONOS3_Mini_release_ckpts) and its language model ``lm/rate30_20k_r2grpo`` (was ``lm/mect_60k``,
-which was ``lm/fullenc_120k`` before).
+(``HF_HOME``; ``HF_TOKEN`` or a stored login for private repos) and return local paths; plain local paths pass through
+unchanged, so the cluster servers keep running from their local registries. Default repo: ``ZONOS3_RELEASE_REPO``
+(Zyphra/ZONOS3-Mini, public) and its language model ``lm/zonos3_mini``.
 """
 
 from __future__ import annotations
@@ -16,8 +15,8 @@ from functools import lru_cache
 from pathlib import Path
 
 PREFIX = "hf://"
-RELEASE_REPO = os.environ.get("ZONOS3_RELEASE_REPO", "Zyphra/ZONOS3_Mini_release_ckpts")
-RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/rate30_20k_r2grpo")
+RELEASE_REPO = os.environ.get("ZONOS3_RELEASE_REPO", "Zyphra/ZONOS3-Mini")
+RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/zonos3_mini")
 RELEASE_SPEAKER_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/speaker_encoder_registry.json"
 
 

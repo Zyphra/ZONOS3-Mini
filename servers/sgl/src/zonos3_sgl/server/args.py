@@ -117,7 +117,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         type=str,
         default=RELEASE_LM,
         help="Zonos3 TTS checkpoint: an hf://owner/repo/folder location (default: the ZONOS3 Mini release LM "
-        f"{RELEASE_LM}; HF_TOKEN or a stored login while that repo is private), a Hugging Face repo id, or a local path.",
+        f"{RELEASE_LM}; HF_TOKEN or a stored login for private repos), a Hugging Face repo id, or a local path.",
     )
 
     parser.add_argument(

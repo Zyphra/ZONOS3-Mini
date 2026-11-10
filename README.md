@@ -26,12 +26,11 @@ Every server implements the same HTTP API and serves the same studio.
 ### 2. Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/); the project pins Python 3.12.
-- Read access to the Hugging Face repo of your backend. While the repos are private, set `HF_TOKEN` or run
-  `hf auth login`.
-  - CUDA server: [`Zyphra/ZONOS3_Mini_release_ckpts`](https://huggingface.co/Zyphra/ZONOS3_Mini_release_ckpts) (LM,
-    codec and speaker encoder weights, about 15 GB, downloaded into the Hugging Face cache on first use).
-  - MLX, ggml and in-browser servers: the `gguf/` and `web/` folders of
-    [`Zyphra/ZONOS3-Mini`](https://huggingface.co/Zyphra/ZONOS3-Mini).
+- The weights come from the public Hugging Face repo [`Zyphra/ZONOS3-Mini`](https://huggingface.co/Zyphra/ZONOS3-Mini);
+  no token is needed.
+  - CUDA server: the PyTorch weights (`lm/`, `autoencoder/`, `speaker_encoders/`, about 9 GB with the default decoder),
+    downloaded into the Hugging Face cache on first use.
+  - MLX, ggml and in-browser servers: the `gguf/` and `web/` folders.
 - CUDA server: the CUDA 12.8 toolkit (`CUDA_HOME`, default `/usr/local/cuda-12.8`).
 
 ### 3. Install
@@ -112,7 +111,7 @@ from zonos3_sgl.tts import TTSLLM, TTSSamplingParams
 
 # The server's settings: FlashAttention, per-request (naive) cache, and half the GPU for the KV cache so the codec
 # encoder and decoder fit next to it.
-tts = TTSLLM(model_path="hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo",
+tts = TTSLLM(model_path="hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini",
              attention_backend="fa", cache_type="naive", memory_ratio=0.5)
 
 result = tts.generate_one("Hello from the offline Python API.", TTSSamplingParams(seed=42), language="en_us")
@@ -140,7 +139,7 @@ first call primes the codec stream and captures its CUDA graphs, as the server's
 backend and the five `ZONOS3_USE_TRAINING_*` exact-mode kernels; on a pre-Hopper GPU such as the A100 it selects the
 portable Triton experts and gated-DeltaNet kernels instead, see
 [docs/tts_architecture.md](docs/tts_architecture.md#gdn--full-attnres-family-2026-10)) and serves the release LM
-`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo` on `127.0.0.1:1919` with `--attention-backend fa
+`hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini` on `127.0.0.1:1919` with `--attention-backend fa
 --cache-type naive`, two running requests and CUDA graphs. Extra server flags are appended (e.g.
 `servers/sgl/scripts/serve.sh --port 1920`). `servers/mlx/scripts/serve.sh` serves the GGUF files of
 the `gguf/` folder of `Zyphra/ZONOS3-Mini` with the same variables:
@@ -166,9 +165,10 @@ The studio's steering controls come from `STEER_BUNDLE`.
   server (`model/src/zonos3/workers/asr.py`) starts on first use; `ZONOS3_ASR_PYTHON` overrides its interpreter
   (default `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU). Without it
   `/v2/capabilities` reports `edit_transcribe: false`, and editing needs the clip's transcript.
-- **Speech editing** needs the speech-edit LoRA (sgl: `--accent-adapters <dir with
-  lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt>` on the release LM; see [docs/guide.md](docs/guide.md)) or an
-  edit checkpoint (`SERVE_MODEL=<edit checkpoint>`) and FuseAlign for the word timings.
+- **Speech editing** needs the speech-edit LoRA (sgl: `--accent-adapters <dir with z3m_omni3b_edit_lora.pt>` on the
+  release LM; the LoRA is in the private `Zyphra/ZONOS3_Mini_release_ckpts`, `lm/rate30_20k_r2grpo/edit_lora/`; see
+  [docs/guide.md](docs/guide.md)) or an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), and FuseAlign for the word
+  timings. The ggml and MLX servers get it from `gguf/zonos3-ptq-edit.gguf` and `gguf/edit/accents.gguf`.
 - **Forced alignment** (speech editing) is the FuseAlign aligner: the submodule `third_party/fusealign-multilingual`
   ([Zyphra/fusealign-multilingual](https://github.com/Zyphra/fusealign-multilingual), package `fusealign-hub`,
   Apache-2.0, installed by `uv sync`) and its checkpoint from the Hugging Face repo
@@ -178,10 +178,11 @@ The studio's steering controls come from `STEER_BUNDLE`.
   (or transcripts over 1022 UTF-8 bytes) are aligned long-form, anchored by Qwen3-ASR transcripts of their
   voice-activity chunks (at most 25 s each), or without speech recognition by FuseAlign's own voice-activity map;
   FuseAlign's built-in Whisper anchoring is never used.
-- **Phoneme input** needs the release phoneme tokens
-  (`lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
-  `convert_gguf.py lm --phoneme-rows`) or a checkpoint merged with them (`tools/add_text_extra_rows.py`), and
-  `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the release repo) for "Phonemize selection".
+- **Phoneme input** needs the release phoneme tokens (private `Zyphra/ZONOS3_Mini_release_ckpts`,
+  `lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
+  `convert_gguf.py lm --phoneme-rows`; `gguf/zonos3-ptq-edit.gguf` already has them) or a checkpoint merged with them
+  (`tools/add_text_extra_rows.py`), and `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the same
+  private repo) for "Phonemize selection".
   `uv sync --group phonemize` adds espeak-ng guesses for `POST /v2/phonemize` (GPL-3.0, opt-in).
 - **Nonverbal tags** need a checkpoint with the NV rows.
 - **Accent adapters** need `--accent-adapters <dir>`.
@@ -236,7 +237,7 @@ whispering, emotion, pace, projection, liveliness) with their control values.
 for both servers. It runs on CPU or GPU:
 
 ```bash
-uv run python -m zonos3.reference --model hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo \
+uv run python -m zonos3.reference --model hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini \
   --text "Hello from the reference." -o ref.wav --device cuda
 ```
 

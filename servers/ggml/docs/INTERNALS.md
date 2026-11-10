@@ -1,6 +1,6 @@
 # zonos3.cpp internals
 
-The supported backbone is **ZONOS3 Mini** (`Zyphra/ZONOS3_Mini_release_ckpts` revision `4d1d9efca3fb58ca880e028586d9f98bbc002288`), LM `lm/rate30_20k_r2grpo` (zonos3-rate30-20k-r2grpo, step 587; the previous `lm/mect_60k`, step 60000, differs only in its condition tables and still loads). Its codec identity is `opus_dual_3n_600k_sched600k_r4096_step600000`. Backbone files use `general.architecture=zonos3` and `zonos3.*` metadata (including speaker, condition and silence-frame keys); the 375k backbone schema, the conv-tail decoder and embedding-free conditioning are rejected, with no compatibility path.
+The supported backbone is **ZONOS3 Mini** ([`Zyphra/ZONOS3-Mini`](https://huggingface.co/Zyphra/ZONOS3-Mini) `lm/zonos3_mini`, tensor-identical to `lm/rate30_20k_r2grpo` of the private `Zyphra/ZONOS3_Mini_release_ckpts` revision `4d1d9efca3fb58ca880e028586d9f98bbc002288`: zonos3-rate30-20k-r2grpo, step 587; the previous `lm/mect_60k`, step 60000, differs only in its condition tables and still loads). Its codec identity is `opus_dual_3n_600k_sched600k_r4096_step600000`. Backbone files use `general.architecture=zonos3` and `zonos3.*` metadata (including speaker, condition and silence-frame keys); the 375k backbone schema, the conv-tail decoder and embedding-free conditioning are rejected, with no compatibility path.
 
 ## Model pipeline
 
@@ -122,11 +122,11 @@ Frontend mean/variance use NumPy's pairwise F32 reduction ordering. Cached teach
 ## Convert the release
 
 ```bash
-R=/path/to/ZONOS3_Mini_release_ckpts   # revision 4d1d9efca3fb58ca880e028586d9f98bbc002288
+R=/path/to/ZONOS3-Mini   # hf download Zyphra/ZONOS3-Mini --include 'lm/*' --include 'autoencoder/*' --include 'speaker_encoders/*' --include 'registries/*' --local-dir "$R"
 T="uv run --package zonos3-tools python ../../tools/convert_gguf.py"
-mkdir -p models
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype f16 -o gguf/zonos3-f16.gguf
-$T lm "$R/lm/rate30_20k_r2grpo" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf   # default backbone (PTQ)
+mkdir -p gguf
+$T lm "$R/lm/zonos3_mini" --outtype f16 -o gguf/zonos3-f16.gguf
+$T lm "$R/lm/zonos3_mini" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf   # default backbone (PTQ)
 $T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o gguf/zac-keep2.gguf   # default decoder
 $T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full_mr" -o gguf/zac.gguf               # full-size (--zac)
 $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o gguf/spk-encoder.gguf
@@ -160,7 +160,7 @@ C="uv run --package zonos3-tools python ../../tools/compare_golden.py"
 Backbone (speaker-embedding prompt with conditions and silence prefill; `dump_golden.py lm` loads the checkpoint through `convert_gguf.load_lm` and captures `Zonos3LM.forward`):
 
 ```bash
-LM="$R/lm/rate30_20k_r2grpo"
+LM="$R/lm/zonos3_mini"
 $T lm "$LM" --outtype f32 -o out/zonos3-f32.gguf
 $D lm "$LM" -o out/golden-emb --text 'The quick brown fox jumps.' \
   --speaker-embedding tests/fixtures/speaker-embedding.npy --condition-buckets 3,5,29 \

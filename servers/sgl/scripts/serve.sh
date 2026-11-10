@@ -1,6 +1,6 @@
 #!/bin/bash
 # Exact-mode ZONOS3 server on 127.0.0.1:1919 (sources servers/sgl/scripts/env.sh). Extra flags are appended.
-# Defaults serve the ZONOS3 Mini release LM (hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo) with the voices in
+# Defaults serve the ZONOS3 Mini release LM (hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini) with the voices in
 # assets/default_voices/ and the steering bundle assets/steering/studio_bundle_mect60k_x10.json (the studio's controls). Overrides:
 #   SERVE_MODEL                 checkpoint dir or hf:// location (--model-path)
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)

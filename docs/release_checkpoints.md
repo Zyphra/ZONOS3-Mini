@@ -1,16 +1,17 @@
 # ZONOS3 Mini release checkpoints on Hugging Face
 ## Checkpoints from Hugging Face by default
 
-The release checkpoints live in the private repo **Zyphra/ZONOS3_Mini_release_ckpts** (language models `lm/rate30_20k_r2grpo`
-(the default) and `lm/mect_60k` (the previous default), the dual
-codec `autoencoder/generator.pt` + its semantic teacher `autoencoder/teacher`, the two causal MR iSTFT decoder heads
-`autoencoder/heads/{full_mr,keep2_plain}`, the `ownmect_s2` speaker encoder, registries, `manifest.json` with sha256s).
-`zonos3.utils.release` resolves `hf://owner/repo/path` locations (files via `hf_hub_download`, folders via `snapshot_download`,
-into `HF_HOME`; set `HF_TOKEN` or log in once while the repo is private). Defaults: `--model-path` =
-`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo`; the registries in `model/src/zonos3/registries/`
-(`codec_registry_keep2_plain.json` (the keep2 decoder head), `speaker_encoder_registry.json`) point at
-the same repo (`ZONOS3_SPEAKER_ENCODER_REGISTRY` overrides the speaker one); the tokenizer path in a
-checkpoint may be relative to its folder. Local paths pass through unchanged.
+The released weights are the public repo **[Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini)**: the
+language model `lm/zonos3_mini` (the `lm/rate30_20k_r2grpo` LM below), the dual codec `autoencoder/generator.pt` + its
+semantic teacher `autoencoder/teacher`, the two causal MR iSTFT decoder heads `autoencoder/heads/{full_mr,keep2_plain}`,
+the `ownmect_s2` speaker encoder, registries, and the `gguf/` and `web/` conversions. The speech-edit LoRA, the phoneme
+tokens, the pronunciation lexicon and `lm/mect_60k` stay in the private **Zyphra/ZONOS3_Mini_release_ckpts** (revision
+`4d1d9efca3fb58ca880e028586d9f98bbc002288`). `zonos3.utils.release` resolves `hf://owner/repo/path` locations (files via
+`hf_hub_download`, folders via `snapshot_download`, into `HF_HOME`; `HF_TOKEN` or a stored login for the private repo).
+Defaults: `--model-path` = `hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini` (`ZONOS3_RELEASE_REPO` / `ZONOS3_RELEASE_LM`
+override it); the registries in `model/src/zonos3/registries/` (`codec_registry_keep2_plain.json` (the keep2 decoder
+head), `speaker_encoder_registry.json`) point at the same repo (`ZONOS3_SPEAKER_ENCODER_REGISTRY` overrides the speaker
+one); the tokenizer path in a checkpoint may be relative to its folder. Local paths pass through unchanged.
 
 The codec code is vendored in `model/src/zonos3/codec`.
 
