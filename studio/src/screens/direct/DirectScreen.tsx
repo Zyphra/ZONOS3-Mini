@@ -99,8 +99,12 @@ interface Brush {
   lineId: string;
   start: number;
   end: number;
+  /** Picked by tapping words (touch): taps extend it, and its words are highlighted (no native selection shows them). */
+  touch?: boolean;
 }
 const brush = signal<Brush | null>(null);
+/** The kind of the last pointer that pressed on a line's text: touch taps pick words, mouse drags select them. */
+let lastPointer = 'mouse';
 
 function playScript() {
   const mix = mixdown();
@@ -182,6 +186,23 @@ function wordRanges(text: string): [number, number][] {
   return out;
 }
 
+/** The offset into the line text under the point (x, y) in `root`'s segments; null off its words (tag chips included). */
+function offsetAt(root: HTMLElement, x: number, y: number): number | null {
+  let node: Node | null = null;
+  let off = 0;
+  if (document.caretPositionFromPoint) {
+    const p = document.caretPositionFromPoint(x, y);
+    if (p) [node, off] = [p.offsetNode, p.offset];
+  } else {
+    const r = document.caretRangeFromPoint?.(x, y);
+    if (r) [node, off] = [r.startContainer, r.startOffset];
+  }
+  if (!node || !root.contains(node)) return null;
+  const seg = (node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement))?.closest<HTMLElement>('[data-start]');
+  if (!seg || seg.dataset.end) return null;
+  return Number(seg.dataset.start) + (node.nodeType === Node.TEXT_NODE ? off : 0);
+}
+
 function selectionIn(el: HTMLElement): { start: number; end: number; rect: DOMRect } | null {
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount) return null;
@@ -219,16 +240,43 @@ function LineText({ line }: { line: Line }) {
     cuts.add(t.end);
   }
   const replaceGroup = (s: number, e: number, t: string) => setLineText(line.id, line.text.slice(0, s) + t + line.text.slice(e));
-  const marks = [...cuts].sort((a, b) => a - b);
   const sel = brush.value?.lineId === line.id ? brush.value : null;
-  const open = (start: number, end: number) => {
+  // A tapped range shows on its own segments (no native selection draws it); a selected one keeps the text nodes whole
+  // so re-rendering doesn't drop the selection.
+  if (sel?.touch) {
+    cuts.add(sel.start);
+    cuts.add(sel.end);
+  }
+  const marks = [...cuts].sort((a, b) => a - b);
+  const open = (start: number, end: number, touch?: boolean) => {
     const [s, e] = snapToWords(line.text, start, Math.min(end, line.text.length));
-    brush.value = { lineId: line.id, start: s, end: e };
+    brush.value = { lineId: line.id, start: s, end: e, touch };
   };
   const pick = (touch?: boolean) => {
     const s = selectionIn(el.current!);
     if (s && s.end > s.start) open(s.start, s.end);
     else if (!touch) brush.value = null;
+  };
+  // Touch (no drag-select there): a tap on a word opens the brushes on it (on its whole span when painted). With a
+  // tapped range open in this line, a tap outside it stretches it to that word, a tap inside starts over from that word,
+  // and a tap on its only word puts it down. A long press still selects text natively. Returns whether it took the tap.
+  const tap = (e: MouseEvent) => {
+    if (lastPointer !== 'touch' || !window.getSelection()?.isCollapsed) return false;
+    const pos = offsetAt(el.current!, e.clientX, e.clientY);
+    // The word holding the tapped offset, else the one ending there (a tap just past a word's last letter).
+    const words = pos === null ? [] : wordRanges(line.text);
+    const w = words.find(([s, end]) => pos! >= s && pos! < end) ?? words.find(([, end]) => pos === end);
+    if (!w) return false;
+    const cur = brush.peek();
+    if (cur?.lineId === line.id && cur.touch) {
+      if (w[0] < cur.start || w[1] > cur.end) open(Math.min(cur.start, w[0]), Math.max(cur.end, w[1]), true);
+      else if (w[0] === cur.start && w[1] === cur.end) brush.value = null;
+      else open(w[0], w[1], true);
+      return true;
+    }
+    const span = line.spans.find((sp) => w[0] >= sp.start && w[0] < sp.end);
+    open(span ? span.start : w[0], span ? span.end : w[1], true);
+    return true;
   };
   // While the bar is open, a changed selection in this line moves the painted range with it.
   useEffect(() => {
@@ -300,14 +348,18 @@ function LineText({ line }: { line: Line }) {
   };
   return (
     // Touch: a long-press selection fires no mouseup; read it once the finger lifts and the selection has settled
-    // (only to open: a tap on painted words opens the brushes through its click).
+    // (only to open). A tap (no selection) picks words in the capture phase, before a painted word's own click.
     <div
       ref={el}
-      class="line-text"
+      class={`line-text${sel?.touch ? ' is-tapping' : ''}`}
       data-line={line.id}
       tabIndex={0}
       aria-label={`Line text: ${line.text}. Shift with the arrow keys selects words; Enter paints them.`}
-      onMouseUp={() => pick()}
+      onPointerDown={(e) => (lastPointer = e.pointerType)}
+      onClickCapture={(e) => {
+        if (!(e.target as Element).closest('.is-pron') && tap(e)) e.stopPropagation();
+      }}
+      onMouseUp={() => lastPointer !== 'touch' && pick()}
       onTouchEnd={() => setTimeout(() => pick(true), 50)}
       onKeyDown={onKey}
       onBlur={() => kbd && setKbd(null)}
@@ -460,6 +512,7 @@ function BrushBar() {
           <Icon name="x" size={14} />
         </button>
       </header>
+      {b.touch && <p class="hint brushbar-tap">Tap more words to stretch the selection; tap a word inside it to start over from there.</p>}
       <div class="legend brushbar-legend" aria-hidden="true">
         {families.map((g) => (
           <span class="legend-item">
@@ -707,7 +760,7 @@ function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
             <TagMarks text={draft} />
           </>
         ) : (
-          <div onDblClick={startEdit}>
+          <div onDblClick={() => lastPointer !== 'touch' && startEdit()}>
             <LineText line={line} />
             <PronMarks text={line.text} issuesOnly />
             <TagMarks text={line.text} replace={(next) => setLineText(line.id, next)} />
@@ -913,7 +966,7 @@ function Sidebar() {
       </div>
       <div class="rail-section">
         <h4>Brushes</h4>
-        <p class="hint">Select words in a line to paint delivery onto them (or use the brush in the line’s tools for the whole line). Click painted words to change or clear them. Underlines show what is painted:</p>
+        <p class="hint">Select words in a line to paint delivery onto them (on a phone, tap a word, then tap more to stretch the selection; or use the brush in the line’s tools for the whole line). Click painted words to change or clear them. Underlines show what is painted:</p>
         <div class="legend">
           {spec.value.ui.groups
             .filter((g) => spec.value.ui.controls.some((c) => c.group === g.id && c.spannable))

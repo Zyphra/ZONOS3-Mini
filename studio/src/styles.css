@@ -2080,8 +2080,20 @@ body,
 .seg.is-picked {
   background-color: color-mix(in srgb, var(--o) 14%, transparent);
 }
+/* A range picked by taps (touch: no native selection draws it), as strong as a selection. */
+.line-text.is-tapping .seg.is-picked {
+  background-color: color-mix(in srgb, var(--o) 35%, transparent);
+}
 .line-text ::selection {
   background: color-mix(in srgb, var(--o) 35%, transparent);
+}
+@media (pointer: coarse) {
+  .line-text {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+.brushbar-tap {
+  margin: 0 0 8px;
 }
 .line-edit {
   font-size: 16px;
