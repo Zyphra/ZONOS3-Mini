@@ -469,6 +469,10 @@ SESSION_SECONDS = 240
 HOLD_SECONDS = 60
 RENEW_SECONDS = 45  # renew a session with less than this left after a take
 MARGIN_SECONDS = 5  # a session stops taking work this long before its ZeroGPU deadline
+# ZeroGPU caps how long one call may hold a GPU, per visitor: one without a quota token (not signed in on huggingface.co,
+# or the Space reached outside it) gets 60 s as ZeroGPU counts them, 40 of ours on its RTX PRO 6000 nodes (which ask for
+# 1.5x a call's duration). A session refused as too long reopens at this length; such a session is not renewed.
+CAPPED_SESSION_SECONDS = 40
 _FORK = multiprocessing.get_context("fork")  # spaces forks its GPU workers, which inherit both pipes
 TAKE_RX, TAKE_TX = _FORK.Pipe(duplex=False)  # (take id, request body) or None (close), main process -> session
 RESULT_RX, RESULT_TX = _FORK.Pipe(duplex=False)  # (take id, kind, payload), session -> main process
@@ -550,7 +554,7 @@ class GpuSessions:
             except Exception as exc:
                 take.out.put_nowait(("failed", exc))
                 continue
-            if self.open() and self.left() < RENEW_SECONDS:
+            if self.open() and self.seconds >= SESSION_SECONDS and self.left() < RENEW_SECONDS:
                 await self.close()
                 self.start(take.request, SESSION_SECONDS)
 
@@ -571,9 +575,12 @@ class GpuSessions:
             await self.close()  # it would run out mid-take, or is about to idle out
         self.ids += 1
         sender = None  # a large take (a clip) blocks in the pipe until a session reads it: send alongside
-        for _ in range(2):  # a session that idled out as the take was sent left it in the pipe for the next one
+        seconds = max(SESSION_SECONDS, need + MARGIN_SECONDS + 1)
+        # a session that idled out as the take was sent, or that ZeroGPU refused as too long for this visitor, left it in
+        # the pipe for the next one
+        for _ in range(3):
             if not self.open():
-                self.start(take.request, max(SESSION_SECONDS, need + MARGIN_SECONDS + 1))
+                self.start(take.request, seconds)
             if sender is None:
                 sender = asyncio.create_task(asyncio.to_thread(TAKE_TX.send, (self.ids, take.body)))
             done = await self.pump(self.ids, take.out)
@@ -583,9 +590,12 @@ class GpuSessions:
                 if not done:
                     take.out.put_nowait(("error", "the GPU session ended mid-take"))
                 return
-            if self.session.exception() is not None:
+            if (exc := self.session.exception()) is not None:
+                if seconds > CAPPED_SESSION_SECONDS and isinstance(exc, gr.Error) and exc.title == "ZeroGPU illegal duration":
+                    seconds = CAPPED_SESSION_SECONDS
+                    continue
                 await self.drain(sender)
-                raise self.session.exception()
+                raise exc
         await self.drain(sender)
         raise RuntimeError("the GPU session ended without running the take")
 

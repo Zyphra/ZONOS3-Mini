@@ -9,8 +9,8 @@
 const HANDSHAKE = 'supports-zerogpu-headers';
 const REQUEST = 'zerogpu-headers';
 
-/** The routes that take a GPU on the Space (`servers/space/app.py`). */
-const GPU_ROUTE = /^\/v2\/generate$/;
+/** The routes that take a GPU on the Space (`servers/space/app.py`): takes and speech editing (ASR, alignment, fills). */
+const GPU_ROUTE = /^\/v2\/(generate|edit|edit\/transcribe|edit\/align)$/;
 
 const parentOrigin = typeof window !== 'undefined' && window.parent !== window && location.hostname.endsWith('.hf.space')
   ? 'https://huggingface.co'
