@@ -37,7 +37,7 @@ the lite page).
 ## Build and run
 
 ```bash
-# Prebuilt shards (the web/ folder of Zyphra/ZONOS3-Mini, ~4.2 GB) into public/models/:
+# Prebuilt shards (the web/ folder of Zyphra/ZONOS3-Mini, ~5.3 GB, of which zac-full_mr ~1.1 GB) into public/models:
 hf download Zyphra/ZONOS3-Mini --include 'web/*' --local-dir /tmp/zonos3-mini && mv /tmp/zonos3-mini/web servers/web/public/models
 # Or export them from the GGUFs (needs the FuseAlign GGUF in the Hugging Face cache for aligner/):
 hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir servers/ggml
