@@ -50,5 +50,8 @@ assets/default_voices/*
 !assets/default_voices/BritishFemale.mp3
 !assets/default_voices/*.codes.npy
 !assets/default_voices/*.embedding.npy
+# The release voices, one folder per language (the clips of gguf/voices/ of Zyphra/ZONOS3-Mini).
+!assets/default_voices/*/
+!assets/default_voices/README.md
 assets/steering/**/pooled.npz
 /node_modules/
