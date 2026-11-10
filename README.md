@@ -166,7 +166,7 @@ The studio's steering controls come from `STEER_BUNDLE`.
   (default `.venv-asr/bin/python`) and `ZONOS3_ASR_DEVICE` its device (default `cuda:0`, else CPU). Without it
   `/v2/capabilities` reports `edit_transcribe: false`, and editing needs the clip's transcript.
 - **Speech editing** needs the speech-edit LoRA (sgl: `--accent-adapters <dir with z3m_omni3b_edit_lora.pt>` on the
-  release LM; the LoRA is in the private `Zyphra/ZONOS3_Mini_release_ckpts`, `lm/rate30_20k_r2grpo/edit_lora/`; see
+  release LM; the LoRA is in the private `Zyphra/ZONOS3_Mini`, `lm/rate30_20k_r2grpo/edit_lora/`; see
   [docs/guide.md](docs/guide.md)) or an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), and FuseAlign for the word
   timings. The ggml and MLX servers get it from `gguf/zonos3-ptq-edit.gguf` and `gguf/edit/accents.gguf`.
 - **Forced alignment** (speech editing) is the FuseAlign aligner: the submodule `third_party/fusealign-multilingual`
@@ -178,7 +178,7 @@ The studio's steering controls come from `STEER_BUNDLE`.
   (or transcripts over 1022 UTF-8 bytes) are aligned long-form, anchored by Qwen3-ASR transcripts of their
   voice-activity chunks (at most 25 s each), or without speech recognition by FuseAlign's own voice-activity map;
   FuseAlign's built-in Whisper anchoring is never used.
-- **Phoneme input** needs the release phoneme tokens (private `Zyphra/ZONOS3_Mini_release_ckpts`,
+- **Phoneme input** needs the release phoneme tokens (private `Zyphra/ZONOS3_Mini`,
   `lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
   `convert_gguf.py lm --phoneme-rows`; `gguf/zonos3-ptq-edit.gguf` already has them) or a checkpoint merged with them
   (`tools/add_text_extra_rows.py`), and `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the same
