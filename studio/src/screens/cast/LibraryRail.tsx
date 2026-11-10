@@ -10,6 +10,7 @@ import { NameInput } from '../../components/Projects';
 import { Waveform } from '../../components/Waveform';
 import { notify } from '../../state/app';
 import { design, designs, switchBase } from '../../state/design';
+import { byLanguage } from '../../lib/voices';
 import { revealRow, setPhrase } from './Monitor';
 import {
   cast,
@@ -262,7 +263,12 @@ export function LibraryRail() {
         ) : speakersLoading.value && !defaults.length ? (
           <p class="muted">Loading voices…</p>
         ) : (
-          <ul class="voices">{defaults.map((s) => <VoiceRow key={s.id} s={s} />)}</ul>
+          byLanguage(defaults).map((g) => (
+            <section key={g.label} aria-label={g.label ?? undefined}>
+              {g.label && <h5 class="voice-group">{g.label}</h5>}
+              <ul class="voices">{g.voices.map((s) => <VoiceRow key={s.id} s={s} />)}</ul>
+            </section>
+          ))
         )}
       </div>
       <div class="rail-section">

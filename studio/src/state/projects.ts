@@ -15,6 +15,7 @@ import { previewText } from '../audio/preview';
 import { errorText, onUnknownVoice } from '../audio/render';
 import { download, slug } from '../lib/files';
 import { uid } from '../lib/math';
+import { byLanguage } from '../lib/voices';
 import { backend, dismissToast, notify, projectSettings } from './app';
 import { baseSpeaker, design, designs, setMode } from './design';
 import * as edit from './edit';
@@ -280,12 +281,12 @@ async function adopt(doc: ProjectDoc) {
   }
 }
 
-/** The Cast bench needs a voice the server has: the first default one when the project's is gone. */
+/** The Cast bench needs a voice the server has: the first default one (as the library lists them) when the project's is gone. */
 function pickBase() {
   const list = speakers.value;
   const old = design.value.baseId;
   if (list.some((s) => s.id === old)) return;
-  const first = list.find((s) => s.is_default) ?? list[0];
+  const first = byLanguage(list.filter((s) => s.is_default))[0]?.voices[0] ?? list[0];
   if (!first) return;
   designs.reset({ ...design.value, baseId: first.id, mode: embeddingOnly(first) ? 'embedding' : projectSettings.value.voiceMode });
   if (old) notify(`Bench switched to ${first.label} because its voice is gone from the server`);

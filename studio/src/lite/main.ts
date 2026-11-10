@@ -11,6 +11,7 @@ import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
 import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
 import { langLabel } from '../lib/languages';
+import { byLanguage } from '../lib/voices';
 import { drawWave } from '../lib/wave';
 import { onEncoderProgress, selectWebEngine, usingWebEngine, type Download } from '../lib/web-engine';
 import { ApiError } from '../lib/http';
@@ -198,7 +199,7 @@ function disableAll(text: string) {
 function renderVoiceSelect() {
   ui.voiceSelect.replaceChildren();
   const groups: [string, Speaker[]][] = [
-    ['Library', voices.filter((s) => s.scope === 'default')],
+    ...byLanguage(voices.filter((s) => s.scope === 'default')).map((g): [string, Speaker[]] => [g.label ?? 'Library', g.voices]),
     ['Your voices (this tab)', voices.filter((s) => s.scope === 'session')],
   ];
   for (const [label, list] of groups) {
@@ -215,7 +216,8 @@ function renderVoiceSelect() {
 async function refreshVoices(select?: Speaker) {
   voices = (await listSpeakers()).filter((s) => s.speaker_modes.includes('embedding'));
   if (select && !voices.some((s) => s.id === select.id)) voices.push(select);
-  library = (select?.scope === 'default' ? select : null) ?? voices.find((s) => s.id === library?.id) ?? voices.find((s) => s.scope === 'default') ?? voices[0] ?? null;
+  const first = byLanguage(voices.filter((s) => s.scope === 'default'))[0]?.voices[0];
+  library = (select?.scope === 'default' ? select : null) ?? voices.find((s) => s.id === library?.id) ?? first ?? voices[0] ?? null;
   renderVoiceSelect();
   showVoice();
 }
