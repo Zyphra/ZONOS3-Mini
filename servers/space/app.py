@@ -368,14 +368,13 @@ async def prepare(body: dict, session_id: str | None) -> dict:
 
 def gpu_seconds(body) -> int:
     """A job's worst-case GPU time. A take: 10 s, +60 s for encoding an uploaded clip in reference mode (a fresh GPU
-    worker loads the dual codec first), and 0.15 s per character (twice that with a guidance twin, or with LACI: its
-    probe and regenerations). An edit call: 90 s (a fresh worker loads Qwen3-ASR or FuseAlign or the dual codec on its
-    first one)."""
+    worker loads the dual codec first), and 0.15 s per character (twice that with a guidance twin). An edit call: 90 s
+    (a fresh worker loads Qwen3-ASR or FuseAlign or the dual codec on its first one)."""
     if isinstance(body, tuple):
         return 90
     clip = 60 if body["speaker_mode"] == "reference" and body["speaker_audio_base64"] else 0
     guided = any(float(body[k]) != 1.0 for k in ("speaker_cfg_scale", "tag_cfg_scale", "controls_cfg_scale"))
-    return min(240, int(10 + clip + 0.15 * len(body["text"]) * (2 if guided or body["laci"] else 1)))
+    return min(240, int(10 + clip + 0.15 * len(body["text"]) * (2 if guided else 1)))
 
 
 # ------------------------------------------------------------------------------------------------- speech editing
