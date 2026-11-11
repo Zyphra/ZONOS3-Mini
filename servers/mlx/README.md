@@ -40,13 +40,11 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
 `ZONOS3_STUDIO_PROJECTS`, `LACI_HEADS`, `LACI_ALL=1`, `PLUGINS`) plus `MODELS_DIR` and `WORKER_PYTHON`
 (`--worker-python`); extra flags are appended. `python -m zonos3_mlx --help` lists the flags.
 
-- **Helper workers** (`--worker-python PY`, as on the ggml server): text normalization
-  (`model/src/zonos3/workers/textnorm.py`) and the FuseAlign forced aligner (`model/src/zonos3/workers/fusealign.py`)
-  run as persistent worker processes under `PY`. Without the flag, text normalization is off and FuseAlign runs under
-  the server's own interpreter.
-- **Text normalization** (NeMo grammars) needs pynini, which has no macOS wheel on PyPI: point `--worker-python` at
-  an interpreter that has it (e.g. a conda env with `pynini==2.1.6`; FuseAlign then runs there too, so it also needs
-  the workspace's `fusealign-hub`). Without it requests are served unnormalized.
+- **Helper workers** (`--worker-python PY`, as on the ggml server): the FuseAlign forced aligner
+  (`model/src/zonos3/workers/fusealign.py`) runs as a persistent worker process under `PY`; without the flag it runs
+  under the server's own interpreter.
+- **Text normalization** is built in (the Rust `zyphra_textnorm` extension of the `third_party/zyphra-textnorm` submodule; `ZONOS3_TTS_NORM=0` turns it
+  off).
 - **Forced alignment** (every word timing of speech editing and plugins) is FuseAlign (`fusealign-hub`, the
   `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`
   before `uv sync`; the checkpoint downloads from [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) on

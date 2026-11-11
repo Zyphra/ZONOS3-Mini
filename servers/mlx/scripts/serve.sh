@@ -8,9 +8,9 @@
 #   SERVE_VOICES                default-voice dir (--tts-default-voices-dir)
 #   PHONEME_LEXICON             gold pronunciation lexicon (--tts-phoneme-lexicon: POST /v2/phonemize)
 #   ZONOS3_STUDIO_PROJECTS      shared studio project store (--studio-projects-dir); empty keeps projects in the browser
-#   WORKER_PYTHON               interpreter of the helper workers (--worker-python): text normalization (needs pynini;
-#                               off without it) and the FuseAlign forced aligner (needs fusealign-hub; default this
-#                               venv's interpreter; ZONOS3_FUSEALIGN_DEVICE, default cpu on macOS)
+#   WORKER_PYTHON               interpreter of the helper workers (--worker-python): the FuseAlign forced aligner
+#                               (needs fusealign-hub; default this venv's interpreter; ZONOS3_FUSEALIGN_DEVICE, default
+#                               cpu on macOS)
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
 #   LACI_ALL=1                  LACI heads for every server language from LACI_HEADS_DIR (default assets/laci_heads/): the
 #                               default *_heads.json, overridden by a *_heads_<speech code>.json (the zh file for Chinese)

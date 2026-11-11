@@ -1,5 +1,5 @@
 default_stages: [pre-commit, pre-push, manual]
-exclude: ^(servers/ggml/vendor/|studio/dist/|model/src/zonos3/vendor/)
+exclude: ^(servers/ggml/vendor/|studio/dist/)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

@@ -108,7 +108,7 @@ def tokenize_worker(
 
     if text_vocab is None:
         raise ValueError("TTS mode requires text_vocab from the model config.")
-    text_normalizer = load_normalizer(warmup=True)
+    text_normalizer = load_normalizer()
     tts_prompt_builder = TTSPromptBuilder(
         TTSPromptConfig(
             n_codebooks=n_codebooks,

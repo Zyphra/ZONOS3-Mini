@@ -67,19 +67,13 @@ def build_parser() -> argparse.ArgumentParser:
         "speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)",
     )
     p.add_argument(
-        "--python-src",
-        default=str(paths.PYTHON_SRC),
-        help="directory holding the zonos3 package for the text-normalization worker (default model/src)",
-    )
-    p.add_argument(
         "--worker-python",
         default=None,
         metavar="PY",
         help="interpreter of the helper workers of model/src/zonos3/workers, each one persistent process: "
-        "text normalization (textnorm.py under <python-src>: NeMo grammars, needs pynini; off without "
-        "this flag) and the FuseAlign forced aligner of speech editing and plugins (fusealign.py: needs "
-        "fusealign-hub; default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) "
-        "runs in .venv-asr (tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)",
+        "the FuseAlign forced aligner of speech editing and plugins (fusealign.py: needs fusealign-hub; "
+        "default this server's interpreter). Speech recognition (asr.py, Qwen3-ASR) runs in .venv-asr "
+        "(tools/setup_asr_env.sh; ZONOS3_ASR_PYTHON)",
     )
     p.add_argument(
         "--laci-heads",
@@ -135,10 +129,10 @@ def main(argv=None) -> int:
     import uvicorn
     from zonos3.server import plugins
     from zonos3.server.middleware import access_log_enabled
+    from zonos3.tokenizer.textnorm import load_normalizer
     from zonos3.tts.edit_align import FuseAlignWorker
     from zonos3.tts.laci import parse_laci_heads
     from zonos3.tts.stream import StreamSettings
-    from zonos3.workers.textnorm import TextNormalizerClient
 
     from zonos3_mlx.engine import Engine
     from zonos3_mlx.scheduler import Scheduler
@@ -151,9 +145,7 @@ def main(argv=None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     worker_python = args.worker_python or sys.executable
-    normalizer = None
-    if args.worker_python:
-        normalizer = TextNormalizerClient(args.worker_python, Path(args.python_src))
+    normalizer = load_normalizer()
     engine = Engine.load(
         args.model,
         zac=args.zac,

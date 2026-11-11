@@ -44,7 +44,7 @@ static void usage(const char * a0) {
             "  --validate <input_ids.npy> <out_dir> [--layers N]\n"
             "  --generate <input_ids.npy> <out.{npy,wav}>\n"
             "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
-            "  --request <req.json> --build-prompt <ids.npy> [--worker-python PY [--python-src DIR]] [--steer F]\n"
+            "  --request <req.json> --build-prompt <ids.npy> [--steer F]\n"
             "                      [--accent-adapters F] (accents.gguf auto-detected next to the backbone)\n"
             "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
             "      ids.twin.npy + ids.twin.cond.json for a speaker / tag / controls CFG twin); no generation\n"
@@ -556,8 +556,6 @@ static int request_prompt_main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--build-prompt") && v) out = argv[++i];
         else if (!strcmp(argv[i], "--gpu")) s.use_gpu = true;
         else if (!strcmp(argv[i], "--cpu")) s.use_gpu = false;
-        else if (!strcmp(argv[i], "--worker-python") && v) s.worker_python = argv[++i];
-        else if (!strcmp(argv[i], "--python-src") && v) s.python_src = argv[++i];
         else if (!strcmp(argv[i], "--spk-encoder") && v) spk_encoder = argv[++i];
         else if (!strcmp(argv[i], "--zac-encoder") && v) zac_encoder = argv[++i];
         else if (!strcmp(argv[i], "--ssl-teacher") && v) ssl_teacher = argv[++i];
@@ -595,14 +593,6 @@ static int request_prompt_main(int argc, char ** argv) {
     s.teacher_path = ssl_teacher.empty() ? mp_find_companion(path, "ssl-teacher.gguf") : ssl_teacher;
     // The server's accent adapters next to the backbone (accents.gguf).
     if (s.accent_adapters_path.empty()) s.accent_adapters_path = mp_find_companion(path, "accents.gguf");
-    if (!s.worker_python.empty()) {
-        if (s.python_src.empty()) s.python_src = zonos3_find_python_src();
-        if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py")) {
-            fprintf(stderr, "error: --worker-python needs --python-src DIR (DIR/zonos3/workers/textnorm.py)\n");
-            return 1;
-        }
-        s.text_normalizer = std::make_unique<zs::TextNormalizer>(s.worker_python, s.python_src);
-    }
     if (!zonos3_model_load(s.model, path.c_str(), s.use_gpu)) return 1;
     s.model_path = path;
     // The server's default --max and slot capacity, so R5 refuses what the server refuses.

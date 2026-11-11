@@ -74,7 +74,7 @@ json capabilities(const ServerState & s) {
     for (const auto & d : s.decoders) decoders.push_back(decoder(*d));
     json caps = {
         {"text_tokenizer_spec", json::parse(s.model.tok.spec_json)},
-        {"text_normalization_enabled", s.text_normalizer != nullptr},
+        {"text_normalization_enabled", true},
         {"text_norm_languages", zonos3_server_language_codes()},
         {"accents", server_accents(s)},
         {"speaker_enabled", !modes.empty()},

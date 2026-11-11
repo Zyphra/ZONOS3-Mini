@@ -20,7 +20,6 @@ looks words up in the gold pronunciation lexicon. Projects stay in your browser.
 
 Words missing from the lexicon are guessed with espeak-ng (GPL-3.0, through `espeakng-loader`).
 
-The first start downloads about 10.5 GB of weights and builds the text-normalization grammars,
-so it takes several minutes.
+The first start downloads about 10.5 GB of weights, so it takes several minutes.
 
 Source: `servers/space/` in Zyphra/ZONOS3, deployed with `servers/space/deploy.py`.

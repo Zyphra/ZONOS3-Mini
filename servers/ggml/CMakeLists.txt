@@ -198,6 +198,43 @@ target_link_libraries(zonos3-server-core PUBLIC zonos3 zonos3-audio zonos3-json-
 if (WIN32)
     target_link_libraries(zonos3-server-core PUBLIC ws2_32)
 endif()
+
+# Text normalization: the Rust static library of the zyphra-textnorm submodule (zyphra_textnorm.h, its `capi`
+# feature), built by cargo for the host.
+find_program(CARGO cargo HINTS $ENV{CARGO_HOME}/bin $ENV{HOME}/.cargo/bin /opt/homebrew/opt/rustup/bin REQUIRED)
+set(TEXTNORM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/zyphra-textnorm)
+if (NOT EXISTS ${TEXTNORM_DIR}/Cargo.toml)
+    message(FATAL_ERROR "Text normalization needs its submodule: git submodule update --init third_party/zyphra-textnorm")
+endif()
+set(TEXTNORM_TARGET_DIR ${CMAKE_CURRENT_BINARY_DIR}/textnorm)
+# One cargo profile for every CMake config: the grammars are slow unoptimized and debug info is not needed here.
+if (WIN32)
+    set(TEXTNORM_LIB ${TEXTNORM_TARGET_DIR}/release/zyphra_textnorm.lib)
+else()
+    set(TEXTNORM_LIB ${TEXTNORM_TARGET_DIR}/release/libzyphra_textnorm.a)
+endif()
+file(GLOB_RECURSE TEXTNORM_SOURCES CONFIGURE_DEPENDS ${TEXTNORM_DIR}/src/*.rs ${TEXTNORM_DIR}/data/*)
+add_custom_command(
+    OUTPUT ${TEXTNORM_LIB}
+    COMMAND ${CARGO} rustc --release --locked --lib -p zyphra-textnorm --features capi --crate-type staticlib
+        --manifest-path ${TEXTNORM_DIR}/Cargo.toml --target-dir ${TEXTNORM_TARGET_DIR}
+    DEPENDS ${TEXTNORM_SOURCES} ${TEXTNORM_DIR}/Cargo.toml ${TEXTNORM_DIR}/Cargo.lock
+    COMMENT "cargo build zyphra-textnorm"
+    USES_TERMINAL
+    VERBATIM)
+add_custom_target(zyphra-textnorm-build DEPENDS ${TEXTNORM_LIB})
+add_library(zyphra-textnorm STATIC IMPORTED GLOBAL)
+set_target_properties(zyphra-textnorm PROPERTIES
+    IMPORTED_LOCATION ${TEXTNORM_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${TEXTNORM_DIR}/include)
+add_dependencies(zyphra-textnorm zyphra-textnorm-build)
+if (WIN32)
+    # Rust std's system libraries on MSVC.
+    set_property(TARGET zyphra-textnorm APPEND PROPERTY INTERFACE_LINK_LIBRARIES ws2_32 userenv ntdll bcrypt)
+else()
+    set_property(TARGET zyphra-textnorm APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${CMAKE_DL_LIBS} Threads::Threads)
+endif()
+target_link_libraries(zonos3-server-core PUBLIC zyphra-textnorm)
 add_executable(zonos3-server src/server/main.cpp)
 target_link_libraries(zonos3-server PRIVATE zonos3-server-core)
 # --- end HTTP server ---

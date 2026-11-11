@@ -27,7 +27,7 @@ std::vector<std::string> child_environment(const std::map<std::string, std::opti
 #ifdef _WIN32
     char * block = GetEnvironmentStringsA();
     for (const char * p = block; p && *p; p += strlen(p) + 1) {
-        const char * eq = strchr(p + 1, '=');   // entries like "=C:=C:\\" start with '='
+        const char * eq = strchr(p + 1, '='); // entries like "=C:=C:\\" start with '='
         if (eq) vars[std::string(p, eq - p)] = eq + 1;
     }
     if (block) FreeEnvironmentStringsA(block);
@@ -46,7 +46,7 @@ std::vector<std::string> child_environment(const std::map<std::string, std::opti
     return out;
 }
 
-}  // namespace
+} // namespace
 
 #ifdef _WIN32
 
@@ -55,7 +55,10 @@ static std::string quote_arg(const std::string & a) {
     std::string q = "\"";
     size_t backslashes = 0;
     for (char c : a) {
-        if (c == '\\') { ++backslashes; continue; }
+        if (c == '\\') {
+            ++backslashes;
+            continue;
+        }
         if (c == '"') q.append(backslashes * 2 + 1, '\\');
         else q.append(backslashes, '\\');
         backslashes = 0;
@@ -70,13 +73,20 @@ ChildProcess::ChildProcess(const std::vector<std::string> & argv,
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE in_r, in_w, out_r, out_w;
     if (!CreatePipe(&in_r, &in_w, &sa, 0)) throw WorkerError("cannot create the worker's stdin pipe");
-    if (!CreatePipe(&out_r, &out_w, &sa, 0)) { CloseHandle(in_r); CloseHandle(in_w); throw WorkerError("cannot create the worker's stdout pipe"); }
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) {
+        CloseHandle(in_r);
+        CloseHandle(in_w);
+        throw WorkerError("cannot create the worker's stdout pipe");
+    }
     SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
     std::string cmd;
     for (const auto & a : argv) cmd += (cmd.empty() ? "" : " ") + quote_arg(a);
     std::string envblock;
-    for (const auto & e : child_environment(env)) { envblock += e; envblock += '\0'; }
+    for (const auto & e : child_environment(env)) {
+        envblock += e;
+        envblock += '\0';
+    }
     envblock += '\0';
     STARTUPINFOA si{};
     si.cb = sizeof(si);
@@ -90,11 +100,14 @@ ChildProcess::ChildProcess(const std::vector<std::string> & argv,
     CloseHandle(in_r);
     CloseHandle(out_w);
     if (!ok) {
-        CloseHandle(in_w); CloseHandle(out_r);
+        CloseHandle(in_w);
+        CloseHandle(out_r);
         throw WorkerError("cannot start " + argv[0]);
     }
     CloseHandle(pi.hThread);
-    process_ = pi.hProcess; in_ = in_w; out_ = out_r;
+    process_ = pi.hProcess;
+    in_ = in_w;
+    out_ = out_r;
 }
 
 bool ChildProcess::write(const std::string & data) {
@@ -108,7 +121,11 @@ bool ChildProcess::write(const std::string & data) {
 bool ChildProcess::read_line(std::string & line) {
     for (;;) {
         const size_t nl = pending_.find('\n');
-        if (nl != std::string::npos) { line = pending_.substr(0, nl); pending_.erase(0, nl + 1); return true; }
+        if (nl != std::string::npos) {
+            line = pending_.substr(0, nl);
+            pending_.erase(0, nl + 1);
+            return true;
+        }
         char buf[65536];
         DWORD n = 0;
         if (!out_ || !ReadFile((HANDLE) out_, buf, sizeof(buf), &n, nullptr) || n == 0) return false;
@@ -136,7 +153,8 @@ ChildProcess::ChildProcess(const std::vector<std::string> & argv,
     int in_pipe[2], out_pipe[2];
     if (pipe(in_pipe) != 0) throw WorkerError(std::string("cannot create the worker's stdin pipe: ") + strerror(errno));
     if (pipe(out_pipe) != 0) {
-        ::close(in_pipe[0]); ::close(in_pipe[1]);
+        ::close(in_pipe[0]);
+        ::close(in_pipe[1]);
         throw WorkerError(std::string("cannot create the worker's stdout pipe: ") + strerror(errno));
     }
     fcntl(in_pipe[1], F_SETFD, FD_CLOEXEC);
@@ -161,17 +179,23 @@ ChildProcess::ChildProcess(const std::vector<std::string> & argv,
     ::close(in_pipe[0]);
     ::close(out_pipe[1]);
     if (rc != 0) {
-        ::close(in_pipe[1]); ::close(out_pipe[0]);
+        ::close(in_pipe[1]);
+        ::close(out_pipe[0]);
         throw WorkerError("cannot start " + argv[0] + ": " + strerror(rc));
     }
-    pid_ = pid; in_ = in_pipe[1]; out_ = out_pipe[0];
+    pid_ = pid;
+    in_ = in_pipe[1];
+    out_ = out_pipe[0];
 }
 
 bool ChildProcess::write(const std::string & data) {
     if (in_ < 0) return false;
     for (size_t off = 0; off < data.size();) {
         const ssize_t n = ::write(in_, data.data() + off, data.size() - off);
-        if (n < 0) { if (errno == EINTR) continue; return false; }
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
         off += (size_t) n;
     }
     return true;
@@ -180,7 +204,11 @@ bool ChildProcess::write(const std::string & data) {
 bool ChildProcess::read_line(std::string & line) {
     for (;;) {
         const size_t nl = pending_.find('\n');
-        if (nl != std::string::npos) { line = pending_.substr(0, nl); pending_.erase(0, nl + 1); return true; }
+        if (nl != std::string::npos) {
+            line = pending_.substr(0, nl);
+            pending_.erase(0, nl + 1);
+            return true;
+        }
         if (out_ < 0) return false;
         char buf[65536];
         const ssize_t n = ::read(out_, buf, sizeof(buf));
@@ -208,30 +236,8 @@ void ChildProcess::wait() {
 
 #endif
 
-ChildProcess::~ChildProcess() { wait(); }
-
-JsonLinesWorker::JsonLinesWorker(std::vector<std::string> argv, std::map<std::string, std::optional<std::string>> env)
-    : argv_(std::move(argv)), env_(std::move(env)) {}
-
-void JsonLinesWorker::close() {
-    std::lock_guard<std::mutex> lk(m_);
-    process_.reset();
-}
-
-nlohmann::json JsonLinesWorker::call(const nlohmann::json & request) {
-    std::lock_guard<std::mutex> lk(m_);
-    if (!process_) process_ = std::make_unique<ChildProcess>(argv_, env_);
-    std::string line = request.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
-    if (!process_->write(line) || !process_->read_line(line)) {
-        process_.reset();
-        throw WorkerError(argv_.size() > 1 ? argv_[1] + " exited" : argv_[0] + " exited");
-    }
-    nlohmann::json response = nlohmann::json::parse(line, nullptr, false);
-    if (response.is_discarded()) {
-        process_.reset();
-        throw WorkerError("worker answered with a line that is not JSON");
-    }
-    return response;
+ChildProcess::~ChildProcess() {
+    wait();
 }
 
 int run_process(const std::vector<std::string> & argv, std::string & stderr_text) {
@@ -243,11 +249,17 @@ int run_process(const std::vector<std::string> & argv, const std::map<std::strin
                 std::string & stderr_text) {
     stderr_text.clear();
     std::string envblock;
-    for (const auto & e : child_environment(env)) { envblock += e; envblock += '\0'; }
+    for (const auto & e : child_environment(env)) {
+        envblock += e;
+        envblock += '\0';
+    }
     envblock += '\0';
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE err_r, err_w;
-    if (!CreatePipe(&err_r, &err_w, &sa, 0)) { stderr_text = "cannot create a pipe"; return -1; }
+    if (!CreatePipe(&err_r, &err_w, &sa, 0)) {
+        stderr_text = "cannot create a pipe";
+        return -1;
+    }
     SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
     HANDLE nul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
     std::string cmd;
@@ -263,7 +275,11 @@ int run_process(const std::vector<std::string> & argv, const std::map<std::strin
                                    nullptr, &si, &pi);
     CloseHandle(err_w);
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
-    if (!ok) { CloseHandle(err_r); stderr_text = "cannot start " + argv[0]; return -1; }
+    if (!ok) {
+        CloseHandle(err_r);
+        stderr_text = "cannot start " + argv[0];
+        return -1;
+    }
     char buf[4096];
     DWORD n = 0;
     while (ReadFile(err_r, buf, sizeof(buf), &n, nullptr) && n > 0) stderr_text.append(buf, n);
@@ -284,7 +300,10 @@ int run_process(const std::vector<std::string> & argv, const std::map<std::strin
     for (auto & e : envs) envp.push_back(e.data());
     envp.push_back(nullptr);
     int err_pipe[2];
-    if (pipe(err_pipe) != 0) { stderr_text = "cannot create a pipe"; return -1; }
+    if (pipe(err_pipe) != 0) {
+        stderr_text = "cannot create a pipe";
+        return -1;
+    }
     fcntl(err_pipe[0], F_SETFD, FD_CLOEXEC);
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
@@ -319,4 +338,4 @@ int run_process(const std::vector<std::string> & argv, const std::map<std::strin
 }
 #endif
 
-}  // namespace zs
+} // namespace zs

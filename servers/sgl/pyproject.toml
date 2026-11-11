@@ -20,6 +20,7 @@ dependencies = [
     "sgl_kernel>=0.3.17.post1",
     "pyzmq",
     "uvicorn",
+    "tqdm",  # CUDA-graph capture progress (engine/graph.py), the benchmark client
     "fastapi",
     "apache-tvm-ffi>=0.1.4",
     "nvidia-cutlass-dsl==4.4.2",

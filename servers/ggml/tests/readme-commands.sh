@@ -173,6 +173,7 @@ pass "/v2/health"
 caps="$(curl -fsS "$BASE/v2/capabilities")"
 echo "$caps" | grep -q '"n_codebooks"' || fail "/v2/capabilities missing n_codebooks"
 echo "$caps" | grep -q '"speaker_modes"' || fail "/v2/capabilities missing speaker_modes"
+echo "$caps" | grep -Eq '"text_normalization_enabled": ?true' || fail "/v2/capabilities: text normalization is built in"
 for key in bucket_counts unknown_ids; do
   echo "$caps" | grep -Eq "\"$key\": ?\\{[^}]*\"speaking_rate\": ?30" || fail "/v2/capabilities $key lacks speaking_rate 30"
 done

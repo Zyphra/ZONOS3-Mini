@@ -11,7 +11,8 @@
 //   phonemize.*, edit.*          their routes and capabilities
 //   pyhost.*                     the Python host (model/src/zonos3/workers/pyhost.py) and its engine calls
 //   plugins.*                    --plugins routes, forwarded to the Python host
-//   workers.*, textnorm.*        helper processes (model/src/zonos3/workers/*.py), text normalization
+//   workers.*                    helper processes (model/src/zonos3/workers/*.py)
+//   textnorm.*                   text normalization (third_party/zyphra-textnorm, in process)
 #include "compat.h"
 
 #include "server/capabilities.h"
@@ -25,6 +26,7 @@
 #include "server/speakers.h"
 #include "server/state.h"
 #include "server/util.h"
+#include "server/workers.h"
 
 #include "exe-path.h"
 #include "model-paths.h"
@@ -81,10 +83,9 @@ void usage(const char * a0) {
             "                      speaker embedding) and .npy/.npz speaker embeddings (default default_voices; empty disables)\n"
             "  --python-src DIR    directory holding the zonos3 Python package for the helper workers (default:\n"
             "                      model/src of the checkout holding the executable, else python/ beside it)\n"
-            "  --worker-python PY  interpreter of the helper workers <python-src>/zonos3/workers: text normalization\n"
-            "                      (textnorm.py: zonos3.tokenizer.textnorm, NeMo grammars) and speech editing and plugins\n"
-            "                      (pyhost.py: zonos3.tts.edit_runtime and the --plugins routers; word timings\n"
-            "                      need fusealign-hub installed), each one persistent worker. Speech recognition\n"
+            "  --worker-python PY  interpreter of the helper worker <python-src>/zonos3/workers/pyhost.py: speech\n"
+            "                      editing and plugins (zonos3.tts.edit_runtime and the --plugins routers; word\n"
+            "                      timings need fusealign-hub installed), one persistent worker. Speech recognition\n"
             "                      (Qwen3-ASR, optional: transcribes clips sent without their transcript) runs in its\n"
             "                      own interpreter: ZONOS3_ASR_PYTHON (default <repo>/.venv-asr/bin/python, set up by\n"
             "                      tools/setup_asr_env.sh; ZONOS3_ASR_DEVICE picks its device)\n"
@@ -265,10 +266,9 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         return 1;
     }
     if (!s.worker_python.empty()) {
-        if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/textnorm.py") ||
-            !mp_file_exists(s.python_src + "/zonos3/workers/pyhost.py")) {
+        if (s.python_src.empty() || !mp_file_exists(s.python_src + "/zonos3/workers/pyhost.py")) {
             fprintf(stderr, "error: --worker-python needs the zonos3 package: pass --python-src DIR "
-                            "(DIR/zonos3/workers/textnorm.py, DIR/zonos3/workers/pyhost.py)\n");
+                            "(DIR/zonos3/workers/pyhost.py)\n");
             return 1;
         }
         const auto host_env = pyhost_environment(s);
@@ -282,7 +282,6 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
                 return 1;
             }
         }
-        s.text_normalizer = std::make_unique<TextNormalizer>(s.worker_python, s.python_src);
         s.pyhost = std::make_unique<PyHost>(s);
         // zonos3.tts.edit_align.fusealign_installed, asked of the host's interpreter once (the speech_editing
         // capability)
@@ -367,7 +366,8 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
         if (!zac_partial_frames(d.zac))
             fprintf(stderr, "zonos3-server: %s has no per-codebook residual biases (res.{i}.bias): early partial-frame "
                             "decode is off for decoder %s, prefix streaming decodes complete frames only (reconvert with "
-                            "tools/convert_gguf.py codec-decoder)\n", zac_path.c_str(), d.id.c_str());
+                            "tools/convert_gguf.py codec-decoder)\n",
+                    zac_path.c_str(), d.id.c_str());
     }
     std::string decoders;
     for (const auto & d : s.decoders) decoders += (decoders.empty() ? "" : ", ") + d->id + "=" + d->path;
@@ -418,7 +418,6 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     if (s.pyhost) s.pyhost->close(); // before the scheduler: its engine calls finish first
     stop_scheduler(s);               // stop the worker, reaper + ZAC pool before returning
     stop_reference_reaper(s);
-    if (s.text_normalizer) s.text_normalizer->close();
     if (ctl) ctl->svr = nullptr; // svr is about to go out of scope
     if (!bound) {
         fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port);

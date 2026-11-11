@@ -137,10 +137,6 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
             "--build-prompt",
             str(ggml_ids),
             *steer_flags,
-            "--worker-python",
-            sys.executable,
-            "--python-src",
-            str(REPO / "model" / "src"),
         ],
         capture_output=True,
         text=True,
@@ -202,8 +198,10 @@ def test_request_refused(entry, backbone_caps, ggml_build, tmp_path):
         text=True,
     )
     assert run.returncode != 0, f"{entry['name']}: accepted"
-    # The refusal is the last stderr line: "<status> {"detail": ...}".
-    status, _, body = run.stderr.strip().splitlines()[-1].partition(" ")
+    # The refusal is the last stderr line of the form "<status> {"detail": ...}" (ggml backend teardown may log after it).
+    refusal = [line for line in run.stderr.splitlines() if line[:3].isdigit() and line[3:5] == " {"]
+    assert refusal, run.stderr
+    status, _, body = refusal[-1].partition(" ")
     assert status == "400", run.stderr
     detail = json.loads(body)["detail"]
     assert isinstance(detail, str) and detail, run.stderr

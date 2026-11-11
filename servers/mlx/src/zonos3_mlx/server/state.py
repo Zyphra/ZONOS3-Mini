@@ -65,5 +65,3 @@ class ServerState:
         for plugin in self.plugins:
             plugin.close()
         self.aligner.close()
-        if self.engine.normalizer is not None:
-            self.engine.normalizer.close()

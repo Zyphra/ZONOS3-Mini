@@ -1135,10 +1135,10 @@ async def _tts_generate_msg(
     for its speaker mode, ``request_rules``); the tokenizer worker builds the prompt rows.
     ``laci_target_frames`` / ``laci_adjust_rate``: a LACI take's duration target (zonos3.server.plugins.LaciTakeRequest;
     needs req.laci)."""
-    # The tokenizer normalizes the text (the longest step before the scheduler, ~0.2 ms per English character) while
-    # this coroutine resolves the request; the TTSTokenizeMsg then finds it memoized. An invalid language is
-    # rejected below. Only with the shared tokenizer: separate tokenizer processes (--num-tokenizer > 0) take messages
-    # round-robin and memoize per process, so the request would mostly reach another process and normalize twice.
+    # The tokenizer normalizes the text while this coroutine resolves the request; the TTSTokenizeMsg then finds it
+    # memoized. An invalid language is rejected below. Only with the shared tokenizer: separate tokenizer processes
+    # (--num-tokenizer > 0) take messages round-robin and memoize per process, so the request would mostly reach another
+    # process and normalize twice.
     if req.text_normalization and state.config.share_tokenizer:
         try:
             language = languages.normalize(req.language)

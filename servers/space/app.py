@@ -148,8 +148,6 @@ ASSETS.speaker_encoder(CONFIG.speaker_embedding_codec, CONFIG.speaker_embedding_
 # A clip in reference mode is encoded by the dual codec inside the GPU call; fetch its teacher folder now.
 _DUAL = next(e for e in matched_codec.registry().values() if e.get("family") == "dual")
 resolve_dir_or_local(_DUAL["teacher"])
-# All nine NeMo grammars, synchronously: GPU workers are forked from this process and normalize with them.
-ASSETS.normalizer().warmup()
 
 
 # --------------------------------------------------------------------------------------------- capabilities

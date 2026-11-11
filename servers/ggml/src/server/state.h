@@ -83,12 +83,12 @@ struct ServerState {
     PrefixStreamSettings prefix;
     std::string studio_dir;
     std::string default_voice_dir = "default_voices";
-    std::string python_src;                          // directory holding the zonos3 package (model/src or <exe>/python)
-    std::string worker_python;                       // --worker-python: interpreter of <python_src>/zonos3/workers
-    std::unique_ptr<TextNormalizer> text_normalizer; // set when --worker-python is given
-    std::unique_ptr<PyHost> pyhost;                  // speech editing and plugins; set when --worker-python is given
-    std::vector<std::string> plugins;                // --plugins: served by the Python host (server/plugins.h)
-    bool fusealign_installed = false;                // the --worker-python interpreter has fusealign_hub
+    std::string python_src;           // directory holding the zonos3 package (model/src or <exe>/python)
+    std::string worker_python;        // --worker-python: interpreter of <python_src>/zonos3/workers
+    TextNormalizer text_normalizer;   // in process (zyphra-textnorm); always available
+    std::unique_ptr<PyHost> pyhost;   // speech editing and plugins; set when --worker-python is given
+    std::vector<std::string> plugins; // --plugins: served by the Python host (server/plugins.h)
+    bool fusealign_installed = false; // the --worker-python interpreter has fusealign_hub
     // Companions of later features (accents.gguf, --laci-heads LANG=PATH, --tts-phoneme-lexicon DIR); recorded here
     // so every module sees the configuration.
     std::string accent_adapters_path, phoneme_lexicon_dir;

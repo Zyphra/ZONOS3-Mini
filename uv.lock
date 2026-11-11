@@ -2421,15 +2421,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pynini"
-version = "2.1.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9b/69/4b59968b0fd351a153d7a3c2feaa6e7514c903c063bbd7f7e1e3f1c079b0/pynini-2.1.6.tar.gz", hash = "sha256:b09b6dda73608cedf962dbfbcfa5826b0984d1b43a8f995761972e6e032921c6", size = 789830, upload-time = "2024-01-13T05:20:20.851Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/34/403a5e792a8454168c9b9e8b7d8141027e9fb5453013d2f9320e0b083333/pynini-2.1.6-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:f32d1c0b3aa05a76153c7e0e395e553e93acddf4a436cbec5d50d1eb1d354bcd", size = 154695139, upload-time = "2024-01-13T05:20:35.048Z" },
-]
-
-[[package]]
 name = "pyparsing"
 version = "3.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2880,21 +2871,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/02/bb3ff8b6e6d02ce9e3740f4c17dfbbfb55f34c789c139e9cd91985f356c7/ruff-0.14.11-py3-none-win32.whl", hash = "sha256:337c5dd11f16ee52ae217757d9b82a26400be7efac883e9e852646f1557ed841", size = 12851094, upload-time = "2026-01-08T19:11:45.163Z" },
     { url = "https://files.pythonhosted.org/packages/58/f1/90ddc533918d3a2ad628bc3044cdfc094949e6d4b929220c3f0eb8a1c998/ruff-0.14.11-py3-none-win_amd64.whl", hash = "sha256:f981cea63d08456b2c070e64b79cb62f951aa1305282974d4d5216e6e0178ae6", size = 14001379, upload-time = "2026-01-08T19:11:52.591Z" },
     { url = "https://files.pythonhosted.org/packages/c4/1c/1dbe51782c0e1e9cfce1d1004752672d2d4629ea46945d19d731ad772b3b/ruff-0.14.11-py3-none-win_arm64.whl", hash = "sha256:649fb6c9edd7f751db276ef42df1f3df41c38d67d199570ae2a7bd6cbc3590f0", size = 12938644, upload-time = "2026-01-08T19:11:50.027Z" },
-]
-
-[[package]]
-name = "sacremoses"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "joblib" },
-    { name = "regex" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/51/fbdc4af4f6e85d26169e28be3763fe50ddfd0d4bf8b871422b0788dcc4d2/sacremoses-0.1.1.tar.gz", hash = "sha256:b6fd5d3a766b02154ed80b962ddca91e1fd25629c0978c7efba21ebccf663934", size = 883188, upload-time = "2023-10-30T15:56:20.187Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/f0/89ee2bc9da434bd78464f288fdb346bc2932f2ee80a90b2a4bbbac262c74/sacremoses-0.1.1-py3-none-any.whl", hash = "sha256:31e04c98b169bfd902144824d191825cd69220cdb4ae4bcf1ec58a7db5587b1a", size = 897476, upload-time = "2023-10-30T15:56:18.121Z" },
 ]
 
 [[package]]
@@ -3580,15 +3556,13 @@ dependencies = [
     { name = "omegaconf" },
     { name = "pydantic" },
     { name = "pyicu-wheels" },
-    { name = "pynini", marker = "sys_platform == 'linux'" },
     { name = "pyyaml" },
-    { name = "sacremoses" },
     { name = "soundfile" },
     { name = "tokenizers" },
     { name = "torch" },
     { name = "torchaudio" },
-    { name = "tqdm" },
     { name = "transformers" },
+    { name = "zyphra-textnorm" },
 ]
 
 [package.metadata]
@@ -3603,15 +3577,13 @@ requires-dist = [
     { name = "omegaconf" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pyicu-wheels", specifier = ">=2.14,<2.15" },
-    { name = "pynini", marker = "sys_platform == 'linux'", specifier = "==2.1.6" },
     { name = "pyyaml" },
-    { name = "sacremoses", specifier = ">=0.1.1" },
     { name = "soundfile" },
     { name = "tokenizers" },
     { name = "torch" },
     { name = "torchaudio", specifier = "==2.9.1" },
-    { name = "tqdm" },
     { name = "transformers", specifier = ">=4.56.0,<=4.57.3" },
+    { name = "zyphra-textnorm", directory = "third_party/zyphra-textnorm" },
 ]
 
 [[package]]
@@ -3705,6 +3677,7 @@ dependencies = [
     { name = "sgl-kernel" },
     { name = "sonic-moe" },
     { name = "tilelang" },
+    { name = "tqdm" },
     { name = "uvicorn" },
     { name = "zonos3" },
 ]
@@ -3730,6 +3703,7 @@ requires-dist = [
     { name = "sgl-kernel", specifier = ">=0.3.17.post1" },
     { name = "sonic-moe", specifier = "==0.1.2.post1" },
     { name = "tilelang", specifier = "==0.1.14" },
+    { name = "tqdm" },
     { name = "uvicorn" },
     { name = "zonos3", editable = "model" },
 ]
@@ -3763,3 +3737,7 @@ requires-dist = [
     { name = "transformers" },
     { name = "zonos3", editable = "model" },
 ]
+
+[[package]]
+name = "zyphra-textnorm"
+source = { directory = "third_party/zyphra-textnorm" }

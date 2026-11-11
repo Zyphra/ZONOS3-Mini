@@ -1,5 +1,5 @@
-"""Tag CFG: nonverbal markup helpers, markup-safe normalization, the tokenizer's plain-text twin
-and the scheduler's tagged-vs-plain pair. CPU only; the real NeMo grammar cases skip without pynini."""
+"""Tag CFG: nonverbal markup helpers, the tokenizer's plain-text twin and the scheduler's tagged-vs-plain pair. CPU
+only. (Markup-safe normalization itself: model/tests/test_textnorm_wrapper.py.)"""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 from zonos3.tokenizer import textnorm
-from zonos3.tokenizer.textnorm import TTSTextNormalizer
 from zonos3.tts import plan
 from zonos3.tts.markup import (
     _NONVERBAL_MARKUP,
@@ -78,14 +77,6 @@ class _Vocoder:
         return _silence_rows(frames, config)
 
 
-class _UpperNormalizer:
-    """Stand-in grammar: upper-cases, spells digits, and refuses any markup character it is handed."""
-
-    def normalize(self, text, verbose=False, punct_pre_process=False, punct_post_process=False):
-        assert "<" not in text and ">" not in text, f"markup reached the grammar: {text!r}"
-        return text.upper().replace("5", "FIVE")
-
-
 def _message(scale=2.0, **kwargs):
     fields = {
         "uid": 7,
@@ -99,8 +90,9 @@ def _message(scale=2.0, **kwargs):
     return TTSTokenizeMsg(**fields)
 
 
-def _tokenize(monkeypatch, tmp_path, messages, *, normalizer=None):
-    """Run the real tokenize_worker loop on ``messages``; return the TTSUserMsgs sent to the scheduler."""
+def _tokenize(monkeypatch, tmp_path, messages, *, normalize=False):
+    """Run the real tokenize_worker loop on ``messages`` (with the real text normalizer when ``normalize``); return the
+    TTSUserMsgs sent to the scheduler."""
     sent = []
 
     class Push:
@@ -125,23 +117,10 @@ def _tokenize(monkeypatch, tmp_path, messages, *, normalizer=None):
         def empty(self):
             return not pending
 
-    class Normalizer:
-        def __init__(self):
-            self.inner = TTSTextNormalizer()
-            if normalizer is not None:
-                self.inner.get = lambda lang: normalizer
-
-        def warmup(self, languages=None):
-            pass
-
-        def normalize(self, text, language):
-            return self.inner.normalize(text, language)
-
     monkeypatch.setattr(tokenizer_server, "ZmqPushQueue", Push)
     monkeypatch.setattr(tokenizer_server, "ZmqPullQueue", Pull)
     monkeypatch.setattr("zonos3_sgl.tokenizer.vocoder.TTSVocoderManager", _Vocoder)
-    monkeypatch.setattr(textnorm, "TTSTextNormalizer", Normalizer)
-    monkeypatch.setattr(textnorm, "normalization_enabled", lambda: normalizer is not None)
+    monkeypatch.setattr(textnorm, "normalization_enabled", lambda: normalize)
     tokenizer_server.tokenize_worker(
         addr="tokenizer",
         create=True,
@@ -225,50 +204,11 @@ def test_split_alternates_text_and_markers_and_round_trips():
     assert split_nonverbal_markup("plain") == ["plain"]
 
 
-# ------------------------------------------------------------------------------------------------ normalization
-def test_normalizer_never_hands_markup_to_a_grammar_and_keeps_the_spacing():
-    tn = TTSTextNormalizer()
-    tn.get = lambda lang: _UpperNormalizer()
-    assert tn.normalize("So I said <laugh/> no way, $5.", "en_us") == "SO I SAID <laugh/> NO WAY, $FIVE."
-    assert tn.normalize("<shouting>Get out!</shouting>  ok", "en_us") == "<shouting>GET OUT!</shouting> OK"
-    assert tn.normalize("我说<laugh/>不行5", "cmn") == "我说<laugh/>不行FIVE"
-    assert tn.normalize("a <laugh/> <sigh/> b\n<cough/>", "ko") == "A <laugh/> <sigh/> B <cough/>"
-    # untagged text takes the whole-text path; unsupported languages come back as typed
-    assert tn.normalize("no markup 5", "en_us") == "NO MARKUP FIVE"
-    assert tn.normalize("keep  <laugh/>  as typed", "xx") == "keep  <laugh/>  as typed"
-
-
-@pytest.fixture(scope="module")
-def tn():
-    pytest.importorskip("pynini", reason="NeMo grammars need pynini")
-    return TTSTextNormalizer()
-
-
-@pytest.mark.parametrize(
-    "language,text,expected",
-    [
-        (
-            "en_us",
-            "<shouting>Get out!</shouting> It costs $5 <sigh/> today.",
-            "<shouting>Get out!</shouting> It costs five dollars <sigh/> today.",
-        ),
-        ("cmn", "<shouting>出去！</shouting>他花了5元<sigh/>。", "<shouting>出去！</shouting>他花了五元<sigh/>。"),
-        ("cmn", "我有3个 <laugh/> 苹果", "我有三个 <laugh/> 苹果"),
-        ("ja", "<shouting>出て行け！</shouting>5円です<sigh/>。", "<shouting>出て行け！</shouting>五円です<sigh/>。"),
-        # whole-text normalization raised on the ASCII space next to the marker and left "3日" unread
-        ("ja", "今日は3日 <breath/> です", "今日は三日 <breath/> です"),
-        ("ko", "<shouting>나가!</shouting> 5원이에요 <sigh/>.", "<shouting>나가!</shouting> 오 원이에요 <sigh/>."),
-    ],
-)
-def test_real_grammars_keep_markup(tn, language, text, expected):
-    assert tn.normalize(text, language) == expected
-
-
 # ------------------------------------------------------------------------------------------------ tokenizer twin
 def test_tokenizer_builds_the_plain_twin_from_the_same_normalized_text(monkeypatch, tmp_path):
     builder = TTSPromptBuilder(_config())
     msg = _message(text="So I said <laugh/> 5 times.")
-    (user,) = _tokenize(monkeypatch, tmp_path, [msg], normalizer=_UpperNormalizer())
+    (user,) = _tokenize(monkeypatch, tmp_path, [msg], normalize=True)
     assert isinstance(user, TTSUserMsg) and user.plain_input_ids is not None
     tagged, plain = user.input_ids, user.plain_input_ids
 
@@ -283,8 +223,8 @@ def test_tokenizer_builds_the_plain_twin_from_the_same_normalized_text(monkeypat
             )
         )
 
-    assert torch.equal(tagged, layout("SO I SAID <laugh/> FIVE TIMES."))
-    assert torch.equal(plain, layout("SO I SAID FIVE TIMES."))
+    assert torch.equal(tagged, layout("So I said <laugh/> five times."))
+    assert torch.equal(plain, layout("So I said five times."))
     # shared conditioning: speaker slot, condition rows (same values / start) and the prefill rows
     assert user.speaker_token_position == 0 and user.condition_token_start == 1
     assert user.condition_values == [3, UNKNOWN, 5]
@@ -423,15 +363,6 @@ def test_scheduler_refuses_a_guided_request_without_its_twin(monkeypatch, tmp_pa
 # ------------------------------------------------------------------------------------------------ interactions
 # Markup together with the rest of this runtime: pronunciation groups, steering and edit text handling.
 G = "\ue000həˈloʊ\ue001"
-
-
-def test_normalizer_keeps_markup_and_pronunciation_groups_together():
-    tn = TTSTextNormalizer()
-    tn.get = lambda lang: _UpperNormalizer()
-    assert tn.normalize(f"say {G} <laugh/> 5 times", "en_us") == f"SAY {G} <laugh/> FIVE TIMES"
-    assert tn.normalize(f"<shouting>{G} 5</shouting>", "en_us") == f"<shouting>{G} FIVE</shouting>"
-    # no markup: the group path as before (whitespace around groups kept exactly)
-    assert tn.normalize(f"say  {G}  5", "en_us") == f"SAY  {G}  FIVE"
 
 
 def test_plain_twin_text_keeps_pronunciation_groups():

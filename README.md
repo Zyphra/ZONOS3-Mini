@@ -26,6 +26,9 @@ Every server implements the same HTTP API and serves the same studio.
 ### 2. Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/); the project pins Python 3.12.
+- A Rust toolchain ([rustup](https://rustup.rs), stable): `uv sync` builds the text normalizer's Python extension
+  (the [zyphra-textnorm](https://github.com/Zyphra/zyphra-textnorm) submodule) with cargo, and the ggml server's CMake
+  build links its C library.
 - The weights come from the public Hugging Face repo [`Zyphra/ZONOS3-Mini`](https://huggingface.co/Zyphra/ZONOS3-Mini);
   no token is needed.
   - CUDA server: the PyTorch weights (`lm/`, `autoencoder/`, `speaker_encoders/`, about 9 GB with the default decoder),
@@ -42,8 +45,8 @@ uv sync --locked --all-packages          # Linux with an NVIDIA GPU
 uv sync --locked --package zonos3-mlx    # Apple Silicon
 ```
 
-In an existing checkout, `git submodule update --init third_party/fusealign-multilingual servers/ggml/ggml` fetches
-the FuseAlign aligner and ggml.
+In an existing checkout, `git submodule update --init third_party/fusealign-multilingual third_party/zyphra-textnorm
+servers/ggml/ggml` fetches the FuseAlign aligner, the text normalizer and ggml.
 
 ### 4. Start a server
 
@@ -56,7 +59,7 @@ hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir servers/ggml
 servers/mlx/scripts/serve.sh
 ```
 
-The first CUDA start JIT-compiles kernels and builds the text-normalization grammar cache, which takes several minutes.
+The first CUDA start JIT-compiles kernels, which takes several minutes.
 Ports, voices, steering and other settings are in [Server configuration](#server-configuration).
 
 ### 5. Speak
@@ -219,7 +222,7 @@ whispering, emotion, pace, projection, liveliness) with their control values.
 
 | Path | Contents |
 | --- | --- |
-| `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, the speech-editing runtime every server serves, the server plugin seam, registries and the Python workers (text normalization, speech recognition, forced alignment, the ggml server's Python host) |
+| `model/` | The `zonos3` package: codec, speaker encoders, prompt / conditioning / steering / LACI code, the speech-editing runtime every server serves, the server plugin seam, registries and the Python workers (speech recognition, forced alignment, the ggml server's Python host) |
 | `servers/sgl/` | The `zonos3-sgl` package (`zonos3_sgl`): the CUDA server built on [Mini-SGLang](https://github.com/sgl-project/mini-sglang), its launch scripts and benchmark |
 | `servers/ggml/` | The C++/ggml server and CLI (CPU, CUDA, Metal, Vulkan); ggml is the submodule `servers/ggml/ggml` |
 | `servers/mlx/` | The `zonos3-mlx` package (`zonos3_mlx`): the Apple Silicon server running the ggml server's GGUF files in MLX |
@@ -229,7 +232,7 @@ whispering, emotion, pace, projection, liveliness) with their control values.
 | `servers/api/` | The HTTP contract every server implements (`openapi.yaml`, its bundled `openapi.json`) and its conformance tests (`zonos3-api`) |
 | `servers/space/` | The ZeroGPU Hugging Face Space (`app.py`) and its deploy script |
 | `assets/` | Runtime assets shared by the servers: `default_voices/`, `steering/` (steering bundles), `laci_heads/` (LACI alignment heads) |
-| `third_party/` | Third-party license texts (`third_party/licenses/`) and the FuseAlign submodule |
+| `third_party/` | Third-party license texts (`third_party/licenses/`) and the submodules: FuseAlign and the text normalizer [zyphra-textnorm](https://github.com/Zyphra/zyphra-textnorm) (Rust ports of the NeMo grammars; its Python extension and C library, linked into the ggml server) |
 
 ## Reference model and conversion
 
@@ -247,8 +250,8 @@ Lingua training checkpoints are converted with `tools/convert_lingua_checkpoint.
 
 ## Development
 
-The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `servers/api`); the `dev` group (installed
-by default) holds the test tools.
+The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `servers/api`); the text normalizer is
+installed from its submodule, and the `dev` group (installed by default) holds the test tools.
 
 ```bash
 source servers/sgl/scripts/env.sh

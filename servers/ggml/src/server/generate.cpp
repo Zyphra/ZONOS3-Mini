@@ -154,12 +154,8 @@ Decoder * resolve_decoder(const ServerState & s, const json & body) {
 }
 
 std::string normalize_text(ServerState & s, const std::string & text, const std::string & language, bool requested) {
-    if (!requested || !s.text_normalizer) return text;
-    try {
-        return s.text_normalizer->normalize(text, language);
-    } catch (const WorkerError & e) {
-        fail(500, std::string("text normalization failed: ") + e.what());
-    }
+    if (!requested) return text;
+    return s.text_normalizer.normalize(text, language);
 }
 
 namespace {

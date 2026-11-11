@@ -1,29 +1,28 @@
-// TTS text normalization through model/src/zonos3/workers/textnorm.py (zonos3.tokenizer.textnorm): one persistent
-// worker process, requests serialized, restarted once when it exits.
+// TTS text normalization, in process: the Rust library of the zyphra-textnorm submodule (zyphra_textnorm.h), linked
+// statically.
 #pragma once
 
-#include "server/workers.h"
-
 #include <memory>
-#include <mutex>
 #include <string>
-#include <vector>
+
+struct zyphra_textnorm;
 
 namespace zs {
 
 class TextNormalizer {
-public:
-    // python: the --worker-python interpreter; python_src: the directory holding the zonos3 package.
-    TextNormalizer(std::string python, std::string python_src);
-    // The normalized text; throws WorkerError when the worker fails twice or reports an error.
-    std::string normalize(const std::string & text, const std::string & language);
-    void close();
+  public:
+    // A normalizer that keeps the nonverbal markup (zonos3_nonverbal_markup_tags()) as typed.
+    TextNormalizer();
+    // The spoken form of `text` for a server language code, in its registry `nemo` grammar; never fails (an
+    // unsupported language comes back with its line breaks collapsed, a grammar failure keeps the failing sentence as
+    // typed). Thread-safe; memoized.
+    std::string normalize(const std::string & text, const std::string & language) const;
 
-private:
-    std::string python_, python_src_;
-    std::mutex m_;
-    std::unique_ptr<JsonLinesWorker> worker_;
-    long long next_id_ = 0;
+  private:
+    struct Delete {
+        void operator()(zyphra_textnorm * tn) const;
+    };
+    std::unique_ptr<zyphra_textnorm, Delete> tn_;
 };
 
-}  // namespace zs
+} // namespace zs

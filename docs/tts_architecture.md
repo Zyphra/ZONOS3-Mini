@@ -61,8 +61,8 @@ The model is trained with an inter-codebook delay: codebook `j` is shifted by `j
 
 ```
 1. HTTP POST /v2/generate (or /v1/audio/speech)
-   ├─ FrontendManager sends TTSNormalizeMsg(text, language) first: the tokenizer normalizes the text while the
-   │  frontend resolves the request's rules and speaker (NeMo costs ~0.2 ms per English character)
+   ├─ FrontendManager sends TTSNormalizeMsg(text, language) first: the tokenizer normalizes the text (the Rust
+   │  zyphra_textnorm extension) while the frontend resolves the request's rules and speaker
    └─ FrontendManager assigns uid, creates TTSTokenizeMsg
 
 2. Tokenizer process

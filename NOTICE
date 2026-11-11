@@ -23,13 +23,23 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    SPDX-License-Identifier: Apache-2.0
    Full license: third_party/licenses/nemo-Apache-2.0.txt
 
-   Vendored under model/src/zonos3/vendor/nemo_text_processing/. These files have
-   been modified by Zyphra, Inc.: import paths were re-namespaced under
-   zonos3.vendor.nemo_text_processing. The original copyright and Apache-2.0
-   license headers are retained in each file.
+   Ported in zyphra-textnorm (the submodule third_party/zyphra-textnorm, Rust;
+   linked into the ggml server and its Python extension installed by the Python
+   servers): its Rust grammars and tables are a port of the r1.2.0 grammars and
+   their data files. The submodule's NOTICE and licenses/ cover it.
 
 ================================================================================
-3. mlx-lm
+3. sacremoses
+   https://github.com/hplt-project/sacremoses
+   Copyright (c) 2020 alvations
+   SPDX-License-Identifier: MIT
+   Full license: third_party/licenses/sacremoses-MIT.txt
+
+   MosesDetokenizer and the perluniprops IsAlpha/IsSc tables are ported in
+   zyphra-textnorm (third_party/zyphra-textnorm: src/moses.rs,
+   data/perluniprops/).
+================================================================================
+4. mlx-lm
    https://github.com/ml-explore/mlx-lm
    Copyright (c) 2023 Apple Inc.
    SPDX-License-Identifier: MIT
@@ -39,7 +49,7 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    servers/mlx/src/zonos3_mlx/models/gdn_kernel.py are adapted from
    mlx_lm/models/gated_delta.py.
 ================================================================================
-4. FuseAlign (fusealign-multilingual)
+5. FuseAlign (fusealign-multilingual)
    https://github.com/Zyphra/fusealign-multilingual
    Copyright (c) 2026 Zyphra, Inc.
    SPDX-License-Identifier: Apache-2.0
@@ -49,7 +59,7 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    third_party/fusealign-multilingual (Python package fusealign_hub), shipped
    unmodified as python/fusealign_hub/ in the ggml server's release packages.
 ================================================================================
-5. z-speech-alignment (textmatch)
+6. z-speech-alignment (textmatch)
    https://github.com/Zyphra/z-speech-alignment
    Copyright (c) 2026 Sofian Mejjoute
    SPDX-License-Identifier: MIT

@@ -6,3 +6,6 @@
 [submodule "third_party/fusealign-multilingual"]
 	path = third_party/fusealign-multilingual
 	url = https://github.com/Zyphra/fusealign-multilingual.git
+[submodule "third_party/zyphra-textnorm"]
+	path = third_party/zyphra-textnorm
+	url = https://github.com/Zyphra/zyphra-textnorm.git

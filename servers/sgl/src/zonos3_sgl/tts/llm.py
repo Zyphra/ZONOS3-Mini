@@ -152,7 +152,7 @@ class TTSLLM(TTSScheduler):
 
         # Text normalization, gated exactly like the server tokenizer worker so the
         # offline path produces the same tokens (e.g. "123" -> "one hundred ...").
-        self._text_normalizer = load_normalizer(warmup=True)
+        self._text_normalizer = load_normalizer()
 
         # Speaker encoder is loaded lazily on first embed_speaker* call.
         self._speaker_embedder = None

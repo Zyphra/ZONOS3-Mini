@@ -85,7 +85,7 @@ class ReferenceAssets:
     def normalizer(self):
         """The text normalizer (None with ZONOS3_TTS_NORM=0), loaded on first use."""
         if self._normalizer is _UNLOADED:
-            self._normalizer = load_normalizer(warmup=False)
+            self._normalizer = load_normalizer()
         return self._normalizer
 
     def decoder(self, codec: str, device: torch.device, decoder: str | None = None):

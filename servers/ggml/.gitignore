@@ -13,7 +13,6 @@
 __pycache__/
 *.pyc
 .venv/
-.venv-tts-norm/
 
 # zonos3-app (saucer) runtime state — cookies/localStorage SQLite db, not source
 .saucer

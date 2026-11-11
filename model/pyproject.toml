@@ -26,14 +26,7 @@ dependencies = [
     "soundfile",
     "tokenizers",
     "kernels>=0.12.1",
-    # Vendored NeMo TTS text normalization (src/zonos3/vendor):
-    # pynini matches WeTextProcessing's pin; sacremoses pulls regex/joblib/tqdm.
-    # NOTE: the pt grammar miscompiles under pynini 2.1.5.
-    # Linux only (no macOS wheel): the MLX server runs normalization in a separate interpreter
-    # (--text-normalizer-python), as the ggml server does.
-    "pynini==2.1.6; sys_platform == 'linux'",
-    "sacremoses>=0.1.1",
-    "tqdm",
+    "zyphra-textnorm",  # Rust text normalization (third_party/zyphra-textnorm)
     # Gold pronunciation lexicon (LMDB) behind phonemize.
     "lmdb>=1.4",
     # Request schemas and studio projects shared by the Python servers (zonos3.server).
@@ -54,6 +47,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-# Vendored NeMo text-normalization grammars: the .tsv tables and .far caches.
-"zonos3.vendor.nemo_text_processing" = ["**/*.tsv", "**/*.far"]
 "zonos3.registries" = ["*.json"]

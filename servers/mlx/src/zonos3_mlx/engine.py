@@ -19,12 +19,11 @@ from types import MappingProxyType
 import torch
 from zonos3.generation import MAX_FRAMES, REFERENCE_MAX_FRAMES
 from zonos3.server.speech import resolve_decoder
-from zonos3.tokenizer.textnorm import normalize_request_text
+from zonos3.tokenizer.textnorm import TTSTextNormalizer, normalize_request_text
 from zonos3.tts.laci import LaciHeads
 from zonos3.tts.plan import PromptPlan, Speaker, plan_prompt
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 from zonos3.tts.steering import SteeringBundle
-from zonos3.workers.textnorm import TextNormalizerClient
 
 from zonos3_mlx import companions
 from zonos3_mlx.models.codec_decoder import CodecDecoder
@@ -104,7 +103,7 @@ class Engine:
         self.decoder = decoders[0]
         self.paths = paths
         self.max_frames = int(max_frames)  # --max: the frame budget of a request (R5)
-        self.normalizer: TextNormalizerClient | None = normalizer
+        self.normalizer: TTSTextNormalizer | None = normalizer
         self.speaker_encoder = None
         if paths.get("spk_encoder"):
             from zonos3_mlx.models.speaker_encoder import SpeakerEncoder

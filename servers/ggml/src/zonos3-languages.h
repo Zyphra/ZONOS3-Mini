@@ -6,8 +6,9 @@
 #include <vector>
 
 struct zonos3_server_language {
-    std::string code;     // TTS request language code
-    std::string lexicon;  // pronunciation lexicon language (ISO 639-3)
+    std::string code;    // TTS request language code
+    std::string nemo;    // text-normalization grammar (NeMo package: en, zh, ...)
+    std::string lexicon; // pronunciation lexicon language (ISO 639-3)
 };
 
 // The server rows, in display order.
