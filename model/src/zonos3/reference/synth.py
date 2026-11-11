@@ -9,9 +9,10 @@ whole utterance with the matched iSTFT codec as zonos3_sgl.tokenizer.vocoder doe
 
 v2 hard-wires the former defaults of the dropped legacy fields (no speaking-rate token, no quality / background /
 accurate-mode rows): ``Zonos3LMConfig.from_params`` only accepts checkpoints without those rows, so the prompt simply has
-none. ``format`` is ignored. ``stream`` and ``stream_decode`` pick LACI's commit rule (the progressive decode streams
-the rows, the whole decode holds them until the result is final); with ``on_audio`` a take without LACI is decoded
-progressively unless ``stream_decode`` is whole.
+none. ``format`` is ignored. With ``on_audio`` a take is decoded progressively (prefix-streamed as it is generated)
+unless ``stream_decode`` is whole; a LACI take follows the request's resolved decode instead (``stream`` and
+``stream_decode``): the progressive one streams the rows no rollback can change, the whole one holds every row until the
+result is final.
 """
 
 from __future__ import annotations
@@ -724,8 +725,9 @@ def synthesize(
     stream: StreamSettings = StreamSettings(),
 ) -> SynthResult:
     """Generate and decode one v2 GenerateRequest. ``on_plan(plan)`` sees the prompt plan before generation starts;
-    ``on_audio(pcm)`` gets the output (gained, faded) as it is decoded: prefix-streamed chunks (``stream``), or the
-    whole take at the end for ``stream_decode: whole`` and LACI (whose rollbacks rewrite rows)."""
+    ``on_audio(pcm)`` gets the output (gained, faded) as it is decoded: prefix-streamed chunks (``stream``; under LACI
+    the committed rows of a progressive request), or the whole take at the end (``stream_decode: whole``, and a LACI
+    take decoded whole)."""
     device = torch.device(device if device is not None else lm.device)
     if lm.device != device:
         lm.to(device)
@@ -749,7 +751,8 @@ def synthesize(
     text_start, text_len = locate_text_span(plan.cond.input_ids, c.n_codebooks)
     gain = output_gain(c.audio_codec, req.headroom_db, req.decoder)
     prefix = emit = on_row = None
-    if on_audio is not None and plan.laci is None and req.stream_decode != "whole":
+    streamed = _progressive(req, c.audio_codec) if plan.laci is not None else req.stream_decode != "whole"
+    if on_audio is not None and streamed:
         from zonos3.codec.istft_head_a_20261002.stream import ISTFTStream
 
         prefix = StreamDecoder(
@@ -792,7 +795,9 @@ def synthesize(
         )
         rows, eos_frame = attempt.rows, attempt.eos_frame
     else:
-        rows, eos_frame, record = _laci(lm, plan, assets, sampling, accents, follower, text_start, text_len)
+        rows, eos_frame, record = _laci(
+            lm, plan, assets, sampling, accents, follower, text_start, text_len, emit_row=on_row
+        )
     if emit is not None:
         return SynthResult(emit.pcm(), plan.seed, record, rows, eos_frame, plan)
     pcm = decode_rows(
@@ -811,9 +816,21 @@ def synthesize(
     return SynthResult(pcm, plan.seed, record, rows, eos_frame, plan)
 
 
-def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_start, text_len):
+def _progressive(req: P.Request, audio_codec: str) -> bool:
+    """Whether the request's resolved decode is the progressive (prefix) one (zonos3.server.speech)."""
+    try:
+        mode = resolve_stream_decode(
+            req.stream_decode, streaming=bool(req.stream), prefix_supported=prefix_stream_supported(audio_codec)
+        )
+    except ValueError:  # the servers refuse prefix on a codec without it; the reference decodes whole
+        return False
+    return mode == "prefix"
+
+
+def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_start, text_len, emit_row=None):
     """LACI (zonos3.tts.laci): attempts until the session's result is final; a rollback re-prefills the prompt plus the
-    kept rows (TTSScheduler._laci_rows) under seed + 1000 * attempt."""
+    kept rows (TTSScheduler._laci_rows) under seed + 1000 * attempt. ``emit_row(row, eos_frame, finished)`` sees every
+    row the session hands downstream, as it does (the final EOS on the last one)."""
     c = lm.config
     names = list(c.condition_names)
     edges = c.condition_edges.get("speaking_rate")
@@ -822,16 +839,6 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
         if c.condition_count and "speaking_rate" in names and edges
         else None
     )
-    req = plan.request
-    try:
-        progressive = (
-            resolve_stream_decode(
-                req.stream_decode, streaming=bool(req.stream), prefix_supported=prefix_stream_supported(c.audio_codec)
-            )
-            == "prefix"
-        )
-    except ValueError:  # the servers refuse prefix on a codec without it; the reference decodes whole
-        progressive = False
     width = c.n_codebooks + 1
     prefill = plan.prefill_rows if plan.prefill_rows is not None else torch.zeros((0, width), dtype=torch.int32)
     session = LaciSession(
@@ -841,7 +848,7 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
         seed=plan.seed,
         max_tokens=plan.max_tokens,
         n_codebooks=c.n_codebooks,
-        hold=not progressive,
+        hold=not _progressive(plan.request, c.audio_codec),
         rates=rates,
         condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
         follower=follower,
@@ -855,11 +862,18 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
 
         def on_row(row, eos, finished):
             session.append(row, eos)
+            final = False
             if finished:
                 state["continuation"] = session.finish_attempt()
-                session.drain(final=state["continuation"] is None)
+                final = state["continuation"] is None
+                out = session.drain(final=final)
             else:
-                session.drain()
+                out = session.drain()
+            if emit_row is not None:
+                eos_frame = session.eos_frame() if final else None
+                for k, r in enumerate(out):
+                    last = final and k == len(out) - 1
+                    emit_row(r, eos_frame if last else None, last)
 
         generate_rows(
             lm,

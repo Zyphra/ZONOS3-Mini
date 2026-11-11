@@ -16,7 +16,8 @@ models:
 The Zonos Voice Studio (Cast, Direct, Edit and the lite page) over the plain-PyTorch reference
 implementation of ZONOS3 Mini, with every take and every speech edit generated on ZeroGPU.
 Pronunciations can be typed in X-SAMPA (the release phoneme tokens), and "Phonemize selection"
-looks words up in the gold pronunciation lexicon. Projects stay in your browser.
+looks words up in the gold pronunciation lexicon. Projects stay in your browser. LACI (Project settings, or Advanced on
+the lite page) regenerates a take from where it skipped words, babbled or stopped early.
 
 Words missing from the lexicon are guessed with espeak-ng (GPL-3.0, through `espeakng-loader`).
 

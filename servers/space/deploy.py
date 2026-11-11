@@ -3,8 +3,8 @@
     uv run --locked python servers/space/deploy.py [--repo-id Zyphra/ZONOS3-Mini] [--stage-only DIR]
 
 Deploying creates the private Space, stores the local HF login token as its HF_TOKEN secret, requests
-ZeroGPU hardware and uploads app.py + the space card + the zonos3 package, steering/ and default_voices/ (from
-assets/), FuseAlign's fusealign_hub package and the studio's build (studio/dist, without the in-browser engine) as
+ZeroGPU hardware and uploads app.py + the space card + the zonos3 package, steering/, default_voices/ and laci_heads/
+(from assets/), FuseAlign's fusealign_hub package and the studio's build (studio/dist, without the in-browser engine) as
 studio/.
 """
 
@@ -21,7 +21,12 @@ SPACE_ID = "Zyphra/ZONOS3-Mini"
 REPO = Path(__file__).resolve().parents[2]
 SPACE_FILES = ("app.py", "README.md", "requirements.txt", "packages.txt")
 # Tracked repo paths and where the Space has them (app.py reads them relative to itself).
-TRACKED = {"model/src/zonos3": "zonos3", "assets/steering": "steering", "assets/default_voices": "default_voices"}
+TRACKED = {
+    "model/src/zonos3": "zonos3",
+    "assets/steering": "steering",
+    "assets/default_voices": "default_voices",
+    "assets/laci_heads": "laci_heads",
+}
 # FuseAlign (speech editing's forced aligner), a submodule: its package as tracked there, with its license.
 FUSEALIGN = REPO / "third_party" / "fusealign-multilingual"
 
@@ -64,7 +69,14 @@ def deploy(repo_id: str) -> None:
             repo_type="space",
             folder_path=tmp,
             commit_message=f"Deploy ZONOS3 {describe}",
-            delete_patterns=["zonos3/**", "steering/**", "default_voices/**", "studio/**", "fusealign_hub/**"],
+            delete_patterns=[
+                "zonos3/**",
+                "steering/**",
+                "default_voices/**",
+                "laci_heads/**",
+                "studio/**",
+                "fusealign_hub/**",
+            ],
         )
     print(f"https://huggingface.co/spaces/{repo_id}")
 

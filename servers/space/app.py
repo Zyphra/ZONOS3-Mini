@@ -5,8 +5,9 @@ reference (zonos3.reference) with generation on ZeroGPU.
 The routes are the part of servers/api/openapi.yaml the studio and the lite page use when the server has no plugins or project
 store (``/v2/capabilities`` says so and the studio adapts): GET ``/v2/capabilities``, ``/v2/controls``,
 ``/v2/speakers``, ``/v2/speakers/{id}/preview``, ``/v2/speakers/{id}/embedding``, POST ``/v2/speakers``,
-``/v2/generate`` (prefix-streamed float32 PCM, chunks ramping from 1 frame), ``/v2/phonemize`` (the gold lexicon, espeak-ng
-guesses) and speech editing (``/v2/edit/transcribe``, ``/v2/edit/align``, ``/v2/edit``: the edit LoRA per request).
+``/v2/generate`` (prefix-streamed float32 PCM, chunks ramping from 1 frame; LACI on the alignment heads of laci_heads/),
+``/v2/phonemize`` (the gold lexicon, espeak-ng guesses) and speech editing (``/v2/edit/transcribe``, ``/v2/edit/align``,
+``/v2/edit``: the edit LoRA per request).
 Pronunciation groups read the release phoneme tokens, appended at load after the edit vocabulary. Speaker embeddings
 run on this process's CPU; generation, edit regions, Qwen3-ASR and FuseAlign run in a held GPU session
 (``gpu_session`` / ``GpuSessions``), on the visitor's ZeroGPU quota through the X-IP-Token the studio forwards from
@@ -99,6 +100,7 @@ from zonos3.tts.audio import _decode_audio_bytes, _transcode_audio_bytes_to_wav,
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
+from zonos3.tts.laci import discover_laci_heads
 from zonos3.tts.markup import trained_on_tags
 from zonos3.tts.phonemes import PhonemeLexicon
 from zonos3.tts.steering import (
@@ -136,7 +138,10 @@ LM = (
     .to(DEVICE)
 )
 CONFIG = LM.config
-ASSETS = ReferenceAssets.load(steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k_x10.json"))
+ASSETS = ReferenceAssets.load(
+    steer_bundle=str(ROOT / "steering" / "studio_bundle_mect60k_x10.json"),
+    laci_heads=discover_laci_heads(ROOT / "laci_heads"),  # LACI and painted spans that follow the reading
+)
 CONTEXT = ReferenceContext(LM, ASSETS, DEVICE)  # the request rules' view of the checkpoint (no GPU work)
 EDIT_LORA = AccentState.for_model(LM, EDIT_ADAPTER, 1.0)
 # The gold pronunciation lexicon behind "Phonemize selection"; espeak-ng (espeakng-loader) guesses the words it lacks.
@@ -363,13 +368,14 @@ async def prepare(body: dict, session_id: str | None) -> dict:
 
 def gpu_seconds(body) -> int:
     """A job's worst-case GPU time. A take: 10 s, +60 s for encoding an uploaded clip in reference mode (a fresh GPU
-    worker loads the dual codec first), and 0.15 s per character (twice that with a guidance twin). An edit call: 90 s
-    (a fresh worker loads Qwen3-ASR or FuseAlign or the dual codec on its first one)."""
+    worker loads the dual codec first), and 0.15 s per character (twice that with a guidance twin, or with LACI: its
+    probe and regenerations). An edit call: 90 s (a fresh worker loads Qwen3-ASR or FuseAlign or the dual codec on its
+    first one)."""
     if isinstance(body, tuple):
         return 90
     clip = 60 if body["speaker_mode"] == "reference" and body["speaker_audio_base64"] else 0
     guided = any(float(body[k]) != 1.0 for k in ("speaker_cfg_scale", "tag_cfg_scale", "controls_cfg_scale"))
-    return min(240, int(10 + clip + 0.15 * len(body["text"]) * (2 if guided else 1)))
+    return min(240, int(10 + clip + 0.15 * len(body["text"]) * (2 if guided or body["laci"] else 1)))
 
 
 # ------------------------------------------------------------------------------------------------- speech editing
