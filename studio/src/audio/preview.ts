@@ -6,9 +6,10 @@
  */
 import { computed, effect, signal, untracked } from '@preact/signals';
 import type { GenerateRequest, Rendered } from '../api';
-import { notify, projectSettings, pronTokens, requestContext, spec } from '../state/app';
+import { notify, pronTokens, requestContext, spec } from '../state/app';
 import { pronProblem } from '../lib/pron';
 import { design } from '../state/design';
+import { speakerLanguage } from '../state/library';
 import { load, persist } from '../state/persist';
 import { buildRequest, PREVIEW_SEED } from '../state/requests';
 import * as player from './player';
@@ -179,7 +180,7 @@ export function startPreview() {
       });
       return;
     }
-    const language = projectSettings.value.language;
+    const language = speakerLanguage(d.baseId);
     reqA = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED, { language });
     reqB = buildRequest(s, requestContext.value, d, text, PREVIEW_SEED, { unsteered: true, language });
     untracked(() => {
@@ -202,7 +203,7 @@ export function startPreview() {
 /** Force a fresh render of the current settings (after an error). */
 export function retry() {
   const d = design.value;
-  const req = buildRequest(spec.value, requestContext.value, d, phrase.value, PREVIEW_SEED, { language: projectSettings.value.language });
+  const req = buildRequest(spec.value, requestContext.value, d, phrase.value, PREVIEW_SEED, { language: speakerLanguage(d.baseId) });
   preview.value = { ...preview.value, key: '' };
   void run(req, requestKey(req));
 }

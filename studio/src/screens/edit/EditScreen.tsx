@@ -19,7 +19,7 @@ import { clamp } from '../../lib/math';
 import { activeHistory, backend, notify, primaryAction, screenKeys } from '../../state/app';
 import * as E from '../../state/edit';
 import type { History } from '../../state/history';
-import { speakers } from '../../state/library';
+import { speakerLanguage, speakers } from '../../state/library';
 import { script, takes as scriptTakes } from '../../state/script';
 import { Direction } from './Direction';
 import { EditWave, fmtTime } from './EditWave';
@@ -139,7 +139,7 @@ async function openVoice(id: string) {
   loadingVoice.value = id;
   try {
     const { pcm, sr } = await player.decode(await api.getPreview(s));
-    if (await E.openClip({ kind: 'voice', label: s.label }, pcm, sr, s.transcript)) closeRail();
+    if (await E.openClip({ kind: 'voice', label: s.label }, pcm, sr, s.transcript, speakerLanguage(s.id))) closeRail();
   } catch (e) {
     notify(`Couldn’t load ${s.label}: ${e instanceof Error ? e.message : e}`, 'error');
   } finally {
@@ -151,7 +151,7 @@ async function openVoice(id: string) {
 async function openTake(lineId: string, lineIndex: number, takeIndex: number) {
   const t = scriptTakes.value[lineId]?.[takeIndex];
   if (!t) return;
-  if (await E.openClip({ kind: 'take', label: `Line ${lineIndex + 1} · take ${takeIndex + 1}`, lineId, takeId: t.id }, t.audio.pcm, t.audio.sr, t.text)) closeRail();
+  if (await E.openClip({ kind: 'take', label: `Line ${lineIndex + 1} · take ${takeIndex + 1}`, lineId, takeId: t.id }, t.audio.pcm, t.audio.sr, t.text, t.request.language ?? 'en_us')) closeRail();
 }
 
 function Sources() {
@@ -1100,4 +1100,3 @@ export function EditScreen() {
     </div>
   );
 }
-

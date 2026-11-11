@@ -14,11 +14,11 @@ import { Waveform } from '../../components/Waveform';
 import { uid } from '../../lib/math';
 import { onZeroGpu } from '../../lib/zerogpu';
 import { phone } from '../../lib/media';
-import { backend, controlById, notify, projectSettings, requestContext, spec } from '../../state/app';
+import { backend, controlById, notify, requestContext, spec } from '../../state/app';
 import { applyPreset, baseSpeaker, design, designs, neighbours, steered, type Design, type Variation } from '../../state/design';
 import { presetToValues } from '../../state/engine';
 import { pinForMix } from '../../state/atlas';
-import { cast, embeddingErrors, embeddingsSynthetic, ensureEmbedding, refreshSpeakers, saveEmbeddingVoice, savePersona } from '../../state/library';
+import { cast, embeddingErrors, embeddingsSynthetic, ensureEmbedding, refreshSpeakers, saveEmbeddingVoice, savePersona, speakerLanguage } from '../../state/library';
 import { buildRequest, PREVIEW_SEED } from '../../state/requests';
 import { rememberOrigin, who } from '../../state/who';
 
@@ -344,7 +344,7 @@ function findVariations() {
   tilesFor.value = around;
   tiles.value = neighbours(around).map((v) => ({ ...v, id: uid(), audio: null, error: null, busy: true }));
   for (const t of tiles.value) {
-    const req = buildRequest(spec.value, requestContext.value, t.design, phrase.value, PREVIEW_SEED, { language: projectSettings.value.language });
+    const req = buildRequest(spec.value, requestContext.value, t.design, phrase.value, PREVIEW_SEED, { language: speakerLanguage(t.design.baseId) });
     render(req, { signal: ctrl.signal })
       .then((audio) => (tiles.value = tiles.value.map((x) => (x.id === t.id ? { ...x, audio, busy: false } : x))))
       .catch((e) => !isAbort(e) && (tiles.value = tiles.value.map((x) => (x.id === t.id ? { ...x, error: errorText(e), busy: false } : x))));

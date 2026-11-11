@@ -83,7 +83,9 @@ export function registerEditTools(server: McpServer) {
       const picks = [src.line !== undefined, !!src.file, !!src.url, !!src.current].filter(Boolean).length;
       if (picks !== 1) throw new Error('Pass exactly one source: line, file, url or current');
       if (parsePron(a.target_text, c.phoneme_tokens ?? null).groups.length) throw new Error('Pronunciation groups in edits are not supported here; use the Studio Edit screen');
-      const lang = a.language ?? (EDIT_LANGUAGES.includes(doc.settings.language) ? doc.settings.language : 'en_us');
+      // The clip's language: `language`, else (a take) the language it was rendered in, else the project's.
+      const fallback = EDIT_LANGUAGES.includes(doc.settings.language) ? doc.settings.language : 'en_us';
+      let lang = a.language ?? fallback;
 
       let version: StoredVersion;
       let wav: Uint8Array;
@@ -103,6 +105,7 @@ export function registerEditTools(server: McpServer) {
           if (!take) throw new Error(src.take ? `Line ${index + 1} has no take ${src.take}` : `Line ${index + 1} has no takes yet: render it with zonos_speak`);
           wav = await audioOf(take.id, take.audio.media);
           knownText = take.text;
+          if (!a.language && EDIT_LANGUAGES.includes(take.request.language ?? 'en_us')) lang = take.request.language ?? 'en_us';
           source = { kind: 'take', label: `Line ${index + 1} · take ${list.indexOf(take) + 1}`, lineId: line.id, takeId: take.id };
         } else {
           const { bytes, name } = await readSource(src.file, src.url);

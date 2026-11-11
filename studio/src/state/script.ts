@@ -10,7 +10,7 @@ import { pronProblem } from '../lib/pron';
 import { design, type Design } from './design';
 import { durationFactor, toDoses, type Values } from './engine';
 import { History } from './history';
-import { cast } from './library';
+import { cast, speakerLanguage, speakers } from './library';
 import { matchLines, newLine, staleReason, type Line } from './lines';
 import { buildRequest, PREVIEW_SEED, remapSpans, type Span } from './requests';
 
@@ -77,6 +77,9 @@ export function lineDesign(line: Line): Design {
   const id = lineVoiceId(line);
   return (id && cast.value.find((p) => p.id === id)?.design) || design.value;
 }
+
+/** The language a line renders in: its voice's own (a library voice of a server language), else the project's. */
+export const lineLanguage = (line: Line) => speakerLanguage(lineDesign(line).baseId);
 
 const update = (fn: (s: Script) => Script) => scripts.set(fn(script.value));
 const commit = (fn: (s: Script) => Script) => scripts.apply(fn(script.value));
@@ -271,7 +274,7 @@ function measuredRate(t: Take): number | undefined {
 export function lineRequest(line: Line, seed: number): GenerateRequest {
   const prior = (takes.value[line.id] ?? []).filter((t) => t.text === line.text);
   const last = prior[prior.length - 1];
-  const language = projectSettings.value.language;
+  const language = lineLanguage(line);
   // The measured rate places spans only by estimate: not sent once the server followed the reading for this line in
   // this language (it has alignment heads for it), sent as the fallback otherwise.
   const reading = last?.audio.spanFollow === 'reading' && (last.request.language ?? 'en_us') === language;
@@ -403,8 +406,8 @@ export function takeIsStale(line: Line, t: Take): boolean {
  */
 const staleContext = signal(0);
 effect(() => {
-  // `backend` (not `spec`): before boot there is no spec to read.
-  void [backend.value, requestContext.value, projectSettings.value.language, design.value, cast.value, script.value.baseline, script.value.voice];
+  // `backend` (not `spec`): before boot there is no spec to read. `speakers`: a line's language is its voice's.
+  void [backend.value, requestContext.value, projectSettings.value.language, speakers.value, design.value, cast.value, script.value.baseline, script.value.voice];
   untracked(() => staleContext.value++);
 });
 const staleMemo = new WeakMap<Take, { line: Line; context: number; reason: string | null }>();
@@ -486,4 +489,3 @@ export function mixdown(): { pcm: Float32Array; sr: number } | null {
   const audio = keepers.value.flatMap(({ take }) => (take ? [take.audio] : []));
   return audio.length ? sequence(audio, script.value.gap) : null;
 }
-

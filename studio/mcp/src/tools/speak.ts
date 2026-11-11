@@ -4,6 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import { langLabel } from '../../../src/lib/languages';
+import { voiceServerLanguage } from '../../../src/lib/voices';
 import { uid } from '../../../src/lib/math';
 import { pronProblem } from '../../../src/lib/pron';
 import type { Values } from '../../../src/state/engine';
@@ -93,13 +94,15 @@ export function registerSpeakTool(server: McpServer) {
       if (problem) throw new Error(problem);
 
       const ctxReq = requestContext(ctx.caps, doc);
+      // The voice's own language (a library voice of a server language), else the project's.
+      const lang = voiceServerLanguage(ctx.speakers.find((s) => s.id === persona.design.baseId), doc.settings.language);
       const existing = doc.direct.takes[line.id] ?? [];
       const n = a.takes ?? 1;
       const made: { take: StoredTake; wav: Uint8Array }[] = [];
       let error: string | null = null;
       for (let k = 0; k < n; k++) {
         const s = k === 0 ? (a.seed ?? (existing.length ? randomInt(0, 1e6) : PREVIEW_SEED)) : randomInt(0, 1e6);
-        const request = buildRequest(ctx.spec, ctxReq, persona.design, line.text, s, { extra: script.baseline, spans: line.spans, language: doc.settings.language });
+        const request = buildRequest(ctx.spec, ctxReq, persona.design, line.text, s, { extra: script.baseline, spans: line.spans, language: lang });
         try {
           const g = await zonos.generate(sendable(request, ctx.steering));
           const audio = { ttfbMs: g.ttfbMs, totalMs: g.totalMs, ...(g.spanFollow ? { spanFollow: g.spanFollow } : {}), ...(g.decoder ? { decoder: g.decoder } : {}), media: '' };
@@ -144,7 +147,7 @@ export function registerSpeakTool(server: McpServer) {
         ...(m.take.audio.spanFollow ? { spanFollow: m.take.audio.spanFollow } : {}),
         starred: m.take.starred,
       }));
-      const params = generationParams({ spec: ctx.spec, design: persona.design, speakers: ctx.speakers, persona, language: doc.settings.language, request: made[0].take.request, text: line.text, spans: line.spans });
+      const params = generationParams({ spec: ctx.spec, design: persona.design, speakers: ctx.speakers, persona, language: lang, request: made[0].take.request, text: line.text, spans: line.spans });
       const body =
         [
           `Line ${lineNo} “${line.text}”`,

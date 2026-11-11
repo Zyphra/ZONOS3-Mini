@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { SpeakerMode } from '../../../src/api';
 import { encodeNpy, slug } from '../../../src/lib/files';
 import { uid } from '../../../src/lib/math';
+import { voiceServerLanguage } from '../../../src/lib/voices';
 import { homePin, mixAt, pinForMix } from '../../../src/state/atlas';
 import type { Design } from '../../../src/state/design';
 import { presetToValues, steerEmbedding, toDoses, type AccentMix } from '../../../src/state/engine';
@@ -109,7 +110,9 @@ export function registerVoiceTools(server: McpServer) {
       warnings.push(...view.warnings);
       const name = existing?.name ?? a.name ?? `${speaker.label} variant`;
       const previewText = a.text ?? (existing?.signature || ctx.spec.ui.preview_text);
-      const request = buildRequest(ctx.spec, requestContext(ctx.caps, doc), design, previewText, a.seed ?? PREVIEW_SEED);
+      // The base voice's own language (a library voice of a server language), else US English as before.
+      const language = voiceServerLanguage(speaker, 'en_us');
+      const request = buildRequest(ctx.spec, requestContext(ctx.caps, doc), design, previewText, a.seed ?? PREVIEW_SEED, { language });
       const g = await zonos.generate(sendable(request, ctx.steering));
       const takeId = uid();
       state.takes.set(takeId, { wav: g.wav });
@@ -121,7 +124,7 @@ export function registerVoiceTools(server: McpServer) {
         return p;
       });
 
-      const params = generationParams({ spec: ctx.spec, design, speakers: ctx.speakers, persona, language: 'en_us', request, text: previewText, requestedAccents: requested, view });
+      const params = generationParams({ spec: ctx.spec, design, speakers: ctx.speakers, persona, language, request, text: previewText, requestedAccents: requested, view });
       const take: TakeInfo = { id: takeId, label: 'Preview', seed: g.seed, durationSec: wavSeconds(g.wav), totalMs: g.totalMs, ttfbMs: g.ttfbMs };
       const body = [
         `${existing ? 'Updated' : 'Created'} persona “${persona.name}”: ${designSummary(ctx.spec, params, previewText.length)}`,

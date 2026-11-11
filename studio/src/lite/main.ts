@@ -11,7 +11,7 @@ import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
 import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
 import { langLabel } from '../lib/languages';
-import { byLanguage } from '../lib/voices';
+import { byLanguage, voiceServerLanguage } from '../lib/voices';
 import { drawWave } from '../lib/wave';
 import { onEncoderProgress, selectWebEngine, usingWebEngine, type Download } from '../lib/web-engine';
 import { ApiError } from '../lib/http';
@@ -97,6 +97,8 @@ let source: Source = 'default';
 let clip: Clip | null = null;
 /** The voice the embedding file was opened into. */
 let fileVoice: Speaker | null = null;
+/** The voice the language select last followed: picking another voice sets it to that voice's language. */
+let languageOf: string | null = null;
 let generation: AbortController | null = null;
 const player = new StreamPlayer(SAMPLE_RATE);
 const preview = new Audio();
@@ -229,6 +231,11 @@ function showVoice() {
   ui.voice.hidden = !s;
   if (s) {
     if (source === 'default') ui.voiceSelect.value = s.id;
+    if (s.id !== languageOf) {
+      languageOf = s.id;
+      const lang = voiceServerLanguage(s, ui.language.value);
+      if ([...ui.language.options].some((o) => o.value === lang)) ui.language.value = lang;
+    }
     ui.voiceLabel.textContent = s.label;
     const scope = s.scope === 'default' ? 'library voice' : 'this tab';
     const from = s.source_type === 'audio' ? 'from a clip' : 'from a voice file';

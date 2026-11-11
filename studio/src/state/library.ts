@@ -4,8 +4,9 @@ import * as api from '../api';
 import type { Speaker } from '../api';
 import * as player from '../audio/player';
 import { levelMeter } from '../lib/level';
+import { voiceServerLanguage } from '../lib/voices';
 import { wavBytes } from '../lib/wav';
-import { notify } from './app';
+import { notify, projectSettings } from './app';
 import type { Design } from './design';
 import { errorText } from '../audio/render';
 
@@ -34,6 +35,9 @@ export async function refreshSpeakers() {
 }
 
 export const speakerById = (id: string | null | undefined) => speakers.value.find((s) => s.id === id);
+
+/** The `language` renders with voice `id` send: the voice's own (a library voice of a server language), else the project's. */
+export const speakerLanguage = (id: string | null | undefined) => voiceServerLanguage(speakerById(id), projectSettings.value.language);
 
 export function embeddingOf(id: string | null | undefined): Float32Array | null {
   void embeddingsVersion.value; // subscribe

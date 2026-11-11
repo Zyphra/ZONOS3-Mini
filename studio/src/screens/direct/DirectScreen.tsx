@@ -32,6 +32,7 @@ import {
   keepers,
   lineBusy,
   lineError,
+  lineLanguage,
   lineVoiceId,
   matchLines,
   mixdown,
@@ -587,7 +588,7 @@ function TakeStrip({ line }: { line: Line }) {
             {canEdit.value && (
               <button
                 class="icon-btn sm"
-                onClick={() => void openClip({ kind: 'take', label: `Line ${script.value.lines.indexOf(line) + 1} · take ${i + 1}`, lineId: line.id, takeId: t.id }, t.audio.pcm, t.audio.sr, t.text)}
+                onClick={() => void openClip({ kind: 'take', label: `Line ${script.value.lines.indexOf(line) + 1} · take ${i + 1}`, lineId: line.id, takeId: t.id }, t.audio.pcm, t.audio.sr, t.text, t.request.language ?? 'en_us')}
                 aria-label={`Edit the words of take ${i + 1}`}
                 title="Edit the words of this take (Edit screen)"
               >
@@ -789,7 +790,7 @@ function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
           value={line.voice ?? ''}
           onChange={(e) => setLineVoice(line.id, (e.currentTarget as HTMLSelectElement).value || null)}
           aria-label={`Voice for line ${n}`}
-          title={`Speaks as ${voiceName(voice)}`}
+          title={`Speaks as ${voiceName(voice)}, in ${langLabel(lineLanguage(line))}`}
         >
           <option value="">Default · {voiceName(script.value.voice)}</option>
           {line.voice && !cast.value.some((p) => p.id === line.voice) && <option value={line.voice}>(voice unavailable)</option>}
@@ -945,7 +946,7 @@ function Sidebar() {
           )}
         </div>
         <p class="hint">
-          Language {langLabel(projectSettings.value.language)} · tag strength {backend.value?.tags ? (projectSettings.value.tagStrength > 1 ? projectSettings.value.tagStrength.toFixed(1) : 'off') : 'n/a'}
+          Language {langLabel(projectSettings.value.language)} (library voices speak their own) · tag strength {backend.value?.tags ? (projectSettings.value.tagStrength > 1 ? projectSettings.value.tagStrength.toFixed(1) : 'off') : 'n/a'}
           {(backend.value?.decoders.length ?? 0) > 1 && ` · decoder ${decoderName(requestContext.value.decoder ?? backend.value!.decoders[0].id)}`} —{' '}
           <button class="link" onClick={() => (settingsOpen.value = true)}>
             Project settings

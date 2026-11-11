@@ -220,7 +220,8 @@ export const asrLabel = (label: string) => (asrWarmed || !canTranscribe.value ? 
 export const suggestedTranscript = signal('');
 
 /**
- * Open a clip; `language` (server code) defaults to the one last used for this clip, else the project's language.
+ * Open a clip; its language (server code) is the one last used for this clip, else `language` (the clip's own: a
+ * take's request language, a library voice's), else the project's.
  * Known text is aligned; otherwise the clip is transcribed, or, on a server without speech recognition, opened
  * without a transcript for the user to type (then aligned by saveFix).
  */
@@ -250,7 +251,7 @@ export async function openClip(source: Source, pcm: Float32Array, sr: number, kn
   }
   suggestedTranscript.value = grouped ? spokenText(knownText!) : '';
   const p = projectSettings.value.language;
-  const lang = language ?? clipLanguages.value[clipKey(source, dur)] ?? (EDIT_LANGUAGES.includes(p) ? p : 'en_us');
+  const lang = clipLanguages.value[clipKey(source, dur)] ?? [language, p].find((l) => l && EDIT_LANGUAGES.includes(l)) ?? 'en_us';
   ctrl = new AbortController();
   busy.value = { label: known ? 'Aligning the transcript…' : transcribe ? asrLabel('Transcribing…') : 'Opening…', started: performance.now() };
   genError.value = null;

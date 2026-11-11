@@ -79,7 +79,7 @@ export function ProjectSettings() {
               ))}
             </select>
             <span class="hint" id="settings-lang-hint">
-              Direct lines and the Cast preview render in it: numbers and abbreviations are read in this language, and painted words follow the reading where the server can. New Edit clips and pronunciation lookups start in it.
+              Direct lines and the Cast preview render in it: numbers and abbreviations are read in this language, and painted words follow the reading where the server can. A library voice of another language (German, French…) speaks its own instead; English voices keep a UK English project. New Edit clips and pronunciation lookups start in it.
             </span>
           </label>
           <label class="settings-row">

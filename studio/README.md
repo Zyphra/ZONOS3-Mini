@@ -148,6 +148,8 @@ microphone while recording) or a **Voice file** (`.npy`/`.npz`; both `POST /v2/s
 its preview (`has_preview`) and **Voice file (.npy)** (`GET /v2/speakers/{id}/embedding` saved as a float32 `.npy`,
 which opens back as a voice file). Generate speaks only with a voice of the source shown: in Clip mode with a clip
 not yet cloned it clones first, then generates; without a clip it is disabled (**Record or upload a clip first**).
+Picking a voice sets the **Language** select to the voice's language (a library voice whose label names a server
+language, as in Direct); it stays as picked until the next voice.
 It posts `/v2/generate` with `speaker_mode: "embedding"`, `stream: true`, `format: "pcm"`, plays the float32 PCM
 through WebAudio as it streams and draws it live as the studio's preview waveform (`src/lib/wave.ts`, shared with
 `components/Waveform.tsx`) with a playhead; click the waveform to play from there (focused: Space plays / stops,
@@ -226,9 +228,13 @@ small pad appear on hover / focus.
 
 ## Painted spans and the line language
 
-Direct lines render in the project's language (the **language** select in the Direct rail,
-also in the launcher; `language` on `/v2/generate`, left out for `en_us`): text normalization reads in it, and
-pronunciation lookups and new Edit clips start in it (UK English edits as US English). A line with painted spans
+Direct lines render in their voice's language (`language` on `/v2/generate`, left out for `en_us`): a library voice
+whose label names a server language (`Liesel de F 1`: German, `Meilin zh energetic F 1`: Mandarin; the registry's
+`spoken[].tts`, `src/lib/voices.ts` `voiceServerLanguage`) speaks it, and every other voice (uploads, designed voices,
+Hindi / Telugu ones) speaks the project's language (Project settings; English voices also keep a UK English project).
+The Cast preview and its variations do the same with the bench's voice; the line's voice tooltip names its language,
+and a take reads stale when its voice's language changes. Text normalization reads in it, and pronunciation lookups
+and new Edit clips start in the project's language (UK English edits as US English). A line with painted spans
 asks for `control_span_follow: "reading"`: the server steers each span where the model is reading it (its alignment
 heads for that language) instead of by a characters-per-frame estimate. The response header
 `X-Control-Span-Follow` says which ran, and each take shows it: **read** (followed the reading) or **est.**
@@ -311,7 +317,8 @@ forces the same against a live server.
 
 Every edit call sends the clip's `language` (server code: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko); it picks
 the alignment tokenization (and, with speech recognition, the Qwen3-ASR language) for transcription, alignment,
-windowing and the take check. Clips use the language last chosen for them (the picker next to the title, default US
+windowing and the take check. Clips use the language last chosen for them (the picker next to the title), else their
+own (a Direct take its request's language, a library voice its voice language), else the project's (default US
 English; switching re-aligns the version, or re-transcribes an automatic transcript when the server can, one undo
 step). On a server with speech recognition its first transcription or take check loads the recognition model (about
 half a minute): the status says so rather than looking stuck. An unsupported language shows the server's message.
