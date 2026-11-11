@@ -26,9 +26,9 @@ Every server implements the same HTTP API and serves the same studio.
 ### 2. Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/); the project pins Python 3.12.
-- A Rust toolchain ([rustup](https://rustup.rs), stable): `uv sync` builds the text normalizer's Python extension
-  (the [zyphra-textnorm](https://github.com/Zyphra/zyphra-textnorm) submodule) with cargo, and the ggml server's CMake
-  build links its C library.
+- ggml server: a Rust toolchain ([rustup](https://rustup.rs), stable). Its CMake build compiles the text normalizer's C
+  library from the [zyphra-textnorm](https://github.com/Zyphra/zyphra-textnorm) submodule with cargo; the Python servers
+  install the same normalizer's wheel from PyPI.
 - The weights come from the public Hugging Face repo [`Zyphra/ZONOS3-Mini`](https://huggingface.co/Zyphra/ZONOS3-Mini);
   no token is needed.
   - CUDA server: the PyTorch weights (`lm/`, `autoencoder/`, `speaker_encoders/`, about 9 GB with the default decoder),
@@ -45,8 +45,8 @@ uv sync --locked --all-packages          # Linux with an NVIDIA GPU
 uv sync --locked --package zonos3-mlx    # Apple Silicon
 ```
 
-In an existing checkout, `git submodule update --init third_party/fusealign-multilingual third_party/zyphra-textnorm
-servers/ggml/ggml` fetches the FuseAlign aligner, the text normalizer and ggml.
+In an existing checkout, `git submodule update --init third_party/fusealign-multilingual` fetches the FuseAlign
+aligner; the ggml server also needs `servers/ggml/ggml` and the text normalizer, `third_party/zyphra-textnorm`.
 
 ### 4. Start a server
 
@@ -232,7 +232,7 @@ whispering, emotion, pace, projection, liveliness) with their control values.
 | `servers/api/` | The HTTP contract every server implements (`openapi.yaml`, its bundled `openapi.json`) and its conformance tests (`zonos3-api`) |
 | `servers/space/` | The ZeroGPU Hugging Face Space (`app.py`) and its deploy script |
 | `assets/` | Runtime assets shared by the servers: `default_voices/`, `steering/` (steering bundles), `laci_heads/` (LACI alignment heads) |
-| `third_party/` | Third-party license texts (`third_party/licenses/`) and the submodules: FuseAlign and the text normalizer [zyphra-textnorm](https://github.com/Zyphra/zyphra-textnorm) (Rust ports of the NeMo grammars; its Python extension and C library, linked into the ggml server) |
+| `third_party/` | Third-party license texts (`third_party/licenses/`) and the submodules: FuseAlign and the text normalizer [zyphra-textnorm](https://github.com/Zyphra/zyphra-textnorm) (Rust ports of the NeMo grammars; the ggml server links its C library, the Python servers install its PyPI wheel) |
 
 ## Reference model and conversion
 
@@ -250,8 +250,8 @@ Lingua training checkpoints are converted with `tools/convert_lingua_checkpoint.
 
 ## Development
 
-The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `servers/api`); the text normalizer is
-installed from its submodule, and the `dev` group (installed by default) holds the test tools.
+The repo is a uv workspace (`model`, `servers/sgl`, `servers/mlx`, `tools`, `servers/api`); the text normalizer comes
+from PyPI (`zyphra-textnorm`), and the `dev` group (installed by default) holds the test tools.
 
 ```bash
 source servers/sgl/scripts/env.sh

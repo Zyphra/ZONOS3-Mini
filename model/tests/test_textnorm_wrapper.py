@@ -1,6 +1,6 @@
 """Text normalization through the Rust extension (zyphra_textnorm): line breaks, markup, pronunciation groups and
 the per-language fixes. Expected strings are the outputs of the pre-port reference pipeline (the oracle of
-third_party/zyphra-textnorm)."""
+github.com/Zyphra/zyphra-textnorm)."""
 
 import pytest
 import zyphra_textnorm

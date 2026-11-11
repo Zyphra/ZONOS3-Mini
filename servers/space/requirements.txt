@@ -6,7 +6,7 @@ descript-audio-codec==1.0.0
 numpy==2.4.1
 soundfile==0.13.1
 tokenizers==0.22.2
-./zyphra_textnorm-0.1.0-cp39-abi3-manylinux_2_28_x86_64.whl
+zyphra-textnorm==0.1.0
 pyyaml==6.0.3
 safetensors==0.7.0
 silero-vad==6.2.3

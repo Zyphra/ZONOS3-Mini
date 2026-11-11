@@ -1,6 +1,5 @@
 # Virtual uv workspace: the model package (zonos3), the mini-SGL server (zonos3-sgl), the MLX server (zonos3-mlx), the
 # GGUF tools and the API conformance suite. The ggml server (servers/ggml) and the studio (studio/) build outside uv.
-# The text normalizer's Python extension (zyphra-textnorm) is built by maturin from its submodule: needs cargo on PATH.
 
 [tool.uv.workspace]
 members = ["model", "servers/sgl", "servers/mlx", "tools", "servers/api"]
@@ -14,7 +13,6 @@ flashinfer-jit-cache = { url = "https://github.com/flashinfer-ai/flashinfer/rele
 zonos3 = { workspace = true }
 zonos3-sgl = { workspace = true }
 zonos3-mlx = { workspace = true }
-zyphra-textnorm = { path = "third_party/zyphra-textnorm" }
 fusealign-hub = { path = "third_party/fusealign-multilingual", editable = true }
 
 [dependency-groups]

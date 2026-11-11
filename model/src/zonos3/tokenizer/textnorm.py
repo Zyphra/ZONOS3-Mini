@@ -1,4 +1,4 @@
-"""TTS text normalization: zyphra_textnorm (Rust ports of the NeMo grammars, third_party/zyphra-textnorm).
+"""TTS text normalization: zyphra_textnorm (Rust ports of the NeMo grammars, github.com/Zyphra/zyphra-textnorm).
 
 Converts written text to its spoken form ("$5.32" -> "five dollars thirty two cents") before tokenization, in the
 grammar of the request language's ``nemo`` package (registries/languages.json), with the nonverbal markup the model

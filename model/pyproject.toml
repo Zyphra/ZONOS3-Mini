@@ -26,7 +26,8 @@ dependencies = [
     "soundfile",
     "tokenizers",
     "kernels>=0.12.1",
-    "zyphra-textnorm",  # Rust text normalization (third_party/zyphra-textnorm)
+    # Rust text normalization, the PyPI wheel; the ggml server builds the same version from third_party/zyphra-textnorm.
+    "zyphra-textnorm==0.1.0",
     # Gold pronunciation lexicon (LMDB) behind phonemize.
     "lmdb>=1.4",
     # Request schemas and studio projects shared by the Python servers (zonos3.server).

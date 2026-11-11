@@ -43,8 +43,8 @@ servers/mlx/scripts/serve.sh            # 127.0.0.1:1919: / chooser, /studio, /l
 - **Helper workers** (`--worker-python PY`, as on the ggml server): the FuseAlign forced aligner
   (`model/src/zonos3/workers/fusealign.py`) runs as a persistent worker process under `PY`; without the flag it runs
   under the server's own interpreter.
-- **Text normalization** is built in (the Rust `zyphra_textnorm` extension of the `third_party/zyphra-textnorm` submodule; `ZONOS3_TTS_NORM=0` turns it
-  off).
+- **Text normalization** is built in (the Rust `zyphra_textnorm` extension, installed from PyPI; `ZONOS3_TTS_NORM=0`
+  turns it off).
 - **Forced alignment** (every word timing of speech editing and plugins) is FuseAlign (`fusealign-hub`, the
   `third_party/fusealign-multilingual` submodule: `git submodule update --init third_party/fusealign-multilingual`
   before `uv sync`; the checkpoint downloads from [`Zyphra/fusealign`](https://huggingface.co/Zyphra/fusealign) on

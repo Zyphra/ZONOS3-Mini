@@ -23,10 +23,11 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    SPDX-License-Identifier: Apache-2.0
    Full license: third_party/licenses/nemo-Apache-2.0.txt
 
-   Ported in zyphra-textnorm (the submodule third_party/zyphra-textnorm, Rust;
-   linked into the ggml server and its Python extension installed by the Python
-   servers): its Rust grammars and tables are a port of the r1.2.0 grammars and
-   their data files. The submodule's NOTICE and licenses/ cover it.
+   Ported in zyphra-textnorm (Rust, https://github.com/Zyphra/zyphra-textnorm:
+   the submodule third_party/zyphra-textnorm, linked into the ggml server, and
+   the PyPI package the Python servers install): its Rust grammars and tables
+   are a port of the r1.2.0 grammars and their data files. Its NOTICE and
+   licenses/ cover it.
 
 ================================================================================
 3. sacremoses
