@@ -11,7 +11,8 @@ The scheduler runs this for requests whose ``TTSUserMsg.laci`` names an alignmen
 (``TTSLLM.generate(laci=...)``) and in the server (``laci: true`` on the request) alike: a ``LaciSession`` per request
 owns the stream, a rollback becomes a continuation request (the prompt plus the kept rows, re-prefilled) under the same
 uid, and only rows no later rollback can change are handed downstream (``LaciSession.drain``), so the detokenizer and the
-streamed response see one uninterrupted stream. Constraints: no CFG twin (speaker and controls CFG scale 1), the FA
+streamed response see one uninterrupted stream; a request decoded whole at the end (``stream=false`` or ``stream_decode``
+whole) holds every row until it is final (``hold``). Constraints: no CFG twin (speaker and controls CFG scale 1), the FA
 attention backend, tensor parallel size 1.
 
 Vocabulary
@@ -537,6 +538,8 @@ class LaciSession:
     seed: int | None
     max_tokens: int
     n_codebooks: int
+    # a whole decode: nothing goes downstream before the result is final, so no rollback is ever clamped
+    hold: bool = False
     stream: list = field(default_factory=list)  # 1D int32 frames: the prefill rows, then the generated rows
     attempt_start: int = 0  # stream row of the current attempt's first generated row
     emitted: int = 0  # generated rows handed downstream (final)
@@ -676,10 +679,12 @@ class LaciSession:
     def commit_row(self) -> int:
         """Stream rows below this go downstream: they are outside every rollback the current detector state can still
         report (``finish_attempt`` keeps any deeper rollback above them). The last row is always held back so the
-        final message has a row to carry."""
+        final message has a row to carry. With ``hold`` nothing goes downstream before the result is final."""
         n = len(self.stream)
         if self.end is not None:
             return n
+        if self.hold:
+            return self.n_prefill
         if self.attempts >= self.cfg.max_retries:
             row = n
         elif self._pace_open():

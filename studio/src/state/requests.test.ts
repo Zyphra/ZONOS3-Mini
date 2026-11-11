@@ -38,7 +38,7 @@ describe('span-only controls (emphasis)', () => {
 });
 
 describe('decoder', () => {
-  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null };
+  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'off', laciLanguages: [] };
 
   it('is left out for the server default', () => {
     expect('decoder' in buildRequest(spec, ctx, d, text, 1)).toBe(false);
@@ -60,5 +60,33 @@ describe('decoder', () => {
 
   it('an unknown one gets the server’s 400 text', () => {
     expect(unknownDecoder('x', FIXTURE_DECODERS)).toBe("Unknown decoder 'x'; this server serves: keep2_plain, full_mr.");
+  });
+});
+
+describe('laci', () => {
+  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'stream', laciLanguages: ['en_us'] };
+
+  it('streamed: laci on with the progressive decode of the request defaults, on both A/B sides', () => {
+    for (const x of [{}, { unsteered: true }]) {
+      const req = buildRequest(spec, ctx, d, text, 1, x);
+      expect(req.laci).toBe(true);
+      expect(req.stream_decode).toBe('prefix');
+    }
+  });
+
+  it('whole take: the whole decode', () => {
+    const req = buildRequest(spec, { ...ctx, laci: 'whole' }, d, text, 1);
+    expect([req.laci, req.stream_decode]).toEqual([true, 'whole']);
+  });
+
+  it('is left out for a language without alignment heads', () => {
+    expect('laci' in buildRequest(spec, ctx, d, text, 1, { language: 'fr_fr' })).toBe(false);
+  });
+
+  it('wins over tag guidance', () => {
+    const tagged = { ...ctx, tags: { min_scale: 1, max_scale: 4 }, tagStrength: 2 };
+    const line = 'Hi <laugh/> there.';
+    expect('tag_cfg_scale' in buildRequest(spec, tagged, d, line, 1)).toBe(false);
+    expect(buildRequest(spec, { ...tagged, laci: 'off' }, d, line, 1).tag_cfg_scale).toBe(2);
   });
 });

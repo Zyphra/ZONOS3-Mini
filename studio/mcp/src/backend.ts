@@ -52,6 +52,9 @@ export function requestContext(c: zonos.Capabilities, doc: ProjectDoc | null): R
     tagStrength: doc?.settings.tagStrength ?? DEFAULT_SETTINGS.tagStrength,
     // The project's decoder (set in the Studio's project settings) where this server serves it, else the default.
     decoder: requestDecoder(c.decoders ?? [], doc?.settings.decoder),
+    // The project's LACI mode (set in the Studio's project settings); languages without heads here run without it.
+    laci: doc?.settings.laci ?? DEFAULT_SETTINGS.laci,
+    laciLanguages: c.laci_languages,
   };
 }
 

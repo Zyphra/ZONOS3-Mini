@@ -11,6 +11,7 @@ import { slug } from '../../lib/files';
 import { phone } from '../../lib/media';
 import { isTyping } from '../../lib/dom';
 import { decoderName } from '../../lib/decoders';
+import { LACI_LABEL } from '../../lib/laci';
 import { langLabel } from '../../lib/languages';
 import { guessed, isPronError, lookupLanguage, openPronEditor, phonemizeOn, phonemizeRange, phonemizing, PronHelp, PronMarks, PronounceButton } from '../../components/Pron';
 import { parsePron } from '../../lib/pron';
@@ -947,7 +948,8 @@ function Sidebar() {
         </div>
         <p class="hint">
           Language {langLabel(projectSettings.value.language)} (library voices speak their own) · tag strength {backend.value?.tags ? (projectSettings.value.tagStrength > 1 ? projectSettings.value.tagStrength.toFixed(1) : 'off') : 'n/a'}
-          {(backend.value?.decoders.length ?? 0) > 1 && ` · decoder ${decoderName(requestContext.value.decoder ?? backend.value!.decoders[0].id)}`} —{' '}
+          {(backend.value?.decoders.length ?? 0) > 1 && ` · decoder ${decoderName(requestContext.value.decoder ?? backend.value!.decoders[0].id)}`}
+          {(backend.value?.laciLanguages.length ?? 0) > 0 && ` · LACI ${LACI_LABEL[projectSettings.value.laci].toLowerCase()}`} —{' '}
           <button class="link" onClick={() => (settingsOpen.value = true)}>
             Project settings
           </button>

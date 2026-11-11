@@ -50,6 +50,7 @@ class Job:
     sampling: Sampling
     sink: Callable[[tuple], None]
     stop_id: int
+    laci_hold: bool  # LACI: a whole decode holds every row until the result is final
     aborted: bool = False
 
     @property
@@ -233,7 +234,7 @@ class Scheduler:
             text_span = locate_text_span(plan.cond.input_ids, c.n_codebooks)
         session = None
         if plan.laci is not None:
-            session = self._laci_session(plan, follower)
+            session = self._laci_session(plan, follower, job.laci_hold)
         branches = [(plan.cond, LMState())] + ([] if plan.twin is None else [(plan.twin, LMState())])
         a = _Active(
             job=job,
@@ -260,7 +261,7 @@ class Scheduler:
         a.outs = self._run([self._forward(a, b, state, b.input_ids, None, False) for b, state in branches])
         return a
 
-    def _laci_session(self, plan: Plan, follower: SpanFollower | None) -> LaciSession:
+    def _laci_session(self, plan: Plan, follower: SpanFollower | None, hold: bool) -> LaciSession:
         c = self.config
         names = list(c.condition_names)
         edges = c.condition_edges.get("speaking_rate")
@@ -295,6 +296,7 @@ class Scheduler:
             seed=plan.seed,
             max_tokens=plan.max_tokens,
             n_codebooks=c.n_codebooks,
+            hold=hold,
             duration=duration,
             rates=rates,
             condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
@@ -451,7 +453,9 @@ class Scheduler:
 
         plan = plan_request(self.engine, request, speaker)
         events: queue.Queue = queue.Queue()
-        job = self.enqueue(Job(plan, Sampling.from_request(plan.request), events.put, self.config.eoa_id))
+        job = self.enqueue(
+            Job(plan, Sampling.from_request(plan.request), events.put, self.config.eoa_id, laci_hold=True)
+        )
         rows, eos, record = [], None, None
         while True:
             kind, *rest = events.get()

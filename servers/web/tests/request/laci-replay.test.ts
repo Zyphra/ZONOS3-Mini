@@ -29,7 +29,7 @@ function runLaci(t: J): J {
   const r = t.rates;
   const s = new LaciSession({
     heads, cfg, prefillRows: Array.from({ length: nPrefill }, () => Int32Array.of(-1)),
-    seed: 'seed' in t ? t.seed : 0, maxTokens: t.max_tokens ?? 4000, nCodebooks: C,
+    seed: 'seed' in t ? t.seed : 0, maxTokens: t.max_tokens ?? 4000, nCodebooks: C, hold: t.hold ?? false,
     rates: r ? new RateBuckets(r.index, r.edges, r.n_buckets, r.first ?? 0) : null,
     conditionValues: t.condition_values ?? null, bucket: t.bucket ?? null,
     rateDeltas: t.rate_deltas ? (t.rate_deltas as (number[] | null)[]).map((d) => (d ? Float32Array.from(d) : null)) : null,

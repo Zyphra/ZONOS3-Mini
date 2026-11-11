@@ -77,6 +77,7 @@ class JobRun:
             sampling or Sampling.from_request(plan.request),
             self._sink,
             c.eoa_id if stop_id is None else int(stop_id),
+            laci_hold=mode != "prefix",
         )
 
     def start(self) -> "JobRun":

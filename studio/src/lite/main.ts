@@ -10,6 +10,7 @@ import { mountChrome, setLabel } from '../lib/chrome';
 import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
 import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
+import { LACI_LABEL, LACI_MODES, laciFields, type LaciMode } from '../lib/laci';
 import { langLabel } from '../lib/languages';
 import { byLanguage, voiceServerLanguage } from '../lib/voices';
 import { drawWave } from '../lib/wave';
@@ -70,6 +71,9 @@ const ui = {
   text: $<HTMLTextAreaElement>('text'),
   language: $<HTMLSelectElement>('language'),
   seed: $<HTMLInputElement>('seed'),
+  laciField: $<HTMLDivElement>('laci-field'),
+  laci: $<HTMLSelectElement>('laci'),
+  laciNote: $<HTMLSpanElement>('laci-note'),
   generate: $<HTMLButtonElement>('generate'),
   stop: $<HTMLButtonElement>('stop'),
   status: $<HTMLSpanElement>('generate-status'),
@@ -99,6 +103,8 @@ let clip: Clip | null = null;
 let fileVoice: Speaker | null = null;
 /** The voice the language select last followed: picking another voice sets it to that voice's language. */
 let languageOf: string | null = null;
+/** Languages with LACI alignment heads on the server (`/v2/capabilities.laci_languages`). */
+let laciLanguages: readonly string[] = [];
 let generation: AbortController | null = null;
 const player = new StreamPlayer(SAMPLE_RATE);
 const preview = new Audio();
@@ -235,6 +241,7 @@ function showVoice() {
       languageOf = s.id;
       const lang = voiceServerLanguage(s, ui.language.value);
       if ([...ui.language.options].some((o) => o.value === lang)) ui.language.value = lang;
+      updateLaciNote();
     }
     ui.voiceLabel.textContent = s.label;
     const scope = s.scope === 'default' ? 'library voice' : 'this tab';
@@ -473,6 +480,7 @@ async function generate() {
     stream: true,
     format: 'pcm',
   };
+  Object.assign(body, laciFields(ui.laci.value as LaciMode, laciLanguages, body.language ?? 'en_us'));
   if (ui.seed.value !== '') body.seed = Number(ui.seed.value);
   ui.status.textContent = 'Generating…';
   samples = 0;
@@ -566,6 +574,13 @@ ui.voiceSelect.addEventListener('change', () => {
   library = voices.find((s) => s.id === ui.voiceSelect.value) ?? null;
   showVoice();
 });
+
+/** LACI on in a language without alignment heads: say that its takes run without it. */
+function updateLaciNote() {
+  show(ui.laciNote, ui.laci.value !== 'off' && !laciLanguages.includes(ui.language.value) ? `No alignment heads for ${langLabel(ui.language.value)}: takes run without LACI.` : null);
+}
+ui.laci.addEventListener('change', updateLaciNote);
+ui.language.addEventListener('change', updateLaciNote);
 
 ui.clipPick.addEventListener('click', () => ui.clipFile.click());
 ui.clipFile.addEventListener('change', async () => {
@@ -749,6 +764,11 @@ async function start() {
   }
   const languages = caps.text_norm_languages.length ? caps.text_norm_languages : ['en_us'];
   for (const code of languages) ui.language.append(new Option(langLabel(code), code, false, code === 'en_us'));
+  laciLanguages = caps.laci_languages;
+  if (laciLanguages.length) {
+    for (const m of LACI_MODES) ui.laci.append(new Option(LACI_LABEL[m], m, false, m === 'off'));
+    ui.laciField.hidden = false;
+  }
   if (!caps.speaker_audio_upload) {
     ui.clipUpload.disabled = true;
     ui.clipState.textContent = 'This server doesn’t take clip uploads.';

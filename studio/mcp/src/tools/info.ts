@@ -2,6 +2,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { decoderName } from '../../../src/lib/decoders';
+import { LACI_LABEL } from '../../../src/lib/laci';
 import { LANG_LABEL, langLabel } from '../../../src/lib/languages';
 import { uid } from '../../../src/lib/math';
 import { mixAt } from '../../../src/state/atlas';
@@ -25,7 +26,7 @@ function isSummary(s: unknown): s is ProjectSummary {
 function overview(doc: ProjectDoc, speakerLabel: (id: string) => string): string {
   const out: string[] = [];
   const st = doc.settings;
-  out.push(`Project “${doc.name}” (${doc.id}) · ${langLabel(st.language)} · voice mode ${st.voiceMode} · tag strength ${st.tagStrength} · decoder ${st.decoder ? decoderName(st.decoder) : 'server default'}`);
+  out.push(`Project “${doc.name}” (${doc.id}) · ${langLabel(st.language)} · voice mode ${st.voiceMode} · tag strength ${st.tagStrength} · decoder ${st.decoder ? decoderName(st.decoder) : 'server default'} · LACI ${LACI_LABEL[st.laci ?? 'off'].toLowerCase()}`);
   out.push(doc.cast.personas.length ? 'Personas:' : 'Personas: none');
   for (const p of doc.cast.personas) {
     const vals = Object.entries(p.design.values).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(', ');
@@ -58,6 +59,7 @@ export function registerInfoTools(server: McpServer) {
         `Text normalization languages: ${c.text_norm_languages.join(', ')}`,
         `Tag guidance: ${c.tag_cfg.available && c.tag_cfg.trained ? `yes (tags ${c.tag_cfg.tags.join(', ')}; scale ${c.tag_cfg.min_scale}..${c.tag_cfg.max_scale})` : 'no'}`,
         `Decoders: ${(c.decoders ?? []).map((d, i) => `${decoderName(d.id)} (${d.id}${i === 0 ? ', default' : ''})`).join(', ') || 'none'} (picked per project in the Studio's project settings)`,
+        `LACI: ${c.laci_languages.length ? `${c.laci_languages.join(', ')} (set per project in the Studio's project settings)` : 'none (no alignment heads on this server)'}`,
         `Phoneme tokens (pronunciation groups): ${c.phoneme_tokens ? `yes (${c.phoneme_tokens.symbols.length} symbols)` : 'no'}`,
       ];
       let active = 'none';

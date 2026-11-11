@@ -58,6 +58,8 @@ export function staleReason(stored: GenerateRequest, fresh: GenerateRequest, opt
   if (JSON.stringify(stored.control_spans ?? []) !== JSON.stringify(fresh.control_spans ?? [])) return 'painting changed';
   // The whole-line controls: the voice's design edited since, or the script baseline.
   if (JSON.stringify(stored.controls ?? {}) !== JSON.stringify(fresh.controls ?? {})) return opts.voiceEdited ? 'voice edited' : 'baseline changed';
+  // Before tag strength: turning LACI on also drops tag guidance.
+  if ((stored.laci ?? false) !== (fresh.laci ?? false) || (stored.stream_decode ?? null) !== (fresh.stream_decode ?? null)) return 'LACI changed';
   if (stored.tag_cfg_scale !== fresh.tag_cfg_scale) return 'tag strength changed';
   if ((stored.decoder ?? null) !== (fresh.decoder ?? null)) return 'decoder changed';
   return null;

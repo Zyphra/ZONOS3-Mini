@@ -287,6 +287,7 @@ export interface SessionParams {
   seed: number | null;
   maxTokens: number;
   nCodebooks: number;
+  hold: boolean;                      // a whole decode: nothing goes downstream before the result is final, so no rollback is ever clamped
   rates?: RateBuckets | null;
   conditionValues?: number[] | null;  // the request's condition-row ids
   bucket?: number | null;             // default: conditionValues[rates.index]
@@ -395,6 +396,7 @@ export class LaciSession {
   commitRow(): number {
     const n = this.stream.length;
     if (this.end) return n;
+    if (this.p.hold) return this.nPrefill;
     let row: number;
     if (this.attempts >= this.p.cfg.maxRetries) {
       row = n;

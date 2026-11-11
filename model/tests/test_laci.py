@@ -323,7 +323,7 @@ P = 3  # prefill rows
 HEADS = LaciHeads(heads=((7, 4),), radius={(7, 4): 3}, frames_per_token=float(FPT))
 
 
-def session(cfg=CFG, max_tokens=4000, seed=0):
+def session(cfg=CFG, max_tokens=4000, seed=0, hold=False):
     return LaciSession(
         heads=HEADS,
         cfg=cfg,
@@ -331,6 +331,7 @@ def session(cfg=CFG, max_tokens=4000, seed=0):
         seed=seed,
         max_tokens=max_tokens,
         n_codebooks=C,
+        hold=hold,
     )
 
 
@@ -402,6 +403,9 @@ class SessionTest(unittest.TestCase):
         """Random readings with skips, stalls and early EOS: every row handed downstream is in the final stream."""
         self.assertGreater(random_sessions(self, lambda rng, cfg: session(cfg)), 20)
 
+    def test_held_session_sends_nothing_before_the_result_is_final_and_never_clamps(self):
+        self.assertGreater(random_sessions(self, lambda rng, cfg: session(cfg, hold=True)), 20)
+
 
 def random_sessions(test, make_session, trials=120) -> int:
     """Drive sessions through random readings (skips, stalls, early EOS); assert that every row handed downstream
@@ -426,12 +430,17 @@ def random_sessions(test, make_session, trials=120) -> int:
                 n = len(pos)
             pos += [TEXT_LEN - 1] * 40
             eos_at = rng.randint(20, len(pos) - 1) if rng.random() < 0.15 else None
-            out += run_attempt(s, pos, eos_at=eos_at, eos_lag=rng.randint(0, C - 1), tag=attempt + 1)
+            drained = run_attempt(s, pos, eos_at=eos_at, eos_lag=rng.randint(0, C - 1), tag=attempt + 1)
+            if s.hold:
+                test.assertEqual(drained, [], trial)
+            out += drained
             if s.finish_attempt() is None:
                 break
             rollbacks += 1
             attempt += 1
         out += s.drain(final=True)
+        if s.hold:
+            test.assertFalse(any(f["clamped"] for f in s.failures), trial)
         final = s.stream[P:]
         test.assertEqual(len(out), len(final), trial)
         test.assertTrue(all(torch.equal(a, b) for a, b in zip(out, final)), trial)

@@ -23,7 +23,7 @@ Destructive and replacing actions (reset, presets, loading a cast member, deleti
 **Direct** is one script whose every line has its own voice. A new project starts with no lines (**Paste a script** /
 **Add a line**). The left rail sets the **default voice** (a cast member, or the voice from Cast) that lines follow,
 with a “{name} says…” button per cast member that adds a line in that voice (an empty cast offers to add the Cast
-voice), plus the language, tag strength and decoder (in Project settings), baseline performance, pronunciation help and the
+voice), plus the language, tag strength, decoder and LACI (in Project settings), baseline performance, pronunciation help and the
 brushes legend. Each line has a voice select (“Default · {name}”, or any cast member; one undo step) and a colored edge
 in its voice's color (pinned per voice in the script document); select words, or focus the line and use ⇧← / ⇧→ then
 Enter, to paint delivery onto them (the paint bar opens under the line); each line keeps its takes and a **keeper**:
@@ -154,7 +154,9 @@ It posts `/v2/generate` with `speaker_mode: "embedding"`, `stream: true`, `forma
 through WebAudio as it streams and draws it live as the studio's preview waveform (`src/lib/wave.ts`, shared with
 `components/Waveform.tsx`) with a playhead; click the waveform to play from there (focused: Space plays / stops,
 ← / → seek 1 s; ⌘↵ in the text generates). The last five takes stay under the waveform with play and Download each;
-the seed lives under **Advanced** and in the take's tooltip. Errors show the server's
+the seed lives under **Advanced** and in the take's tooltip; with alignment heads on the server
+(`/v2/capabilities.laci_languages`) **Advanced** also holds a **LACI** select (Off / On, streamed / On, whole take; not
+remembered, see [LACI](#laci)), with a note when the chosen language has no heads. Errors show the server's
 `detail` (the 422 list as `field: message`). `?server=https://…` points it at another server; `X-TTS-Session-ID` is
 random per tab (sessionStorage), so the voices a tab adds are its own.
 
@@ -169,7 +171,7 @@ client-side fixture store (`src/fixtures/projects.ts`, its own IndexedDB, shared
 (uploads, recordings, saved designs), the Direct script (lines with their voices, the gap) and its takes, the
 Edit clip with its versions, plus per-project settings (default language for new Edit clips and pronunciation
 lookups, default
-voice mode: the Cast bench takes it when it leaves an embedding-only voice; tag strength; decoder). Undo history, drafts (the Edit text and
+voice mode: the Cast bench takes it when it leaves an embedding-only voice; tag strength; decoder; LACI). Undo history, drafts (the Edit text and
 regions, the last generation's takes) and in-flight work stay per session.
 
 - **Header switcher**: the open project's name and save state (dot: saved / saving / error / changed elsewhere /
@@ -286,6 +288,17 @@ take's hover text names the decoder that made it (the `X-Decoder` response heade
 line shows the current one. The offline backend serves both (`src/fixtures/decoders.ts`): the synth sounds the same
 either way, takes report the decoder, and an id it does not list gets the server's 400
 (`Unknown decoder 'X'; this server serves: keep2_plain, full_mr.`).
+
+## LACI
+
+When `/v2/capabilities.laci_languages` is not empty, Project settings shows a **LACI** select: Off (the default),
+On, streamed, or On, whole take (`settings.laci`: `off` / `stream` / `whole`; `src/lib/laci.ts`). On, every render
+in a language with heads sends `laci: true` (Cast previews on both A/B sides, Direct lines, the MCP server's
+`zonos_speak`); whole take also sends `stream_decode: "whole"`, so the server holds the take until it is final and
+every fix restarts at its own row, while streamed keeps the request defaults' prefix decode (playback about one text
+bin behind generation). Renders in a language without heads leave LACI out, which the select's hint says. LACI needs
+tag guidance off, so it wins: tagged lines render without `tag_cfg_scale` while it is on. A Direct take made under
+another LACI mode reads **LACI changed**, and the Direct rail's settings line shows the current mode.
 
 ## Pronunciation input
 

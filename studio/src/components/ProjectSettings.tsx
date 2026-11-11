@@ -1,7 +1,8 @@
-/** The open project's settings in one dialog: language, voice mode, tag strength, decoder, and what opening it did to its voices. */
+/** The open project's settings in one dialog: language, voice mode, tag strength, decoder, LACI, and what opening it did to its voices. */
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { decoderName } from '../lib/decoders';
-import { LANG_LABEL } from '../lib/languages';
+import { LACI_LABEL, LACI_MODES, type LaciMode } from '../lib/laci';
+import { LANG_LABEL, langLabel } from '../lib/languages';
 import { backend, modalOpen, projectSettings, requestContext, settingsOpen } from '../state/app';
 import { current, restoreReport, setSettings } from '../state/projects';
 import { dialogKeys } from './focusTrap';
@@ -34,6 +35,29 @@ export function DecoderPicker() {
       </select>
       <span class="hint" id="settings-decoder-hint">
         What turns the model’s codes into sound, for every render (Cast previews, Direct lines, Edit takes). Fast (keep2) runs a pruned decoder; Full-size runs all of its layers (heavier). Direct takes rendered with another decoder read as stale.
+      </span>
+    </label>
+  );
+}
+
+/** LACI for every render, when the server has alignment heads (`/v2/capabilities.laci_languages`). */
+export function LaciPicker() {
+  const languages = backend.value?.laciLanguages ?? [];
+  if (!languages.length) return null;
+  const st = projectSettings.value;
+  return (
+    <label class="settings-row">
+      <span>LACI</span>
+      <select class="input" value={st.laci} onChange={(e) => setSettings({ laci: e.currentTarget.value as LaciMode })} aria-describedby="settings-laci-hint">
+        {LACI_MODES.map((m) => (
+          <option key={m} value={m}>
+            {LACI_LABEL[m]}
+          </option>
+        ))}
+      </select>
+      <span class="hint" id="settings-laci-hint">
+        Watches the model read the text and regenerates a take from where it skipped words, babbled or stopped early. Streamed: playback starts about a phrase later. Whole take: audio comes when the take is done, and every fix restarts exactly at its slip. While it is on, lines with nonverbal tags render without tag guidance.
+        {!languages.includes(st.language) && ` No alignment heads for ${langLabel(st.language)} on this server: its renders run without LACI.`}
       </span>
     </label>
   );
@@ -114,6 +138,7 @@ export function ProjectSettings() {
             </label>
           )}
           <DecoderPicker />
+          <LaciPicker />
         </div>
         {r.reRegistered.length > 0 && <p class="proj-note">Restored after a server restart: {r.reRegistered.join(', ')}.</p>}
         {r.issues.length > 0 && (

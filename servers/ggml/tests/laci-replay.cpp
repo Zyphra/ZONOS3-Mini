@@ -4,7 +4,7 @@
 //
 // mode "laci" (default): one LaciSession driven like model/tests/test_laci.py `run_attempt` across attempts.
 //   {text_len, heads_json: <laci_heads JSON object> | "<path>", frames_per_token?: prior override, cfg?: {LaciConfig
-//    fields}, n_prefill?: 0, n_codebooks?: 10, max_tokens?: 4000, seed?: 0 | null,
+//    fields}, n_prefill?: 0, n_codebooks?: 10, max_tokens?: 4000, seed?: 0 | null, hold?: false,
 //    duration_target?: {frames, adjust_rate?} | null, rates?: {index, edges, n_buckets, first?} | null,
 //    condition_values?: [int] | null, bucket?: int | null, rate_deltas?: [[float] | null] | null,
 //    follower?: {ranges, deltas, cfg?, origin?} | null,
@@ -112,6 +112,7 @@ static json run_laci(const json & t) {
     p.seed = t.contains("seed") ? opt<int64_t>(t, "seed") : std::optional<int64_t>(0);
     p.max_tokens = t.value("max_tokens", 4000);
     p.n_codebooks = t.value("n_codebooks", 10);
+    p.hold = t.value("hold", false);
     if (t.contains("duration_target") && !t["duration_target"].is_null()) {
         const json & d = t["duration_target"];
         p.duration = d.is_number() ? L::DurationTarget{d.get<double>(), true}

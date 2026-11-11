@@ -239,6 +239,8 @@ struct SessionParams {
     std::optional<int64_t> seed;
     int max_tokens = 0;
     int n_codebooks = 0;
+    // a whole decode: nothing goes downstream before the result is final, so no rollback is ever clamped
+    bool hold = false;
     std::optional<DurationTarget> duration;
     std::optional<RateBuckets> rates;
     std::optional<std::vector<int>> condition_values;  // the request's condition-row ids

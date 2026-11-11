@@ -154,6 +154,8 @@ export interface Backend {
   tags: TagCaps | null;
   /** Audio decoders a request may pick with `decoder` (`/v2/capabilities.decoders`, the default first); [] when none. */
   decoders: DecoderInfo[];
+  /** Languages with LACI alignment heads (`/v2/capabilities.laci_languages`); [] offline or without heads. */
+  laciLanguages: string[];
 }
 
 type Capabilities = Schemas['Capabilities'];
@@ -350,6 +352,7 @@ export async function connect(opts: ConnectOptions = {}): Promise<Backend> {
       tags: tagCaps(as, caps?.tag_cfg),
       // Audio decoders: the server's when one answers, the fixture's two offline.
       decoders: kind === 'offline' ? FIXTURE_DECODERS : (caps?.decoders ?? []),
+      laciLanguages: caps?.laci_languages ?? [],
     });
   };
   if (forced === 'offline') return make('offline', fixture);

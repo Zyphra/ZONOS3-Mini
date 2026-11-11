@@ -9,7 +9,9 @@ whole utterance with the matched iSTFT codec as zonos3_sgl.tokenizer.vocoder doe
 
 v2 hard-wires the former defaults of the dropped legacy fields (no speaking-rate token, no quality / background /
 accurate-mode rows): ``Zonos3LMConfig.from_params`` only accepts checkpoints without those rows, so the prompt simply has
-none. ``format``, ``stream`` and ``stream_decode`` are accepted and ignored (one whole decode).
+none. ``format`` is ignored. ``stream`` and ``stream_decode`` pick LACI's commit rule (the progressive decode streams
+the rows, the whole decode holds them until the result is final); with ``on_audio`` a take without LACI is decoded
+progressively unless ``stream_decode`` is whole.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from zonos3.generation import SAMPLE_RATE, SAMPLING
 from zonos3.models.accent_format import AccentAdapter, list_accent_adapters, load_adapter
 from zonos3.reference.accents import AccentState
 from zonos3.reference.lm import LMCache, ProbeSpec, Zonos3LM
+from zonos3.server.speech import prefix_stream_supported, resolve_stream_decode
 from zonos3.speaker_cfg import guided_logits
 from zonos3.tokenizer.textnorm import load_normalizer, normalize_request_text
 from zonos3.tts import plan as P
@@ -819,6 +822,16 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
         if c.condition_count and "speaking_rate" in names and edges
         else None
     )
+    req = plan.request
+    try:
+        progressive = (
+            resolve_stream_decode(
+                req.stream_decode, streaming=bool(req.stream), prefix_supported=prefix_stream_supported(c.audio_codec)
+            )
+            == "prefix"
+        )
+    except ValueError:  # the servers refuse prefix on a codec without it; the reference decodes whole
+        progressive = False
     width = c.n_codebooks + 1
     prefill = plan.prefill_rows if plan.prefill_rows is not None else torch.zeros((0, width), dtype=torch.int32)
     session = LaciSession(
@@ -828,6 +841,7 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
         seed=plan.seed,
         max_tokens=plan.max_tokens,
         n_codebooks=c.n_codebooks,
+        hold=not progressive,
         rates=rates,
         condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
         follower=follower,

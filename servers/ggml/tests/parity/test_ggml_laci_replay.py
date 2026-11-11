@@ -81,6 +81,7 @@ def run_laci(t: dict) -> dict:
         seed=t["seed"] if "seed" in t else 0,
         max_tokens=t.get("max_tokens", 4000),
         n_codebooks=t.get("n_codebooks", 10),
+        hold=t.get("hold", False),
         duration=duration,
         rates=rates,
         condition_values=t.get("condition_values"),
@@ -335,6 +336,7 @@ def laci_traces() -> dict[str, dict]:
             ],
         ),
     }
+    traces["stall_held"] = {**traces["stall"], "hold": True}
     rng = random.Random(1234)
     for k in range(4):
         traces[f"random_{k}"] = _random_trace(rng)
@@ -488,7 +490,7 @@ def test_span_token_ranges_match_python(tool, monkeypatch, name):
     assert tool("laci-replay", trace) == run_span_ranges(trace, monkeypatch)
 
 
-CTEST_CASES = ("clean", "skip", "stall", "early_eos", "pace_miss", "span_follow_scheduler")
+CTEST_CASES = ("clean", "skip", "stall", "stall_held", "early_eos", "pace_miss", "span_follow_scheduler")
 
 
 def _ctest_cases() -> dict[str, tuple[dict, dict]]:

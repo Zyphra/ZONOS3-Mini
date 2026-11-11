@@ -127,6 +127,11 @@
               <summary>Advanced</summary>
               <label class="field" for="seed">Seed <span class="hint-inline">a fixed seed repeats a take's randomness</span></label>
               <input type="number" id="seed" class="input" min="0" max="4294967295" step="1" inputmode="numeric" placeholder="random" />
+              <div id="laci-field" hidden>
+                <label class="field" for="laci">LACI <span class="hint-inline">regenerates skipped words and cut-off endings</span></label>
+                <select id="laci" class="input"></select>
+                <span id="laci-note" class="hint-inline" hidden></span>
+              </div>
             </details>
           </div>
           <div class="row gap-s actions">

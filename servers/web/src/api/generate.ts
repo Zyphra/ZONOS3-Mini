@@ -402,6 +402,7 @@ function attachProbe(e: Engine, p: Plan): { probe: Probe | null; follower: SpanF
   });
   const laci = as400(() => new LaciSession({
     heads: p.laci!, cfg: defaultLaciConfig(), prefillRows, seed: p.sp.seed, maxTokens: p.maxFrames, nCodebooks: NCB,
+    hold: !p.prefix,
     rates, conditionValues: hp.nCond > 0 ? p.prompt.cond.buckets.slice() : null, bucket: null, rateDeltas: null, follower,
   }));
   return { probe, follower, laci };

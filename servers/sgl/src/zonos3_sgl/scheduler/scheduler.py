@@ -509,6 +509,7 @@ class TTSScheduler(SchedulerIOMixin):
                 seed=msg.sampling_params.seed,
                 max_tokens=int(msg.sampling_params.max_tokens),
                 n_codebooks=self.n_codebooks,
+                hold=msg.sampling_params.stream_decode != "prefix",
                 duration=duration,
                 rates=rates,
                 condition_values=None if msg.condition_values is None else [int(v) for v in msg.condition_values],

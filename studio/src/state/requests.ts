@@ -1,5 +1,6 @@
 /** Design (+ script extras) → POST /v2/generate body, per the contract. */
 import type { ControlSpan, ControlsSpec, Dose, GenerateRequest } from '../api';
+import { laciFields, type LaciMode } from '../lib/laci';
 import { clamp } from '../lib/math';
 import { toSent, type PronTokens, type Sent } from '../lib/pron';
 import { hasTags } from '../lib/tags';
@@ -36,6 +37,10 @@ export interface RequestContext {
   tagStrength: number;
   /** The `decoder` to send (`requestDecoder`): null = the server default, left out of the request. */
   decoder: string | null;
+  /** The project's LACI mode (`laciFields`); undefined = off. */
+  laci: LaciMode | undefined;
+  /** Languages with LACI alignment heads on the server. */
+  laciLanguages: readonly string[];
 }
 
 /** Keep spans attached to their words across an edit (common prefix / suffix diff). */
@@ -109,11 +114,14 @@ export function buildRequest(s: ControlsSpec, ctx: RequestContext, d: Design, te
   if (x.language && x.language !== 'en_us') req.language = x.language;
   // The A/B reference too: the two sides differ only in their controls.
   if (ctx.decoder) req.decoder = ctx.decoder;
+  const laci = laciFields(ctx.laci, ctx.laciLanguages, x.language ?? 'en_us');
+  Object.assign(req, laci);
   if (x.unsteered) return req;
   // Tag guidance strengthens nonverbal tags; the server takes one guidance per request, so voice guidance is off.
+  // LACI needs tag guidance off (tag_cfg_scale 1), and wins.
   const tags = ctx.tags;
   const strength = ctx.tagStrength;
-  if (tags && strength > 1 && hasTags(text)) {
+  if (!laci.laci && tags && strength > 1 && hasTags(text)) {
     req.tag_cfg_scale = Math.round(clamp(strength, Math.max(1, tags.min_scale), tags.max_scale) * 100) / 100;
     req.speaker_cfg_scale = 1;
   }

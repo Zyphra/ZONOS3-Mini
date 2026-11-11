@@ -77,6 +77,8 @@ says so. Without a steering bundle (`/v2/controls` 404) only plain voices work: 
   voice (or the Cast bench).
 - Renders and edits use the project's decoder (Studio Project settings → Decoder) when the server serves it, else
   the server default; `zonos_status` lists the server's decoders, `zonos_project open` the project's choice.
+- Renders use the project's LACI mode (Studio Project settings → LACI) for languages with alignment heads on the
+  server; `zonos_status` lists those languages, `zonos_project open` the project's mode.
 - Accents: the Studio places one accent pin, so the strongest requested accent wins and the result reports the
   strength it really gets.
 - Saves go against the revision loaded; on a conflict the tool reloads and applies its change again (3 attempts).

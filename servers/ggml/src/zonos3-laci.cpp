@@ -473,6 +473,7 @@ void LaciSession::append(std::vector<int32_t> row, std::optional<int> eos_frame)
 int LaciSession::commit_row() const {
     const int n = (int)stream_.size();
     if (end_) return n;
+    if (p_.hold) return n_prefill_;
     int row;
     if (attempts_ >= p_.cfg.max_retries) {
         row = n;

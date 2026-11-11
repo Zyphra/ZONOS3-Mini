@@ -29,6 +29,8 @@ export const requestContext = computed<RequestContext>(() => ({
   tags: backend.value?.tags ?? null,
   tagStrength: projectSettings.value.tagStrength,
   decoder: requestDecoder(backend.value?.decoders ?? [], projectSettings.value.decoder),
+  laci: projectSettings.value.laci,
+  laciLanguages: backend.value?.laciLanguages ?? [],
 }));
 
 export const controlById = computed(() => new Map<string, ControlSpec>(spec.value.ui.controls.map((c) => [c.id, c])));
@@ -54,7 +56,7 @@ export const act = signal<Act>(ACT_IDS.includes(initialAct) ? initialAct : 'cast
 export const activeHistory = signal<History<unknown> | null>(null);
 /** A dialog is open: act switching by number keys is off. */
 export const modalOpen = signal(false);
-/** The project settings dialog (language, voice mode, tag strength, decoder). */
+/** The project settings dialog (language, voice mode, tag strength, decoder, LACI). */
 export const settingsOpen = signal(false);
 /** The current act's own keys (called first; return true when handled). */
 export const screenKeys = signal<((e: KeyboardEvent) => boolean) | null>(null);

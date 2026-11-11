@@ -1454,7 +1454,7 @@
             "default": null
           },
           "laci": {
-            "description": "Guard against skips, hallucinations and truncation (servers with LACI heads).",
+            "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
             "default": false
           }
@@ -1763,7 +1763,7 @@
             "default": null
           },
           "laci": {
-            "description": "Guard against skips, hallucinations and truncation (servers with LACI heads).",
+            "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
             "default": false
           },
@@ -2089,7 +2089,7 @@
             "default": null
           },
           "laci": {
-            "description": "Guard against skips, hallucinations and truncation (servers with LACI heads).",
+            "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
             "default": false
           },

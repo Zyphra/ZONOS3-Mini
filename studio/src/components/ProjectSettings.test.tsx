@@ -4,7 +4,7 @@ import { FIXTURE_DECODERS } from '../fixtures/decoders';
 import { backend, projectSettings } from '../state/app';
 import { DEFAULT_SETTINGS } from '../state/projectSchema';
 import { offlineBackend } from '../test/backend';
-import { DecoderPicker } from './ProjectSettings';
+import { DecoderPicker, LaciPicker } from './ProjectSettings';
 
 const select = (c: Element) => c.querySelector('select');
 
@@ -41,5 +41,22 @@ describe('decoder picker', () => {
   it('shows a saved pick this server lacks as the default', () => {
     projectSettings.value = { ...DEFAULT_SETTINGS, decoder: 'gone_head' };
     expect(select(render(<DecoderPicker />).container)!.value).toBe('keep2_plain');
+  });
+});
+
+describe('LACI picker', () => {
+  beforeEach(() => {
+    backend.value = offlineBackend();
+    projectSettings.value = DEFAULT_SETTINGS;
+  });
+  afterEach(cleanup);
+
+  it('shows only with alignment heads, and stores the pick', () => {
+    expect(select(render(<LaciPicker />).container)).toBeNull();
+    backend.value = { ...offlineBackend(), laciLanguages: ['en_us'] };
+    const { container } = render(<LaciPicker />);
+    expect([...container.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['Off', 'On, streamed', 'On, whole take']);
+    fireEvent.change(select(container)!, { target: { value: 'whole' } });
+    expect(projectSettings.value.laci).toBe('whole');
   });
 });
