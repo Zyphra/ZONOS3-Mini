@@ -522,6 +522,18 @@ class TTSScheduler(SchedulerIOMixin):
 
         return laci_probe(laci.session)
 
+    def _laci_stop_bias(self, batch) -> list[float] | None:
+        """Per request of ``batch``: the stop-id logit bias of its LACI session (LaciSession.stop_boost), 0 for others;
+        None when no request has one. With overlap scheduling the session may lag the sampled row by one frame (the
+        boost then starts a row late)."""
+        if not self.laci_requests:
+            return None
+        bias = []
+        for req in batch.reqs:
+            laci = self.laci_requests.get(req.uid)
+            bias.append(0.0 if laci is None else laci.session.stop_boost())
+        return bias if any(bias) else None
+
     def _span_follower(self, msg: TTSUserMsg, origin: int = 0):
         """The span gate of a request whose control spans follow the reading position (zonos3.tts.span_follow), or
         None: no such spans, or no alignment heads for its language (then the character-rate schedule places them).
@@ -1028,7 +1040,9 @@ class TTSScheduler(SchedulerIOMixin):
 
         return TTSForwardInput(
             batch=batch,
-            sample_args=self.tts_sampler.prepare(batch, token_pool=self.token_pool),
+            sample_args=self.tts_sampler.prepare(
+                batch, token_pool=self.token_pool, stop_bias=self._laci_stop_bias(batch)
+            ),
             load_indices=load_indices,
             write_indices=write_indices,
         )
@@ -1170,6 +1184,7 @@ class TTSScheduler(SchedulerIOMixin):
             repetition_penalties=select(sample_args.repetition_penalties),
             stop_token_ids=select(sample_args.stop_token_ids),
             stop_blocked=select(sample_args.stop_blocked),
+            stop_bias=select(sample_args.stop_bias),
             generators=[sample_args.generators[i] for i in rows],
         )
         sampled = self.tts_sampler.sample(logits.index_select(0, indices), visible_args)

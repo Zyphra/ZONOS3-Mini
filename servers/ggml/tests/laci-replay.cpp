@@ -106,6 +106,8 @@ static json run_laci(const json & t) {
         p.cfg.max_retries = c.value("max_retries", p.cfg.max_retries);
         p.cfg.pace_window_bins = c.value("pace_window_bins", p.cfg.pace_window_bins);
         p.cfg.warmup_bins = c.value("warmup_bins", p.cfg.warmup_bins);
+        p.cfg.stop_boost = c.value("stop_boost", p.cfg.stop_boost);
+        p.cfg.stop_boost_delay = c.value("stop_boost_delay", p.cfg.stop_boost_delay);
     }
     const int n_prefill = t.value("n_prefill", 0);
     p.prefill_rows.assign(n_prefill, std::vector<int32_t>{-1});
@@ -158,7 +160,7 @@ static json run_laci(const json & t) {
         for (const auto & v : tags(s, s.drain())) drained.push_back(v);
         std::optional<int> countdown;
         int steps_run = 0;
-        std::optional<int> stop_step;
+        std::optional<int> stop_step, boost_step;
         const json & steps = a.at("steps");
         for (int step = 1; step <= (int)steps.size(); step++) {
             const int pos = steps[step - 1].at(0).get<int>();
@@ -175,6 +177,7 @@ static json run_laci(const json & t) {
                 if (!countdown) countdown = C + 1;
             }
             s.append({tag * 100000 + step}, eos);
+            if (!boost_step && s.stop_boost() > 0) boost_step = step;  // the first step whose next row is boosted
             if (countdown) *countdown -= 1;
             if (probe.stop || (countdown && *countdown == 0)) {
                 if (probe.stop) stop_step = step;
@@ -185,6 +188,7 @@ static json run_laci(const json & t) {
         rec["mask_changes"] = changes;
         rec["steps_run"] = steps_run;
         rec["stop_step"] = jopt(stop_step);
+        rec["boost_step"] = jopt(boost_step);
         rec["drained"] = drained;
         if (follower) rec["follower_weights"] = fweights;
         const auto cont = s.finish_attempt();

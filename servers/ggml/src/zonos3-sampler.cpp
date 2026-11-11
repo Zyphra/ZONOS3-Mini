@@ -34,6 +34,7 @@ int zonos3_sampler::sample(const float * in, int cb) {
     // and the stop id waits for min_frames
     for (int i = codebook_size; i < vocab; ++i)
         if (i == pad_id || i != stop_id || generated < min_frames + cb) logit[i] = -INFINITY;
+    if (stop_bias != 0.0f && stop_id < vocab) logit[stop_id] += stop_bias;   // -inf stays -inf (min_frames)
 
     // repetition penalty over this codebook's recent ordinary codes (first rep_codebooks only)
     if (sp.rep_penalty != 1.0f && cb < sp.rep_codebooks) {

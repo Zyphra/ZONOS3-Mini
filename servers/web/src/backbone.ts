@@ -600,9 +600,10 @@ export class Backbone {
 
   /** One decode row on the last sampled frame (both slots under CFG, as stepPair) and the sample of the frame at stream
    *  row `row`, in one submission; reads back the frame's ids [NCB + 1] (+ the probe readout, as step). Everything is
-   *  submitted before the first await (nPast included), so step k + 1 may start before step k resolves. */
-  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
-      Promise<{ frame: Int32Array; probe: Float32Array | null }> {
+   *  submitted before the first await (nPast included), so step k + 1 may start before step k resolves. `stopBias`:
+   *  added to the stop id's logit before the sampling filters (LACI's stop boost). */
+  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null,
+                   stopBias = 0): Promise<{ frame: Int32Array; probe: Float32Array | null }> {
     const pair = this.sampler.guided;
     if (pair && twinSteer && twinSteer !== steer) throw new Error('backbone: the CFG twin shares the conditional slot\'s steering delta');
     this.checkStep(0, steer);
@@ -611,7 +612,7 @@ export class Backbone {
     if (steer && this.steerSources.length) this.gpu.write(this.steerBuf, 0, steer);
     this.writeDyn(0, steer !== null);
     if (pair) this.writeDyn(1, twinSteer !== null);
-    const smp = this.sampler.next(row);
+    const smp = this.sampler.next(row, stopBias);
     const reads = [{ buf: this.ids, offset: 0, bytes: (NCB + 1) * 4 }];
     if (textLen) reads.push({ buf: this.probeAcc, offset: 0, bytes: textLen * 4 });
     const done = this.gpu.submitRead(enc => {

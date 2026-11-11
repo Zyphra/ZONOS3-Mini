@@ -4,8 +4,10 @@
 // (argmax `pos`, centroid `m`) and fed to a Detector. A skip, a hallucination (stall) or a truncation (EOS with two or
 // more bins unread) rolls the request back to the failure onset; it is regenerated from there with a new seed under an
 // ACI hard attention mask (arXiv 2404.19723) until the reading passes the detection point, at most max_retries times.
-// Generation stops once the last bin has been read (plus tail_frames). A DurationTarget adds a PaceMonitor that holds
-// the take to a length (pace_fast / pace_slow retakes in another speaking-rate bucket).
+// The text is done once the last bin has been read for its share and the reading has reached the last text token;
+// generation stops tail_frames later, and stop_boost_delay rows after the text is done the sampler raises the stop
+// id's logit by stop_boost (LaciSession::stop_boost). A DurationTarget adds a PaceMonitor that holds the take to a
+// length (pace_fast / pace_slow retakes in another speaking-rate bucket).
 //
 // Driving a request (as the sgl scheduler and model/tests/test_laci.py `run_attempt` do), per attempt:
 //   probe_mask()                    the probe windows of the attempt's prefill (nullopt: no mask)
@@ -41,6 +43,10 @@ struct Config {
     int max_retries = 8;
     int pace_window_bins = 16;
     int warmup_bins = 2;
+    // Once the text is done and stop_boost_delay more rows were sampled, the sampler adds stop_boost to the stop id's
+    // logit in every codebook before the sampling filters (laci.py LaciConfig); 0 turns it off.
+    double stop_boost = 3.0;
+    int stop_boost_delay = 6;
 };
 
 // A content failure ("skip" | "hallucination" | "truncation") or, with `pace`, a duration miss ("pace_slow" |
@@ -95,6 +101,7 @@ private:
     std::vector<std::optional<int>> first_row_;
     int frontier_ = 0;
     std::optional<int> last_advance_row_, done_row_;
+    std::optional<int> read_row_;  // first row the reading was on the last text token (EOS)
 };
 
 // ACI dynamic-programming attention centre (2404.19723, Eq. 2/5), held monotone and limited to +1 per update.
@@ -260,6 +267,9 @@ public:
 
     std::optional<Windows> window(int center) const;
     std::optional<Windows> probe_mask() const;
+    // The logit the sampler adds to the stop id (every codebook) for the next row: cfg.stop_boost once the text is done
+    // and cfg.stop_boost_delay rows followed, else 0 (laci.py LaciSession.stop_boost).
+    double stop_boost() const;
     void on_step(ProbeControl & probe, int step, int pos, double m);
     void append(std::vector<int32_t> row, std::optional<int> eos_frame);
     int commit_row() const;

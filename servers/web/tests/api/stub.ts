@@ -76,8 +76,9 @@ class StubBackbone {
     this.smp = smp;
     this.cfgScale = s.cfgScale;
   }
-  private sample(row: number): Int32Array {
+  private sample(row: number, stopBias = 0): Int32Array {
     const smp = this.smp!;
+    smp.stopBias = stopBias;
     let src = this.last[0];
     if (this.cfgScale !== null) {
       const s = Math.fround(this.cfgScale), c = this.last[0], t = this.last[1];
@@ -92,7 +93,8 @@ class StubBackbone {
   async sampleFirst(row: number) {
     return this.sample(row);
   }
-  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null) {
+  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null,
+                   stopBias = 0) {
     this.steps[0]++;
     this.steered.push(steer);
     this.probes.push(probe);
@@ -102,7 +104,7 @@ class StubBackbone {
       this.twinSteered.push(twinSteer);
       this.last[1] = this.logits(1);
     }
-    const frame = this.sample(row);
+    const frame = this.sample(row, stopBias);
     let read = false;
     const self = this;
     return {

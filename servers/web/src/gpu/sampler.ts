@@ -21,9 +21,10 @@ export interface SamplingSetup {
   history?: ArrayLike<number>[];
 }
 
-/** sample.wgsl's uniform Smp: 20 scalar words, then u[] as 3 vec4 (at most 12 codebooks). */
-const SMP_WORDS = 32;
+/** sample.wgsl's uniform Smp: 20 scalar words, u[] as 3 vec4 (at most 12 codebooks), then stop_bias (padded to 36). */
+const SMP_WORDS = 36;
 const SMP_U = 20;
+const SMP_STOP_BIAS = 32;
 const MAX_CODEBOOKS = 12;
 /** sample.wgsl MAXC: ids per thread of its 256-thread workgroup. */
 const MAX_IDS_PER_THREAD = 20;
@@ -103,12 +104,14 @@ export class GpuSampler {
   }
 
   /** The next frame's draw at stream row `row` (codebooks past it get the audio pad): writes its uniform (ordered after
-   *  every earlier submission) and returns the program to encode after the decode that fills the logits. */
-  next(row: number): Program {
+   *  every earlier submission) and returns the program to encode after the decode that fills the logits. `stopBias`:
+   *  added to the stop id's logit in every codebook before the filters (LACI's stop boost). */
+  next(row: number, stopBias = 0): Program {
     if (!this.rng) throw new Error('backbone: startSampling must run before sampling');
     const w = this.words;
     w[5] = this.generated++;
     w[6] = row;
+    this.floats[SMP_STOP_BIAS] = f(stopBias);
     if (!this.greedy) for (let cb = 0; cb < this.ncb; cb++) this.floats[SMP_U + cb] = canonical53(this.rng);
     this.gpu.write(this.uni, 0, w);
     const i = this.guided ? 1 : 0;

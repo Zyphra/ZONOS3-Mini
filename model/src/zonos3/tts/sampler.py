@@ -172,6 +172,7 @@ def sample_tts(
     text_vocab: int = 0,
     generators: list[torch.Generator | None] | None = None,
     stop_blocked: torch.Tensor | None = None,
+    stop_bias: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Functional interface for TTS sampling.
 
@@ -192,6 +193,8 @@ def sample_tts(
         text_vocab: Text vocabulary size (appended as placeholder)
         stop_blocked: Optional (B, C) bool mask of the codebooks whose stop token is
             not allowed yet (a request's min_frames); None leaves every stop id allowed.
+        stop_bias: Optional (B,) float added to each row's stop-id logit in every
+            codebook before the filters (LACI's stop boost once the text is read); None adds nothing.
 
     The values of temperatures, top_ks, top_ps, min_ps and stop_token_ids pick host-side branches (greedy, the
     batch's top-k / top-p / min-p, each row's vocabulary width): pass them as CPU tensors and sampling never waits on
@@ -231,6 +234,8 @@ def sample_tts(
     if stop_blocked is not None:
         invalid = invalid | ((token_ids == stop_ids) & _on_device(stop_blocked, device).view(B, C, 1))
     logits = logits.masked_fill(invalid, float("-inf"))
+    if stop_bias is not None:
+        logits = logits + (token_ids == stop_ids) * _on_device(stop_bias, device).to(logits.dtype).view(B, 1, 1)
 
     # Debug: print detailed stats matching reference format for first 10 samples
     # Guard with is_current_stream_capturing to avoid CUDA graph capture errors

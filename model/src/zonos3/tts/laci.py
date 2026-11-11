@@ -4,8 +4,10 @@ While a request decodes, the alignment heads' attention over the text (zonos3_sg
 position per step and fed to a ``Detector``. A skip (the reading jumps past a token bin that got far fewer steps than
 the bins before it), a hallucination (the reading stops advancing) or a truncation (EOS with two or more bins unread)
 rolls the request back to the failure onset; it is regenerated from there with a new seed under an ACI hard attention
-mask (arXiv 2404.19723) until the reading passes the detection point, at most ``max_retries`` times. Generation stops
-once the last bin has been read (plus ``tail_frames``).
+mask (arXiv 2404.19723) until the reading passes the detection point, at most ``max_retries`` times. The text is done
+once the last bin has been read for its share and the reading has reached the last text token; generation stops
+``tail_frames`` later, and ``stop_boost_delay`` rows after the text is done the sampler raises the stop id's logit by
+``stop_boost`` (``LaciSession.stop_boost``) so a take that would run on past the text ends at its next likely stop.
 
 The scheduler runs this for requests whose ``TTSUserMsg.laci`` names an alignment-head spec (``LaciHeads``), offline
 (``TTSLLM.generate(laci=...)``) and in the server (``laci: true`` on the request) alike: a ``LaciSession`` per request
@@ -51,6 +53,12 @@ class LaciConfig:
     max_retries: int = 8
     pace_window_bins: int = 16
     warmup_bins: int = 2
+    # Once the text is done and stop_boost_delay more rows were sampled, the sampler adds stop_boost to the stop id's
+    # logit in every codebook (before the sampling filters): a take that would run on past the text (extra words,
+    # mostly with speaker embeddings, whose stop probability there is ~0.02 instead of ~1) ends at its next likely
+    # stop. 0 turns it off.
+    stop_boost: float = 3.0
+    stop_boost_delay: int = 6
 
 
 @dataclass(frozen=True)
@@ -93,6 +101,7 @@ class Detector:
         self._frontier = 0
         self._last_advance_row = None
         self._done_row = None
+        self._read_row = None  # first row the reading was on the last text token (EOS)
 
     def _tokens(self, b):
         return min(self.cfg.bin_tokens, self.text_len - b * self.cfg.bin_tokens)
@@ -196,9 +205,13 @@ class Detector:
                     frontier=self._frontier,
                 )
 
-        # 4. text done
+        # 4. text done: the last bin read for its share, and the reading has reached the last text token (with two
+        # bins the share alone, a pace prior, can call the text read a second before the end is spoken)
+        if self._read_row is None and pos >= self.text_len - 1:
+            self._read_row = row
         if (
             self._done_row is None
+            and self._read_row is not None
             and self._frontier >= self.nb - 2
             and self._counts[self.nb - 1] >= self._share(self.nb - 1)
         ):
@@ -597,6 +610,14 @@ class LaciSession:
     def probe_mask(self) -> dict[Head, tuple[int, int]] | None:
         """Text windows of the next attempt's probe: the ACI window around the probation center, else None."""
         return self.window(self.probation[1].center) if self.probation is not None else None
+
+    def stop_boost(self) -> float:
+        """The logit the sampler adds to the stop id (every codebook) for the next row (stream row ``len(stream)``):
+        ``cfg.stop_boost`` once the text is done and ``cfg.stop_boost_delay`` rows followed, else 0."""
+        det = self.detector
+        if det is None or det.done_row is None or len(self.stream) < det.done_row + self.cfg.stop_boost_delay:
+            return 0.0
+        return float(self.cfg.stop_boost)
 
     def on_step(self, probe, step, pos, m) -> None:
         """Observer: one decode step of the current attempt, the reading position ``pos`` and centroid ``m``."""

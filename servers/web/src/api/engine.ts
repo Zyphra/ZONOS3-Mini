@@ -16,9 +16,10 @@ export type BackboneApi = Pick<Backbone, 'steerSources'> & {
   /** The frame at stream row `row` sampled from the last prefill(s)' logits: ids [NCB + 1], the next decode input. */
   sampleFirst(row: number): Promise<Int32Array>;
   /** Decodes the last sampled frame and samples the frame at stream row `row` (ids [NCB + 1]); submits before awaiting,
-   *  so the next call may start before this one resolves. `twinSteer` is `steer` or null. */
-  stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null):
-    Promise<{ frame: Int32Array; probe: Float32Array | null }>;
+   *  so the next call may start before this one resolves. `twinSteer` is `steer` or null; `stopBias` is added to the
+   *  stop id's logit before the sampling filters (LACI's stop boost; 0 = none). */
+  stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null,
+             stopBias?: number): Promise<{ frame: Int32Array; probe: Float32Array | null }>;
 };
 
 /** Streaming codec decoder (src/zac.ts ZacStream). */

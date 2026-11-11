@@ -10,10 +10,13 @@ import type { SpanFollower } from './spanFollow';
 export interface LaciConfig {
   binTokens: number; coverFrac: number; skipFrac: number; stallFactor: number; minStallFrames: number;
   tailFrames: number; rollbackMarginFrames: number; maxRetries: number; paceWindowBins: number; warmupBins: number;
+  /** Once the text is done and stopBoostDelay more rows were sampled, the sampler adds stopBoost to the stop id's logit
+   *  in every codebook before the sampling filters (laci.py LaciConfig); 0 turns it off. */
+  stopBoost: number; stopBoostDelay: number;
 }
 export const defaultLaciConfig = (): LaciConfig => ({
   binTokens: 8, coverFrac: 0.5, skipFrac: 0.15, stallFactor: 3.0, minStallFrames: 45, tailFrames: 15,
-  rollbackMarginFrames: 8, maxRetries: 8, paceWindowBins: 16, warmupBins: 2,
+  rollbackMarginFrames: 8, maxRetries: 8, paceWindowBins: 16, warmupBins: 2, stopBoost: 3.0, stopBoostDelay: 6,
 });
 
 export interface Failure { kind: string; detectRow: number; onsetRow: number; rollbackRow: number; bin: number; frontier: number }
@@ -42,6 +45,7 @@ export class Detector {
   private frontierV = 0;
   private lastAdvance: number | null = null;
   private done: number | null = null;
+  private readRow: number | null = null;   // first row the reading was on the last text token (EOS)
 
   constructor(public textLen: number, public prior: number, public cfg: LaciConfig, public minRollbackRow: number) {
     if (textLen < 1) throw new Error(`text_len must be >= 1, got ${textLen}`);
@@ -60,6 +64,7 @@ export class Detector {
     this.frontierV = 0;
     this.lastAdvance = null;
     this.done = null;
+    this.readRow = null;
   }
   private tokens(b: number): number { return Math.min(this.cfg.binTokens, this.textLen - b * this.cfg.binTokens); }
 
@@ -131,7 +136,11 @@ export class Detector {
       }
     }
 
-    if (this.done === null && this.frontierV >= this.nb - 2 && this.countsArr[this.nb - 1] >= this.share(this.nb - 1))
+    // text done: the last bin read for its share, and the reading has reached the last text token (with two bins the
+    // share alone, a pace prior, can call the text read a second before the end is spoken)
+    if (this.readRow === null && pos >= this.textLen - 1) this.readRow = row;
+    if (this.done === null && this.readRow !== null && this.frontierV >= this.nb - 2
+        && this.countsArr[this.nb - 1] >= this.share(this.nb - 1))
       this.done = row;
     return null;
   }
@@ -346,6 +355,14 @@ export class LaciSession {
   }
 
   probeMask(): Windows | null { return this.probation ? this.window(this.probation[1].center) : null; }
+
+  /** The logit the sampler adds to the stop id (every codebook) for the next row: cfg.stopBoost once the text is done
+   *  and cfg.stopBoostDelay rows followed, else 0 (laci.py LaciSession.stop_boost). */
+  stopBoost(): number {
+    const done = this.detector?.doneRow() ?? null;
+    if (done === null || this.stream.length < done + this.p.cfg.stopBoostDelay) return 0;
+    return this.p.cfg.stopBoost;
+  }
 
   onStep(probe: ProbeControl, step: number, pos: number, m: number): void {
     const row = this.attemptStart + step;

@@ -21,7 +21,8 @@ function runLaci(t: J): J {
   const keys: [string, keyof typeof cfg][] = [['bin_tokens', 'binTokens'], ['cover_frac', 'coverFrac'],
     ['skip_frac', 'skipFrac'], ['stall_factor', 'stallFactor'], ['min_stall_frames', 'minStallFrames'],
     ['tail_frames', 'tailFrames'], ['rollback_margin_frames', 'rollbackMarginFrames'], ['max_retries', 'maxRetries'],
-    ['pace_window_bins', 'paceWindowBins'], ['warmup_bins', 'warmupBins']];
+    ['pace_window_bins', 'paceWindowBins'], ['warmup_bins', 'warmupBins'], ['stop_boost', 'stopBoost'],
+    ['stop_boost_delay', 'stopBoostDelay']];
   for (const [k, c] of keys) if (t.cfg?.[k] !== undefined) cfg[c] = t.cfg[k];
   const nPrefill: number = t.n_prefill ?? 0;
   const C: number = t.n_codebooks ?? 10;
@@ -49,7 +50,7 @@ function runLaci(t: J): J {
     s.append(Int32Array.of(tag), null);
     let d = s.drain();
     drained.push(...tags(d.begin, d.end));
-    let countdown: number | null = null, stepsRun = 0, stopStep: number | null = null;
+    let countdown: number | null = null, stepsRun = 0, stopStep: number | null = null, boostStep: number | null = null;
     for (let step = 1; step <= a.steps.length; step++) {
       const [pos, m] = a.steps[step - 1];
       if (follower) fweights.push(follower.weights(s.attemptStart + step - s.nPrefill).slice());
@@ -64,6 +65,7 @@ function runLaci(t: J): J {
         countdown ??= C + 1;
       }
       s.append(Int32Array.of(tag * 100000 + step), eos);
+      if (boostStep === null && s.stopBoost() > 0) boostStep = step;   // the first step whose next row is boosted
       if (countdown !== null) countdown -= 1;
       if (probe.stop || countdown === 0) {
         if (probe.stop) stopStep = step;
@@ -75,6 +77,7 @@ function runLaci(t: J): J {
     rec.mask_changes = changes;
     rec.steps_run = stepsRun;
     rec.stop_step = stopStep;
+    rec.boost_step = boostStep;
     rec.drained = drained;
     if (follower) rec.follower_weights = fweights;
     const cont = s.finishAttempt();

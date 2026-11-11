@@ -524,7 +524,10 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
     const k = issued++;
     const out: Promise<StepOut> = k === 0
       ? bb.sampleFirst(slot.prefill).then(frame => ({ frame, probe: null }))
-      : (() => { const steer = steerAt(k); return bb.stepSample(slot.prefill + k, steer, twinSteered ? steer : null, probeInput()); })();
+      : (() => {
+          const steer = steerAt(k);
+          return bb.stepSample(slot.prefill + k, steer, twinSteered ? steer : null, probeInput(), laci?.stopBoost() ?? 0);
+        })();
     out.catch(() => {});   // awaited through `inflight`; a step discarded after an error is not reported
     inflight.push(out);
   };

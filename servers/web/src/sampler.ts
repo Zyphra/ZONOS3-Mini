@@ -83,6 +83,8 @@ export class Sampler {
   stopId: number;
   minFrames = 0;
   generated = 0;
+  /** Added to the stop id's logit in every codebook before the filters (LACI's stop boost); set before each frame. */
+  stopBias = 0;
 
   constructor(private sp: Sampling, private ncb = 10, private vocab = 4098, opts: SamplerVocab = {}) {
     this.rng = new MT19937(sp.seed >>> 0);
@@ -118,6 +120,7 @@ export class Sampler {
     // waits for minFrames
     for (let i = this.codebookSize; i < V; i++)
       if (i === this.padId || i !== this.stopId || this.generated < this.minFrames + cb) logit[i] = -Infinity;
+    if (this.stopBias !== 0 && this.stopId < V) logit[this.stopId] = f(logit[this.stopId] + this.stopBias);
 
     if (sp.rep_penalty !== 1 && cb < sp.rep_codebooks) {
       const pen = f(sp.rep_penalty);

@@ -102,7 +102,7 @@ def run_laci(t: dict) -> dict:
         changes, drained, fweights = [], [], []
         s.append(torch.tensor([tag], dtype=torch.int32), None)
         drained += _tags(s.drain())
-        countdown, steps_run, stop_step = None, 0, None
+        countdown, steps_run, stop_step, boost_step = None, 0, None, None
         for step, (pos, m) in enumerate(a["steps"], start=1):
             if follower is not None:
                 fweights.append(list(follower.weights(s.attempt_start + step - s.n_prefill)))
@@ -117,6 +117,8 @@ def run_laci(t: dict) -> dict:
                 eos = eos_at - eos_lag
                 countdown = C + 1 if countdown is None else countdown
             s.append(torch.tensor([tag * 100000 + step], dtype=torch.int32), eos)
+            if boost_step is None and s.stop_boost() > 0:
+                boost_step = step  # the first step whose next row the sampler boosts
             if countdown is not None:
                 countdown -= 1
             if probe.stop or countdown == 0:
@@ -124,7 +126,9 @@ def run_laci(t: dict) -> dict:
                     stop_step = step
                 break
             drained += _tags(s.drain())
-        rec.update(mask_changes=changes, steps_run=steps_run, stop_step=stop_step, drained=drained)
+        rec.update(
+            mask_changes=changes, steps_run=steps_run, stop_step=stop_step, drained=drained, boost_step=boost_step
+        )
         if follower is not None:
             rec["follower_weights"] = fweights
         cont = s.finish_attempt()
@@ -335,6 +339,13 @@ def laci_traces() -> dict[str, dict]:
                 {"steps": reading(30, 50) + [[49, 49.0]] * 200},
             ],
         ),
+        # two bins read slowly: the prior's share of the last bin fills long before the reading reaches EOS; the text
+        # is done (and the tail starts) only once it does
+        "slow_two_bins": base(
+            text_len=14,
+            heads_json={**HEADS, "frames_per_token": 3.5},
+            steps=reading(0, 13, fpt=6, jitter=0.3) + [[13, 13.0]] * 30,
+        ),
     }
     traces["stall_held"] = {**traces["stall"], "hold": True}
     rng = random.Random(1234)
@@ -490,7 +501,16 @@ def test_span_token_ranges_match_python(tool, monkeypatch, name):
     assert tool("laci-replay", trace) == run_span_ranges(trace, monkeypatch)
 
 
-CTEST_CASES = ("clean", "skip", "stall", "stall_held", "early_eos", "pace_miss", "span_follow_scheduler")
+CTEST_CASES = (
+    "clean",
+    "skip",
+    "stall",
+    "stall_held",
+    "slow_two_bins",
+    "early_eos",
+    "pace_miss",
+    "span_follow_scheduler",
+)
 
 
 def _ctest_cases() -> dict[str, tuple[dict, dict]]:
