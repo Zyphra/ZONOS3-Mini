@@ -316,3 +316,42 @@ def test_accents_are_adapters_only(monkeypatch):
     assert plan.resolve_accent(ctx.accent_names, "cmn", 0.5) == ("cmn", 0.5)
     with pytest.raises(ValueError):
         plan.resolve_accent(ctx.accent_names, "kor", 1.0)
+
+
+def test_reference_clips_encode_once_and_failed_encodes_are_retried(monkeypatch):
+    """The frontend encodes raw reference clips (one codec encoder per server, not one per tokenizer process):
+    concurrent requests with one clip share a single encode, and a clip the encoder refused is encoded again."""
+    import threading
+
+    calls = []
+    release = threading.Event()  # holds the first encode of each clip until every request is waiting on it
+
+    def encode(audio_codec, audio, *, max_seconds):
+        calls.append((audio, max_seconds))
+        release.wait(5)
+        if audio == b"short":
+            raise ValueError("Reference shorter than 0.5 s")
+        return torch.full((3, 10), len(calls), dtype=torch.int32)
+
+    monkeypatch.setattr(api_server, "encode_reference_audio_bytes", encode)
+    monkeypatch.setattr(api_server, "_audio_codec", lambda config: "codec")
+    monkeypatch.setattr(api_server, "_REFERENCE_CODES", type(api_server._REFERENCE_CODES)())
+
+    async def requests(audio, n):
+        pending = [asyncio.ensure_future(api_server._encode_reference_audio(None, audio, 60.0)) for _ in range(n)]
+        await asyncio.sleep(0.05)
+        release.set()
+        results = await asyncio.gather(*pending, return_exceptions=True)
+        release.clear()
+        return results
+
+    async def _run():
+        return await requests(b"clip", 8), await requests(b"short", 2), await requests(b"short", 1)
+
+    same, refused, retried = asyncio.run(_run())
+
+    assert calls == [(b"clip", 60.0), (b"short", 60.0), (b"short", 60.0)]
+    assert all(torch.equal(codes, torch.full((3, 10), 1, dtype=torch.int32)) for codes in same)
+    same[0][0, 0] = -1  # every caller gets its own copy of the memoized codes
+    assert same[1][0, 0] == 1
+    assert all(isinstance(exc, ValueError) for exc in refused + retried)

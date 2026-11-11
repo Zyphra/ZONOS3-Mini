@@ -253,7 +253,7 @@ async def encode_reference(
 
 async def resolve_reference(state: ServerState, session_id: str | None, req) -> torch.Tensor | None:
     """speaker_mode=reference: inline codes, a default voice's codes or clip, a session clip, or an upload
-    (sgl _resolve_speaker_reference_audio + the tokenizer's reference encode)."""
+    (sgl _resolve_speaker_reference_audio + the frontend's reference encode)."""
     if any((req.speaker_embedding_base64, req.speaker_blend_embedding_id_a, req.speaker_blend_embedding_id_b)):
         raise ValueError(
             "This checkpoint conditions on raw reference audio and does not accept speaker embedding "

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import collections
-import hashlib
 import multiprocessing as mp
 import os
 from types import SimpleNamespace
@@ -26,7 +24,6 @@ from zonos3_sgl.message import (
     TTSCodesReply,
     TTSDecodeCodesMsg,
     TTSDetokenizeMsg,
-    TTSEncodeAudioMsg,
     TTSNormalizeMsg,
     TTSTokenizeMsg,
     TTSUserMsg,
@@ -43,24 +40,6 @@ def _unwrap_msg(
     if isinstance(msg, BatchTTSTokenizerMsg):
         return msg.data
     return [msg]
-
-
-_REFERENCE_CODE_CACHE: "collections.OrderedDict[tuple[str, float], torch.Tensor]" = collections.OrderedDict()
-_REFERENCE_CODE_CACHE_SIZE = 64
-
-
-def _encode_reference_cached(vocoder_manager, audio_bytes: bytes, max_seconds: float) -> torch.Tensor:
-    """Reference codes memoized by the clip's bytes: a chat demo sends the same voice with every sentence."""
-    key = (hashlib.sha1(audio_bytes).hexdigest(), float(max_seconds))
-    codes = _REFERENCE_CODE_CACHE.get(key)
-    if codes is None:
-        codes = vocoder_manager.encode_reference_audio_bytes(audio_bytes, max_seconds=max_seconds)
-        _REFERENCE_CODE_CACHE[key] = codes
-        if len(_REFERENCE_CODE_CACHE) > _REFERENCE_CODE_CACHE_SIZE:
-            _REFERENCE_CODE_CACHE.popitem(last=False)
-    else:
-        _REFERENCE_CODE_CACHE.move_to_end(key)
-    return codes.clone()
 
 
 def _tag_cfg_plain_text(msg: TTSTokenizeMsg, text: str) -> str | None:
@@ -173,16 +152,9 @@ def tokenize_worker(
 
             tts_tokenize_msg = [m for m in pending_msg if isinstance(m, TTSTokenizeMsg)]
             tts_detokenize_msg = [m for m in pending_msg if isinstance(m, TTSDetokenizeMsg)]
-            encode_msgs = [m for m in pending_msg if isinstance(m, TTSEncodeAudioMsg)]
             normalize_msgs = [m for m in pending_msg if isinstance(m, TTSNormalizeMsg)]
             decode_msgs = [m for m in pending_msg if isinstance(m, TTSDecodeCodesMsg)]
             frontend_replies = []
-            for msg in encode_msgs:
-                try:
-                    codes = tts_vocoder_manager.encode_reference_audio_bytes(msg.audio, max_seconds=msg.max_seconds)
-                    frontend_replies.append(TTSCodesReply(uid=msg.uid, codes=codes))
-                except (ValueError, RuntimeError) as exc:
-                    frontend_replies.append(TTSCodesReply(uid=msg.uid, codes=None, error=str(exc)))
             for msg in decode_msgs:
                 audio = tts_vocoder_manager.decode_all(
                     msg.codes.to(torch.int64)[None], apply_shear_up=False, decoder=msg.decoder
@@ -251,8 +223,6 @@ def tokenize_worker(
                                 tts_prompt_builder.config.text_tokenizer_spec,
                             )
                         ]
-                    if msg.speaker_embedding is not None and msg.speaker_reference_audio is not None:
-                        raise ValueError("Speaker embeddings and raw reference audio are mutually exclusive.")
                     # Condition rows (cond3 finetunes): one bucket id per row, every row unknown by default.
                     condition_values = None
                     requested_buckets = getattr(msg, "condition_buckets", None)
@@ -263,17 +233,12 @@ def tokenize_worker(
                         condition_values = check_ids(buckets, condition_bucket_counts)
                     elif requested_buckets is not None:
                         raise ValueError("This checkpoint has no condition rows (loudness / fmax / speaking rate)")
-                    # Reference prefix codes: inline codes cut to the reference limit, else the encoded reference clip.
+                    # Reference prefix codes (inline in the request or encoded by the frontend), cut to the reference
+                    # limit.
                     reference_codes = getattr(msg, "speaker_reference_codes", None)
                     if reference_codes is not None:
                         reference_codes = plan.truncate_reference(
                             torch.as_tensor(reference_codes, dtype=torch.int32), reference_limit
-                        )
-                    elif msg.speaker_reference_audio is not None:
-                        reference_codes = _encode_reference_cached(
-                            tts_vocoder_manager,
-                            msg.speaker_reference_audio,
-                            speaker_reference_max_seconds,
                         )
                     # [reference prefix | speaker slot (position 0, as in training)][condition rows] text rows
                     rows = plan.prompt_rows(
@@ -306,7 +271,7 @@ def tokenize_worker(
                         mode = os.environ["LONG_TTS_REFERENCE_MODE"]
                         if mode == "none":
                             assert reference_prefix_length == 0 and speaker_token_position == -1
-                            assert msg.speaker_embedding is None and msg.speaker_reference_audio is None
+                            assert msg.speaker_embedding is None and msg.speaker_reference_codes is None
                             assert float(msg.sampling_params.speaker_cfg_scale) == 1.0
                         else:
                             assert reference_prefix_length > 0 and msg.speaker_embedding is None

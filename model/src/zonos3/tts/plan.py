@@ -158,14 +158,13 @@ class PromptContext(RulesContext, Protocol):
 
 @dataclass
 class Speaker:
-    """A request's speaker inputs as the server resolved them for its mode: the speaker-row embedding, the reference
-    prefix codes (``reference_codes``, already checked and cut to the reference limit) or the raw reference audio the
-    sgl tokenizer worker encodes (``reference_audio``)."""
+    """A request's speaker inputs as the server resolved them for its mode: the speaker-row embedding or the reference
+    prefix codes (``reference_codes``: inline ones already checked and cut to the reference limit, or the server's
+    encode of a reference clip)."""
 
     mode: str | None
     embedding: torch.Tensor | None = None
     reference_codes: torch.Tensor | None = None
-    reference_audio: bytes | None = None
 
 
 # ----------------------------------------------------------------------------------------------------- the rules
@@ -511,9 +510,7 @@ def request_rules(
     # R12: one CFG twin per request (tag CFG's exclusivity is R1's); controls CFG needs a hidden delta and a speaker row
     cfg_kind, cfg_scale = None, 1.0
     if float(req.speaker_cfg_scale) != 1.0:
-        has_reference = speaker.mode == "reference" and (
-            speaker.reference_codes is not None or speaker.reference_audio is not None
-        )
+        has_reference = speaker.mode == "reference" and speaker.reference_codes is not None
         has_embedding = speaker.mode == "embedding" and embedding is not None
         if not (has_reference or has_embedding):
             raise ValueError(

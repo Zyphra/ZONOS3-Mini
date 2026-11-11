@@ -8,7 +8,6 @@ from .tts import (  # noqa: F401
     BatchTTSTokenizerMsg,
     TTSDecodeCodesMsg,
     TTSDetokenizeMsg,
-    TTSEncodeAudioMsg,
     TTSNormalizeMsg,
     TTSSamplingParams,
     TTSTokenizeMsg,

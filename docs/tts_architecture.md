@@ -290,7 +290,9 @@ Raw-reference cloning and the silence-frame fallback encode audio with the same 
 `zonos3.codec.codec_adapter.MossAutoencoder` from its generator checkpoint, SSL teacher, step and codebook sizes
 (SSL teacher → semantic Q1, acoustic residual RVQ). Reference audio is mixed to mono, resampled to 44.1 kHz, peak
 normalized only above 1.0 and cut to whole codec frames within the reference limit; the result is int32 codes
-`[frames, 10]`.
+`[frames, 10]`. The sgl server encodes in its API process, on one worker thread, and memoizes the codes by the clip's
+bytes; the tokenizer processes only receive codes. The encoder holds several GB of GPU memory per process that loads
+it, so `--num-tokenizer N` must not give each tokenizer process its own.
 
 ## GDN / Full-AttnRes family (2026-10)
 

@@ -347,26 +347,20 @@ class TTSLLM(TTSScheduler):
     def encode_reference(
         self, waveform: torch.Tensor, sample_rate: int, *, max_seconds: float | None = None
     ) -> torch.Tensor:
-        """Reference waveform -> prefix codes with the checkpoint's codec (same path as the server tokenizer)."""
-        from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
-
-        if max_seconds is None:
-            max_seconds = float(getattr(self.engine.model_config, "speaker_reference_max_seconds", 30.0))
-        manager = getattr(self, "_reference_manager", None)
-        if manager is None:
-            manager = TTSVocoderManager(
-                n_codebooks=self.n_codebooks,
-                audio_pad_id=self.audio_pad_id,
-                audio_codec=self.engine.model_config.audio_codec,
-            )
-            self._reference_manager = manager
+        """Reference waveform -> prefix codes with the checkpoint's codec (same path as the server frontend)."""
         import io
 
         import soundfile as sf
 
+        from zonos3_sgl.tokenizer.vocoder import encode_reference_audio_bytes
+
+        if max_seconds is None:
+            max_seconds = float(getattr(self.engine.model_config, "speaker_reference_max_seconds", 30.0))
         buffer = io.BytesIO()
         sf.write(buffer, waveform.detach().cpu().float().T.numpy(), int(sample_rate), format="WAV", subtype="FLOAT")
-        return manager.encode_reference_audio_bytes(buffer.getvalue(), max_seconds=max_seconds)
+        return encode_reference_audio_bytes(
+            self.engine.model_config.audio_codec, buffer.getvalue(), max_seconds=max_seconds
+        )
 
     def offline_receive_msg(self, blocking: bool = False) -> List[BaseTTSBackendMsg]:
         """Receive messages from the pending queue."""

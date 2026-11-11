@@ -519,7 +519,7 @@ static std::vector<float> voice_embedding(ServerState & s, const std::optional<s
     return v.embedding;
 }
 
-// The voice's reference codes (sgl _resolve_speaker_reference_audio + the tokenizer's codec encode): shipped
+// The voice's reference codes (sgl _resolve_speaker_reference_audio + the frontend's codec encode): shipped
 // <stem>.codes.npy, else the codec encoder's codes of the clip, computed once; the first reference_max_frames frames.
 static std::vector<int32_t> voice_codes(ServerState & s, const std::optional<std::string> & session, const std::string & id) {
     Speaker v = lookup_voice(s, session, id);

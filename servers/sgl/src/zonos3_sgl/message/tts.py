@@ -100,11 +100,8 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     decode_context_frames: int = DECODE_CONTEXT_FRAMES
     # Optional speaker embedding for voice cloning; shape: (speaker_embedding_dim,)
     speaker_embedding: torch.Tensor | None = None
-    # Encoded by the tokenizer into the raw delayed-ZAC reference prefix used
-    # by speaker-reference-prefix checkpoints. Mutually exclusive with the
-    # vector speaker_embedding path.
-    speaker_reference_audio: bytes | None = None
-    # Already-encoded reference prefix codes [frames, n_codebooks] (int). Takes precedence over the audio.
+    # The raw reference prefix codes [frames, n_codebooks] (int) of speaker-reference-prefix checkpoints: inline in the
+    # request or encoded by the frontend. Mutually exclusive with the vector speaker_embedding path.
     speaker_reference_codes: torch.Tensor | None = None
     # Token position in the prompt sequence where speaker embedding is injected.
     speaker_token_position: int = -1
@@ -147,15 +144,6 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     laci_rate_first: int = 0
     laci_rate_bucket: int | None = None
     laci_rate_deltas: List[torch.Tensor | None] | None = None
-
-
-@dataclass
-class TTSEncodeAudioMsg(BaseTTSTokenizerMsg):
-    """Encode audio bytes to codec frames (Frontend -> Tokenizer -> TTSCodesReply)."""
-
-    uid: int
-    audio: bytes
-    max_seconds: float
 
 
 @dataclass
@@ -315,15 +303,10 @@ class TTSAudioReply(BaseTTSFrontendMsg):
 
 @dataclass
 class TTSCodesReply(BaseTTSFrontendMsg):
-    """Codec frames for the frontend (Tokenizer -> Frontend).
-
-    Answers TTSEncodeAudioMsg with frames [frames, n_codebooks], and "span"
-    generations with their delayed rows (excluding the finishing row, as the
-    offline engine does) plus eos_frame. ``error`` reports a rejected input.
-    """
+    """Codec frames for the frontend (Tokenizer -> Frontend): a "span" generation's delayed rows (excluding the
+    finishing row, as the offline engine does) plus eos_frame."""
 
     uid: int
-    codes: torch.Tensor | None
+    codes: torch.Tensor
     finished: bool = True
     eos_frame: int | None = None
-    error: str | None = None

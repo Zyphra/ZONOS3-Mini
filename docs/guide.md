@@ -146,11 +146,12 @@ clip longer than `max_context_seconds` (`send the clip's transcript as original_
   keeps its exact KV and only the new words take the delivery. Unknown ids,
   `region_controls` without `spans` or of the wrong length are 400s.
 
-The frontend runs an edit through the process pipeline: the tokenizer encodes
-the audio (`TTSEncodeAudioMsg`) and builds each fill prompt
-(`TTSTokenizeMsg.edit_*`), the scheduler generates it with `end_token="span"`,
-the detokenizer returns its rows as codes (`TTSCodesReply`), and the tokenizer
-decodes the spliced frames (`TTSDecodeCodesMsg`). Qwen3-ASR, when installed, runs in one persistent
+The frontend runs an edit through the process pipeline: it encodes the audio
+with the server's one codec encoder (the same memoized encode as raw-reference
+prompts), the tokenizer builds each fill prompt (`TTSTokenizeMsg.edit_*`), the
+scheduler generates it with `end_token="span"`, the detokenizer returns its rows
+as codes (`TTSCodesReply`), and the tokenizer decodes the spliced frames
+(`TTSDecodeCodesMsg`). Qwen3-ASR, when installed, runs in one persistent
 worker per server (`model/src/zonos3/workers/asr.py`: `ping`, `transcribe`; shared with
 plugins) under the `.venv-asr` interpreter (`ZONOS3_ASR_PYTHON`, default
 `.venv-asr/bin/python`; `HF_HUB_OFFLINE=1`, so the model must be cached; `ZONOS3_ASR_DEVICE`

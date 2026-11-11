@@ -7,8 +7,8 @@ This page describes the CUDA server (`servers/sgl`, package `zonos3_sgl`), the M
 
 ## Processes
 
-- **API server**: FastAPI frontend for `/v2/generate`, `/v1/audio/speech`, capabilities, speaker cache, edit and studio project endpoints, plus the routes of `--plugins`; it also serves the studio build at `/`.
-- **Tokenizer worker**: Builds SuperBPE / byte-token TTS prompt frames, encodes reference audio with the matched dual codec, and decodes audio frames to PCM with the codec's iSTFT decoder.
+- **API server**: FastAPI frontend for `/v2/generate`, `/v1/audio/speech`, capabilities, speaker cache, edit and studio project endpoints, plus the routes of `--plugins`; it also serves the studio build at `/`. It encodes reference audio with the matched dual codec (one encoder per server, codes memoized by clip) and runs the speaker encoder.
+- **Tokenizer worker**: Builds SuperBPE / byte-token TTS prompt frames and decodes audio frames to PCM with the codec's iSTFT decoder.
 - **Scheduler worker**: Runs one scheduler per tensor-parallel rank, manages request queues, KV cache slots, and decode scheduling.
 - **Engine**: Owns the model, attention backend, KV cache, CUDA graphs, and checkpoint weights for one rank.
 

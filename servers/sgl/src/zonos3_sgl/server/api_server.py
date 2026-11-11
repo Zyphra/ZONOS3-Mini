@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import functools
+import hashlib
 import io
 import os
 import threading
@@ -97,11 +99,11 @@ from zonos3_sgl.message import (
     TTSAudioReply,
     TTSCodesReply,
     TTSDecodeCodesMsg,
-    TTSEncodeAudioMsg,
     TTSNormalizeMsg,
     TTSSamplingParams,
     TTSTokenizeMsg,
 )
+from zonos3_sgl.tokenizer.vocoder import encode_reference_audio_bytes
 from zonos3_sgl.utils.logger import init_logger
 from zonos3_sgl.utils.mp import ZmqAsyncPullQueue, ZmqAsyncPushQueue
 
@@ -133,6 +135,13 @@ _ASR = AsrWorker()
 _FUSEALIGN = FuseAlignWorker()
 # Gold pronunciation lexicons, keyed by LMDB directory.
 _PHONEME_LEXICON_CACHE: Dict[str, "PhonemeLexicon"] = {}
+# Raw reference prefixes (speaker_mode=reference) and the codec encodes of speech editing and LACI run in this process:
+# one codec encoder for the whole server (zonos3.tokenizer.dual_reference keeps one per process, several GB of GPU
+# memory; encoded in the tokenizer processes, --num-tokenizer N held up to N of them and concurrent first loads ran
+# the GPU out of memory), on one worker thread (forwards are serialized). Codes are memoized by the clip's bytes.
+_REFERENCE_ENCODER_POOL: ThreadPoolExecutor | None = None
+_REFERENCE_CODES: "collections.OrderedDict[tuple[str, float], asyncio.Future[torch.Tensor]]" = collections.OrderedDict()
+_REFERENCE_CODES_SIZE = 64
 
 
 @dataclass
@@ -605,6 +614,38 @@ def _embed_waveform_sync(embedder, wav: torch.Tensor, sample_rate: int) -> list[
         output = embedder(wav, sample_rate)
         outputs = output if isinstance(output, tuple) else (output,)
         return [tensor.squeeze(0).to(dtype=torch.float32, device="cpu") for tensor in outputs]
+
+
+def _reference_encoder_pool() -> ThreadPoolExecutor:
+    global _REFERENCE_ENCODER_POOL
+    if _REFERENCE_ENCODER_POOL is None:
+        _REFERENCE_ENCODER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reference-encoder")
+    return _REFERENCE_ENCODER_POOL
+
+
+async def _encode_reference_audio(config: ServerArgs, audio: bytes, max_seconds: float) -> torch.Tensor:
+    """A clip's codec codes [frames, n_codebooks] (int32, its first ``max_seconds``), memoized by its bytes (a chat or
+    an evaluation sends one voice with every sentence); concurrent requests for one clip share one encode. A clip the
+    encoder refuses raises ValueError; a failed encode is not memoized."""
+    key = (hashlib.sha1(audio).hexdigest(), float(max_seconds))
+    future = _REFERENCE_CODES.get(key)
+    if future is None:
+        future = asyncio.get_running_loop().run_in_executor(
+            _reference_encoder_pool(),
+            functools.partial(encode_reference_audio_bytes, _audio_codec(config), audio, max_seconds=max_seconds),
+        )
+        _REFERENCE_CODES[key] = future
+        while len(_REFERENCE_CODES) > _REFERENCE_CODES_SIZE:
+            _REFERENCE_CODES.popitem(last=False)
+    else:
+        _REFERENCE_CODES.move_to_end(key)
+    try:
+        codes = await asyncio.shield(future)  # a cancelled request leaves the shared encode running
+    except Exception:
+        if _REFERENCE_CODES.get(key) is future:
+            del _REFERENCE_CODES[key]
+        raise
+    return codes.clone()
 
 
 async def _compute_speaker_embedding_from_audio(
@@ -1115,13 +1156,18 @@ async def _tts_generate_msg(
         speaker_reference_audio, speaker_embedding = await _resolve_request_speaker_conditioning(
             state.config, req, session_id, head.mode
         )
+        # The reference prefix: inline codes, else the resolved clip encoded here (the tokenizer gets codes only)
+        reference_codes = plan.reference_codes(ctx, request.speaker_reference_codes)
+        if reference_codes is None and speaker_reference_audio is not None:
+            reference_codes = await _encode_reference_audio(
+                state.config, speaker_reference_audio, state.config.tts_speaker_reference_max_seconds
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        reference_codes = plan.reference_codes(ctx, request.speaker_reference_codes)
-        speaker = plan.Speaker(head.mode, speaker_embedding, reference_codes, speaker_reference_audio)
+        speaker = plan.Speaker(head.mode, speaker_embedding, reference_codes)
         rules = plan.request_rules(ctx, request, head, speaker, duration_target=laci_target_frames is not None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1168,7 +1214,6 @@ async def _tts_generate_msg(
             decoder=decoder,
         ),
         speaker_embedding=rules.embedding,
-        speaker_reference_audio=speaker_reference_audio,
         speaker_reference_codes=reference_codes,
         steering_delta=rules.hidden_delta,
         condition_buckets=rules.condition_ids,
@@ -1550,12 +1595,11 @@ class _SglEditEngine:
             raise ValueError(str(exc)) from exc
 
     async def encode(self, audio: bytes, max_seconds: float) -> np.ndarray:
-        reply = await _backend_reply(
-            get_global_state(), lambda uid: TTSEncodeAudioMsg(uid=uid, audio=audio, max_seconds=max_seconds)
-        )
-        if reply.error is not None:
-            raise ValueError(reply.error)
-        return reply.codes.to(torch.int64).numpy()
+        try:
+            codes = await _encode_reference_audio(get_global_state().config, audio, max_seconds)
+        except RuntimeError as exc:  # the codec encoder refused the clip
+            raise ValueError(str(exc)) from exc
+        return codes.to(torch.int64).numpy()
 
     async def check(
         self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
@@ -1712,16 +1756,14 @@ class _SglHost:
         return list(await asyncio.gather(*(run(msg) for msg in msgs)))
 
     async def encode_reference(self, audio: np.ndarray, sample_rate: int, max_seconds: float) -> list[list[int]]:
-        """Raw reference prefix codes of a mono clip (the tokenizer's codec encode)."""
+        """Raw reference prefix codes of a mono clip (the frontend's codec encode)."""
         buf = io.BytesIO()
         sf.write(buf, audio, int(sample_rate), format="WAV", subtype="FLOAT")
-        reply = await _backend_reply(
-            get_global_state(),
-            lambda uid: TTSEncodeAudioMsg(uid=uid, audio=buf.getvalue(), max_seconds=float(max_seconds)),
-        )
-        if reply.error is not None:
-            raise ValueError(reply.error)
-        return reply.codes.to(torch.int64).tolist()
+        try:
+            codes = await _encode_reference_audio(get_global_state().config, buf.getvalue(), float(max_seconds))
+        except RuntimeError as exc:  # the codec encoder refused the clip
+            raise ValueError(str(exc)) from exc
+        return codes.to(torch.int64).tolist()
 
 
 def _studio_dir() -> Path:

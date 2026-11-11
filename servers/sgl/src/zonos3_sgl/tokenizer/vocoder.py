@@ -27,6 +27,19 @@ def decode_audio_codes(codes: torch.Tensor, audio_codec: str, decoder: str | Non
     raise ValueError(f"Unsupported audio codec: {audio_codec!r}")
 
 
+def encode_reference_audio_bytes(audio_codec: str, audio_bytes: bytes, *, max_seconds: float = 30.0) -> torch.Tensor:
+    """Reference audio (any container ffmpeg/soundfile reads) -> int32 codes [frames, n_codebooks] of the matched
+    codec's dual encoder (zonos3.tokenizer.dual_reference: one encoder per process and device, loaded on first use)."""
+    from zonos3.tts.audio import _decode_audio_bytes
+
+    if matched_codec_entry(audio_codec).get("family") != "dual":
+        raise ValueError(f"Raw audio-prefix conditioning has no encoder for matched codec {audio_codec!r}")
+    from zonos3.tokenizer.dual_reference import encode_dual_reference
+
+    waveform, sample_rate = _decode_audio_bytes(audio_bytes)
+    return encode_dual_reference(waveform, sample_rate, max_seconds=max_seconds)
+
+
 class TTSVocoderManager:
     """Converts audio codebook tokens to PCM audio with the registry's matched codec.
 
@@ -181,7 +194,7 @@ class TTSVocoderManager:
 
             buf = io.BytesIO()
             sf.write(buf, np.zeros(2 * 44100, dtype=np.float32), 44100, format="WAV", subtype="FLOAT")
-            codes = self.encode_reference_audio_bytes(buf.getvalue(), max_seconds=5.0)
+            codes = encode_reference_audio_bytes(self.audio_codec, buf.getvalue(), max_seconds=5.0)
             if codes.ndim != 2 or codes.shape[0] < 4:
                 raise ValueError(f"silence encode returned {tuple(codes.shape)}")
             self._silence_frame = codes[-2].to(torch.int32).clone()
@@ -338,22 +351,6 @@ class TTSVocoderManager:
                 self._decoder.pop(uid, None)
 
         return results
-
-    def encode_reference_audio_bytes(
-        self,
-        audio_bytes: bytes,
-        *,
-        max_seconds: float = 30.0,
-    ) -> torch.Tensor:
-        """Reference audio (any container ffmpeg/soundfile reads) -> int32 codes [frames, n_codebooks] of the dual codec."""
-        from zonos3.tts.audio import _decode_audio_bytes
-
-        if matched_codec_entry(self.audio_codec).get("family") != "dual":
-            raise ValueError(f"Raw audio-prefix conditioning has no encoder for matched codec {self.audio_codec!r}")
-        from zonos3.tokenizer.dual_reference import encode_dual_reference
-
-        waveform, sample_rate = _decode_audio_bytes(audio_bytes)
-        return encode_dual_reference(waveform, sample_rate, max_seconds=max_seconds)
 
     def _decode_final(self, uid: int) -> bytes:
         """Decode every complete pre-EOS frame not yet counted, in one codec call (end of stream).
