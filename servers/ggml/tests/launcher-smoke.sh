@@ -54,7 +54,8 @@ run_launcher() {
     bash "$LAUNCHER" -- --max 16 >"$WORK/launch.log" 2>&1 &
   LNCH_PID=$!
   local up=0
-  for _ in $(seq 1 150); do
+  # Up to 120 s, as in readme-commands.sh: warmup on a slow CI runner.
+  for _ in $(seq 1 600); do
     if curl -fsS "$BASE/v2/health" >/dev/null 2>&1; then up=1; break; fi
     kill -0 "$LNCH_PID" 2>/dev/null || fail "launcher exited before the server came up"
     sleep 0.2

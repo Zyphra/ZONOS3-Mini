@@ -161,8 +161,10 @@ mkdir -p "$WORK/voices" && cp tests/fixtures/speaker-embedding.npy "$WORK/voices
   --studio-projects-dir "$WORK/projects" --tts-default-voices-dir "$WORK/voices" >"$WORK/srv.log" 2>&1 &
 SRV_PID=$!
 
+# Up to 120 s: the macos-15 runner (3 vCPUs) answers only after the backbone warmup, which shares the CPU with the
+# ZAC warmup of every decode lane (2 decoders x 4 lanes); a crash still fails at once through the kill -0 check.
 up=0
-for _ in $(seq 1 100); do
+for _ in $(seq 1 600); do
   if curl -fsS "$BASE/v2/health" >/dev/null 2>&1; then up=1; break; fi
   kill -0 "$SRV_PID" 2>/dev/null || { echo "--- server log ---"; cat "$WORK/srv.log"; fail "server exited before coming up"; }
   sleep 0.2
