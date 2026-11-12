@@ -61,9 +61,11 @@ jobs:
             servers/ggml/build/textnorm
           key: cargo-${{ runner.os }}-${{ github.job }}-${{ hashFiles('third_party/zyphra-textnorm/Cargo.lock', 'third_party/zyphra-textnorm/src/**', 'third_party/zyphra-textnorm/data/**') }}
           restore-keys: cargo-${{ runner.os }}-${{ github.job }}-
+      # GGML_NATIVE=OFF: portable x86-64 (AVX2) code. -march=native compiled for whichever runner filled the
+      # ccache / build-tree cache (AVX-512 on some), so runners without it, and release archives, died of SIGILL.
       - name: Configure
         run: >
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build -j"$(nproc)"
@@ -80,7 +82,7 @@ jobs:
           # see scripts/make-dummy-model.py): exercises prompt build -> backbone graph ->
           # sampler on the CPU backend, the path the usage check never reaches. Audio is
           # gibberish by design — we only assert the decode loop runs and emits codes.
-          out=$("$bin" tests/fixtures/dummy-zonos3.gguf --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1); rc=$?
+          rc=0; out=$("$bin" tests/fixtures/dummy-zonos3.gguf --cpu --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1) || rc=$?
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
@@ -155,14 +157,15 @@ jobs:
           key: linux-vulkan
       # Shader gen (glslc) is the build's long pole and ccache does not cover it;
       # the generated SPIR-V depends only on the ggml submodule. Same approach as
-      # the windows-vulkan job.
+      # the windows-vulkan job. A restored CMakeCache.txt keeps its cached options
+      # (GGML_NATIVE, GGML_AVX2, ...): bump -vN- in the key when Configure flags change.
       - name: Cache build tree
         uses: actions/cache@v4
         with:
           path: servers/ggml/build
-          key: linux-vulkan-build-${{ steps.ggml.outputs.sha }}-${{ hashFiles('servers/ggml/src/**', 'servers/ggml/CMakeLists.txt') }}
+          key: linux-vulkan-build-v2-${{ steps.ggml.outputs.sha }}-${{ hashFiles('servers/ggml/src/**', 'servers/ggml/CMakeLists.txt') }}
           restore-keys: |
-            linux-vulkan-build-${{ steps.ggml.outputs.sha }}-
+            linux-vulkan-build-v2-${{ steps.ggml.outputs.sha }}-
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: actions/cache@v4
@@ -173,9 +176,10 @@ jobs:
             servers/ggml/build/textnorm
           key: cargo-${{ runner.os }}-${{ github.job }}-${{ hashFiles('third_party/zyphra-textnorm/Cargo.lock', 'third_party/zyphra-textnorm/src/**', 'third_party/zyphra-textnorm/data/**') }}
           restore-keys: cargo-${{ runner.os }}-${{ github.job }}-
+      # GGML_NATIVE=OFF: see linux-cpu.
       - name: Configure
         run: >
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build -j"$(nproc)"
@@ -192,7 +196,7 @@ jobs:
           # see scripts/make-dummy-model.py): exercises prompt build -> backbone graph ->
           # sampler on the CPU backend, the path the usage check never reaches. Audio is
           # gibberish by design — we only assert the decode loop runs and emits codes.
-          out=$("$bin" tests/fixtures/dummy-zonos3.gguf --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1); rc=$?
+          rc=0; out=$("$bin" tests/fixtures/dummy-zonos3.gguf --cpu --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1) || rc=$?
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
@@ -267,14 +271,14 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: linux-app
-      # Same shader-gen build-tree cache rationale as the linux-vulkan job.
+      # Same shader-gen build-tree cache rationale (and -vN- rule) as the linux-vulkan job.
       - name: Cache build tree
         uses: actions/cache@v4
         with:
           path: servers/ggml/build
-          key: linux-app-build-${{ steps.ggml.outputs.sha }}-${{ hashFiles('servers/ggml/src/**', 'servers/ggml/CMakeLists.txt') }}
+          key: linux-app-build-v2-${{ steps.ggml.outputs.sha }}-${{ hashFiles('servers/ggml/src/**', 'servers/ggml/CMakeLists.txt') }}
           restore-keys: |
-            linux-app-build-${{ steps.ggml.outputs.sha }}-
+            linux-app-build-v2-${{ steps.ggml.outputs.sha }}-
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: actions/cache@v4
@@ -285,9 +289,10 @@ jobs:
             servers/ggml/build/textnorm
           key: cargo-${{ runner.os }}-${{ github.job }}-${{ hashFiles('third_party/zyphra-textnorm/Cargo.lock', 'third_party/zyphra-textnorm/src/**', 'third_party/zyphra-textnorm/data/**') }}
           restore-keys: cargo-${{ runner.os }}-${{ github.job }}-
+      # GGML_NATIVE=OFF: see linux-cpu.
       - name: Configure
         run: >
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DZONOS3_APP=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DZONOS3_APP=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
           -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
@@ -373,7 +378,8 @@ jobs:
           # see scripts/make-dummy-model.py): exercises prompt build -> backbone graph ->
           # sampler on the CPU backend, the path the usage check never reaches. Audio is
           # gibberish by design — we only assert the decode loop runs and emits codes.
-          out=$("$bin" tests/fixtures/dummy-zonos3.gguf --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1); rc=$?
+          # --cpu, as in tests/readme-commands.sh: the binaries default to Metal on Apple Silicon (SIGABRT on the runner).
+          rc=0; out=$("$bin" tests/fixtures/dummy-zonos3.gguf --cpu --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1) || rc=$?
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
@@ -505,14 +511,14 @@ jobs:
       # submodule, so key the build tree on its rev. restore-keys lets a src-only
       # change reuse the cached shaders + unchanged objects and rebuild just the
       # changed C++; the restored .spv are newer than the checked-out .comp, so the
-      # shader-gen step is a no-op.
+      # shader-gen step is a no-op. -vN-: see linux-vulkan.
       - name: Cache build tree
         uses: actions/cache@v4
         with:
           path: servers/ggml/build
-          key: win-vulkan-build-${{ steps.ggml.outputs.sha }}-${{ hashFiles('servers/ggml/src/**', 'servers/ggml/CMakeLists.txt') }}
+          key: win-vulkan-build-v2-${{ steps.ggml.outputs.sha }}-${{ hashFiles('servers/ggml/src/**', 'servers/ggml/CMakeLists.txt') }}
           restore-keys: |
-            win-vulkan-build-${{ steps.ggml.outputs.sha }}-
+            win-vulkan-build-v2-${{ steps.ggml.outputs.sha }}-
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: actions/cache@v4
@@ -523,9 +529,10 @@ jobs:
             servers/ggml/build/textnorm
           key: cargo-${{ runner.os }}-${{ github.job }}-${{ hashFiles('third_party/zyphra-textnorm/Cargo.lock', 'third_party/zyphra-textnorm/src/**', 'third_party/zyphra-textnorm/data/**') }}
           restore-keys: cargo-${{ runner.os }}-${{ github.job }}-
+      # GGML_NATIVE=OFF: see linux-cpu.
       - name: Configure
         run: >
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DZONOS3_APP=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DZONOS3_APP=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build -j
@@ -578,7 +585,7 @@ jobs:
           # see scripts/make-dummy-model.py): exercises prompt build -> backbone graph ->
           # sampler on the CPU backend, the path the usage check never reaches. Audio is
           # gibberish by design — we only assert the decode loop runs and emits codes.
-          out=$("$bin" tests/fixtures/dummy-zonos3.gguf --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1); rc=$?
+          rc=0; out=$("$bin" tests/fixtures/dummy-zonos3.gguf --cpu --tts "ci smoke test" gen.npy --max 8 --greedy 2>&1) || rc=$?
           if [ "$rc" -ne 0 ]; then echo "dummy-model run failed (rc=$rc):"; echo "$out"; exit 1; fi
           echo "$out" | grep -qE "tts: [0-9]+ frames, eos_frame=" || { echo "dummy-model: no generation output"; echo "$out"; exit 1; }
           test -f gen.npy || { echo "dummy-model: no output file written"; exit 1; }
