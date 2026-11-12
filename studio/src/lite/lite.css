@@ -310,3 +310,10 @@ p.error-box {
     text-overflow: ellipsis;
   }
 }
+
+/* Script input: Studio's controls as text */
+.script-input { font: 13px/1.5 var(--mono); min-height: 220px; resize: vertical; }
+.script-issues { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; font: 12px/1.4 var(--mono); }
+.script-issues .is-error { color: var(--bad); }
+.script-issues .is-warn { color: var(--warn); }
+.script-help pre { margin: 8px 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; color: var(--text-2); }

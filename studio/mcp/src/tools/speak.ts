@@ -9,10 +9,11 @@ import { uid } from '../../../src/lib/math';
 import { pronProblem } from '../../../src/lib/pron';
 import type { Values } from '../../../src/state/engine';
 import type { StoredTake } from '../../../src/state/projectSchema';
-import { buildRequest, PREVIEW_SEED, remapSpans } from '../../../src/state/requests';
+import { buildRequest, capsContext, PREVIEW_SEED, remapSpans } from '../../../src/state/requests';
+import { anchorSpans, resolveValues } from '../../../src/state/resolve';
 import type { Line } from '../../../src/state/script';
-import { requestContext, sendable } from '../backend';
-import { anchorSpans, resolveValues, resolveVoice } from '../design';
+import { sendable } from '../backend';
+import { resolveVoice } from '../design';
 import { designSummary, generationParams, hasValues, takeText, wavSeconds } from '../params';
 import type { TakeInfo } from '../payload';
 import { openProject, projectLine, saveProject } from '../project';
@@ -93,7 +94,7 @@ export function registerSpeakTool(server: McpServer) {
       const problem = pronProblem(line.text, ctx.caps.phoneme_tokens ?? null);
       if (problem) throw new Error(problem);
 
-      const ctxReq = requestContext(ctx.caps, doc);
+      const ctxReq = capsContext(ctx.caps, doc.settings);
       // The voice's own language (a library voice of a server language), else the project's.
       const lang = voiceServerLanguage(ctx.speakers.find((s) => s.id === persona.design.baseId), doc.settings.language);
       const existing = doc.direct.takes[line.id] ?? [];

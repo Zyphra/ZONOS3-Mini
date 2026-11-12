@@ -1,5 +1,7 @@
 /** Design (+ script extras) → POST /v2/generate body, per the contract. */
 import type { ControlSpan, ControlsSpec, Dose, GenerateRequest } from '../api';
+import type { components } from '../api/schema';
+import { requestDecoder } from '../lib/decoders';
 import { laciFields, type LaciMode } from '../lib/laci';
 import { clamp } from '../lib/math';
 import { toSent, type PronTokens, type Sent } from '../lib/pron';
@@ -7,6 +9,7 @@ import { hasTags } from '../lib/tags';
 import { mixAt } from './atlas';
 import type { Design } from './design';
 import { controlDose, controlUsable, toDoses, type Values } from './engine';
+import type { ProjectSettings } from './projectSchema';
 
 export const PREVIEW_SEED = 4321;
 
@@ -41,6 +44,24 @@ export interface RequestContext {
   laci: LaciMode | undefined;
   /** Languages with LACI alignment heads on the server. */
   laciLanguages: readonly string[];
+}
+
+/** A server's capabilities with a project's settings → the request context (the MCP server, the lite page's script; the studio's own is `state/app.ts` `requestContext`, over its backend). */
+export function capsContext(
+  c: Pick<components['schemas']['Capabilities'], 'phoneme_tokens' | 'tag_cfg' | 'decoders' | 'laci_languages'>,
+  settings: Pick<ProjectSettings, 'tagStrength' | 'decoder' | 'laci'>,
+): RequestContext {
+  const t = c.tag_cfg;
+  return {
+    phonemeTokens: c.phoneme_tokens ?? null,
+    tags: t.available && t.trained ? { min_scale: t.min_scale, max_scale: t.max_scale } : null,
+    tagStrength: settings.tagStrength,
+    // The project's decoder where this server serves it, else the default.
+    decoder: requestDecoder(c.decoders ?? [], settings.decoder),
+    // Languages without heads here run without LACI.
+    laci: settings.laci,
+    laciLanguages: c.laci_languages,
+  };
 }
 
 /** Keep spans attached to their words across an edit (common prefix / suffix diff). */

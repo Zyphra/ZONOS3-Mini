@@ -8,6 +8,7 @@
  * no ZONOS server answers and this browser and site can run it. Every request carries `X-TTS-Session-ID`, random
  * per tab and kept in sessionStorage, so the voices this tab caches stay its own.
  */
+import type { ControlsSpec } from '../api';
 import type { components, paths } from '../api/schema';
 import { ApiError, createHttp, newSessionId, readError, readFloat32Stream } from '../lib/http';
 import { selectWebEngine, startWebEngine, transport, webEngineAvailable, type Download } from '../lib/web-engine';
@@ -82,6 +83,16 @@ export const canRunWeb = webEngineAvailable;
 
 export const listSpeakers = async (): Promise<Speaker[]> =>
   (await ok<Schemas['SpeakerList']>(client.GET('/v2/speakers'))).speakers;
+
+/** The steering bundle (`GET /v2/controls`; the in-browser server serves it too), or null when the server has none (404). */
+export async function controls(): Promise<ControlsSpec | null> {
+  try {
+    return (await ok<Schemas['ControlsDocument']>(client.GET('/v2/controls'))) as ControlsSpec;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}
 
 export const createSpeaker = (body: SpeakerCreateRequest) => ok<Speaker>(client.POST('/v2/speakers', { body }));
 

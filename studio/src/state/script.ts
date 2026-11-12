@@ -11,10 +11,10 @@ import { design, type Design } from './design';
 import { durationFactor, toDoses, type Values } from './engine';
 import { History } from './history';
 import { cast, speakerLanguage, speakers } from './library';
-import { matchLines, newLine, staleReason, type Line } from './lines';
+import { DEFAULT_GAP, matchLines, newLine, staleReason, type Line } from './lines';
 import { buildRequest, PREVIEW_SEED, remapSpans, type Span } from './requests';
 
-export { matchLines, splitScript, staleReason, type Line } from './lines';
+export { GAP_RANGE, matchLines, splitScript, staleReason, type Line } from './lines';
 
 /** Codec frame rate (frames per second) used to measure a take's frames per character. */
 const FPS = 15;
@@ -44,7 +44,7 @@ export interface Take {
 }
 
 /** A new project's script: no lines yet (the empty state offers Paste a script / Add a line). */
-export const newScript = (): Script => ({ lines: [], baseline: {}, voice: null, gap: 0.35 });
+export const newScript = (): Script => ({ lines: [], baseline: {}, voice: null, gap: DEFAULT_GAP });
 
 export const scripts = new History<Script>(newScript());
 export const script = scripts.state;
@@ -172,9 +172,6 @@ export function setVoice(voice: string | null) {
 export function setLineVoice(id: string, voice: string | null) {
   commit((s) => ({ ...s, lines: s.lines.map((l) => (l.id === id ? { ...l, voice } : l)) }));
 }
-
-/** The gap slider's range (s); the gesture is one undo step through `scripts.begin / set / end`. */
-export const GAP_RANGE: [number, number] = [0, 1.5];
 
 /** Pin a cast voice's display colour in the script (not an undo step: a presentation fact, not an edit). */
 export function setVoiceColor(voice: string, color: string) {

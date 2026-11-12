@@ -11,6 +11,10 @@ export interface Line {
   voice?: string | null;
 }
 
+/** Silence between lines when a script plays or exports (s): the default and the gap slider's range. */
+export const DEFAULT_GAP = 0.35;
+export const GAP_RANGE: [number, number] = [0, 1.5];
+
 export const newLine = (text: string, voice?: string | null): Line => ({ id: uid(), text, spans: [], ...(voice ? { voice } : {}) });
 
 /** Rows of a pasted script: one per line break, and (unless `sentences: false`) per sentence end inside a line. */
