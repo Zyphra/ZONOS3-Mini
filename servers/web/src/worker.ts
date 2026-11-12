@@ -190,7 +190,7 @@ async function init(base: string, cache: boolean, voicesPcm: Record<string, Floa
   let spk: Promise<SpeakerEncoder> | null = null;
   let ref: Promise<RefEncoder> | null = null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, decoders, tokenizer,
+    hp, modelFile: 'backbone-ptq.gguf', backbone, decoders, tokenizer,
     steer, controlsDoc: steer ? controlsDocument(steer, hp.speakerDim) : null, laci, voices,
     async embedSpeaker(pcm) {
       const enc = await (spk ??= batchProgress(base, ['spk'], progress).then(p => SpeakerEncoder.load(gpu, base, p, cache)).catch((e: unknown) => { spk = null; throw e; }));

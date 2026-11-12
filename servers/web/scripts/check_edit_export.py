@@ -3,7 +3,7 @@
 adapter applied at runtime by the MLX server (zonos3_mlx.companions.AccentBank / AccentState, strength 1), and writes the
 parity goldens of harness/checks/backbone.ts backbone_edit.
 
-(a) the export against its sources: the grown rows against zonos3-ptq-edit.gguf, the f16 factors against the f32
+(a) the export against its sources: the grown rows against backbone-ptq-edit.gguf, the f16 factors against the f32
     factors of edit/accents.gguf (the head factor fitted to the span-end rows as AccentBank.load does), the router
     biases against bias + shift;
 (b) logits over an edit prompt (training layout, speaker row, unknown condition buckets, one region and one
@@ -150,8 +150,8 @@ def main():
     ap.add_argument("--export", default="servers/web/public/models/edit")
     ap.add_argument("--goldens", help="write goldens/edit/ for harness/checks/backbone.ts backbone_edit")
     a = ap.parse_args()
-    gguf, acc = os.path.join(MODELS, "zonos3-ptq-edit.gguf"), os.path.join(MODELS, "edit/accents.gguf")
-    g, ge, ex = Gguf(os.path.join(MODELS, "zonos3-ptq.gguf")), Gguf(gguf), Export(a.export)
+    gguf, acc = os.path.join(MODELS, "backbone-ptq-edit.gguf"), os.path.join(MODELS, "edit/accents.gguf")
+    g, ge, ex = Gguf(os.path.join(MODELS, "backbone-ptq.gguf")), Gguf(gguf), Export(a.export)
     ncb = g.kv["zonos3.n_codebooks"]
     _, _, factors, shifts = edit_adapter(acc, ncb, ge.ne("output.weight")[1])
     linear, experts = exports(g, ge, ex, factors, shifts)

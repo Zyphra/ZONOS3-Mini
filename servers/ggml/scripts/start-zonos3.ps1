@@ -36,7 +36,7 @@ if ($Gpu) { $GpuMode = 'gpu' }
 if ($Help) {
     Write-Host @"
 usage: start-zonos3.bat [options] [extra zonos3-server args]
-  -Quant Q     backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
+  -Quant Q     backbone file models/backbone-Q.gguf (default ptq; qat = the previous mect_60k backbone)
   -Zac Z       default decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one);
                the other of zac-keep2.gguf / zac.gguf, when present, is served too (requests pick it by id)
   -Cpu | -Gpu  backend (archive default: $GPU_DEFAULT)
@@ -87,7 +87,7 @@ function Download-Ffmpeg {
     return (Test-Path $FfmpegBin)
 }
 
-$Backbone = "zonos3-$Quant.gguf"
+$Backbone = "backbone-$Quant.gguf"
 $Decoder = "$Zac.gguf"
 $Missing = @()
 foreach ($f in @($Backbone, $Decoder)) {

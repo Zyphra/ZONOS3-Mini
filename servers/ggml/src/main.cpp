@@ -778,7 +778,7 @@ int main(int argc, char ** argv) {
 
     if (!mp_file_exists(path)) {
         fprintf(stderr, "failed to load model %s\n", path.c_str());
-        mp_print_missing_hint("zonos3-f16.gguf (or another quant)", path);
+        mp_print_missing_hint("backbone-f16.gguf (or another quant)", path);
         return 1;
     }
 
@@ -951,7 +951,7 @@ int main(int argc, char ** argv) {
     zonos3_model model;
     if (!zonos3_model_load(model, path.c_str(), use_gpu)) {
         fprintf(stderr, "failed to load model %s\n", path.c_str());
-        if (!mp_file_exists(path)) mp_print_missing_hint("zonos3-f16.gguf (or another quant)", path);
+        if (!mp_file_exists(path)) mp_print_missing_hint("backbone-f16.gguf (or another quant)", path);
         return 1;
     }
 

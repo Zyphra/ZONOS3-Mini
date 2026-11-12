@@ -11,14 +11,14 @@ server's 400 and a detail containing the fixture's ``error`` (no accent adapters
 reference checkpoint needed).
 
 Backbones (each skipped when its GGUF or checkpoint is absent):
-- ``release``: the GGUF ``ZONOS3_GGUF`` (default servers/ggml/gguf/zonos3-f16.gguf) and the checkpoint it was
+- ``release``: the GGUF ``ZONOS3_GGUF`` (default servers/ggml/gguf/backbone-f16.gguf) and the checkpoint it was
   converted from, ``ZONOS3_TEST_MODEL`` (default zonos3-rate30-20k-r2grpo's converted checkpoint);
 - ``phonemes``: a phoneme-token backbone (runs the ``phoneme_groups`` entry), ``ZONOS3_PHONEME_GGUF`` (default
-  servers/ggml/gguf/zonos3-phonemes-f16.gguf) converted from ``ZONOS3_PHONEME_MODEL`` (default
+  servers/ggml/gguf/backbone-phonemes-f16.gguf) converted from ``ZONOS3_PHONEME_MODEL`` (default
   /data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k)::
 
     uv run --package zonos3-tools python tools/convert_gguf.py lm "$ZONOS3_PHONEME_MODEL" --outtype f16 \
-        --silence-frame <release>/registries/silence_frame_<audio_codec>.json -o servers/ggml/gguf/zonos3-phonemes-f16.gguf
+        --silence-frame <release>/registries/silence_frame_<audio_codec>.json -o servers/ggml/gguf/backbone-phonemes-f16.gguf
 """
 
 from __future__ import annotations
@@ -38,14 +38,14 @@ ERROR_FIXTURES = REPO / "model" / "tests" / "fixtures" / "request_errors.json"
 MODELS = REPO / "servers" / "ggml" / "gguf"
 BACKBONES = {
     "release": (
-        Path(os.environ.get("ZONOS3_GGUF", MODELS / "zonos3-f16.gguf")),
+        Path(os.environ.get("ZONOS3_GGUF", MODELS / "backbone-f16.gguf")),
         os.environ.get(
             "ZONOS3_TEST_MODEL",
             "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted",
         ),
     ),
     "phonemes": (
-        Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "zonos3-phonemes-f16.gguf")),
+        Path(os.environ.get("ZONOS3_PHONEME_GGUF", MODELS / "backbone-phonemes-f16.gguf")),
         os.environ.get("ZONOS3_PHONEME_MODEL", "/data/groups/audio/sofian/runs/z3m_phonemes/tokens/merged_mect_60k"),
     ),
 }

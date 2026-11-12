@@ -42,7 +42,7 @@ identical codes.
 
 Speech editing runs on the release LM with the speech-edit LoRA
 (`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo/edit_lora/z3m_omni3b_edit_lora.pt`, in the private release
-repo; the public `Zyphra/ZONOS3-Mini` ships it converted for ggml and MLX as `gguf/zonos3-ptq-edit.gguf` + `gguf/edit/accents.gguf`),
+repo; the public `Zyphra/ZONOS3-Mini` ships it converted for ggml and MLX as `gguf/backbone-ptq-edit.gguf` + `gguf/edit/accents.gguf`),
 an accent adapter in the `zonos-accent-lora/3` format (see [Accent adapters](#accent-adapters)): it
 carries the vocabulary it was trained with, three text marker rows (`text_extra_tokens: 3`) and a
 span-end audio token (`span_end_id` = `audio_pad_id + 1` = 4098: one more embedding and head row per
@@ -355,7 +355,7 @@ PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh --accent-adapters <di
 uv run python -m zonos3.reference --model <LM> --phoneme-rows <phoneme_tokens_s15000.pt> --text '...' -o out.wav
 # GGUF (ggml, MLX): the rows go into the backbone
 uv run --package zonos3-tools python tools/convert_gguf.py lm <LM dir> --outtype q4_0-exp-q8_0-mix \
-    --edit-adapter <z3m_omni3b_edit_lora.pt> --phoneme-rows <phoneme_tokens_s15000.pt> -o zonos3-ptq-edit.gguf
+    --edit-adapter <z3m_omni3b_edit_lora.pt> --phoneme-rows <phoneme_tokens_s15000.pt> -o backbone-ptq-edit.gguf
 ```
 
 The Space (`servers/space/`) serves the release LM with both. A converted checkpoint can also carry the rows on disk:

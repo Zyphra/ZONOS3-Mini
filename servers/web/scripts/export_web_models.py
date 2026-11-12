@@ -224,7 +224,7 @@ def copy_plain(w, g, name):
 
 # --------------------------------------------------------------------------- backbone
 #
-# backbone/ is the release LM (zonos3-ptq.gguf).
+# backbone/ is the release LM (backbone-ptq.gguf).
 
 
 def check_tokenizer(meta, path):
@@ -289,7 +289,7 @@ def export_backbone(path, out):
 #
 # edit/ turns backbone/ into the speech-edit LM at runtime (src/backbone.ts Backbone.withEdit), as the native servers
 # apply the adapter (servers/mlx/src/zonos3_mlx/companions.py AccentState, servers/ggml/src/zonos3-accent.h):
-#   - the edit vocabulary: zonos3-ptq-edit.gguf is zonos3-ptq.gguf with grown tables (span_end_id = audio pad + 1 in
+#   - the edit vocabulary: backbone-ptq-edit.gguf is backbone-ptq.gguf with grown tables (span_end_id = audio pad + 1 in
 #     every audio table and logits-head block, text_extra_tokens infill-marker rows after the text pad); edit/ keeps
 #     only the grown rows: embd_extra (f16 [n_codebooks audio rows, then the marker rows]) and output_extra (q8_0 as
 #     backbone/'s head, one span-end row per codebook block). Every other row and tensor must equal backbone/'s;
@@ -355,7 +355,7 @@ def export_edit(release, edit, adapter, out):
     meta = ge.meta()
     check_tokenizer(meta, edit)
     if "span_end_id" not in meta:
-        raise SystemExit(f"{edit}: the speech-edit adapter needs the edit vocabulary (zonos3-ptq-edit.gguf)")
+        raise SystemExit(f"{edit}: the speech-edit adapter needs the edit vocabulary (backbone-ptq-edit.gguf)")
     ncb = g.kv["zonos3.n_codebooks"]
     grown = {f"audio_embd.{k}.weight" for k in range(ncb)} | {"text_embd.weight", "output.weight"}
     if list(g.tensors) != list(ge.tensors):
@@ -746,9 +746,9 @@ def export_laci(laci, out):
 
 # --------------------------------------------------------------------------- main
 
-EDIT_FILES = ("zonos3-ptq-edit.gguf", "edit/accents.gguf")
+EDIT_FILES = ("backbone-ptq-edit.gguf", "edit/accents.gguf")
 MODEL_FILES = (
-    ("zonos3-ptq.gguf", "zac-keep2.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf")
+    ("backbone-ptq.gguf", "zac-keep2.gguf", "zac-encoder.gguf", "ssl-teacher.gguf", "spk-encoder.gguf")
     + COMPANIONS
     + EDIT_FILES
 )
@@ -773,9 +773,9 @@ def main():
             )
     m = a.models
     os.makedirs(a.out, exist_ok=True)
-    export_backbone(os.path.join(m, "zonos3-ptq.gguf"), a.out)
+    export_backbone(os.path.join(m, "backbone-ptq.gguf"), a.out)
     export_edit(
-        os.path.join(m, "zonos3-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out
+        os.path.join(m, "backbone-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out
     )
     export_zac(os.path.join(m, "zac-keep2.gguf"), a.out)
     # The full-size decoder (full_mr), when the models directory has it: a request picks it with `decoder`.

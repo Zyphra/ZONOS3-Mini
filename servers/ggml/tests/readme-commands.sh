@@ -95,9 +95,9 @@ pass "--control (raw) without --speaker-embedding -> error"
 # same, with --zac dropped: zac-keep2.gguf (the default decoder) sitting next to the backbone is auto-detected
 # (README CLI section's models/ example)
 mkdir -p "$WORK/models"
-cp "$MODEL" "$WORK/models/zonos3-q6_k.gguf"
+cp "$MODEL" "$WORK/models/backbone-q6_k.gguf"
 cp "$ZAC_KEEP2" "$WORK/models/zac-keep2.gguf"
-out=$("$CLI" "$WORK/models/zonos3-q6_k.gguf" --cpu --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
+out=$("$CLI" "$WORK/models/backbone-q6_k.gguf" --cpu --tts "ci tts autodiscover" "$WORK/auto.wav" --max 16 --greedy 2>&1) \
   || { echo "$out"; fail "--tts with sibling zac-keep2.gguf exited nonzero"; }
 is_riff "$WORK/auto.wav" || fail "--tts with sibling zac-keep2.gguf did not write a RIFF WAV"
 pass "--tts (sibling zac-keep2.gguf auto-detected) -> WAV"
@@ -157,7 +157,7 @@ pass "--zac twice with one head variant -> startup error"
 cp "$ZAC" "$WORK/models/zac.gguf"
 # default voice ci.npy = the speaker embedding fixture; dummy-steer.gguf's set calibrations disable two controls for it
 mkdir -p "$WORK/voices" && cp tests/fixtures/speaker-embedding.npy "$WORK/voices/ci.npy"
-"$SRV" "$WORK/models/zonos3-q6_k.gguf" --cpu --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
+"$SRV" "$WORK/models/backbone-q6_k.gguf" --cpu --steer tests/fixtures/dummy-steer.gguf --host 127.0.0.1 --port "$PORT" --max 16 --batch 2 \
   --studio-projects-dir "$WORK/projects" --tts-default-voices-dir "$WORK/voices" >"$WORK/srv.log" 2>&1 &
 SRV_PID=$!
 

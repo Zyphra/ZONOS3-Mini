@@ -171,7 +171,7 @@ The studio's steering controls come from `STEER_BUNDLE`.
 - **Speech editing** needs the speech-edit LoRA (sgl: `--accent-adapters <dir with z3m_omni3b_edit_lora.pt>` on the
   release LM; the LoRA is in the private `Zyphra/ZONOS3_Mini`, `lm/rate30_20k_r2grpo/edit_lora/`; see
   [docs/guide.md](docs/guide.md)) or an edit checkpoint (`SERVE_MODEL=<edit checkpoint>`), and FuseAlign for the word
-  timings. The ggml and MLX servers get it from `gguf/zonos3-ptq-edit.gguf` and `gguf/edit/accents.gguf`.
+  timings. The ggml and MLX servers get it from `gguf/backbone-ptq-edit.gguf` and `gguf/edit/accents.gguf`.
 - **Forced alignment** (speech editing) is the FuseAlign aligner: the submodule `third_party/fusealign-multilingual`
   ([Zyphra/fusealign-multilingual](https://github.com/Zyphra/fusealign-multilingual), package `fusealign-hub`,
   Apache-2.0, installed by `uv sync`) and its checkpoint from the Hugging Face repo
@@ -183,7 +183,7 @@ The studio's steering controls come from `STEER_BUNDLE`.
   FuseAlign's built-in Whisper anchoring is never used.
 - **Phoneme input** needs the release phoneme tokens (private `Zyphra/ZONOS3_Mini`,
   `lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
-  `convert_gguf.py lm --phoneme-rows`; `gguf/zonos3-ptq-edit.gguf` already has them) or a checkpoint merged with them
+  `convert_gguf.py lm --phoneme-rows`; `gguf/backbone-ptq-edit.gguf` already has them) or a checkpoint merged with them
   (`tools/add_text_extra_rows.py`), and `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the same
   private repo) for "Phonemize selection".
   `uv sync --group phonemize` adds espeak-ng guesses for `POST /v2/phonemize` (GPL-3.0, opt-in).

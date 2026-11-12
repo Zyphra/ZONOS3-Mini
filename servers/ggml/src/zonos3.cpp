@@ -233,7 +233,7 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
             ggml_backend_dev_backend_reg(dev), "ggml_backend_dev_get_extra_bufts");
         if (get_extra) for (ggml_backend_buffer_type_t * b = get_extra(dev); b && *b; ++b) extra_bufts.push_back(*b);
     }
-    // Quantized checkpoints (general.file_type not F32/F16, e.g. zonos3-ptq.gguf) run their F16 logits head as q8_0,
+    // Quantized checkpoints (general.file_type not F32/F16, e.g. backbone-ptq.gguf) run their F16 logits head as q8_0,
     // quantized here at load: half the bytes of the largest per-step matmul. Full-precision checkpoints keep F16.
     ggml_tensor * q8_head = nullptr;
     {

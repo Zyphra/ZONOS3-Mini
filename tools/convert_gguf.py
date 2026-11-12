@@ -2,9 +2,9 @@
 """Build every zonos3.cpp GGUF from the PyTorch modules of the `zonos3` model package.
 
     T="uv run --package zonos3-tools python tools/convert_gguf.py"
-    $T lm RELEASE/lm/rate30_20k_r2grpo [--outtype f32|f16|q8_0] [--silence-frame J] -o zonos3-f16.gguf
-    $T lm RELEASE/lm/rate30_20k_r2grpo --outtype q4_0-exp-q8_0-mix -o zonos3-ptq.gguf   (PTQ)
-    $T lm lm/mect_60k_q4q8_qat -o zonos3-qat.gguf               (QAT directory: bake.json present)
+    $T lm RELEASE/lm/rate30_20k_r2grpo [--outtype f32|f16|q8_0] [--silence-frame J] -o backbone-f16.gguf
+    $T lm RELEASE/lm/rate30_20k_r2grpo --outtype q4_0-exp-q8_0-mix -o backbone-ptq.gguf   (PTQ)
+    $T lm lm/mect_60k_q4q8_qat -o backbone-qat.gguf               (QAT directory: bake.json present)
     $T codec-decoder RELEASE/autoencoder/generator.pt --head RELEASE/autoencoder/heads/full_mr -o zac.gguf
     $T codec-encoder RELEASE/autoencoder/generator.pt -o zac-encoder.gguf
     $T ssl-teacher RELEASE/autoencoder/teacher -o ssl-teacher.gguf

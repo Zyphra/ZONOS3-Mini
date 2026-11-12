@@ -180,7 +180,7 @@ export function stubApi(opts: { frames?: number; editFrames?: number; partialFra
   codec.clock = full.clock = () => backbone.consumed;
   const edit = haveEditModels ? editStubs(steer.sources, opts.editFrames ?? 6) : null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, tokenizer: createTokenizer(),
+    hp, modelFile: 'backbone-ptq.gguf', backbone, tokenizer: createTokenizer(),
     decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec), stubDecoder('full_mr', 'zac.gguf', full)],
     steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
     voices: voices.map(v => ({
@@ -221,7 +221,7 @@ export function bareApi(opts: { frames?: number; partialFrames?: boolean } = {})
   const codec = new StubCodec(opts.partialFrames);
   codec.clock = () => backbone.consumed;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec)],
+    hp, modelFile: 'backbone-ptq.gguf', backbone, decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec)],
     tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),
     voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5), embedding: null }],
