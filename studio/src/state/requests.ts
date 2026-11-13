@@ -1,11 +1,14 @@
 /** Design (+ script extras) → POST /v2/generate body, per the contract. */
 import type { ControlSpan, ControlsSpec, Dose, GenerateRequest } from '../api';
+import type { components } from '../api/schema';
+import { requestDecoder } from '../lib/decoders';
 import { laciFields, type LaciMode } from '../lib/laci';
 import { clamp } from '../lib/math';
 import { toSent, type PronTokens, type Sent } from '../lib/pron';
 import { mixAt } from './atlas';
 import type { Design } from './design';
 import { controlDose, controlUsable, toDoses, type Values } from './engine';
+import type { ProjectSettings } from './projectSchema';
 
 export const PREVIEW_SEED = 4321;
 
@@ -42,6 +45,22 @@ export interface RequestContext {
   laciLanguages: readonly string[];
   /** The checkpoint has a start token (`/v2/capabilities.start_token`). */
   startToken: boolean;
+}
+
+/** A server's capabilities with a project's settings → the request context (the MCP server, the lite page's script; the studio's own is `state/app.ts` `requestContext`, over its backend). */
+export function capsContext(
+  c: Pick<components['schemas']['Capabilities'], 'phoneme_tokens' | 'decoders' | 'laci_languages' | 'start_token'>,
+  settings: Pick<ProjectSettings, 'decoder' | 'laci'>,
+): RequestContext {
+  return {
+    phonemeTokens: c.phoneme_tokens ?? null,
+    // The project's decoder where this server serves it, else the default.
+    decoder: requestDecoder(c.decoders ?? [], settings.decoder),
+    // Languages without heads here run without LACI.
+    laci: settings.laci,
+    laciLanguages: c.laci_languages,
+    startToken: c.start_token != null,
+  };
 }
 
 /** Keep spans attached to their words across an edit (common prefix / suffix diff). */

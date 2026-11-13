@@ -1,10 +1,6 @@
-/** What the server offers, cached for 30 s: capabilities, the steering spec, and the request context. */
+/** What the server offers, cached for 30 s: capabilities and the steering spec. */
 import type { ControlsSpec, GenerateRequest } from '../../src/api';
 import fixtureSpec from '../../src/fixtures/controls.json';
-import { requestDecoder } from '../../src/lib/decoders';
-import type { ProjectDoc } from '../../src/state/projectSchema';
-import { DEFAULT_SETTINGS } from '../../src/state/projectSchema';
-import type { RequestContext } from '../../src/state/requests';
 import * as zonos from './zonos';
 
 const TTL_MS = 30_000;
@@ -44,17 +40,6 @@ export const spec = cached(async (): Promise<SpecInfo> => {
 export const NO_STEERING =
   'This server has no steering bundle (start it with STEER_BUNDLE=assets/steering/studio_bundle_mect60k_x10.json, or the MLX server with steer.gguf next to the backbone).';
 
-export function requestContext(c: zonos.Capabilities, doc: ProjectDoc | null): RequestContext {
-  return {
-    phonemeTokens: c.phoneme_tokens ?? null,
-    // The project's decoder (set in the Studio's project settings) where this server serves it, else the default.
-    decoder: requestDecoder(c.decoders ?? [], doc?.settings.decoder),
-    // The project's LACI mode (set in the Studio's project settings); languages without heads here run without it.
-    laci: doc?.settings.laci ?? DEFAULT_SETTINGS.laci,
-    laciLanguages: c.laci_languages,
-    startToken: c.start_token != null,
-  };
-}
 
 /** The body as sent: without steering fields the server can't apply (the stored request keeps them, as Studio's). */
 export function sendable(req: GenerateRequest, steering: boolean): GenerateRequest {

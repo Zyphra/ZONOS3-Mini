@@ -3,7 +3,8 @@ import type { ControlsSpec } from '../../src/api';
 import fixture from '../../src/fixtures/controls.json';
 import { homePin, pinForMix } from '../../src/state/atlas';
 import { presetToValues, toDoses } from '../../src/state/engine';
-import { designView, resolveAccents, resolveValues } from '../src/design';
+import { resolveAccents, resolveValues } from '../../src/state/resolve';
+import { designView } from '../src/design';
 
 const spec = fixture as unknown as ControlsSpec;
 

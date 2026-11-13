@@ -6,7 +6,9 @@ import '@fontsource-variable/inter/wght.css';
 import '@fontsource/jetbrains-mono/latin-400.css';
 import '@fontsource/jetbrains-mono/latin-500.css';
 import './lite.css';
+import type { ControlsSpec } from '../api';
 import { mountChrome, setLabel } from '../lib/chrome';
+import { editableText } from '../lib/dom';
 import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
 import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
@@ -19,6 +21,7 @@ import { ApiError } from '../lib/http';
 import {
   canRunWeb,
   connect,
+  controls,
   createSpeaker,
   generateStream,
   listSpeakers,
@@ -27,10 +30,14 @@ import {
   speakerEmbedding,
   speakerPreview,
   type Backend,
+  type Capabilities,
   type GenerateRequest,
   type Speaker,
 } from './api';
+import type { ScriptEditor } from './editor';
 import { StreamPlayer } from './player';
+import type * as ScriptModule from './script';
+import type { Issue, ScriptEnv, ScriptResult } from './script';
 import { CLIP_MAX_S, clipLengthProblem, readiness, selectedVoice, type Clip, type Source, type VoiceState } from './voice';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -68,7 +75,16 @@ const ui = {
   preview: $<HTMLButtonElement>('preview'),
   downloadEmbedding: $<HTMLButtonElement>('download-embedding'),
   form: $<HTMLFormElement>('generate-form'),
+  inputs: document.querySelectorAll<HTMLInputElement>('input[name="input"]'),
+  textPanel: $('panel-text'),
+  scriptPanel: $('panel-script'),
   text: $<HTMLTextAreaElement>('text'),
+  script: $<HTMLDivElement>('script'),
+  scriptBox: $<HTMLDivElement>('script-editor'),
+  scriptComplete: $<HTMLDivElement>('script-complete'),
+  scriptLabel: $<HTMLLabelElement>('script-label'),
+  scriptIssues: $<HTMLUListElement>('script-issues'),
+  scriptVocab: $<HTMLParagraphElement>('script-vocab'),
   language: $<HTMLSelectElement>('language'),
   seed: $<HTMLInputElement>('seed'),
   laciField: $<HTMLDivElement>('laci-field'),
@@ -105,6 +121,23 @@ let fileVoice: Speaker | null = null;
 let languageOf: string | null = null;
 /** Languages with LACI alignment heads on the server (`/v2/capabilities.laci_languages`). */
 let laciLanguages: readonly string[] = [];
+/** Step 2's input: plain text, or a script (`./script.ts`, loaded with the steering bundle on first use). */
+let input: 'text' | 'script' = 'text';
+/** Every voice of the server, every mode: a script may name a library voice the select leaves out. */
+let speakers: Speaker[] = [];
+let serverCaps: Capabilities | null = null;
+interface Kit {
+  m: typeof ScriptModule;
+  spec: ControlsSpec;
+  steering: boolean;
+}
+let kit: Kit | null = null;
+let kitLoading: Promise<void> | null = null;
+let kitError: string | null = null;
+/** The Script box's coloring, squiggles and completion, mounted with the kit. */
+let editor: ScriptEditor | null = null;
+/** The script's last check: its issues show under it; Generate is off while it has errors. */
+let checked: ScriptResult | null = null;
 let generation: AbortController | null = null;
 const player = new StreamPlayer(SAMPLE_RATE);
 const preview = new Audio();
@@ -200,6 +233,8 @@ function disableAll(text: string) {
   )) {
     el.disabled = true;
   }
+  ui.script.contentEditable = 'false';
+  ui.script.setAttribute('aria-disabled', 'true');
 }
 
 // ── Voices ────────────────────────────────────────────────────────────────────────────────────────
@@ -222,7 +257,8 @@ function renderVoiceSelect() {
 }
 
 async function refreshVoices(select?: Speaker) {
-  voices = (await listSpeakers()).filter((s) => s.speaker_modes.includes('embedding'));
+  speakers = await listSpeakers();
+  voices = speakers.filter((s) => s.speaker_modes.includes('embedding'));
   if (select && !voices.some((s) => s.id === select.id)) voices.push(select);
   const first = byLanguage(voices.filter((s) => s.scope === 'default'))[0]?.voices[0];
   library = (select?.scope === 'default' ? select : null) ?? voices.find((s) => s.id === library?.id) ?? first ?? voices[0] ?? null;
@@ -252,6 +288,7 @@ function showVoice() {
     setLabel(ui.preview, 'Play preview', 'play');
   }
   updateGenerate();
+  recheckScript();
 }
 
 function showSource(next: Source) {
@@ -392,12 +429,110 @@ async function toggleRecording() {
 // ── Generation ────────────────────────────────────────────────────────────────────────────────────
 
 function updateGenerate() {
+  if (input === 'script') {
+    const why = generation ? '' : (kitError ?? (!kit ? 'Loading Studio’s controls…' : !editableText(ui.script).trim() ? 'Write a script first' : checked?.errors.length ? 'Fix the script first' : null));
+    ui.generate.disabled = why !== null;
+    show(ui.why, why || null);
+    return;
+  }
   const r = readiness(state());
   ui.generate.disabled = !r.ok;
   show(ui.why, r.ok ? null : r.why || null);
 }
 ui.text.addEventListener('input', updateGenerate);
 ui.text.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    void generate();
+  }
+});
+
+// ── Script ────────────────────────────────────────────────────────────────────────────────────────
+
+function showInput(next: 'text' | 'script') {
+  input = next;
+  ui.textPanel.hidden = next !== 'text';
+  ui.scriptPanel.hidden = next !== 'script';
+  // The hidden textarea never blocks the form's submit.
+  ui.text.required = next === 'text';
+  // Step 1's voice or a default may have changed while Text was shown.
+  if (next === 'script') void loadKit().then(checkScript);
+  updateGenerate();
+}
+
+/** The compiler and the server's steering bundle, once; a failure is tried again on the next switch to Script. */
+function loadKit(): Promise<void> {
+  kitLoading ??= (async () => {
+    try {
+      const [m, ed, spec] = await Promise.all([import('./script'), import('./editor'), controls()]);
+      kit = { m, spec: spec ?? m.NO_CONTROLS, steering: !!spec };
+      editor ??= ed.mountScriptEditor({ el: ui.script, root: ui.scriptBox, popup: ui.scriptComplete });
+      ui.scriptVocab.textContent = m.vocabulary(kit.spec, kit.steering);
+      kitError = null;
+      checkScript();
+    } catch (e) {
+      kitError = `Couldn’t load Studio’s controls: ${message(e)}`;
+      showIssues({ errors: [{ line: 0, from: 0, to: 0, message: kitError }], warnings: [] });
+      kitLoading = null;
+    } finally {
+      updateGenerate();
+    }
+  })();
+  return kitLoading;
+}
+
+/** What the script compiles against: the server, step 1's voice, and step 2's Language / Seed / LACI as defaults. */
+function scriptEnv(k: Kit, caps: Capabilities): ScriptEnv {
+  const s = state();
+  const r = readiness({ ...s, text: '-', generating: false });
+  return {
+    spec: k.spec,
+    steering: k.steering,
+    speakers,
+    caps,
+    languages: [...ui.language.options].map((o) => o.value),
+    selected: selectedVoice(s),
+    selectedWhy: r.ok ? null : r.why,
+    language: ui.language.value,
+    seed: ui.seed.value === '' ? null : Number(ui.seed.value),
+    laci: (ui.laci.value || 'off') as LaciMode,
+  };
+}
+
+let checkTimer = 0;
+
+function checkScript() {
+  clearTimeout(checkTimer);
+  if (!kit || !serverCaps) return;
+  const text = editableText(ui.script);
+  const env = scriptEnv(kit, serverCaps);
+  editor?.setEnv(env);
+  checked = kit.m.compileScript(text, env);
+  // A blank script says so beside Generate, not as an issue under the box.
+  showIssues(text.trim() ? checked : { errors: [], warnings: [] });
+  updateGenerate();
+}
+
+function scheduleCheck() {
+  clearTimeout(checkTimer);
+  checkTimer = window.setTimeout(checkScript, 250);
+}
+
+/** Step 1's voice or a step-2 default changed: a script compiles differently. */
+function recheckScript() {
+  if (input === 'script') scheduleCheck();
+}
+
+function showIssues(result: { errors: Issue[]; warnings: Issue[] }) {
+  const item = (issue: Issue, className: string) => Object.assign(document.createElement('li'), { className, textContent: issue.line ? `Line ${issue.line}: ${issue.message}` : issue.message });
+  ui.scriptIssues.replaceChildren(...result.errors.map((x) => item(x, 'is-error')), ...result.warnings.map((x) => item(x, 'is-warn')));
+  ui.scriptIssues.hidden = !result.errors.length && !result.warnings.length;
+  editor?.setIssues(result);
+}
+
+ui.scriptLabel.addEventListener('click', () => ui.script.focus());
+ui.script.addEventListener('input', scheduleCheck);
+ui.script.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
     void generate();
@@ -447,30 +582,44 @@ function keepTake(pcm: Float32Array, seed: string | null, text: string, label: s
   return url;
 }
 
-async function generate() {
-  const r = readiness(state());
-  if (!r.ok) return updateGenerate();
-  const text = ui.text.value.trim();
+/** Generate's start: Stop shows; the last error and the preview go. */
+function startGeneration(): AbortController {
   const ctrl = new AbortController();
   generation = ctrl;
   updateGenerate();
   ui.stop.hidden = false;
   show(ui.error, null);
   preview.pause();
+  return ctrl;
+}
+
+/** Generate stopped before any audio: the reason, and the controls back. */
+function fail(msg: string) {
+  generation = null;
+  ui.stop.hidden = true;
+  ui.status.textContent = '';
+  show(ui.error, msg);
+  updateGenerate();
+}
+
+function generate(): Promise<void> {
+  return input === 'script' ? generateScript() : generateText();
+}
+
+async function generateText() {
+  const r = readiness(state());
+  if (!r.ok) return updateGenerate();
+  const text = ui.text.value.trim();
+  const ctrl = startGeneration();
   let voice = selectedVoice(state());
-  try {
-    if (!voice) {
-      // Clip mode with a clip not yet cloned: Generate clones it first (the server does the embedding).
-      ui.status.textContent = 'Cloning the clip…';
+  if (!voice) {
+    // Clip mode with a clip not yet cloned: Generate clones it first (the server does the embedding).
+    ui.status.textContent = 'Cloning the clip…';
+    try {
       voice = await cloneClip();
+    } catch (e) {
+      return fail(message(e));
     }
-  } catch (e) {
-    generation = null;
-    ui.stop.hidden = true;
-    ui.status.textContent = '';
-    show(ui.error, message(e));
-    updateGenerate();
-    return;
   }
   const body: GenerateRequest = {
     text,
@@ -482,6 +631,32 @@ async function generate() {
   };
   Object.assign(body, laciFields(ui.laci.value as LaciMode, laciLanguages, body.language ?? 'en_us'));
   if (ui.seed.value !== '') body.seed = Number(ui.seed.value);
+  await speak([{ line: 0, request: body }], 0, { text, label: voice.label }, ctrl);
+}
+
+async function generateScript() {
+  if (!kit || !serverCaps || generation) return;
+  const ctrl = startGeneration();
+  let result = kit.m.compileScript(editableText(ui.script), scriptEnv(kit, serverCaps));
+  if (!result.render && !result.errors.length && result.usesSelected) {
+    // Step 1's clip not yet cloned: clone it, then the script speaks with it.
+    ui.status.textContent = 'Cloning the clip…';
+    try {
+      await cloneClip();
+    } catch (e) {
+      return fail(message(e));
+    }
+    result = kit.m.compileScript(editableText(ui.script), scriptEnv(kit, serverCaps));
+  }
+  checked = result;
+  showIssues(result);
+  if (!result.render) return fail('Fix the script first');
+  const { parts, gap } = result.render;
+  await speak(parts, gap, { text: parts.map((p) => p.text).join(' / '), label: 'Script' }, ctrl);
+}
+
+/** Streams `parts` in order into one take, `gap` seconds of silence between them: the waveform, the player, one WAV. */
+async function speak(parts: { line: number; request: GenerateRequest }[], gap: number, take: { text: string; label: string }, ctrl: AbortController) {
   ui.status.textContent = 'Generating…';
   samples = 0;
   drawn = -1;
@@ -492,23 +667,32 @@ async function generate() {
   animate();
   const t0 = performance.now();
   let firstAudio = 0;
+  let at = 0;
+  let seed: string | null = null;
+  const silence = new Float32Array(Math.round(gap * SAMPLE_RATE));
   try {
     await player.begin();
-    const { seed } = await generateStream(
-      body,
-      (pcm) => {
-        firstAudio ||= performance.now();
-        append(pcm);
-        player.push(pcm);
-        ui.status.textContent = `Playing while generating… ${seconds(samples)}`;
-      },
-      ctrl.signal,
-    );
+    for (; at < parts.length; at++) {
+      if (at > 0) {
+        append(silence);
+        player.push(silence);
+      }
+      ({ seed } = await generateStream(
+        parts[at].request,
+        (pcm) => {
+          firstAudio ||= performance.now();
+          append(pcm);
+          player.push(pcm);
+          ui.status.textContent = parts.length > 1 ? `Line ${at + 1} of ${parts.length}: playing while generating… ${seconds(samples)}` : `Playing while generating… ${seconds(samples)}`;
+        },
+        ctrl.signal,
+      ));
+    }
     player.flush();
     if (!samples) throw new ApiError(200, 'The server returned no audio.');
-    const url = keepTake(audio.slice(0, samples), seed, text, voice.label);
+    const url = keepTake(audio.slice(0, samples), seed, take.text, take.label);
     ui.resultDownload.href = url;
-    ui.resultDownload.download = `${slug(voice.label)}${seed ? `-seed${seed}` : ''}.wav`;
+    ui.resultDownload.download = `${slug(take.label)}${seed ? `-seed${seed}` : ''}.wav`;
     ui.resultDownload.hidden = false;
     ui.resultMeta.textContent = seconds(samples);
     ui.resultMeta.title = `seed ${seed ?? 'unknown'} · first audio after ${((firstAudio - t0) / 1000).toFixed(2)} s`;
@@ -521,7 +705,7 @@ async function generate() {
     if (ctrl.signal.aborted) ui.status.textContent = 'Stopped.';
     else {
       ui.status.textContent = '';
-      show(ui.error, message(e));
+      show(ui.error, parts.length > 1 && at < parts.length ? `Line ${parts[at].line}: ${message(e)}` : message(e));
     }
     ui.result.hidden = !samples;
   } finally {
@@ -569,6 +753,7 @@ ui.wave.addEventListener('keydown', (e) => {
 // ── Wiring ────────────────────────────────────────────────────────────────────────────────────────
 
 for (const input of ui.sources) input.addEventListener('change', () => input.checked && showSource(input.value as Source));
+for (const r of ui.inputs) r.addEventListener('change', () => r.checked && showInput(r.value as 'text' | 'script'));
 
 ui.voiceSelect.addEventListener('change', () => {
   library = voices.find((s) => s.id === ui.voiceSelect.value) ?? null;
@@ -579,8 +764,15 @@ ui.voiceSelect.addEventListener('change', () => {
 function updateLaciNote() {
   show(ui.laciNote, ui.laci.value !== 'off' && !laciLanguages.includes(ui.language.value) ? `No alignment heads for ${langLabel(ui.language.value)}: takes run without LACI.` : null);
 }
-ui.laci.addEventListener('change', updateLaciNote);
-ui.language.addEventListener('change', updateLaciNote);
+ui.laci.addEventListener('change', () => {
+  updateLaciNote();
+  recheckScript();
+});
+ui.language.addEventListener('change', () => {
+  updateLaciNote();
+  recheckScript();
+});
+ui.seed.addEventListener('input', recheckScript);
 
 ui.clipPick.addEventListener('click', () => ui.clipFile.click());
 ui.clipFile.addEventListener('change', async () => {
@@ -745,6 +937,7 @@ async function start() {
   }
   booting(false);
   const { kind, caps } = backend;
+  serverCaps = caps;
   ui.backend.hidden = false;
   ui.backend.querySelector('.pill-text')!.textContent = kind === 'web' ? 'In this browser' : 'Server';
   const explanation = kind === 'web' ? 'The voice engine runs in this tab on your graphics card; its models are cached in the browser.' : `Connected to ${server || location.origin}: that server renders every voice.`;

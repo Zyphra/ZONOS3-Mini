@@ -114,10 +114,47 @@
       <section class="panel" aria-labelledby="speak-heading">
         <div class="panel-head">
           <h3 id="speak-heading"><span class="step">2</span>Speak</h3>
+          <fieldset class="mode">
+            <legend class="sr-only">Input</legend>
+            <input type="radio" name="input" id="input-text" value="text" checked />
+            <label class="mode-btn" for="input-text">Text</label>
+            <input type="radio" name="input" id="input-script" value="script" />
+            <label class="mode-btn" for="input-script">Script</label>
+          </fieldset>
         </div>
         <form id="generate-form">
-          <label class="field" for="text">Text <span class="hint-inline">⌘↵ / Ctrl+Enter generates</span></label>
-          <textarea id="text" class="input" rows="4" required>Hello! This is my cloned voice.</textarea>
+          <div id="panel-text">
+            <label class="field" for="text">Text <span class="hint-inline">⌘↵ / Ctrl+Enter generates</span></label>
+            <textarea id="text" class="input" rows="4" required>Hello! This is my cloned voice.</textarea>
+          </div>
+          <div id="panel-script" hidden>
+            <label class="field" id="script-label">Script <span class="hint-inline">Studio’s controls as text · Tab completes · ⌘↵ / Ctrl+Enter generates</span></label>
+            <div id="script-editor" class="script-editor">
+              <div id="script" class="input script-input" contenteditable="plaintext-only" role="textbox" aria-multiline="true" aria-labelledby="script-label" aria-describedby="script-issues" spellcheck="false" autocapitalize="off" autocorrect="off" translate="no" data-placeholder="# Lines speak with the voice of step 1.&#10;@voice Bright {pitch 1, bright 2}&#10;Hello! This is my cloned voice.&#10;Bright {happy 3}: And this is [a designed one]{projection 1.5}."></div>
+              <div id="script-complete" class="script-complete" hidden>
+                <ul id="script-complete-list" role="listbox" aria-label="Suggestions"></ul>
+                <p class="sc-info"></p>
+                <p class="sc-keys">Tab inserts · ↑ ↓ choose · Esc closes</p>
+              </div>
+            </div>
+            <ul id="script-issues" class="script-issues" aria-live="polite" hidden></ul>
+            <details class="pro script-help">
+              <summary>Syntax</summary>
+              <pre>Lines     Hello there.                    the voice of step 1
+          Ann: Hello there.               a @voice, or a library voice by name
+          Ann {happy 3}: Hello there.     delivery for the whole line
+          {calm 2}: Hello there.
+Words     I [really]{emphasis 4} mean it.
+Voices    @voice Ann = &lt;library voice&gt; {preset BBC newsreader, age 1, accent irish 1.2, mode reference}
+          @voice Me {deep 2}              designed from the voice of step 1
+Script    @language en_gb   @mode reference   @seed 42   @laci off|stream|whole
+          @decoder &lt;id&gt;   @gap 0.5   @baseline chatty 1, pace -0.5
+Other     # comment     \ first: the line is read as text
+Pronunciations (S@vQn) work as in Studio.
+Language, Seed and LACI above are defaults: @language, @seed and @laci override them.</pre>
+              <p id="script-vocab" class="hint-inline"></p>
+            </details>
+          </div>
           <div class="grid">
             <div>
               <label class="field" for="language">Language</label>

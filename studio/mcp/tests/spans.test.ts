@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ControlsSpec } from '../../src/api';
 import fixture from '../../src/fixtures/controls.json';
 import type { Span } from '../../src/state/requests';
-import { anchorSpans, resolveValues } from '../src/design';
+import { anchorSpans, resolveValues } from '../../src/state/resolve';
 
 const spec = fixture as unknown as ControlsSpec;
 const strip = (spans: Span[]) => spans.map(({ start, end, values }) => ({ start, end, values }));

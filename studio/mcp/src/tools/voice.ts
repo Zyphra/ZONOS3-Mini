@@ -13,9 +13,10 @@ import { homePin, mixAt, pinForMix } from '../../../src/state/atlas';
 import type { Design } from '../../../src/state/design';
 import { presetToValues, steerEmbedding, toDoses, type AccentMix } from '../../../src/state/engine';
 import { EMBEDDING_TYPE } from '../../../src/state/media';
-import { buildRequest, PREVIEW_SEED } from '../../../src/state/requests';
-import { requestContext, sendable } from '../backend';
-import { designView, findSpeaker, modeFor, resolveAccents, resolveValues, upsertPersona } from '../design';
+import { buildRequest, capsContext, PREVIEW_SEED } from '../../../src/state/requests';
+import { findSpeaker, modeFor, resolveAccents, resolveValues } from '../../../src/state/resolve';
+import { sendable } from '../backend';
+import { designView, upsertPersona } from '../design';
 import { designSummary, generationParams, takeText, wavSeconds } from '../params';
 import type { TakeInfo } from '../payload';
 import { b64, openProject, projectLine, saveProject } from '../project';
@@ -112,7 +113,7 @@ export function registerVoiceTools(server: McpServer) {
       const previewText = a.text ?? (existing?.signature || ctx.spec.ui.preview_text);
       // The base voice's own language (a library voice of a server language), else US English as before.
       const language = voiceServerLanguage(speaker, 'en_us');
-      const request = buildRequest(ctx.spec, requestContext(ctx.caps, doc), design, previewText, a.seed ?? PREVIEW_SEED, { language });
+      const request = buildRequest(ctx.spec, capsContext(ctx.caps, doc.settings), design, previewText, a.seed ?? PREVIEW_SEED, { language });
       const g = await zonos.generate(sendable(request, ctx.steering));
       const takeId = uid();
       state.takes.set(takeId, { wav: g.wav });
