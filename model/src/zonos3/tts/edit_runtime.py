@@ -46,6 +46,60 @@ from zonos3.tts.edit_align import (
     whole_clip_window,
     wildcard_verify,
 )
+from zonos3.tts.steering import SteeringBundle, request_release, resolve_controls
+
+# Steer then hold of a region's hidden controls (zonos3.tts.steering.request_release): the EditRequest's fields, carried
+# by every FillJob and the engine's check (None = the bundle's default).
+STEER_FIELDS = ("steer_hold", "steer_onset_seconds", "steer_ramp_seconds")
+
+
+def steer_fields(obj) -> dict[str, float | None]:
+    """The steer-then-hold fields of an EditRequest or a FillJob."""
+    return {k: getattr(obj, k) for k in STEER_FIELDS}
+
+
+def steer_release(bundle: SteeringBundle | None, fields, *, hint: str):
+    """``request_release`` of the steer-then-hold fields (``steer_fields``): the region's ReleaseSchedule, or None when
+    its controls stay constant (ValueError: a hold below 1 without the bundle's steer_release)."""
+    return request_release(
+        bundle, fields["steer_hold"], fields["steer_onset_seconds"], fields["steer_ramp_seconds"], hint=hint
+    )
+
+
+@dataclass
+class FillSteering:
+    """A region's resolved controls: the speaker-row embedding moved by the raw doses, the constant hidden delta, the
+    released hidden delta and its (onset frames, ramp frames, hold) counted from the fill's first frame (both None when
+    the controls stay constant)."""
+
+    speaker_embedding: Any
+    hidden_delta: Any
+    release_delta: Any
+    release: tuple[int, int, float] | None
+
+
+def fill_steering(
+    bundle: SteeringBundle | None, job: FillJob, *, hint: str, sources, hidden_size: int, frame_rate: float
+) -> FillSteering:
+    """The steering of one FillJob (its controls, checked by ``EditEngine.check``, and its steer-then-hold fields)."""
+    release = steer_release(bundle, steer_fields(job), hint=hint)
+    if not job.controls:
+        return FillSteering(job.speaker_embedding, None, None, None)
+    resolved = resolve_controls(
+        bundle,
+        job.controls,
+        None,
+        text=job.controls_text,
+        speaker_embedding=job.speaker_embedding,
+        sources=sources,
+        hidden_size=hidden_size,
+        release_exempt=None if release is None else release.exempt,
+    )
+    if release is None or resolved.release_delta is None:
+        return FillSteering(resolved.speaker_embedding, resolved.hidden_delta, None, None)
+    return FillSteering(
+        resolved.speaker_embedding, resolved.hidden_delta, resolved.release_delta, release.frames(float(frame_rate))
+    )
 
 
 @dataclass(frozen=True)
@@ -94,6 +148,10 @@ class FillJob:
     window_codes: np.ndarray  # [frames, n_codebooks] int64
     spans: list[list[int]]  # window-relative [start_frame, length_frames]
     fills: list[np.ndarray] = field(default_factory=list)  # [n, n_codebooks] int32 each, earlier regions of the window
+    # steer then hold of the controls (the EditRequest's STEER_FIELDS; None = the bundle's default)
+    steer_hold: float | None = None
+    steer_onset_seconds: float | None = None
+    steer_ramp_seconds: float | None = None
 
 
 class EditEngine(Protocol):
@@ -112,11 +170,17 @@ class EditEngine(Protocol):
         """Ordinary codec codes ``[frames, n_codebooks]`` (int64) of an upload."""
 
     async def check(
-        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
+        self,
+        target_text: str,
+        doses: list[dict[str, float]] | None,
+        condition_buckets,
+        condition_values,
+        steer: dict[str, float | None],
     ) -> set[str]:
         """Engine-level checks before any work: the target's pronunciation groups, every region's steering doses
-        against the server's bundle (ValueError without one) and the condition buckets / values. Returns the dosed
-        ids that move the speaker embedding (raw-space directions)."""
+        against the server's bundle (ValueError without one), the steer-then-hold fields (``steer_fields``;
+        ``steer_release``) and the condition buckets / values. Returns the dosed ids that move the speaker embedding
+        (raw-space directions)."""
 
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
         """The generated delay-stacked rows ``[n, n_codebooks]`` without the finishing row, and the aligned EOS frame
@@ -306,7 +370,9 @@ class EditRuntime:
         use_row = m.speaker_row if req.speaker_embedding is None else bool(req.speaker_embedding)
         if use_row and not m.speaker_row:
             raise ValueError("speaker_embedding needs a checkpoint with a speaker-embedding row.")
-        raw = await self.engine.check(target_text, doses, req.condition_buckets, req.condition_values)
+        raw = await self.engine.check(
+            target_text, doses, req.condition_buckets, req.condition_values, steer_fields(req)
+        )
         if raw and not use_row:
             raise ValueError(
                 f"Controls {', '.join(sorted(raw))} move the speaker embedding and need the speaker row "
@@ -419,6 +485,7 @@ class EditRuntime:
                                 window_codes=window_codes,
                                 spans=window_spans,
                                 fills=list(window_fills),
+                                **steer_fields(req),
                             )
                         )
                         fill, ended = extract_fill(

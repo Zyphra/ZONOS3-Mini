@@ -80,7 +80,7 @@ from zonos3.tts.audio import (
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, fill_steering, steer_release
 from zonos3.tts.steering import (
     SteeringBundle,
     check_controls,
@@ -88,7 +88,7 @@ from zonos3.tts.steering import (
     disabled_controls,
     load_bundle,
     no_steering_message,
-    resolve_controls,
+    release_document,
 )
 
 from zonos3_sgl.message import (
@@ -354,6 +354,12 @@ class _RulesContext:
     @property
     def laci_languages(self) -> dict:
         return getattr(self.config, "laci_heads", None) or {}
+
+    @property
+    def frame_rate(self) -> float:
+        from zonos3.tokenizer.matched_codec import entry
+
+        return SAMPLE_RATE / int(entry(str(self.config.tts_audio_codec))["hop"])
 
     @property
     def max_frames(self) -> int:
@@ -1213,6 +1219,8 @@ async def _tts_generate_msg(
         accent=accent,
         accent_strength=accent_strength,
         steer_schedule=rules.schedule,
+        steer_release_delta=rules.release_delta,
+        steer_release=None if rules.release is None else list(rules.release),
         steer_follow_chars=rules.follow_chars,
         steer_follow_gate=rules.follow_gate,
         laci=req.laci,
@@ -1490,6 +1498,7 @@ def _capability_facts(config: ServerArgs) -> CapabilityFacts:
         edit_transcribe=_ASR.installed,
         lexicon=_get_phoneme_lexicon(config),
         projects=store.capabilities() if store is not None else {"enabled": False},
+        steer_release=release_document(_steer_bundle(config)),
     )
 
 
@@ -1593,9 +1602,10 @@ class _SglEditEngine:
         return codes.to(torch.int64).numpy()
 
     async def check(
-        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
+        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values, steer
     ) -> set[str]:
         ctx = _RulesContext(get_global_state().config)
+        steer_release(ctx.steer_bundle, steer, hint=ctx.steer_hint)
         plan.validate_text_markers(ctx.text_tokenizer_spec, target_text, edit=True)
         raw: set[str] = set()
         if doses is not None:
@@ -1611,18 +1621,14 @@ class _SglEditEngine:
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
         state = get_global_state()
         ctx = _RulesContext(state.config)
-        speaker_embedding, delta = job.speaker_embedding, None
-        if job.controls:
-            resolved = resolve_controls(
-                ctx.steer_bundle,
-                job.controls,
-                None,
-                text=job.controls_text,
-                speaker_embedding=job.speaker_embedding,
-                sources=ctx.steering_sources,
-                hidden_size=ctx.hidden_size,
-            )
-            speaker_embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
+        steering = fill_steering(
+            ctx.steer_bundle,
+            job,
+            hint=ctx.steer_hint,
+            sources=ctx.steering_sources,
+            hidden_size=ctx.hidden_size,
+            frame_rate=ctx.frame_rate,
+        )
         sampling = TTSSamplingParams(
             **job.sampling,
             max_tokens=plan.max_tokens_budget(job.max_tokens, ctx.max_frames),
@@ -1642,8 +1648,10 @@ class _SglEditEngine:
                 edit_codes=torch.as_tensor(job.window_codes, dtype=torch.int64),
                 edit_spans=job.spans,
                 edit_fills=[torch.as_tensor(fill, dtype=torch.int32) for fill in job.fills],
-                speaker_embedding=speaker_embedding,
-                steering_delta=delta,
+                speaker_embedding=steering.speaker_embedding,
+                steering_delta=steering.hidden_delta,
+                steer_release_delta=steering.release_delta,
+                steer_release=None if steering.release is None else list(steering.release),
                 condition_buckets=condition_ids,
                 accent=_edit_adapter(state.config),
                 accent_strength=1.0,

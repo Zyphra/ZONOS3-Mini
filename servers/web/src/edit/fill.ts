@@ -3,6 +3,7 @@
 // spliced codes (decode_codes). Ports zonos3.tts.edit_runtime's EditEngine.fill / decode for the in-browser engine.
 import type { BackboneApi, CodecApi } from '../api/engine';
 import { buildPrompt, CODEBOOK_SIZE, NCB, type ModelHp, type Prompt } from '../prompt';
+import type { Steering } from '../request/steer';
 import { vocabIds, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { acceptFrame, newSlot, slotRow } from '../slot';
@@ -20,7 +21,7 @@ export interface FillJob {
   minFrames: number;
   buckets: number[];                   // resolved condition buckets
   speakerEmbedding: Float32Array | null;
-  steer: Float32Array | null;          // the region's hidden steering delta
+  steering: Steering | null;           // the region's hidden steering (frames count from the fill's first one)
   windowCodes: Int32Array;             // ordinary [frames][K]
   spans: Span[];                       // window-relative
   fills: Int32Array[];                 // earlier regions of the window, ordinary [n][K] each
@@ -39,7 +40,8 @@ export function fillPrompt(tok: Tokenizer, hp: ModelHp, job: FillJob): Prompt {
 }
 
 /** Runs a fill: prefills `ids` on slot 0, samples with span-end as the stop (EOA never sampled) until the stop's
- *  delay tail or `maxFrames`, and returns the region's codec frames and whether it ended on span-end. */
+ *  delay tail or `maxFrames`, and returns the region's codec frames and whether it ended on span-end. The decode that
+ *  yields the fill's frame k is steered with the region's delta at frame k (steer then hold counts from frame 0). */
 export async function runFill(bb: BackboneApi, hp: ModelHp, prompt: Prompt, job: FillJob,
                               aborted: () => boolean): Promise<{ fill: Int32Array; ended: boolean }> {
   const stopId = vocabIds(hp.audioVocab, { spanEndStop: true }).stopId;
@@ -51,7 +53,7 @@ export async function runFill(bb: BackboneApi, hp: ModelHp, prompt: Prompt, job:
     if (aborted()) throw new Error('aborted');
     acceptFrame(slot, frame, stopId, job.maxFrames);
     if (slot.done) break;
-    frame = (await bb.stepSample(slotRow(slot), job.steer, null, null)).frame;
+    frame = (await bb.stepSample(slotRow(slot), job.steering?.at(slot.step) ?? null, null, null)).frame;
   }
   // the finishing row is not part of the fill's rows
   const rows = Int32Array.from(slot.codes.slice(0, Math.max(0, slot.codes.length - NCB)));

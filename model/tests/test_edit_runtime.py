@@ -43,8 +43,9 @@ class FakeEngine:
         self.encoded += 1
         return self.codes
 
-    async def check(self, target_text, doses, condition_buckets, condition_values):
+    async def check(self, target_text, doses, condition_buckets, condition_values, steer):
         self.checked.append(doses)
+        self.steer = steer
         return self.raw
 
     async def fill(self, job):

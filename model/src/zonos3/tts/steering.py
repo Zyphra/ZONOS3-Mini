@@ -19,6 +19,15 @@ measurement from an earlier take, or a default), stretched inside each span by t
 ``timing`` table of the controls that change the pace, with linear ramps of
 ``RAMP_FRAMES`` at both edges. ``control_span_follow: "reading"`` places the same
 span deltas by the model's reading position instead (zonos3.tts.span_follow).
+
+``steer_release`` (bundle key, ``ReleaseSchedule``; request fields ``steer_hold`` /
+``steer_onset_seconds`` / ``steer_ramp_seconds``) weights the request-level hidden
+``controls`` over the generated frames: full dose for ``onset`` frames, a linear ramp to
+``hold`` over ``ramp`` frames, ``hold`` after (``release_weight``). The model copies the
+style of the speech it has generated, so a constant push integrates over a long line
+(pitch and loudness climb); a held fraction keeps the style without the climb. The
+bundle's ``exempt`` directions (pace: span placement and edit lengths assume it) stay
+constant, as do control_spans and raw directions.
 """
 
 from __future__ import annotations
@@ -26,7 +35,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Sequence
+from typing import Collection, Dict, List, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -64,6 +73,32 @@ class RateExtension:
     reference_sides: tuple[str, ...] = ("slower", "faster")
 
 
+@dataclass(frozen=True)
+class ReleaseSchedule:
+    """Steer then hold (bundle ``steer_release``): the request-level hidden controls at full dose for ``onset_seconds``
+    of generated speech, a linear ramp to ``hold`` x dose over ``ramp_seconds``, ``hold`` after. ``exempt``: hidden
+    directions that stay constant. The bundle's values are the server defaults of the request fields; hold 1 is the
+    constant push of before."""
+
+    onset_seconds: float
+    ramp_seconds: float
+    hold: float
+    exempt: tuple[str, ...] = ()
+
+    def frames(self, frame_rate: float) -> tuple[int, int, float]:
+        """(onset frames, ramp frames, hold) at ``frame_rate`` generated frames per second."""
+        return round(self.onset_seconds * frame_rate), round(self.ramp_seconds * frame_rate), float(self.hold)
+
+
+def check_release(onset_seconds: float, ramp_seconds: float, hold: float) -> None:
+    """ValueError unless 0 <= hold <= 1 and the times are finite and >= 0."""
+    if not (np.isfinite(hold) and 0.0 <= hold <= 1.0):
+        raise ValueError(f"steer_hold must be in [0, 1], got {hold!r}.")
+    for name, v in (("steer_onset_seconds", onset_seconds), ("steer_ramp_seconds", ramp_seconds)):
+        if not (np.isfinite(v) and v >= 0.0):
+            raise ValueError(f"{name} must be finite and >= 0, got {v!r}.")
+
+
 @dataclass
 class SteeringBundle:
     name: str
@@ -73,6 +108,7 @@ class SteeringBundle:
     timing: Dict[str, List[List[float]]] = field(default_factory=dict)
     ui: dict = field(default_factory=dict)
     rate_extension: RateExtension | None = None
+    steer_release: ReleaseSchedule | None = None
 
     @property
     def hidden_sources(self) -> List[int]:
@@ -93,11 +129,19 @@ def no_steering_message(hint: str, *, field: str | None = None) -> str:
 
 
 def build_bundle(
-    origin: Path, name: str, sets: Dict[str, DirectionSet], *, timing: dict, ui: dict, rate_extension: dict | None
+    origin: Path,
+    name: str,
+    sets: Dict[str, DirectionSet],
+    *,
+    timing: dict,
+    ui: dict,
+    rate_extension: dict | None,
+    steer_release: dict | None = None,
 ) -> SteeringBundle:
     """A bundle of loaded direction sets (``origin``: the bundle file, for messages and ``path``): every check of the
     bundle file format (set names, non-empty sets, one raw embedding dim, timing of known directions, a hidden
-    rate_extension direction), the directions and the rate extension."""
+    rate_extension direction, steer_release values and hidden exempt directions), the directions, the rate extension
+    and the steer-then-hold defaults."""
     directions: Dict[str, Direction] = {}
     raw_dims = set()
     for set_name, loaded in sets.items():
@@ -137,9 +181,35 @@ def build_bundle(
             doses={lang: {int(b): float(d) for b, d in doses.items()} for lang, doses in r["languages"].items()},
             reference_sides=tuple(r.get("reference_sides", ("slower", "faster"))),
         )
+    release = None
+    if steer_release is not None:
+        r = steer_release
+        if not isinstance(r, dict) or set(r) - _RELEASE_KEYS or _RELEASE_KEYS - {"exempt"} - set(r):
+            raise ValueError(
+                f"{origin}: steer_release must be {{onset_seconds, ramp_seconds, hold, exempt?}}, got {r!r}"
+            )
+        try:
+            check_release(float(r["onset_seconds"]), float(r["ramp_seconds"]), float(r["hold"]))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{origin}: steer_release: {exc}") from None
+        exempt = tuple(r.get("exempt", ()))
+        bad = sorted(d for d in exempt if d not in directions or directions[d].space != HIDDEN_SPACE)
+        if bad:
+            raise ValueError(f"{origin}: steer_release exempts {bad}, which are not hidden directions of the bundle")
+        release = ReleaseSchedule(float(r["onset_seconds"]), float(r["ramp_seconds"]), float(r["hold"]), exempt)
     return SteeringBundle(
-        name=name, path=origin, sets=dict(sets), directions=directions, timing=timing, ui=ui, rate_extension=extension
+        name=name,
+        path=origin,
+        sets=dict(sets),
+        directions=directions,
+        timing=timing,
+        ui=ui,
+        rate_extension=extension,
+        steer_release=release,
     )
+
+
+_RELEASE_KEYS = {"onset_seconds", "ramp_seconds", "hold", "exempt"}
 
 
 def load_bundle(path: str | Path) -> SteeringBundle:
@@ -160,7 +230,42 @@ def load_bundle(path: str | Path) -> SteeringBundle:
         timing=spec.get("timing", {}),
         ui=spec.get("ui", {}),
         rate_extension=spec.get("rate_extension"),
+        steer_release=spec.get("steer_release"),
     )
+
+
+def request_release(
+    bundle: SteeringBundle | None,
+    hold: float | None,
+    onset_seconds: float | None,
+    ramp_seconds: float | None,
+    *,
+    hint: str,
+) -> ReleaseSchedule | None:
+    """A request's steer-then-hold schedule: its ``steer_hold`` / ``steer_onset_seconds`` / ``steer_ramp_seconds``
+    (None = the bundle's ``steer_release`` default) with the bundle's exempt directions. None when the request-level
+    controls stay constant (hold 1: the bundle has no ``steer_release``, or the request asks for 1); a hold below 1
+    needs the bundle's ``steer_release``, which names the directions that never release (``hint``: how this server
+    loads a bundle)."""
+    default = None if bundle is None else bundle.steer_release
+    if default is None:
+        if hold is None or float(hold) == 1.0:
+            return None
+        if bundle is None:
+            raise ValueError(
+                f"This server has no steering bundle ({hint}); steer_hold below 1 needs its steer_release."
+            )
+        raise ValueError(
+            "steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none."
+        )
+    release = ReleaseSchedule(
+        onset_seconds=default.onset_seconds if onset_seconds is None else float(onset_seconds),
+        ramp_seconds=default.ramp_seconds if ramp_seconds is None else float(ramp_seconds),
+        hold=default.hold if hold is None else float(hold),
+        exempt=default.exempt,
+    )
+    check_release(release.onset_seconds, release.ramp_seconds, release.hold)
+    return None if release.hold == 1.0 else release
 
 
 def _duration_factor(bundle: SteeringBundle, controls: Mapping[str, float]) -> float:
@@ -180,12 +285,15 @@ class ResolvedControls:
     delta laid out per steered source (flattened; None if no hidden control), the span
     schedule tensor [K, 3 + n_sources*hidden] (start frame, end frame, ramp frames, delta) or None,
     and the character range [start, end) of each schedule row (zonos3.tts.span_follow places
-    the rows by the reading position instead)."""
+    the rows by the reading position instead). With ``release_exempt`` the request-level hidden
+    controls split: the exempt ones stay in ``hidden_delta`` (constant), the others make
+    ``release_delta`` (same layout, None if none; weighted per frame by ``release_weight``)."""
 
     speaker_embedding: torch.Tensor | None
     hidden_delta: torch.Tensor | None
     schedule: torch.Tensor | None
     span_chars: list[tuple[int, int]] | None = None
+    release_delta: torch.Tensor | None = None
 
 
 def check_controls(bundle: SteeringBundle, controls: Mapping[str, float], span_ids: Sequence[str] = ()) -> None:
@@ -209,6 +317,7 @@ def resolve_controls(
     sources: Sequence[int],
     hidden_size: int,
     frames_per_char: float | None = None,
+    release_exempt: Collection[str] | None = None,
 ) -> ResolvedControls:
     controls = {k: float(v) for k, v in (controls or {}).items() if float(v) != 0.0}
     spans = list(spans or [])
@@ -250,7 +359,12 @@ def resolve_controls(
             moved * (torch.linalg.vector_norm(base) / torch.linalg.vector_norm(moved).clamp_min(1e-8))
         ).contiguous()
 
-    hidden = hidden_vector(controls)
+    release = None
+    if release_exempt is None:
+        hidden = hidden_vector(controls)
+    else:
+        hidden = hidden_vector({d: v for d, v in controls.items() if d in release_exempt})
+        release = hidden_vector({d: v for d, v in controls.items() if d not in release_exempt})
 
     schedule, span_chars = None, None
     if spans:
@@ -290,7 +404,33 @@ def resolve_controls(
             chars.append((start, end))
         schedule = torch.stack(rows) if rows else None
         span_chars = chars if rows else None
-    return ResolvedControls(speaker_embedding=embedding, hidden_delta=hidden, schedule=schedule, span_chars=span_chars)
+    return ResolvedControls(
+        speaker_embedding=embedding,
+        hidden_delta=hidden,
+        schedule=schedule,
+        span_chars=span_chars,
+        release_delta=release,
+    )
+
+
+def release_weight(frame: int, onset: int, ramp: int, hold: float) -> float:
+    """Weight of the released controls at generated frame ``frame``: 1 before ``onset``, a linear ramp to ``hold``
+    reaching it ``ramp`` frames after onset (a step at onset for ramp 0), ``hold`` after."""
+    if frame < onset:
+        return 1.0
+    if frame >= onset + ramp:
+        return float(hold)
+    return 1.0 + (float(hold) - 1.0) * (frame - onset) / ramp
+
+
+def released_delta(base: torch.Tensor | None, release_delta: torch.Tensor | None, release, frame: int):
+    """``base`` plus the released controls at generated frame ``frame`` (``release``: (onset frames, ramp frames,
+    hold)); ``base`` unchanged without a released delta."""
+    if release_delta is None:
+        return base
+    w = release_weight(frame, *release)
+    released = release_delta if w == 1.0 else w * release_delta
+    return released if base is None else base + released
 
 
 def schedule_delta(schedule: torch.Tensor | None, frame: int) -> torch.Tensor | None:
@@ -331,7 +471,17 @@ def controls_document(bundle: SteeringBundle, *, speaker_embedding_dim: int | No
         "directions": directions,
         "timing": bundle.timing,
         "ui": bundle.ui,
+        "steer_release": release_document(bundle),
     }
+
+
+def release_document(bundle: SteeringBundle | None) -> dict | None:
+    """The server defaults of steer_hold / steer_onset_seconds / steer_ramp_seconds and the exempt directions (the
+    bundle's ``steer_release``), or None: every request-level control is constant (/v2/controls, /v2/capabilities)."""
+    r = None if bundle is None else bundle.steer_release
+    if r is None:
+        return None
+    return {"onset_seconds": r.onset_seconds, "ramp_seconds": r.ramp_seconds, "hold": r.hold, "exempt": list(r.exempt)}
 
 
 def disabled_controls(bundle: SteeringBundle | None, speaker_id: str | None) -> list[str]:

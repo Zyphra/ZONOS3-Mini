@@ -110,6 +110,17 @@ std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const json
     return out;
 }
 
+std::optional<zonos3_steer_release_frames> resolve_steer_release(const ServerState & s, const json & body) {
+    const double nan = std::nan("");
+    std::optional<zonos3_steer_release_frames> out;
+    std::string err;
+    if (!zonos3_steer_request_release(s.steer_loaded ? &s.steer : nullptr, num(body, "steer_hold", nan),
+                                      num(body, "steer_onset_seconds", nan), num(body, "steer_ramp_seconds", nan),
+                                      ZONOS3_FRAME_RATE, out, err))
+        fail(400, s.steer_loaded ? err : std::string(NO_STEERING) + "; steer_hold below 1 needs its steer_release.");
+    return out;
+}
+
 // R4 (zonos3.languages.normalize).
 std::string resolve_language(const json & body) {
     const std::string given = set(body, "language") ? body["language"].get<std::string>() : "en_us";
@@ -163,9 +174,11 @@ void apply_accent(const ServerState & s, const json & body, GenReq & gr) {
     gr.accent_strength = (float) num(body, "accent_strength", 1.0);
 }
 
-// R10 (zonos3.tts.plan.request_rules' controls): steering-bundle controls and spans -> resolved steering (raw controls
-// move the embedding in place).
+// R10 (zonos3.tts.plan.request_rules' controls): the steer-then-hold schedule, then steering-bundle controls and spans ->
+// resolved steering (raw controls move the embedding in place; with a schedule the request-level hidden controls not
+// exempt from it release).
 void apply_controls(ServerState & s, const json & body, GenReq & gr) {
+    const std::optional<zonos3_steer_release_frames> release = resolve_steer_release(s, body);
     if (!truthy(body, "controls") && !truthy(body, "control_spans")) return;
     if (!s.steer_loaded)
         fail(400, std::string(NO_STEERING) + "; `controls` are unavailable.");
@@ -184,7 +197,8 @@ void apply_controls(ServerState & s, const json & body, GenReq & gr) {
     const double rate = set(body, "control_span_rate") ? body["control_span_rate"].get<double>() : 0.0;
     std::string err;
     if (!zonos3_steer_resolve(s.steer, controls, spans, (int) utf8_length(gr.raw_text), rate,
-                              gr.speaker_mode == "embedding" ? &gr.speaker_embedding : nullptr, gr.steering, err))
+                              gr.speaker_mode == "embedding" ? &gr.speaker_embedding : nullptr, gr.steering, err,
+                              release ? &*release : nullptr))
         fail(400, err);
 }
 
@@ -359,9 +373,10 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
         gr.cfg_scale = (float) speaker_cfg;
         out.cfg_kind = "speaker";
     }
-    // Controls CFG (scheduler._schedule_prefill): a request with a hidden steering delta and a speaker embedding runs
-    // an unconditional twin on the same prompt without the delta; otherwise controls_cfg_scale does nothing.
-    if (controls_cfg != 1.0 && !gr.steering.hidden.empty() && request_embedding(gr)) {
+    // Controls CFG (scheduler._schedule_prefill): a request with a hidden steering delta (constant or released) and a
+    // speaker embedding runs an unconditional twin on the same prompt without the delta; otherwise controls_cfg_scale
+    // does nothing.
+    if (controls_cfg != 1.0 && (!gr.steering.hidden.empty() || !gr.steering.release.empty()) && request_embedding(gr)) {
         if (s.batch_slots < 2) fail(400, "controls CFG needs --batch >= 2 (the CFG twin takes a second slot)");
         gr.cfg_scale = (float) controls_cfg;
         gr.twin_steered = false;

@@ -18,12 +18,12 @@ import {
 } from '../edit/words';
 import { CONTEXT_CAPACITY, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING } from '../generation';
 import { NCB, type Prompt } from '../prompt';
-import { NO_STEERING, resolveControls, STEER_FRAMES_PER_CHAR, textChars } from '../request/steer';
+import { NO_STEERING, resolveControls, STEER_FRAMES_PER_CHAR, textChars, type ReleaseFrames } from '../request/steer';
 import { defaultSampling, type Sampling } from '../sampler';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { editMaxSpans } from './capabilities';
 import type { EditModels, Engine } from './engine';
-import { as400, resolveConditionBuckets, resolveDecoder, resolveLanguage } from './generate';
+import { as400, resolveConditionBuckets, resolveDecoder, resolveLanguage, resolveRelease } from './generate';
 import { bool, fail, HttpError, isSet, num, parseBody, str, type EngineRequest, type Sink, sendJson } from './http';
 
 type Body = Record<string, unknown>;
@@ -102,10 +102,12 @@ export async function alignRoute(e: Engine, req: EngineRequest, sink: Sink): Pro
   sendJson(sink, { text, duration, words: publicWords(words) });
 }
 
-/** EditEngine.check: the target's pronunciation groups (this checkpoint has no phoneme tokens), every region's doses
- *  against the steering bundle and the condition buckets / values. Returns the buckets and the dosed ids that move
- *  the speaker embedding. */
-function checkEdit(e: Engine, body: Body, targetText: string, doses: Doses[] | null): { buckets: number[]; raw: string[] } {
+/** EditEngine.check: the request's steer-then-hold fields, the target's pronunciation groups (this checkpoint has no
+ *  phoneme tokens), every region's doses against the steering bundle and the condition buckets / values. Returns the
+ *  release schedule, the buckets and the dosed ids that move the speaker embedding. */
+function checkEdit(e: Engine, body: Body, targetText: string, doses: Doses[] | null):
+    { release: ReleaseFrames | null; buckets: number[]; raw: string[] } {
+  const release = resolveRelease(e, body);
   if (/[\uE002-\uE00A]/.test(targetText))
     fail(400, 'Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text');
   if (targetText.includes('\uE000') || targetText.includes('\uE001'))
@@ -120,7 +122,7 @@ function checkEdit(e: Engine, body: Body, targetText: string, doses: Doses[] | n
       for (const id of Object.keys(region)) if (!steer.dirs[steer.index.get(id)!].hidden) raw.add(id);
     }
   }
-  return { buckets: resolveConditionBuckets(e, body), raw: [...raw].sort() };
+  return { release, buckets: resolveConditionBuckets(e, body), raw: [...raw].sort() };
 }
 
 /** The request's sampling (registry defaults), with the take's seed. */
@@ -165,7 +167,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
   const speakerRow = e.hp.speakerDim > 0;
   const useRow = isSet(body, 'speaker_embedding') ? bool(body, 'speaker_embedding')! : speakerRow;
   if (useRow && !speakerRow) fail(400, 'speaker_embedding needs a checkpoint with a speaker-embedding row.');
-  const { buckets, raw } = checkEdit(e, body, targetText, doses);
+  const { release, buckets, raw } = checkEdit(e, body, targetText, doses);
   if (raw.length && !useRow)
     fail(400, `Controls ${raw.join(', ')} move the speaker embedding and need the speaker row (speaker_embedding true ` +
       'or unset, on a speaker-embedding checkpoint).');
@@ -245,15 +247,16 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
       const relative = windowSpans(window, spans);
       const windowFills: Int32Array[] = [];
       for (const region of window.regions) {
-        // The region's steering: its speaker-row embedding moved by the raw doses and the hidden delta of the others.
+        // The region's steering: its speaker-row embedding moved by the raw doses and the hidden delta of the others
+        // (with the request's steer-then-hold schedule, counted from the fill's first generated frame).
         const embedding = speakerEmbedding ? Float32Array.from(speakerEmbedding) : null;
         const controls = regionControls[region];
-        const steer = controls && Object.keys(controls).length
-          ? as400(() => resolveControls(e.steer!, controls, [], textChars(targetText), STEER_FRAMES_PER_CHAR, embedding)).hidden
+        const steering = controls && Object.keys(controls).length
+          ? as400(() => resolveControls(e.steer!, controls, [], textChars(targetText), STEER_FRAMES_PER_CHAR, embedding, release))
           : null;
         const job: FillJob = {
           text: window.text, sampling: { ...sampling, seed: (baseSeed + k) >>> 0 }, maxFrames: maxTokens,
-          minFrames: minFrames[region], buckets, speakerEmbedding: embedding, steer, windowCodes, spans: relative,
+          minFrames: minFrames[region], buckets, speakerEmbedding: embedding, steering, windowCodes, spans: relative,
           fills: [...windowFills],
         };
         let prompt: Prompt;

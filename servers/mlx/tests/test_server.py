@@ -554,12 +554,13 @@ def test_cfg_needs_two_slots(files):
 
 VOICE_ID = "default_" + hashlib.sha1(b"v.npy").hexdigest()[:16]  # the default voice v.npy
 CALIBRATION = {"default": {"valence": 0.5}, "by_speaker": {VOICE_ID: {"valence-": 0.0}}, "global_default": 1.0}
+STEER_RELEASE = {"onset_seconds": 1.0, "ramp_seconds": 0.5, "hold": 1.0, "exempt": []}
 
 
 @pytest.fixture(scope="module")
 def steered(files, tmp_path_factory):
-    """A server with a steer.gguf (tools/convert_gguf.py steer) of a raw set and a calibrated hidden set, and one
-    default voice; yields (client, bundle JSON)."""
+    """A server with a steer.gguf (tools/convert_gguf.py steer) of a raw set and a calibrated hidden set, steer then hold
+    defaults at hold 1 (constant unless a request asks), and one default voice; yields (client, bundle JSON)."""
     import convert_gguf
 
     root = tmp_path_factory.mktemp("steer")
@@ -582,7 +583,9 @@ def steered(files, tmp_path_factory):
         )
     (root / "mood" / "calibration.json").write_text(json.dumps(CALIBRATION))
     bundle = root / "bundle.json"
-    bundle.write_text(json.dumps({"name": "tiny", "sets": {"who": "who", "mood": "mood"}, "ui": {}}))
+    bundle.write_text(
+        json.dumps({"name": "tiny", "sets": {"who": "who", "mood": "mood"}, "ui": {}, "steer_release": STEER_RELEASE})
+    )
     convert_gguf.main(["steer", str(bundle), "-o", str(root / "steer.gguf")])
     (root / "voices").mkdir()
     np.save(root / "voices" / "v.npy", np.ones(192, np.float32))
@@ -625,3 +628,24 @@ def test_controls_cfg_twins_the_prompt_without_the_hidden_delta(steered):
     assert plan_request(engine, {**body, "controls": {"who.gender": 1.0}}, speaker).twin is None  # no hidden delta
     with pytest.raises(ValueError):
         plan_request(engine, {**body, "speaker_cfg_scale": 1.5}, speaker)
+
+
+def test_steer_release_comes_from_the_steer_gguf(steered):
+    client, bundle = steered
+    engine = client.app.state.zonos3.engine
+    assert engine.steer_bundle.steer_release == load_bundle(bundle).steer_release
+    assert client.get("/v2/capabilities").json()["steer_release"] == STEER_RELEASE
+    assert client.get("/v2/controls").json()["steer_release"] == STEER_RELEASE
+    speaker = Speaker("embedding", torch.ones(192))
+    body = {"text": "hi", "speaker_mode": "embedding", "controls": {"mood.valence": 1.0}}
+    constant = plan_request(engine, body, speaker)  # the bundle's hold 1: the constant push
+    assert constant.release is None and constant.release_delta is None and constant.hidden_delta is not None
+    held = plan_request(engine, {**body, "steer_hold": 0.5}, speaker)
+    fr = engine.frame_rate
+    assert held.release == (round(1.0 * fr), round(0.5 * fr), 0.5) and held.hidden_delta is None
+    assert torch.equal(held.release_delta, constant.hidden_delta)
+    r = client.post("/v2/generate", json={**body, "speaker_embedding_id": VOICE_ID, "steer_hold": 2.0})
+    assert r.status_code == 422
+    ok = {**body, "speaker_embedding_id": VOICE_ID, "stream": False, "max_tokens": 24, "seed": 3}
+    r = client.post("/v2/generate", json={**ok, "steer_hold": 0.0, "steer_onset_seconds": 0.0})
+    assert r.status_code == 200 and len(r.content) > 0

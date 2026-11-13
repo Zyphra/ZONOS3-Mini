@@ -14,7 +14,7 @@ from zonos3.server.capabilities import (
 )
 from zonos3.server.schemas import PhonemizeRequest
 from zonos3.tts.edit_runtime import EditModel
-from zonos3.tts.steering import controls_document, no_steering_message
+from zonos3.tts.steering import controls_document, no_steering_message, release_document
 
 from zonos3_mlx.server.generate import PREFIX_STREAM
 from zonos3_mlx.server.state import ServerState
@@ -93,6 +93,7 @@ def facts(state: ServerState) -> CapabilityFacts:
         edit_transcribe=state.asr.installed,
         lexicon=state.lexicon,
         projects=state.projects.capabilities() if state.projects is not None else {"enabled": False},
+        steer_release=release_document(engine.steer_bundle),
     )
 
 

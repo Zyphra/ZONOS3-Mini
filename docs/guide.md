@@ -11,6 +11,7 @@ Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plai
 - [Pronunciation input (phoneme tokens)](#pronunciation-input-phoneme-tokens)
 - [Literal angle-bracket text](#literal-angle-bracket-text)
 - [Steering controls](#steering-controls)
+  - [Steer then hold](#steer-then-hold)
   - [Hidden-space steering](#hidden-space-steering)
   - [Set calibration](#set-calibration)
   - [Accent directions](#accent-directions)
@@ -486,6 +487,35 @@ same prompt and speaker, its generated frames unsteered) and mixes
 `speaker_mode: embedding` requests with a speaker and a hidden-space control;
 `controls_cfg_scale` other than 1 is refused (400) next to `speaker_cfg_scale`
 other than 1 or `laci` (one twin per request).
+
+### Steer then hold
+
+A constant hidden-space push integrates over a long line: the model copies the style of the speech it has already
+generated, so stacked liveliness, valence and arousal can climb in pitch and loudness towards shouting. The bundle's
+`steer_release` block (`{onset_seconds, ramp_seconds, hold, exempt}`) makes the request-level hidden `controls` run at
+full dose for `onset_seconds` of generated speech, ramp linearly to `hold` × dose over `ramp_seconds`, then stay at
+`hold`. At generated frame f (codec frames, 15 per second; a LACI continuation counts its history, an edit fill its
+own first frame) the weight is 1 before the onset, `hold` from onset + ramp on, `1 − (1 − hold)·(f − onset)/ramp` in
+between (ramp 0 is a step); both CFG branches of a steered twin get the same weight. The `exempt` directions (pace:
+span placement and edit lengths assume it), `control_spans`, raw (speaker-embedding) directions and server-side
+deltas (a LACI take's tempo bucket) stay constant.
+
+Requests override the defaults with `steer_hold` (0–1), `steer_onset_seconds` and `steer_ramp_seconds` (0–600 s) on
+`/v2/generate`, `/v1/audio/speech` and `/v2/edit` (every region's fill); `steer_hold: 1` is the constant push of
+before, bit for bit, and so is a bundle without the block. A `steer_hold` below 1 on a server whose bundle has no
+`steer_release` (or without a bundle) is a 400. `GET /v2/capabilities` and `GET /v2/controls` report the defaults as
+`steer_release` (null without them).
+
+The shipped defaults (onset 4 s, ramp 1 s, hold 0.35; `delivery.tempo` and `delivery.whisper` exempt) were measured
+on the release LM with the x10 bundle. On three 25–32 s passages (Thaddeus and Rupert, 4 seeds each) a stacked voice
+design (raw identity / pitch / texture / room controls plus `delivery.conversational` 3, `expressive.expressive` 4,
+`mood.valence` 2, `mood.arousal` 2) held constant climbed in 19 of 24 takes (a 4 s window ≥ 6 semitones above the
+first 8 s; neutral 0/24), +7.2 st and +7.0 dB over the neutral take after the first 5 s. Holds 0.25 / 0.35 / 0.5
+climbed in 0 / 0 / 2 takes (+0.2 / +0.6 / +1.9 st, +4.9 / +5.2 / +5.5 dB), with WER and identity unchanged; the
+default is the largest hold with neutral's climb count. A hidden direction stays constant when none of its
+single-direction tests raises loudness or median F0 and it loses its effect once released (32 short lines, 4 voices):
+the whisper kept only 43% of its voicing drop after the onset without raising level or pitch; `emotions.sad` raises
+median F0 on the x10 sets and the Mandarin accent's hidden part keeps its effect, so both release.
 
 ### Hidden-space steering
 

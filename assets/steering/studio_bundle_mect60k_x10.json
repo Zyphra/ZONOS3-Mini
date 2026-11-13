@@ -274,6 +274,15 @@
    "faster"
   ]
  },
+ "steer_release": {
+  "onset_seconds": 4.0,
+  "ramp_seconds": 1.0,
+  "hold": 0.35,
+  "exempt": [
+   "delivery.tempo",
+   "delivery.whisper"
+  ]
+ },
  "ui": {
   "groups": [
    {

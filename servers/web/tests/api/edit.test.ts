@@ -2,6 +2,7 @@
 // the speech-edit backbone emits code 7 then span-end, the aligner spreads the words evenly over the clip.
 import { describe, expect, it } from 'vitest';
 import { validate } from '../../src/api/validate';
+import { resolveControls } from '../../src/request/steer';
 import { bareApi, call, haveEditModels, stubApi } from './stub';
 
 const SR = 44100;
@@ -142,6 +143,40 @@ describe.skipIf(!haveEditModels)('speech editing without speech recognition', ()
     expect(edit!.backbone.prefills[1].cond.speakerRow).toBe(-1);
     expect(ids[(rows - 1) * W + 10]).toBe(8196 + 2);
     expect(Array.from(ids).filter((v, i) => i % W < 10 && v === 4098).length).toBeGreaterThan(0);
+  });
+
+  it('steer then hold counts each fill from its first frame; hold 1 keeps the constant delta', async () => {
+    const { api, engine, edit } = stubApi();
+    const steer = engine.steer!;
+    const kept = 'delivery.tempo', released = steer.dirs.find(d => d.hidden && d.id !== kept)!.id;
+    const body = {
+      audio_base64: b64('wav'), target_text: 'Something else.', spans: [[0.2, 0.6], [1.2, 1.5]], seed: 9,
+      speaker_embedding: false, controls: { [kept]: 1, [released]: 1 },
+      steer_hold: 0.5, steer_onset_seconds: 0.2, steer_ramp_seconds: 0,
+    };
+    const none = await call(api, 'POST', '/v2/edit', body, {}, clip(2));
+    expect(none.status).toBe(400);
+    expect(none.json()).toEqual({ detail: "steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none." });
+    expect(edit!.backbone.prefills).toEqual([]);
+
+    steer.steerRelease = { onsetSeconds: 4, rampSeconds: 1, hold: 0.25, exempt: [kept] };
+    expect((await call(api, 'POST', '/v2/edit', body, {}, clip(2))).status).toBe(200);
+    expect(edit!.backbone.prefills).toHaveLength(2);
+    const c = resolveControls(steer, { [kept]: 1 }, [], 0, 0, null).hidden!;
+    const r = resolveControls(steer, { [released]: 1 }, [], 0, 0, null).hidden!;
+    let i = 0;
+    for (let k = 1; k < r.length; k++) if (Math.abs(r[k]) > Math.abs(r[i])) i = k;
+    // onset 3 frames, a step to 0.5: frames 1 and 2 of each fill at full dose, the rest held
+    const ws = edit!.backbone.steered.map(s => +((s![i] - c[i]) / r[i]).toFixed(3));
+    const second = ws.indexOf(1, 2);
+    expect(second).toBeGreaterThan(3);
+    expect(ws).toEqual([1, 1, ...new Array(second - 2).fill(0.5), 1, 1, ...new Array(ws.length - second - 2).fill(0.5)]);
+
+    edit!.backbone.steered.length = 0;
+    expect((await call(api, 'POST', '/v2/edit', { ...body, steer_hold: 1 }, {}, clip(2))).status).toBe(200);
+    const constant = resolveControls(steer, body.controls, [], 0, 0, null).hidden!;
+    expect(edit!.backbone.steered.length).toBeGreaterThan(0);
+    expect(edit!.backbone.steered.every(s => s !== null && s.every((v, j) => Object.is(v, constant[j])))).toBe(true);
   });
 
   it('decoder picks the decoder of the edited clip; an unknown id is a 400 before any model work', async () => {

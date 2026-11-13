@@ -272,6 +272,8 @@ def tokenize_worker(
                             speaker_token_position=speaker_token_position,
                             steering_delta=msg.steering_delta,
                             steer_schedule=msg.steer_schedule,
+                            steer_release_delta=msg.steer_release_delta,
+                            steer_release=msg.steer_release,
                             steer_follow=msg.language if follow_tokens is not None else None,
                             steer_follow_tokens=follow_tokens,
                             steer_follow_gate=msg.steer_follow_gate if follow_tokens is not None else None,

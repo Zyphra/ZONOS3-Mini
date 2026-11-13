@@ -126,4 +126,22 @@ describe('request rules', () => {
     expect(bad.status).toBe(400);
     expect(bad.json()).toEqual({ detail: 'condition_buckets[speaking_rate] must be in [0, 29] or 30 (= unknown)' });
   });
+
+  it('R10: steer_hold below 1 needs a bundle with steer_release (refused even without controls); 1 or unset is constant', async () => {
+    const generate = (fields: Record<string, unknown>) =>
+      call(api, 'POST', '/v2/generate', { text: 'Hello there.', stream: false, ...fields });
+    const refused = await generate({ steer_hold: 0.5 });
+    expect(refused.status).toBe(400);
+    expect(refused.json()).toEqual({
+      detail: 'This server has no steering bundle (place steer.gguf next to the backbone or pass --steer); ' +
+        'steer_hold below 1 needs its steer_release.',
+    });
+    for (const ok of [{ steer_hold: 1 }, { steer_hold: null }, { steer_onset_seconds: 2, steer_ramp_seconds: 0 }])
+      expect((await generate(ok)).status, JSON.stringify(ok)).toBe(200);
+    for (const bad of [{ steer_hold: 1.5 }, { steer_hold: -0.1 }, { steer_onset_seconds: -1 }, { steer_ramp_seconds: 601 },
+      { steer_hold: '0.5' }])
+      expect((await generate(bad)).status, JSON.stringify(bad)).toBe(422);
+    const caps = await call(api, 'GET', '/v2/capabilities');
+    expect(caps.json().steer_release).toBeNull();
+  });
 });

@@ -237,10 +237,11 @@ json call_encode(ServerState & s, const json & c) {
     return {{"codes", rows_json(encode_audio_codes(s, pcm, (int) std::ceil(max_seconds)), (int) s.model.hp.n_codebooks)}};
 }
 
-// EditEngine.check: the target's text markers (pronunciation groups; no start or pause markers), every region's doses
-// against the steering bundle and the condition buckets / values; the dosed ids whose direction is raw (moves the
-// speaker embedding), sorted.
+// EditEngine.check: the request's steer-then-hold fields, the target's text markers (pronunciation groups; no start or
+// pause markers), every region's doses against the steering bundle and the condition buckets / values; the dosed ids
+// whose direction is raw (moves the speaker embedding), sorted.
 json call_check(const ServerState & s, const json & c) {
+    resolve_steer_release(s, c);
     const std::string markers =
         zonos3_check_text_markers(s.model.tok, c.at("target_text").get<std::string>(), /*edit=*/true);
     if (!markers.empty()) fail(400, markers);
@@ -274,7 +275,9 @@ json call_fill(ServerState & s, const json & c) {
     const std::vector<int32_t> condition_ids = resolve_condition_buckets(s, c);
     std::vector<float> speaker_embedding;
     if (set(c, "speaker_embedding")) speaker_embedding = c["speaker_embedding"].get<std::vector<float>>();
-    // The region's steering: its speaker-row embedding moved by the raw doses and the hidden delta of the others.
+    // The region's steering: its speaker-row embedding moved by the raw doses and the hidden delta of the others (with
+    // the request's steer-then-hold schedule, counted from the fill's first generated frame).
+    const std::optional<zonos3_steer_release_frames> release = resolve_steer_release(s, c);
     zonos3_steering steering;
     if (set(c, "controls")) {
         if (!s.steer_loaded)
@@ -283,7 +286,7 @@ json call_fill(ServerState & s, const json & c) {
         if (!zonos3_steer_resolve(s.steer, c["controls"].get<std::map<std::string, double>>(), {},
                                   (int) utf8_length(c.value("controls_text", std::string())),
                                   ZONOS3_STEER_FRAMES_PER_CHAR, speaker_embedding.empty() ? nullptr : &speaker_embedding,
-                                  steering, err))
+                                  steering, err, release ? &*release : nullptr))
             fail(400, err);
     }
     const json & sampling = c.at("sampling");

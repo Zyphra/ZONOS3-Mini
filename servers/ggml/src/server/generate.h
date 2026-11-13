@@ -90,6 +90,10 @@ Decoder * resolve_decoder(const ServerState & s, const nlohmann::json & body);
 // R3 zonos3.tts.plan.resolve_condition_buckets (condition_buckets / condition_values): one bucket per condition row,
 // hp.cond_bucket_counts[i] = unknown.
 std::vector<int32_t> resolve_condition_buckets(const ServerState & s, const nlohmann::json & body);
+// R10's first step (zonos3.tts.steering.request_release): the request's steer_hold / steer_onset_seconds /
+// steer_ramp_seconds over the bundle's steer_release, in codec frames; nullopt = constant controls (hold 1). A hold below 1
+// without the bundle key is a 400, with or without `controls`.
+std::optional<zonos3_steer_release_frames> resolve_steer_release(const ServerState & s, const nlohmann::json & body);
 // The tokenizer's TTSTextNormalizer step (the Rust normalizer of third_party/zyphra-textnorm, in process): `text` unchanged unless
 // requested.
 std::string normalize_text(ServerState & s, const std::string & text, const std::string & language, bool requested);

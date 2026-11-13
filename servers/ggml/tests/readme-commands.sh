@@ -294,6 +294,13 @@ pass "unknown control -> 400"
 body="$(curl -sS -w '\n%{http_code}' "$BASE/v2/generate" -d '{"text":"x","controls":{"who.gender":1}}')"
 [ "${body##*$'\n'}" = 400 ] || fail "raw control without a speaker must be a 400"
 pass "raw control without speaker -> 400"
+# steer then hold: dummy-steer.gguf has no steer_release, so both documents report null and a hold below 1 is a 400
+echo "$caps" | grep -Eq '"steer_release": ?null' || fail "/v2/capabilities steer_release must be null without the bundle key"
+echo "$controls" | grep -Eq '"steer_release": ?null' || fail "/v2/controls steer_release must be null without the bundle key"
+body="$(curl -sS -w '\n%{http_code}' "$BASE/v2/generate" -d '{"text":"x","steer_hold":0.5}')"
+[ "${body##*$'\n'}" = 400 ] && echo "$body" | grep -q "needs a steering bundle with steer_release; this server's bundle has none" \
+  || fail "steer_hold below 1 without the bundle key must be a 400"
+pass "steer_release null; steer_hold < 1 without it -> 400"
 SPK_ID="$(curl -fsS -H 'X-TTS-Session-ID: ci' "$BASE/v2/speakers" \
   -d "{\"speaker_embedding_base64\":\"$EMB_B64\",\"speaker_embedding_name\":\"e.npy\",\"label\":\"ci\"}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
 [ -n "$SPK_ID" ] || fail "POST /v2/speakers returned no id"

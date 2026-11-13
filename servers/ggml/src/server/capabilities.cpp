@@ -107,6 +107,9 @@ json capabilities(const ServerState & s) {
         {"speaker_embedding_blend", embedding},
         {"default_voices_enabled", !s.default_voice_dir.empty()},
         {"projects", s.projects ? s.projects->capabilities() : json{{"enabled", false}}},
+        // Steer then hold: the defaults of steer_hold / steer_onset_seconds / steer_ramp_seconds and the directions that
+        // stay constant (the bundle's steer_release); null = request-level controls are constant.
+        {"steer_release", json::parse(zonos3_steer_release_json(s.steer_loaded ? &s.steer : nullptr))},
     };
     for (const json & part : {edit_capabilities(s), phoneme_capabilities(s)})
         for (auto it = part.begin(); it != part.end(); ++it) caps[it.key()] = it.value();

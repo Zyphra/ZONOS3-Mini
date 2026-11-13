@@ -44,7 +44,7 @@ static void usage(const char * a0) {
             "  --validate <input_ids.npy> <out_dir> [--layers N]\n"
             "  --generate <input_ids.npy> <out.{npy,wav}>\n"
             "  --tts <text> <out.{npy,wav}> | --build-prompt <text> <out_ids.npy>\n"
-            "  --request <req.json> --build-prompt <ids.npy> [--steer F]\n"
+            "  --request <req.json> --build-prompt <ids.npy> [--steer F] [--dump-steer <steer.npy> [--steer-frames N]]\n"
             "                      [--accent-adapters F] (accents.gguf auto-detected next to the backbone)\n"
             "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
             "      ids.twin.npy + ids.twin.cond.json for a speaker / controls CFG twin); no generation\n"
@@ -66,6 +66,8 @@ static void usage(const char * a0) {
             "  --steer <steer.gguf> steering directions (auto-detected next to backbone when a control flag is given; --tts only)\n"
             "  --control ID=DOSE (repeatable) --control-span START:END:ID=DOSE[,ID=DOSE...] (repeatable, hidden-space controls over\n"
             "    code-point range [START,END) of the --tts text) --control-span-rate R (frames per character, default 1)\n"
+            "  --steer-hold H --steer-onset S --steer-ramp S  steer then hold: the --control hidden doses at full dose for S\n"
+            "    seconds, a linear ramp over S seconds to H x dose (default: the steer.gguf's steer_release, else constant)\n"
             "  --zac <zac.gguf> decodes output (default zac-keep2.gguf next to the backbone; zac.gguf = full-size decoder);\n"
             "    companions auto-discover next to backbone\n"
             "  --max N --seed N --greedy --recompute\n"
@@ -545,15 +547,20 @@ static int phonemize_main(int argc, char ** argv) {
 // the same validation, speaker, condition, text normalization and CFG-twin rules as POST /v2/generate) without
 // generating. Writes ids.npy (float32 [rows, n_codebooks+1]) + ids.cond.json and, for a CFG twin, ids.twin.npy +
 // ids.twin.cond.json -- the files of `python -m zonos3.reference --request req.json --dump-prompt ids.npy`.
+// --dump-steer steer.npy [--steer-frames N]: the hidden steering delta of generated frames 0..N-1 (float32
+// [N, sources * hidden], zeros where none; default N 120), written when the request steers hidden sources.
 static int request_prompt_main(int argc, char ** argv) {
     const std::string path = argv[1];
-    std::string request_path, out, zac_encoder, ssl_teacher, spk_encoder, steer_path;
+    std::string request_path, out, zac_encoder, ssl_teacher, spk_encoder, steer_path, dump_steer;
+    int steer_frames = 120;
     zs::ServerState s;
     s.default_voice_dir.clear(); // speaker ids need the server's voices
     for (int i = 2; i < argc; ++i) {
         const bool v = i + 1 < argc;
         if (!strcmp(argv[i], "--request") && v) request_path = argv[++i];
         else if (!strcmp(argv[i], "--build-prompt") && v) out = argv[++i];
+        else if (!strcmp(argv[i], "--dump-steer") && v) dump_steer = argv[++i];
+        else if (!strcmp(argv[i], "--steer-frames") && v) steer_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--gpu")) s.use_gpu = true;
         else if (!strcmp(argv[i], "--cpu")) s.use_gpu = false;
         else if (!strcmp(argv[i], "--spk-encoder") && v) spk_encoder = argv[++i];
@@ -635,6 +642,17 @@ static int request_prompt_main(int argc, char ** argv) {
     printf("build-prompt: %d rows x %d -> %s", plan.prompt.n_rows, (int) W, out.c_str());
     if (!twin_path.empty()) printf(" (+ %s twin -> %s)", plan.cfg_kind.c_str(), twin_path.c_str());
     printf("\n");
+    const zonos3_steering & st = plan.gr.steering;
+    if (saved && !dump_steer.empty() && st.hidden_active() && steer_frames > 0) {
+        const size_t n = st.sources.size() * (size_t) st.hidden_size;
+        std::vector<float> rows((size_t) steer_frames * n, 0.0f), d;
+        for (int f = 0; f < steer_frames; ++f) {
+            st.delta_at(f, d);
+            if (d.size() == n) std::copy(d.begin(), d.end(), rows.begin() + (size_t) f * n);
+        }
+        saved = npy::save_f32(dump_steer, rows.data(), {(int64_t) steer_frames, (int64_t) n});
+        printf("steer: %d frames x %zu -> %s\n", steer_frames, n, dump_steer.c_str());
+    }
     return saved ? 0 : 1;
 }
 
@@ -658,7 +676,7 @@ int main(int argc, char ** argv) {
     double mask_mass_eps = -1.0;
     int n_layer_limit = -1, max_frames = 450, n_slots = 1;
     bool use_kv = true;
-    std::string steer_path, span_rate_arg;
+    std::string steer_path, span_rate_arg, hold_arg, onset_arg, ramp_arg;
     std::vector<std::string> control_args, span_args;
     zonos3_sampling sp;
     cli_extras extras;
@@ -716,6 +734,9 @@ int main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--control") && i + 1 < argc) control_args.push_back(argv[++i]);
         else if (!strcmp(argv[i], "--control-span") && i + 1 < argc) span_args.push_back(argv[++i]);
         else if (!strcmp(argv[i], "--control-span-rate") && i + 1 < argc) span_rate_arg = argv[++i];
+        else if (!strcmp(argv[i], "--steer-hold") && i + 1 < argc) hold_arg = argv[++i];
+        else if (!strcmp(argv[i], "--steer-onset") && i + 1 < argc) onset_arg = argv[++i];
+        else if (!strcmp(argv[i], "--steer-ramp") && i + 1 < argc) ramp_arg = argv[++i];
         else if (!strcmp(argv[i], "--dump-ids") && i + 1 < argc) dump_ids_path = argv[++i];
         else if (!strcmp(argv[i], "--probe-heads") && i + 1 < argc) extras.heads_path = argv[++i];
         else if (!strcmp(argv[i], "--probe-window") && i + 1 < argc) window_args.push_back(argv[++i]);
@@ -869,10 +890,23 @@ int main(int argc, char ** argv) {
     std::map<std::string, double> controls;
     std::vector<zonos3_control_span> control_spans;
     double span_rate = 0.0;
-    if ((!steer_path.empty() || !control_args.empty() || !span_args.empty() || !span_rate_arg.empty()) && !do_tts) {
-        fprintf(stderr, "error: --steer, --control, --control-span and --control-span-rate require --tts\n");
+    if ((!steer_path.empty() || !control_args.empty() || !span_args.empty() || !span_rate_arg.empty() ||
+         !hold_arg.empty() || !onset_arg.empty() || !ramp_arg.empty()) && !do_tts) {
+        fprintf(stderr, "error: --steer, --control, --control-span, --control-span-rate and --steer-hold/-onset/-ramp require --tts\n");
         return 1;
     }
+    // Steer then hold: NaN = the bundle's default.
+    double release_hold = std::nan(""), release_onset = std::nan(""), release_ramp = std::nan("");
+    auto parse_release = [](const std::string & arg, double max, const char * name, double & out) {
+        if (arg.empty()) return true;
+        if (parse_finite(arg.c_str(), out) && out >= 0.0 && out <= max) return true;
+        fprintf(stderr, "error: %s must be a number in [0, %g]\n", name, max);
+        return false;
+    };
+    if (!parse_release(hold_arg, 1.0, "--steer-hold", release_hold) ||
+        !parse_release(onset_arg, 600.0, "--steer-onset", release_onset) ||
+        !parse_release(ramp_arg, 600.0, "--steer-ramp", release_ramp))
+        return 1;
     for (const auto & a : control_args) {
         const size_t eq = a.rfind('=');
         double dose = 0;
@@ -1081,13 +1115,18 @@ int main(int argc, char ** argv) {
     const bool use_reference = !reference_path.empty() || (clone && !embed_mode);
     const bool use_embedding = !speaker_embedding_path.empty() || embed_mode;
     zonos3_steering steering;
-    if (!steer_path.empty()) {
+    {
         zonos3_steer_bundle bundle;
         std::string err;
-        if (!zonos3_steer_load(bundle, steer_path.c_str(), model, err) ||
-            !zonos3_steer_resolve(bundle, controls, control_spans, (int) utf8_length(text), span_rate,
-                                  use_embedding ? &speaker_embedding : nullptr, steering, err)) {
-            fprintf(stderr, "steering: %s\n", err.c_str());
+        std::optional<zonos3_steer_release_frames> release;
+        const bool loaded = !steer_path.empty() && zonos3_steer_load(bundle, steer_path.c_str(), model, err);
+        if ((!steer_path.empty() && !loaded) ||
+            !zonos3_steer_request_release(loaded ? &bundle : nullptr, release_hold, release_onset, release_ramp,
+                                          ZONOS3_FRAME_RATE, release, err) ||
+            (loaded && !zonos3_steer_resolve(bundle, controls, control_spans, (int) utf8_length(text), span_rate,
+                                             use_embedding ? &speaker_embedding : nullptr, steering, err,
+                                             release ? &*release : nullptr))) {
+            fprintf(stderr, "steering: %s\n", err == "no-bundle" ? "--steer-hold below 1 needs a steer.gguf with steer_release" : err.c_str());
             zonos3_model_free(model);
             return 1;
         }

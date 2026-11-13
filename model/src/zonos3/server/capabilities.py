@@ -48,6 +48,7 @@ class CapabilityFacts:
     edit_transcribe: bool  # the ASR worker is installed
     lexicon: Any  # zonos3.tts.phonemes.PhonemeLexicon, or None
     projects: dict  # zonos3.server.projects.ProjectStore.capabilities(), or {"enabled": False}
+    steer_release: dict | None  # zonos3.tts.steering.release_document of the steering bundle
 
 
 def condition_spec(
@@ -212,6 +213,9 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         **text_marker_capabilities(f.text_tokenizer_spec),
         # server-side studio projects (/v2/projects, /v2/media; --studio-projects-dir)
         "projects": f.projects,
+        # request fields steer_hold / steer_onset_seconds / steer_ramp_seconds: their server defaults and the directions
+        # that stay constant (the bundle's steer_release); null = request-level controls are constant
+        "steer_release": f.steer_release,
     }
 
 

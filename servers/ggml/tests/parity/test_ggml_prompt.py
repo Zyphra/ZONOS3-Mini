@@ -3,7 +3,9 @@
 model/tests/fixtures/prompt_requests.json whose ``requires`` the loaded backbone meets. Both sides load the steering
 bundle ``assets/steering/studio_bundle_mect60k_x10.json`` (ggml: its ``convert_gguf.py steer`` GGUF) for the ``controls`` entries.
 
-Rows (and a CFG twin's rows) must be identical; the ``.cond.json`` sidecars equal, speaker embeddings within 1e-6.
+Rows (and a CFG twin's rows) must be identical; the ``.cond.json`` sidecars equal, speaker embeddings within 1e-6. The
+hidden steering delta of the first ``STEER_FRAMES`` generated frames (``--dump-steer``: constant, steer-then-hold and
+span deltas) must match ``zonos3.reference.synth.steer_fn`` within 1e-6.
 
 Refusals: the CLI refuses every request of model/tests/fixtures/request_errors.json whose ``requires`` the backbone GGUF
 meets (``conditions``: it has condition rows; ``no_phoneme_tokens`` / ``no_start_token`` / ``no_pause_tokens``: its text
@@ -53,6 +55,7 @@ BACKBONES = {
 BUNDLE = REPO / "assets" / "steering" / "studio_bundle_mect60k_x10.json"
 ENTRIES = json.loads(FIXTURES.read_text())
 ERRORS = json.loads(ERROR_FIXTURES.read_text())
+STEER_FRAMES = 120  # 8 s at 15 frames/s: past the onset and ramp of every fixture's steer-then-hold schedule
 
 
 @pytest.fixture(scope="module", params=list(BACKBONES))
@@ -124,7 +127,7 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
     if missing:
         pytest.skip(f"the loaded model / assets lack {sorted(missing)}")
     from zonos3.reference.__main__ import _dump
-    from zonos3.reference.synth import plan_prompt
+    from zonos3.reference.synth import plan_prompt, steer_fn
 
     request = tmp_path / "req.json"
     request.write_text(json.dumps(entry["request"]))
@@ -132,6 +135,7 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
     if not exe.exists():
         pytest.fail(f"{exe} is not built")
     ggml_ids = tmp_path / "ggml.npy"
+    ggml_steer = tmp_path / "ggml.steer.npy"
     steer_flags = ["--steer", str(steer)] if steer is not None else []
     run = subprocess.run(
         [
@@ -141,6 +145,10 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
             str(request),
             "--build-prompt",
             str(ggml_ids),
+            "--dump-steer",
+            str(ggml_steer),
+            "--steer-frames",
+            str(STEER_FRAMES),
             *steer_flags,
         ],
         capture_output=True,
@@ -161,6 +169,18 @@ def test_prompt_parity(entry, reference, ggml_build, tmp_path):
         ref_twin = tmp_path / "ref.twin.npy"
         _dump(ref_twin, plan.twin.input_ids, plan.cond_json(plan.twin))
         _assert_same(ggml_twin, ref_twin, f"{entry['name']} ({plan.cfg_kind} twin)")
+
+    steer_at = steer_fn(plan, None)
+    deltas = [None if steer_at is None else steer_at(f) for f in range(STEER_FRAMES)]
+    steered = any(d is not None for d in deltas)
+    assert ggml_steer.exists() == steered, f"{entry['name']}: hidden steering {'missing' if steered else 'unexpected'}"
+    if steered:
+        got = np.load(ggml_steer)
+        want = np.zeros_like(got)
+        for f, d in enumerate(deltas):
+            if d is not None:
+                want[f] = np.concatenate([d[s].reshape(-1).float().cpu().numpy() for s in plan.sources])
+        np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6, err_msg=f"{entry['name']}: steering delta per frame")
 
 
 @pytest.fixture(scope="module", params=list(BACKBONES))

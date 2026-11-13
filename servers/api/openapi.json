@@ -1451,6 +1451,36 @@
             "maximum": 8,
             "default": null
           },
+          "steer_hold": {
+            "description": "Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle's exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "default": null
+          },
+          "steer_onset_seconds": {
+            "description": "Steer then hold: seconds of generated speech at full dose (null = the server default).",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
+            "default": null
+          },
+          "steer_ramp_seconds": {
+            "description": "Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
+            "default": null
+          },
           "laci": {
             "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
@@ -1756,6 +1786,36 @@
             ],
             "minimum": -4,
             "maximum": 8,
+            "default": null
+          },
+          "steer_hold": {
+            "description": "Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle's exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "default": null
+          },
+          "steer_onset_seconds": {
+            "description": "Steer then hold: seconds of generated speech at full dose (null = the server default).",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
+            "default": null
+          },
+          "steer_ramp_seconds": {
+            "description": "Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
             "default": null
           },
           "laci": {
@@ -2080,6 +2140,36 @@
             ],
             "minimum": -4,
             "maximum": 8,
+            "default": null
+          },
+          "steer_hold": {
+            "description": "Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle's exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "default": null
+          },
+          "steer_onset_seconds": {
+            "description": "Steer then hold: seconds of generated speech at full dose (null = the server default).",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
+            "default": null
+          },
+          "steer_ramp_seconds": {
+            "description": "Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
             "default": null
           },
           "laci": {
@@ -2737,7 +2827,8 @@
           "phonemize_enabled",
           "phonemize_languages",
           "phonemize_guess_languages",
-          "projects"
+          "projects",
+          "steer_release"
         ],
         "properties": {
           "text_tokenizer_spec": {
@@ -2954,6 +3045,49 @@
           },
           "projects": {
             "$ref": "#/components/schemas/ProjectsCapability"
+          },
+          "steer_release": {
+            "description": "The server defaults of the request fields steer_hold / steer_onset_seconds / steer_ramp_seconds (the steering bundle's `steer_release`); null: the request-level controls are constant and steer_hold below 1 is refused.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SteerRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SteerRelease": {
+        "description": "Steer then hold: the request-level hidden controls at full dose for `onset_seconds`, a linear ramp to `hold` x dose over `ramp_seconds`, `hold` after; `exempt` directions stay constant.",
+        "type": "object",
+        "required": [
+          "onset_seconds",
+          "ramp_seconds",
+          "hold",
+          "exempt"
+        ],
+        "properties": {
+          "onset_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "ramp_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "hold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "exempt": {
+            "description": "Hidden-space control ids that never release.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -3059,7 +3193,8 @@
           "sets",
           "directions",
           "timing",
-          "ui"
+          "ui",
+          "steer_release"
         ],
         "properties": {
           "bundle": {
@@ -3100,6 +3235,17 @@
           "ui": {
             "description": "The bundle's studio UI metadata, passed through.",
             "type": "object"
+          },
+          "steer_release": {
+            "description": "The bundle's steer-then-hold defaults (as Capabilities `steer_release`); null without them.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SteerRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -3455,6 +3601,34 @@
                 "type": "number"
               }
             },
+            "default": null
+          },
+          "steer_hold": {
+            "description": "Steer then hold of every region's hidden controls, as GenerateRequest; a fill's frames count from its first one.",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "default": null
+          },
+          "steer_onset_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
+            "default": null
+          },
+          "steer_ramp_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 600,
             "default": null
           },
           "max_context_seconds": {

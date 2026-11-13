@@ -99,14 +99,14 @@ from zonos3.tts import plan as P
 from zonos3.tts.audio import _decode_audio_bytes, _transcode_audio_bytes_to_wav, pcm16_wav_bytes
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob, fill_steering, steer_fields, steer_release
 from zonos3.tts.laci import discover_laci_heads
 from zonos3.tts.phonemes import PhonemeLexicon
 from zonos3.tts.steering import (
     check_controls,
     controls_document,
     disabled_controls,
-    resolve_controls,
+    release_document,
 )
 from zonos3.utils.release import RELEASE_TEXT_ROWS, resolve_dir_or_local, resolve_file
 from zonos3.workers import asr as asr_worker
@@ -209,6 +209,7 @@ def capabilities() -> dict:
             edit_transcribe=True,
             lexicon=LEXICON,
             projects={"enabled": False},
+            steer_release=release_document(ASSETS.steer_bundle),
         )
     )
 
@@ -450,6 +451,7 @@ def edit_job(op: str, args: dict):
             min_frames=args["min_frames"],
             speaker_embedding=None if embedding is None else embedding.to(DEVICE),
             hidden_delta=args["hidden_delta"],
+            release_delta=args["release_delta"],
             accents=EDIT_LORA,
             device=DEVICE,
         )
@@ -705,7 +707,8 @@ class SpaceEditEngine:
         codes = await edit_call(EDIT_REQUEST.get()[0], "encode", audio=audio, max_seconds=float(max_seconds))
         return np.asarray(codes, dtype=np.int64)
 
-    async def check(self, target_text: str, doses, condition_buckets, condition_values) -> set[str]:
+    async def check(self, target_text: str, doses, condition_buckets, condition_values, steer) -> set[str]:
+        steer_release(ASSETS.steer_bundle, steer, hint=CONTEXT.steer_hint)
         P.validate_text_markers(CONTEXT.text_tokenizer_spec, target_text, edit=True)
         raw = set()
         if doses is not None:
@@ -716,18 +719,14 @@ class SpaceEditEngine:
         return raw
 
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
-        embedding, delta = job.speaker_embedding, None
-        if job.controls:
-            resolved = resolve_controls(
-                ASSETS.steer_bundle,
-                job.controls,
-                None,
-                text=job.controls_text,
-                speaker_embedding=embedding,
-                sources=CONTEXT.steering_sources,
-                hidden_size=CONTEXT.hidden_size,
-            )
-            embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
+        steering = fill_steering(
+            ASSETS.steer_bundle,
+            job,
+            hint=CONTEXT.steer_hint,
+            sources=CONTEXT.steering_sources,
+            hidden_size=CONTEXT.hidden_size,
+            frame_rate=CONTEXT.frame_rate,
+        )
         request = {
             "text": job.text,
             "language": job.language,
@@ -739,6 +738,7 @@ class SpaceEditEngine:
             "condition_buckets": job.condition_buckets,
             "condition_values": job.condition_values,
             "stream": False,
+            **steer_fields(job),
         }
         return await edit_call(
             EDIT_REQUEST.get()[0],
@@ -748,8 +748,9 @@ class SpaceEditEngine:
             spans=job.spans,
             fills=[np.asarray(f) for f in job.fills],
             min_frames=int(job.min_frames),
-            embedding=embedding,
-            hidden_delta=delta,
+            embedding=steering.speaker_embedding,
+            hidden_delta=steering.hidden_delta,
+            release_delta=steering.release_delta,
         )
 
     async def decode(self, codes: np.ndarray, decoder: str | None) -> np.ndarray:

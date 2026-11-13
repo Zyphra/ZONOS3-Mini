@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validate } from '../../src/api/validate';
+import { resolveControls } from '../../src/request/steer';
 import { bareApi, call, haveEditModels, haveModels, stubApi } from './stub';
 
 const SESSION = { 'x-tts-session-id': 's1' };
@@ -238,6 +239,58 @@ describe.skipIf(!haveModels)('engine api', () => {
       text: 'Hello there.', stream: false, control_spans: [{ start: 0, end: 50, controls: { [hidden[0]]: 1.0 } }],
     });
     expect(span.status).toBe(400);
+  });
+
+  it('steer then hold: released controls fade per generated frame on both CFG branches; exempt ones stay', async () => {
+    const { api, engine, backbone } = stubApi({ frames: 20 });
+    const steer = engine.steer!;
+    const kept = 'delivery.tempo', released = steer.dirs.find(d => d.hidden && d.id !== kept)!.id;
+    const body = {
+      text: 'Hello there.', stream: false, speaker_mode: 'embedding', speaker_embedding_id: engine.voices[0].id,
+      controls: { [kept]: 1, [released]: 1 }, speaker_cfg_scale: 1.5,
+    };
+    const none = await call(api, 'POST', '/v2/generate', { ...body, steer_hold: 0.5 });
+    expect(none.status).toBe(400);
+    expect(none.json()).toEqual({ detail: "steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none." });
+    expect((await call(api, 'GET', '/v2/capabilities')).json().steer_release).toBeNull();
+
+    steer.steerRelease = { onsetSeconds: 0.2, rampSeconds: 0.2, hold: 0.25, exempt: [kept] };   // 3 + 3 frames at 15 Hz
+    const caps = await call(api, 'GET', '/v2/capabilities');
+    expect(validate('Capabilities', caps.json())).toEqual([]);
+    expect(caps.json().steer_release).toEqual({ onset_seconds: 0.2, ramp_seconds: 0.2, hold: 0.25, exempt: [kept] });
+    const c = resolveControls(steer, { [kept]: 1 }, [], 0, 0, null).hidden!;
+    const r = resolveControls(steer, { [released]: 1 }, [], 0, 0, null).hidden!;
+    const weight = (frame: number) => (frame < 3 ? 1 : frame >= 6 ? 0.25 : 1 - 0.75 * (frame - 3) / 3);
+    const expectWeights = (steered: (Float32Array | null)[], constant: Float32Array | null) => {
+      expect(steered.length).toBeGreaterThan(8);
+      // steered[j]: the decode that yields generated frame j + 1
+      steered.forEach((s, j) => {
+        for (let i = 0; i < s!.length; i += 37) expect(s![i], `frame ${j + 1}`).toBeCloseTo((constant?.[i] ?? 0) + weight(j + 1) * r[i], 5);
+      });
+    };
+    expect((await call(api, 'POST', '/v2/generate', body)).status).toBe(200);
+    expectWeights(backbone.steered, c);
+    // the speaker-CFG twin gets the conditional slot's delta at every step
+    expect(backbone.twinSteered.length).toBe(backbone.steered.length);
+    expect(backbone.twinSteered.every((s, j) => s === backbone.steered[j])).toBe(true);
+
+    // hold 1 is the constant path: bit for bit the delta of a server without steer_release, every step
+    backbone.steered.length = 0;
+    expect((await call(api, 'POST', '/v2/generate', { ...body, speaker_cfg_scale: 1, steer_hold: 1 })).status).toBe(200);
+    const constant = resolveControls(steer, body.controls, [], 0, 0, null).hidden!;
+    expect(backbone.steered.every(s => s !== null && s.every((v, i) => Object.is(v, constant[i])))).toBe(true);
+
+    // controls CFG runs on a released-only delta, its twin unsteered
+    backbone.steered.length = 0;
+    backbone.twinSteered.length = 0;
+    backbone.prefills.length = 0;
+    expect((await call(api, 'POST', '/v2/generate', {
+      ...body, speaker_cfg_scale: 1, controls: { [released]: 1 }, controls_cfg_scale: 1.5,
+    })).status).toBe(200);
+    expect(backbone.prefills.map(p => p.slot)).toEqual([0, 1]);
+    expect(backbone.twinSteered.length).toBe(backbone.steered.length);
+    expect(backbone.twinSteered.every(s => s === null)).toBe(true);
+    expectWeights(backbone.steered, null);
   });
 
   it('LACI and reading follow attach the probe', async () => {

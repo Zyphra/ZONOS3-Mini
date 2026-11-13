@@ -318,6 +318,42 @@ bool zonos3_steer_load(zonos3_steer_bundle & b, const char * path, const zonos3_
         }
     }
 
+    // steer_release (steering.py load_bundle): optional key; "" = none.
+    std::string release_json;
+    if (get_str("zonos3_steer.steer_release", release_json) && !release_json.empty()) {
+        try {
+            const nlohmann::json r = nlohmann::json::parse(release_json);
+            bool shape = r.is_object() && r.contains("onset_seconds") && r.contains("ramp_seconds") && r.contains("hold");
+            if (shape)
+                for (auto it = r.begin(); it != r.end(); ++it)
+                    if (it.key() != "onset_seconds" && it.key() != "ramp_seconds" && it.key() != "hold" && it.key() != "exempt")
+                        shape = false;
+            if (!shape) throw std::runtime_error("expected {onset_seconds, ramp_seconds, hold, exempt?}");
+            zonos3_steer_release rel;
+            rel.onset_seconds = r.at("onset_seconds").get<double>();
+            rel.ramp_seconds = r.at("ramp_seconds").get<double>();
+            rel.hold = r.at("hold").get<double>();
+            if (r.contains("exempt")) rel.exempt = r["exempt"].get<std::vector<std::string>>();
+            if (!(std::isfinite(rel.hold) && 0.0 <= rel.hold && rel.hold <= 1.0))
+                throw std::runtime_error("steer_hold must be in [0, 1]");
+            if (!(std::isfinite(rel.onset_seconds) && rel.onset_seconds >= 0.0))
+                throw std::runtime_error("steer_onset_seconds must be finite and >= 0");
+            if (!(std::isfinite(rel.ramp_seconds) && rel.ramp_seconds >= 0.0))
+                throw std::runtime_error("steer_ramp_seconds must be finite and >= 0");
+            for (const auto & id : rel.exempt) {
+                const auto d = b.index.find(id);
+                if (d == b.index.end() || !b.dirs[d->second].hidden) {
+                    err = invalid(path, "steer_release exempts '" + id + "', which is not a hidden direction of the bundle");
+                    return false;
+                }
+            }
+            b.steer_release = std::move(rel);
+        } catch (const std::exception & e) {
+            err = invalid(path, std::string("bad steer_release JSON: ") + e.what());
+            return false;
+        }
+    }
+
     const auto & hp = model.hp;
     if (b.hidden_size && b.hidden_size != hp.n_embd) {
         err = "steering hidden directions have " + std::to_string(b.hidden_size) +
@@ -380,7 +416,48 @@ std::string zonos3_steer_controls_json(const zonos3_steer_bundle & b, int embedd
     doc["directions"] = std::move(dirs);
     doc["timing"] = ojson::parse(b.timing_json);
     doc["ui"] = ojson::parse(b.ui_json);
+    doc["steer_release"] = ojson::parse(zonos3_steer_release_json(&b));
     return doc.dump();
+}
+
+std::string zonos3_steer_release_json(const zonos3_steer_bundle * b) {
+    if (!b || !b->steer_release) return "null";
+    const auto & r = *b->steer_release;
+    ojson e;
+    e["onset_seconds"] = r.onset_seconds;
+    e["ramp_seconds"] = r.ramp_seconds;
+    e["hold"] = r.hold;
+    e["exempt"] = r.exempt;
+    return e.dump();
+}
+
+bool zonos3_steer_request_release(const zonos3_steer_bundle * b, double hold, double onset_seconds,
+                                  double ramp_seconds, double frame_rate,
+                                  std::optional<zonos3_steer_release_frames> & out, std::string & err) {
+    out.reset();
+    if (!b || !b->steer_release) {
+        if (std::isnan(hold) || hold == 1.0) return true;
+        err = b ? "steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none."
+                : "steer_hold below 1 needs a steering bundle with steer_release.";
+        return false;
+    }
+    const auto & d = *b->steer_release;
+    const double h = std::isnan(hold) ? d.hold : hold;
+    const double onset = std::isnan(onset_seconds) ? d.onset_seconds : onset_seconds;
+    const double ramp = std::isnan(ramp_seconds) ? d.ramp_seconds : ramp_seconds;
+    if (!(std::isfinite(h) && 0.0 <= h && h <= 1.0)) {
+        err = "steer_hold must be in [0, 1], got " + nlohmann::json(h).dump() + ".";
+        return false;
+    }
+    for (const auto & [name, v] : {std::pair<const char *, double>{"steer_onset_seconds", onset}, {"steer_ramp_seconds", ramp}})
+        if (!(std::isfinite(v) && v >= 0.0)) {
+            err = std::string(name) + " must be finite and >= 0, got " + nlohmann::json(v).dump() + ".";
+            return false;
+        }
+    if (h == 1.0) return true;
+    // ReleaseSchedule.frames: Python round() (half to even) = nearbyint under the default rounding mode.
+    out = zonos3_steer_release_frames{(int) std::nearbyint(onset * frame_rate), (int) std::nearbyint(ramp * frame_rate), h};
+    return true;
 }
 
 double zonos3_steer_duration_factor(const zonos3_steer_bundle & b, const std::map<std::string, double> & doses) {
@@ -393,15 +470,40 @@ double zonos3_steer_duration_factor(const zonos3_steer_bundle & b, const std::ma
     return factor;
 }
 
+double zonos3_steering::release_weight(int frame) const {
+    const auto & r = release_frames;
+    if (frame < r.onset) return 1.0;
+    if (frame >= r.onset + r.ramp) return r.hold;
+    return 1.0 + (r.hold - 1.0) * (double) (frame - r.onset) / (double) r.ramp;
+}
+
+void zonos3_steering::base_at(int frames, std::vector<float> & out) const {
+    if (release.empty()) {
+        out = hidden;
+        return;
+    }
+    // TTSReq.steer_delta: the constant delta plus w * release (w == 1: the release delta unscaled), float32.
+    if (hidden.empty()) out.assign(release.size(), 0.0f);
+    else out.assign(hidden.begin(), hidden.end());
+    const double w = release_weight(frames);
+    if (w == 1.0) {
+        for (size_t i = 0; i < out.size(); i++) out[i] += release[i];
+    } else {
+        const float wf = (float) w;
+        for (size_t i = 0; i < out.size(); i++) out[i] += wf * release[i];
+    }
+}
+
 void zonos3_steering::delta_at(int frames, std::vector<float> & out) const {
     if (!hidden_active()) {
         out.clear();
         return;
     }
     const size_t n = sources.size() * (size_t) hidden_size;
-    if (hidden.empty()) out.assign(n, 0.0f);
+    if (!release.empty()) base_at(frames, out);
+    else if (hidden.empty()) out.assign(n, 0.0f);
     else out.assign(hidden.begin(), hidden.end());
-    bool any = !hidden.empty();
+    bool any = !hidden.empty() || !release.empty();
     const float f = (float) frames;
     for (const auto & s : spans) {
         const float r = (float) std::max(s.ramp, 1);
@@ -415,7 +517,8 @@ void zonos3_steering::delta_at(int frames, std::vector<float> & out) const {
 
 bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::string, double> & controls,
                           const std::vector<zonos3_control_span> & spans, int text_chars, double frames_per_char,
-                          std::vector<float> * speaker_embedding, zonos3_steering & out, std::string & err) {
+                          std::vector<float> * speaker_embedding, zonos3_steering & out, std::string & err,
+                          const zonos3_steer_release_frames * release) {
     out = zonos3_steering{};
     out.sources = b.sources;
     out.hidden_size = (int) b.hidden_size;
@@ -492,7 +595,17 @@ bool zonos3_steer_resolve(const zonos3_steer_bundle & b, const std::map<std::str
         for (size_t i = 0; i < base.size(); i++) base[i] = delta[i] * scale;
     }
 
-    out.hidden = hidden_vector(doses);
+    if (!release) {
+        out.hidden = hidden_vector(doses);
+    } else { // resolve_controls(release_exempt=...): the exempt ids stay constant, the others release
+        const auto & exempt = b.steer_release ? b.steer_release->exempt : std::vector<std::string>{};
+        std::map<std::string, double> kept, released;
+        for (const auto & [id, v] : doses)
+            (std::find(exempt.begin(), exempt.end(), id) != exempt.end() ? kept : released)[id] = v;
+        out.hidden = hidden_vector(kept);
+        out.release = hidden_vector(released);
+        if (!out.release.empty()) out.release_frames = *release;
+    }
 
     if (spans.empty()) return true;
     const double rate = (frames_per_char > 0 ? frames_per_char : ZONOS3_STEER_FRAMES_PER_CHAR) *

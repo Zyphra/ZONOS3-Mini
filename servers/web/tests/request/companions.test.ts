@@ -1,18 +1,20 @@
 // Steering, LACI detector and span follower against the ggml fixtures and the shipped steer.gguf.
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseGguf } from '../../src/gguf';
+import { GGUF_TYPE, parseGguf } from '../../src/gguf';
 import { defaultLaciConfig, Detector } from '../../src/request/laci';
 import { SpanFollower } from '../../src/request/spanFollow';
 import {
-  Calibration, controlsDocument, disabledControls, loadSteer, resolveControls, steerIndex, Steering, textChars,
-  type SteerBundle,
+  Calibration, controlsDocument, disabledControls, loadSteer, NO_STEERING, releaseDocument, requestRelease,
+  resolveControls, steerIndex, Steering, textChars, type SteerBundle,
 } from '../../src/request/steer';
 
 const FIX = new URL('../../../ggml/tests/fixtures/', import.meta.url);
 const MODELS = new URL('../../../ggml/gguf/', import.meta.url);
 const gguf = (u: URL) => { const b = readFileSync(u); return parseGguf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
 const norm = (v: Float32Array) => Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+/** The float32 bit patterns of a delta (null stays null): bit-identity checks. */
+const bits = (v: Float32Array | null) => (v ? Array.from(new Uint32Array(v.buffer, v.byteOffset, v.length)) : null);
 
 describe('steer', () => {
   it('loads dummy-steer.gguf like steering.cpp test_loader', () => {
@@ -24,7 +26,9 @@ describe('steer', () => {
     expect(b.dirs[2].vec.length).toBe(32);
     expect(b.timing.get('style.tempo')?.length).toBe(3);
     const doc = controlsDocument(b, 192) as Record<string, any>;
-    expect(Object.keys(doc)).toEqual(['bundle', 'embedding_dim', 'sets', 'directions', 'timing', 'ui']);
+    expect(Object.keys(doc)).toEqual(['bundle', 'embedding_dim', 'sets', 'directions', 'timing', 'ui', 'steer_release']);
+    expect(b.steerRelease).toBeNull();
+    expect(doc.steer_release).toBeNull();
     expect(Object.keys(doc.sets)).toEqual(['who', 'style', 'mood']);
     expect(doc.sets.style).toEqual({
       space: 'attnres_source', modes: ['embedding', 'reference'], source_index: 3,
@@ -79,7 +83,7 @@ describe('steer', () => {
       dirs: [dir('who', 'gender', false, -1, [0, 2, 0]), dir('accent', 'british', false, -1, [0, 0, 1]),
         dir('deep', 'cmn', true, 15, [0, 3]), dir('style', 'whisper', true, 19, [1, 0]), dir('style', 'tempo', true, 19, [-1, 1])],
       timing: new Map([['style.tempo', [[-1, 2], [0, 1], [1, 0.5]]]]), timingJson: '{}', uiJson: '{}',
-      index: new Map(), sources: [], rateExtension: null,
+      index: new Map(), sources: [], rateExtension: null, steerRelease: null,
     };
     steerIndex(b);
     return b;
@@ -144,6 +148,144 @@ describe('steer', () => {
     const doc = controlsDocument(b, 3) as Record<string, any>;
     expect(Object.keys(doc.sets.style)).toEqual(['space', 'modes', 'source_index', 'calibration']);
     expect(doc.sets.deep.calibration).toBeUndefined();
+  });
+
+  // steering.py ReleaseSchedule / request_release / release_weight / resolve_controls(release_exempt=...)
+  const withRelease = (json: string): SteerBundle => {
+    const g = gguf(new URL('dummy-steer.gguf', FIX));
+    const keyed = { ...g, kv: new Map(g.kv), types: new Map(g.types) };
+    keyed.kv.set('zonos3_steer.steer_release', json);
+    keyed.types.set('zonos3_steer.steer_release', { type: GGUF_TYPE.STRING, arrType: null });
+    return loadSteer(keyed, { nEmbd: 32, nLayer: 4, speakerDim: 192 });
+  };
+
+  it('steer_release: loaded from the GGUF, checked, reported in the controls document', () => {
+    const b = withRelease(JSON.stringify({ onset_seconds: 4, ramp_seconds: 1, hold: 0.25, exempt: ['style.tempo'] }));
+    expect(b.steerRelease).toEqual({ onsetSeconds: 4, rampSeconds: 1, hold: 0.25, exempt: ['style.tempo'] });
+    const doc = { onset_seconds: 4, ramp_seconds: 1, hold: 0.25, exempt: ['style.tempo'] };
+    expect((controlsDocument(b, 192) as Record<string, unknown>).steer_release).toEqual(doc);
+    expect(releaseDocument(b)).toEqual(doc);
+    expect(releaseDocument(null)).toBeNull();
+    expect(withRelease('').steerRelease).toBeNull();
+    expect(withRelease(JSON.stringify({ onset_seconds: 4, ramp_seconds: 0, hold: 0 })).steerRelease)
+      .toEqual({ onsetSeconds: 4, rampSeconds: 0, hold: 0, exempt: [] });
+    const base = { onset_seconds: 4, ramp_seconds: 1, hold: 0.25 };
+    const cases: [unknown, string][] = [
+      [{ onset_seconds: 4, ramp_seconds: 1 }, 'expected {onset_seconds, ramp_seconds, hold, exempt?}'],
+      [{ ...base, extra: 1 }, 'expected {onset_seconds, ramp_seconds, hold, exempt?}'],
+      [[1, 2, 3], 'expected {onset_seconds, ramp_seconds, hold, exempt?}'],
+      [{ ...base, hold: 1.5 }, 'steer_hold must be in [0, 1], got 1.5.'],
+      [{ ...base, onset_seconds: -1 }, 'steer_onset_seconds must be finite and >= 0, got -1.0.'],
+      [{ ...base, ramp_seconds: '1' }, 'onset_seconds, ramp_seconds and hold must be numbers'],
+      [{ ...base, exempt: 'style.tempo' }, 'exempt is not a string array'],
+      [{ ...base, exempt: ['who.gender'] }, "steer_release exempts 'who.gender', which is not a hidden direction of the bundle"],
+      [{ ...base, exempt: ['style.nope'] }, "steer_release exempts 'style.nope', which is not a hidden direction of the bundle"],
+    ];
+    for (const [bad, why] of cases) expect(() => withRelease(JSON.stringify(bad)), why).toThrow(why);
+    expect(() => withRelease('{')).toThrow('bad steer_release JSON');
+  });
+
+  it('release weight: full dose before onset, a linear ramp to hold, hold after; ramp 0 is a step', () => {
+    const s = new Steering();
+    s.releaseFrames = { onset: 60, ramp: 15, hold: 0.25 };
+    const want = [[0, 1], [59, 1], [60, 1], [61, 0.95], [65, 0.75], [74, 0.3], [75, 0.25], [500, 0.25]];
+    for (const [f, w] of want) expect(s.releaseWeight(f), `frame ${f}`).toBeCloseTo(w, 12);
+    s.releaseFrames = { onset: 3, ramp: 0, hold: 0 };
+    expect([0, 2, 3, 4].map(f => s.releaseWeight(f))).toEqual([1, 1, 0, 0]);
+    s.releaseFrames = { onset: 0, ramp: 4, hold: 0.5 };
+    expect([0, 1, 2, 4].map(f => s.releaseWeight(f))).toEqual([1, 0.875, 0.75, 0.5]);
+  });
+
+  it('request fields: bundle defaults, overrides in frames and the refusals', () => {
+    const b = mem();
+    expect(requestRelease(null, null, null, null, 15)).toBeNull();
+    expect(requestRelease(null, 1, 2, 3, 15)).toBeNull();
+    expect(() => requestRelease(null, 0.5, null, null, 15))
+      .toThrow(`${NO_STEERING}; steer_hold below 1 needs its steer_release.`);
+    expect(requestRelease(b, 1, null, null, 15)).toBeNull();
+    expect(() => requestRelease(b, 0.25, null, null, 15))
+      .toThrow("steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none.");
+    b.steerRelease = { onsetSeconds: 4, rampSeconds: 1, hold: 0.25, exempt: [] };
+    expect(requestRelease(b, null, null, null, 15)).toEqual({ onset: 60, ramp: 15, hold: 0.25 });
+    expect(requestRelease(b, 1, null, null, 15)).toBeNull();
+    // Python round: 7.5 -> 8, 10.5 -> 10
+    expect(requestRelease(b, 0, 0.5, 0.7, 15)).toEqual({ onset: 8, ramp: 10, hold: 0 });
+    expect(() => requestRelease(b, 1.5, null, null, 15)).toThrow('steer_hold must be in [0, 1], got 1.5.');
+    expect(() => requestRelease(b, null, -1, null, 15)).toThrow('steer_onset_seconds must be finite and >= 0, got -1.0.');
+    expect(() => requestRelease(b, null, null, Infinity, 15)).toThrow('steer_ramp_seconds must be finite and >= 0, got inf.');
+    b.steerRelease.hold = 1;
+    expect(requestRelease(b, null, null, null, 15)).toBeNull();
+  });
+
+  it('splits the request-level hidden controls: exempt ones constant, the others released; spans and raw unaffected', () => {
+    const b = mem();
+    b.steerRelease = { onsetSeconds: 4, rampSeconds: 1, hold: 0.25, exempt: ['style.whisper'] };
+    const frames = requestRelease(b, null, null, null, 15)!;
+    const emb = Float32Array.of(4, 0, 0);
+    const st = resolveControls(b, { 'style.whisper': 2, 'deep.cmn': 1, 'style.tempo': 1, 'who.gender': 1.5 }, [], 10, 0, emb, frames);
+    expect(Array.from(st.hidden!)).toEqual([0, 0, 2, 0]);
+    expect(Array.from(st.release!)).toEqual([0, 3, -1, 1]);
+    expect(st.releaseFrames).toEqual(frames);
+    expect(st.hiddenActive()).toBe(true);
+    expect(emb[1]).toBeCloseTo(3 * 4 / 5, 6);
+    const kept = resolveControls(b, { 'style.whisper': 2 }, [], 10, 0, null, frames);
+    expect(Array.from(kept.hidden!)).toEqual([0, 0, 2, 0]);
+    expect(kept.release).toBeNull();
+    const all = resolveControls(b, { 'deep.cmn': 1 }, [], 10, 0, null, frames);
+    expect(all.hidden).toBeNull();
+    expect(Array.from(all.release!)).toEqual([0, 3, 0, 0]);
+    const sp = resolveControls(b, { 'deep.cmn': 1 }, [{ start: 0, end: 4, controls: { 'style.tempo': 1 } }], 10, 0, null, frames);
+    expect(sp.spans.map(s => Array.from(s.delta))).toEqual([[0, 0, -1, 1]]);
+    expect(Array.from(sp.release!)).toEqual([0, 3, 0, 0]);
+    const raw = resolveControls(b, { 'who.gender': 1 }, [], 10, 0, Float32Array.of(4, 0, 0), frames);
+    expect(raw.hiddenActive()).toBe(false);
+  });
+
+  it('the delta at a frame: constant + w * released + spans, before onset, in the ramp and after', () => {
+    const b = mem();
+    b.steerRelease = { onsetSeconds: 0.2, rampSeconds: 0.2, hold: 0.25, exempt: ['style.whisper'] };
+    const frames = requestRelease(b, null, null, null, 15)!;
+    expect(frames).toEqual({ onset: 3, ramp: 3, hold: 0.25 });
+    const st = resolveControls(b, { 'style.whisper': 2, 'deep.cmn': 1 }, [], 10, 1, null, frames);
+    const at = (f: number) => Array.from(st.at(f)!);
+    for (const f of [0, 1, 2, 3]) expect(at(f), `frame ${f}`).toEqual([0, 3, 2, 0]);
+    expect(at(4)).toEqual([0, 2.25, 2, 0]);
+    expect(at(5)).toEqual([0, 1.5, 2, 0]);
+    for (const f of [6, 7, 100]) expect(at(f), `frame ${f}`).toEqual([0, 0.75, 2, 0]);
+    // a span (style.tempo halves its characters' pace: chars [6, 8) -> frames [6, 7)) adds on top
+    const sp = resolveControls(b, { 'style.whisper': 2, 'deep.cmn': 1 }, [{ start: 6, end: 8, controls: { 'style.tempo': 1 } }],
+      10, 1, null, frames);
+    expect(sp.spans.map(s => [s.start, s.end])).toEqual([[6, 7]]);
+    expect(Array.from(sp.at(1)!)).toEqual([0, 3, 2, 0]);
+    expect(Array.from(sp.at(6)!)).toEqual([0, 0.75, 1, 1]);
+    const out: { v: Float32Array | null } = { v: null };
+    sp.deltaAt(6, out);
+    expect(Array.from(out.v!)).toEqual([0, 0.75, 1, 1]);
+    // hold 0 without a constant part: a zero delta after the ramp, still applied (as the reference's)
+    const zero = resolveControls(b, { 'deep.cmn': 1 }, [], 10, 1, null, requestRelease(b, 0, null, null, 15));
+    expect(Array.from(zero.at(1)!)).toEqual([0, 3, 0, 0]);
+    expect(Array.from(zero.at(6)!)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('hold 1 (or a bundle without steer_release) gives bit-identical per-frame deltas', () => {
+    const plain = mem(), keyed = mem();
+    keyed.steerRelease = { onsetSeconds: 0.2, rampSeconds: 0.2, hold: 0.25, exempt: ['deep.cmn'] };
+    const controls = { 'style.whisper': 0.3, 'deep.cmn': 0.7, 'style.tempo': 1.1 };
+    const spans = [{ start: 2, end: 5, controls: { 'style.whisper': 0.9 } }];
+    const ref = resolveControls(plain, controls, spans, 10, 1, null, requestRelease(plain, null, null, null, 15));
+    const one = resolveControls(keyed, controls, spans, 10, 1, null, requestRelease(keyed, 1, null, null, 15));
+    const unset = resolveControls(plain, controls, spans, 10, 1, null, requestRelease(plain, 1, 3, 0, 15));
+    expect(ref.release).toBeNull();
+    expect(one.release).toBeNull();
+    const held = resolveControls(keyed, controls, spans, 10, 1, null, requestRelease(keyed, null, null, null, 15));
+    expect(held.release).not.toBeNull();
+    for (let f = 0; f < 40; f++) {
+      expect(bits(one.at(f)), `frame ${f}`).toEqual(bits(ref.at(f)));
+      expect(bits(unset.at(f)), `frame ${f}`).toEqual(bits(ref.at(f)));
+      const r = ref.at(f)!, h = held.at(f)!;
+      if (f < 3) for (let i = 0; i < r.length; i++) expect(h[i]).toBeCloseTo(r[i], 6);
+    }
+    expect(bits(held.at(10))).not.toEqual(bits(ref.at(10)));
   });
 });
 

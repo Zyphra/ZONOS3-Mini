@@ -99,6 +99,13 @@ class GenerationOptions(_Strict):
     control_span_follow: Literal["rate", "reading"] = "rate"
     control_span_lead: Annotated[float, Field(ge=0.0, le=8.0)] | None = None
     control_span_lag: Annotated[float, Field(ge=-4.0, le=8.0)] | None = None
+    # Steer then hold (GET /v2/capabilities steer_release): the request-level hidden `controls` at full dose for
+    # steer_onset_seconds of generated speech, a linear ramp to steer_hold x dose over steer_ramp_seconds, then
+    # steer_hold. None = the bundle's default; 1 = constant. control_spans, raw directions and the bundle's exempt
+    # directions stay constant. A hold below 1 needs a bundle with steer_release (400).
+    steer_hold: Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)] | None = None
+    steer_onset_seconds: Annotated[float, Field(ge=0.0, le=600.0, allow_inf_nan=False)] | None = None
+    steer_ramp_seconds: Annotated[float, Field(ge=0.0, le=600.0, allow_inf_nan=False)] | None = None
     # LACI: guard against skips, hallucinations and truncation (servers with --laci-heads).
     laci: bool = False
 
@@ -213,6 +220,10 @@ class EditRequest(_Strict):
     controls: Controls = None
     # One entry per `spans` entry (explicit spans only): region k uses controls + region_controls[k].
     region_controls: List[Dict[str, float] | None] | None = None
+    # Steer then hold of every region's hidden controls, as /v2/generate (a fill's frames count from its first one).
+    steer_hold: Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)] | None = None
+    steer_onset_seconds: Annotated[float, Field(ge=0.0, le=600.0, allow_inf_nan=False)] | None = None
+    steer_ramp_seconds: Annotated[float, Field(ge=0.0, le=600.0, allow_inf_nan=False)] | None = None
     # Clips longer than max_context_seconds are edited on word-snapped windows: each region plus context_seconds of
     # unedited audio per side (edit training saw 2-20 s clips). Shorter clips are edited whole.
     max_context_seconds: float = Field(default=16.0, gt=0.0, le=20.0)

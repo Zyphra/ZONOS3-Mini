@@ -37,7 +37,8 @@ process), answered ``{"call": N, "status": "ok", ...}`` or ``{"call": N, "status
   decode_audio {audio, out}                       -> {sample_rate}; float32 mono WAV at out
   embed {audio, max_seconds}                      -> {embedding: [float]}
   encode {audio, max_seconds}                     -> {codes: [[int] * K] * T}
-  check {target_text, doses, condition_buckets, condition_values}                   -> {raw: [id]}
+  check {target_text, doses, condition_buckets, condition_values,
+         steer_hold, steer_onset_seconds, steer_ramp_seconds}                            -> {raw: [id]}
   fill {every FillJob field}                      -> {rows: [[int] * K] * n, eos_frame (-1: none)}
   decode {codes, out, decoder}                    -> {}; float32 44.1 kHz WAV at out (decoder: id, null = default)
   laci_takes {takes: [{request: GenerateRequest body, target_frames, adjust_rate,
@@ -170,13 +171,14 @@ class RpcEditEngine:
             reply = await self.pipe.call("encode", audio=write_upload(tmp, audio), max_seconds=max_seconds)
         return np.asarray(reply["codes"], dtype=np.int64).reshape(-1, self.model.n_codebooks)
 
-    async def check(self, target_text: str, doses, condition_buckets, condition_values) -> set[str]:
+    async def check(self, target_text: str, doses, condition_buckets, condition_values, steer) -> set[str]:
         reply = await self.pipe.call(
             "check",
             target_text=target_text,
             doses=doses,
             condition_buckets=condition_buckets,
             condition_values=condition_values,
+            **steer,
         )
         return set(reply["raw"])
 

@@ -41,7 +41,7 @@ from zonos3.generation import (
 from zonos3.speaker_cfg import speaker_cfg_twin
 from zonos3.tts.prompt import TTSPromptBuilder, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
-from zonos3.tts.steering import SteeringBundle, no_steering_message, resolve_controls
+from zonos3.tts.steering import SteeringBundle, no_steering_message, request_release, resolve_controls
 from zonos3.tts.superbpe import (
     NO_PAUSE_TOKENS,
     NO_START_TOKEN,
@@ -95,6 +95,9 @@ GENERATE_DEFAULTS: dict = {
     "control_span_follow": "rate",
     "control_span_lead": None,
     "control_span_lag": None,
+    "steer_hold": None,
+    "steer_onset_seconds": None,
+    "steer_ramp_seconds": None,
     "laci": False,
 }
 NO_CONDITION_ROWS = "This checkpoint has no condition rows (loudness / fmax / speaking rate)"
@@ -142,6 +145,7 @@ class RulesContext(Protocol):
     steer_hint: str  # how this server loads a steering bundle (in the refusal of `controls` without one)
     steering_sources: tuple[int, ...]  # the Full AttnRes bank sources hidden deltas steer, ascending
     laci_languages: Collection[str]  # languages with LACI alignment heads
+    frame_rate: float  # codec frames per second (steer_release onset / ramp frames)
     max_frames: int  # the server's frame budget (R5)
     reference_max_frames: int  # longer reference codes keep their first frames (R7)
     silence_available: bool  # the codec has codec-matched silence frames (R6)
@@ -457,6 +461,8 @@ class Rules:
     embedding: torch.Tensor | None  # the speaker row's vector after the raw-space controls
     sources: tuple[int, ...]  # steered Full AttnRes bank sources
     hidden_delta: torch.Tensor | None  # constant hidden delta, flattened per source
+    release_delta: torch.Tensor | None  # released hidden delta (steer then hold), same layout
+    release: tuple[int, int, float] | None  # (onset frames, ramp frames, hold) of release_delta
     schedule: torch.Tensor | None  # span schedule [K, 3 + len(sources) * dim]
     follow_chars: list[list[int]] | None  # character range of every schedule row (control_span_follow "reading")
     follow_gate: list[float] | None  # [lead, lag]
@@ -472,12 +478,15 @@ def request_rules(
     speaker: Speaker,
     *,
     hidden_delta=None,
+    release_delta=None,
     edit: bool = False,
     duration_target: bool = False,
 ) -> Rules:
     """R4-R16 for the speaker inputs the server resolved for ``head.mode``. ``hidden_delta``: a server-side steering
-    delta added to the request's (a speech-edit region's); ``edit``: a speech-edit region (no silence prefill, no span
-    follow); ``duration_target``: the request carries a LACI duration target (a duration-target take)."""
+    delta added to the request's (a speech-edit region's); ``release_delta``: a server-side released delta (a
+    speech-edit region's controls not exempt from the request's steer_release) added to the request's; ``edit``: a
+    speech-edit region (no silence prefill, no span follow); ``duration_target``: the request carries a LACI duration
+    target (a duration-target take)."""
     language = languages.normalize(req.language)
     max_tokens = max_tokens_budget(req.max_tokens, ctx.max_frames)
     start = bool(req.start_immediately) or req.text.startswith(START_MARKER)
@@ -491,7 +500,11 @@ def request_rules(
     accent = resolve_accent(ctx.accent_names, req.accent, req.accent_strength)
     embedding = speaker.embedding
     sources = tuple(ctx.steering_sources)
-    delta = schedule = span_chars = None
+    delta = schedule = span_chars = released = None
+    # R10: steer then hold (the bundle's steer_release defaults; hold 1 = constant controls), then the controls
+    release = request_release(
+        ctx.steer_bundle, req.steer_hold, req.steer_onset_seconds, req.steer_ramp_seconds, hint=ctx.steer_hint
+    )
     if req.controls or req.control_spans:
         if ctx.steer_bundle is None:
             raise ValueError(no_steering_message(ctx.steer_hint, field="controls"))
@@ -504,15 +517,22 @@ def request_rules(
             sources=sources,
             hidden_size=int(ctx.hidden_size),
             frames_per_char=req.control_span_rate,
+            release_exempt=None if release is None else release.exempt,
         )
-        embedding, delta, schedule, span_chars = (
+        embedding, delta, released, schedule, span_chars = (
             resolved.speaker_embedding,
             resolved.hidden_delta,
+            resolved.release_delta,
             resolved.schedule,
             resolved.span_chars,
         )
     if hidden_delta is not None:
         delta = hidden_delta if delta is None else delta + hidden_delta
+    if release_delta is not None:
+        released = release_delta if released is None else released + release_delta
+    release_frames = None if released is None or release is None else release.frames(float(ctx.frame_rate))
+    if release_frames is None:
+        released = None
     # R11: spans that follow the reading position need the language's alignment heads (else the character rate)
     follow_chars = follow_gate = None
     if req.control_span_follow == "reading" and span_chars and language in ctx.laci_languages and not edit:
@@ -535,7 +555,7 @@ def request_rules(
         if float(req.controls_cfg_scale) != 1.0:
             raise ValueError("Speaker and controls CFG cannot be combined")
         cfg_kind, cfg_scale = "speaker", float(req.speaker_cfg_scale)
-    elif delta is not None and embedding is not None and float(req.controls_cfg_scale) != 1.0:
+    elif (delta is not None or released is not None) and embedding is not None and float(req.controls_cfg_scale) != 1.0:
         cfg_kind, cfg_scale = "controls", float(req.controls_cfg_scale)
     validate_text_markers(ctx.text_tokenizer_spec, req.text, edit=edit)
     if req.start_immediately and (ctx.text_tokenizer_spec or {}).get("start") is None:
@@ -554,6 +574,8 @@ def request_rules(
         embedding=embedding,
         sources=sources,
         hidden_delta=delta,
+        release_delta=released,
+        release=release_frames,
         schedule=schedule,
         follow_chars=follow_chars,
         follow_gate=follow_gate,
@@ -612,6 +634,8 @@ class PromptPlan:
     context_codes: torch.Tensor | None  # [K, n_codebooks] reference tail decoded as left context
     sources: tuple[int, ...]  # steered Full AttnRes bank sources
     hidden_delta: torch.Tensor | None  # constant hidden delta, flattened per source
+    release_delta: torch.Tensor | None  # released hidden delta (steer then hold), same layout
+    release: tuple[int, int, float] | None  # (onset frames, ramp frames, hold) of release_delta
     schedule: torch.Tensor | None  # span schedule [K, 3 + len(sources) * dim]
     follow_tokens: list[list[int]] | None  # token ranges of the schedule rows (control_span_follow "reading")
     follow_gate: list[float] | None
@@ -758,6 +782,8 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
         context_codes=decode_context_codes(codes, bool(req.decode_context), req.decode_context_frames),
         sources=rules.sources,
         hidden_delta=rules.hidden_delta,
+        release_delta=rules.release_delta,
+        release=rules.release,
         schedule=rules.schedule,
         follow_tokens=follow_tokens,
         follow_gate=rules.follow_gate,
@@ -774,6 +800,7 @@ def plan_prompt(
     resolve_speaker: Callable[[Request, str | None], Speaker],
     *,
     hidden_delta=None,
+    release_delta=None,
     edit=None,
     duration_target: bool = False,
 ) -> PromptPlan:
@@ -782,6 +809,13 @@ def plan_prompt(
     head = request_head(ctx, req)
     speaker = resolve_speaker(req, head.mode)
     rules = request_rules(
-        ctx, req, head, speaker, hidden_delta=hidden_delta, edit=edit is not None, duration_target=duration_target
+        ctx,
+        req,
+        head,
+        speaker,
+        hidden_delta=hidden_delta,
+        release_delta=release_delta,
+        edit=edit is not None,
+        duration_target=duration_target,
     )
     return build_prompt(ctx, rules, edit=edit)

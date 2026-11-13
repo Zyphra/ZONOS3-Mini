@@ -40,7 +40,7 @@ from zonos3.tts.probe import locate_text_span
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 from zonos3.tts.sampler import active_repetition_window, clamp_sampling, sample_tts
 from zonos3.tts.span_follow import FollowConfig, SpanFollower
-from zonos3.tts.steering import SteeringBundle, load_bundle, schedule_delta
+from zonos3.tts.steering import SteeringBundle, load_bundle, released_delta, schedule_delta
 from zonos3.tts.stream import StreamDecoder, StreamSettings
 
 # ----------------------------------------------------------------------------------------------------- assets
@@ -260,6 +260,7 @@ class ReferenceContext:
         self.laci_languages = tuple(assets.laci_heads)
         codec = entry(c.audio_codec)
         self.reference_max_frames = P.reference_frame_limit(c.speaker_reference_max_seconds, codec["hop"], SAMPLE_RATE)
+        self.frame_rate = SAMPLE_RATE / int(codec["hop"])
         self.silence_available = codec.get("silence_frame") is not None or codec.get("family") == "dual"
 
     def prompt_builder(self) -> TTSPromptBuilder:
@@ -361,21 +362,28 @@ def edit_region(
     min_frames: int,
     speaker_embedding: torch.Tensor | None = None,
     hidden_delta=None,
+    release_delta=None,
     accents: AccentState | None = None,
     device=None,
 ) -> tuple[list[torch.Tensor], int | None]:
     """One speech-edit region (``zonos3.tts.edit_runtime.FillJob``): ``request`` (text, language, normalization,
-    sampling, seed, max_tokens, condition buckets) planned over the edit layout behind the speaker row
-    (``speaker_embedding``, already steered) and generated until the span-end token, masked for ``min_frames`` rows;
-    ``hidden_delta``: the region's steering delta on its generated frames. Returns the generated rows and the aligned
-    span-end frame (None: the budget ran out)."""
+    sampling, seed, max_tokens, condition buckets, steer-then-hold fields) planned over the edit layout behind the
+    speaker row (``speaker_embedding``, already steered) and generated until the span-end token, masked for
+    ``min_frames`` rows; ``hidden_delta``: the region's constant steering delta on its generated frames,
+    ``release_delta``: its released one (steer then hold, from the fill's first frame). Returns the generated rows and
+    the aligned span-end frame (None: the budget ran out)."""
     c = lm.config
     if c.span_end_id is None:
         raise ValueError("Speech editing needs a checkpoint with a span-end audio token (span_end_id)")
     device = torch.device(device if device is not None else lm.device)
     ctx = ReferenceContext(lm, assets, device)
     plan = P.plan_prompt(
-        ctx, request, lambda req, mode: P.Speaker(mode, speaker_embedding, None), hidden_delta=hidden_delta, edit=layout
+        ctx,
+        request,
+        lambda req, mode: P.Speaker(mode, speaker_embedding, None),
+        hidden_delta=hidden_delta,
+        release_delta=release_delta,
+        edit=layout,
     )
     sampling = replace(Sampling.from_request(plan.request), min_frames=int(min_frames))
     attempt = generate_rows(
@@ -697,20 +705,22 @@ class SynthResult:
 
 
 def steer_fn(plan: P.PromptPlan, follower: SpanFollower | None, base_delta=None):
-    """Hidden delta of generated frame f: the request's constant delta plus the span deltas active at f (the follower's
-    or the character-rate schedule's) -- TTSReq.steer_delta; None outside hidden mode."""
+    """Hidden delta of generated frame f: the request's constant delta, its released controls at f's weight (steer
+    then hold) and the span deltas active at f (the follower's or the character-rate schedule's) --
+    TTSReq.steer_delta; None outside hidden mode."""
     if not plan.sources:
         return None
     delta0 = plan.hidden_delta if base_delta is None else base_delta
 
     def steer(frame: int):
+        base = released_delta(delta0, plan.release_delta, plan.release, frame)
         if follower is not None:
             span = follower.delta(frame)
         elif plan.schedule is not None:
             span = schedule_delta(plan.schedule, frame)
         else:
             span = None
-        delta = delta0 if span is None else (span if delta0 is None else delta0 + span)
+        delta = base if span is None else (span if base is None else base + span)
         if delta is None:
             return None
         per_source = delta.reshape(len(plan.sources), -1)

@@ -17,7 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import torch
-from zonos3.generation import MAX_FRAMES, REFERENCE_MAX_FRAMES
+from zonos3.generation import MAX_FRAMES, REFERENCE_MAX_FRAMES, SAMPLE_RATE
 from zonos3.server.speech import resolve_decoder
 from zonos3.tokenizer.textnorm import TTSTextNormalizer, normalize_request_text
 from zonos3.tts.laci import LaciHeads
@@ -101,6 +101,7 @@ class Engine:
                 )
             self.decoders[dec.id] = dec
         self.decoder = decoders[0]
+        self.frame_rate = SAMPLE_RATE / int(self.decoder.hop)  # codec frames per second (steer_release frames)
         self.paths = paths
         self.max_frames = int(max_frames)  # --max: the frame budget of a request (R5)
         self.normalizer: TTSTextNormalizer | None = normalizer
@@ -285,18 +286,20 @@ def plan_request(
     laci_take: LaciTake | None = None,
     edit: EditLayout | None = None,
     hidden_delta=None,
+    release_delta=None,
 ) -> Plan:
     """The scheduler plan of ``request``: ``zonos3.tts.plan.plan_prompt`` over the engine with the speaker inputs the
     HTTP layer resolved (None: none, in the request's speaker mode). ``laci_take``: a LACI take's duration target
     and rate scale (zonos3.server.plugins.LaciTakeRequest);
     ``edit``: a speech-edit region (the edit layout, no silence prefill, stop on span-end; ``hidden_delta`` its
-    steering delta; it runs on the speech-edit adapter at strength 1 when accents.gguf has one). Raises ValueError for
-    a request the server refuses (HTTP 400)."""
+    constant steering delta, ``release_delta`` its released one; it runs on the speech-edit adapter at strength 1 when
+    accents.gguf has one). Raises ValueError for a request the server refuses (HTTP 400)."""
     plan = plan_prompt(
         engine,
         request,
         lambda req, mode: Speaker(mode) if speaker is None else speaker,
         hidden_delta=hidden_delta,
+        release_delta=release_delta,
         edit=edit,
         duration_target=laci_take is not None,
     )

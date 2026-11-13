@@ -2,11 +2,12 @@
 // embedding, hidden-space controls add to Full AttnRes bank sources of generated frames.
 //
 // Types: Calibration (a set's calibration.json: per-speaker doses), SteerDirection {id, set, name, axis, hidden,
-// source, vec}, SteerSet {name, hidden, source, calibration}, RateExtension, SteerBundle {name, speakerDim, hiddenSize,
-// sets, dirs, timing (id -> [dose, factor][], id-sorted), timingJson, uiJson, index, sources, rateExtension},
+// source, vec}, SteerSet {name, hidden, source, calibration}, RateExtension, SteerRelease (bundle steer_release: steer
+// then hold), ReleaseFrames (a request's schedule in frames), SteerBundle {name, speakerDim, hiddenSize, sets, dirs,
+// timing (id -> [dose, factor][], id-sorted), timingJson, uiJson, index, sources, rateExtension, steerRelease},
 // ControlSpan {start, end, controls}, SteerSpan {start, end, ramp, delta, charStart, charEnd}, Steering (resolved
-// request: hidden [K*D] | null, spans, deltaAt). Errors are thrown as Error with the C++ message. Controls iterate in
-// key order like std::map.
+// request: hidden [K*D] | null, release [K*D] | null, spans, deltaAt). Errors are thrown as Error with the C++ message.
+// Controls iterate in key order like std::map.
 import { GGUF_TYPE, type Gguf } from '../gguf';
 
 /** Why steering fields fail on a server without a bundle; each site adds its own suffix. */
@@ -78,6 +79,11 @@ export interface RateExtension {
   direction: string; rowEdges: number[]; below: number[]; above: number[];
   doses: Map<string, Map<number, number>>; referenceSides: string[];
 }
+/** Steer then hold (bundle `steer_release`, zonos3.tts.steering.ReleaseSchedule): the defaults of the request fields
+ *  steer_hold / steer_onset_seconds / steer_ramp_seconds and the hidden directions that stay constant (`exempt`). */
+export interface SteerRelease { onsetSeconds: number; rampSeconds: number; hold: number; exempt: string[] }
+/** A request's release schedule at the codec frame rate (ReleaseSchedule.frames). */
+export interface ReleaseFrames { onset: number; ramp: number; hold: number }
 export interface SteerBundle {
   name: string; speakerDim: number; hiddenSize: number;
   sets: SteerSet[]; dirs: SteerDirection[];
@@ -86,6 +92,7 @@ export interface SteerBundle {
   index: Map<string, number>;
   sources: number[];
   rateExtension: RateExtension | null;
+  steerRelease: SteerRelease | null;     // zonos3_steer.steer_release ("" = none)
 }
 export interface SteerModel { nEmbd: number; nLayer: number; speakerDim: number }
 export interface ControlSpan { start: number; end: number; controls: Record<string, number> }
@@ -99,14 +106,40 @@ export class Steering {
   sources: number[] = [];
   hiddenSize = 0;
   hidden: Float32Array | null = null;   // constant delta [sources.length * hiddenSize]; null = none
+  // Steer then hold: the released request-level hidden controls (layout of `hidden`; null = none), weighted per
+  // generated frame by releaseWeight
+  release: Float32Array | null = null;
+  releaseFrames: ReleaseFrames = { onset: 0, ramp: 0, hold: 1 };
   spans: SteerSpan[] = [];               // sorted, non-overlapping
-  hiddenActive(): boolean { return this.hidden !== null || this.spans.length > 0; }
+  hiddenActive(): boolean { return this.hidden !== null || this.release !== null || this.spans.length > 0; }
+  /** steering.release_weight: 1 before onset, a linear ramp to hold over ramp frames (a step for ramp 0), hold after. */
+  releaseWeight(frame: number): number {
+    const { onset, ramp, hold } = this.releaseFrames;
+    if (frame < onset) return 1.0;
+    if (frame >= onset + ramp) return hold;
+    return 1.0 + (hold - 1.0) * (frame - onset) / ramp;
+  }
+  /** steering.released_delta: the constant delta plus the released delta at `frame` (w == 1: unscaled), float32; the
+   *  constant delta itself without a released one (null when both are none). */
+  baseAt(frame: number): Float32Array | null {
+    const r = this.release;
+    if (!r) return this.hidden;
+    const v = this.hidden ? Float32Array.from(this.hidden) : new Float32Array(r.length);
+    const w = this.releaseWeight(frame);
+    if (w === 1.0) {
+      for (let i = 0; i < v.length; i++) v[i] += r[i];
+    } else {
+      const wf = f32(w);
+      for (let i = 0; i < v.length; i++) v[i] += f32(wf * r[i]);
+    }
+    return v;
+  }
   // out.v = the delta at `frames`, or null when it is zero
   deltaAt(frames: number, out: { v: Float32Array | null }): void {
     if (!this.hiddenActive()) { out.v = null; return; }
     const n = this.sources.length * this.hiddenSize;
-    const v = this.hidden ? Float32Array.from(this.hidden) : new Float32Array(n);
-    let any = this.hidden !== null;
+    const v = this.release ? this.baseAt(frames)! : this.hidden ? Float32Array.from(this.hidden) : new Float32Array(n);
+    let any = this.hidden !== null || this.release !== null;
     const f = f32(frames);
     for (const s of this.spans) {
       const r = f32(Math.max(s.ramp, 1));
@@ -117,6 +150,14 @@ export class Steering {
       for (let i = 0; i < n; i++) v[i] += f32(w * s.delta[i]);
     }
     out.v = any ? v : null;
+  }
+  /** The delta of the decode at generated frame `frame` (step_steer without a span follower): the constant delta
+   *  itself when nothing varies per frame, else deltaAt's. */
+  at(frame: number): Float32Array | null {
+    if (!this.release && !this.spans.length) return this.hidden;
+    const out = { v: null as Float32Array | null };
+    this.deltaAt(frame, out);
+    return out.v;
   }
 }
 
@@ -175,7 +216,7 @@ export function loadSteer(g: Gguf, model: SteerModel, path = 'steer.gguf'): Stee
 
   const b: SteerBundle = {
     name, speakerDim, hiddenSize, sets: [], dirs: [], timing: new Map(), timingJson, uiJson,
-    index: new Map(), sources: [], rateExtension: null,
+    index: new Map(), sources: [], rateExtension: null, steerRelease: null,
   };
   const setIndex = new Map<string, number>();
   let anyRaw = false, anyHidden = false;
@@ -283,6 +324,33 @@ export function loadSteer(g: Gguf, model: SteerModel, path = 'steer.gguf'): Stee
     b.rateExtension = ext;
   }
 
+  // steer_release (steering.py build_bundle): optional key; "" = none
+  const releaseJson = getStr('zonos3_steer.steer_release');
+  if (releaseJson) {
+    try {
+      const r: unknown = JSON.parse(releaseJson);
+      const keys = isObj(r) ? Object.keys(r) : [];
+      if (!isObj(r) || !['onset_seconds', 'ramp_seconds', 'hold'].every(k => keys.includes(k)) ||
+          keys.some(k => !RELEASE_KEYS.includes(k)))
+        throw new Error('expected {onset_seconds, ramp_seconds, hold, exempt?}');
+      const { onset_seconds: onset, ramp_seconds: ramp, hold } = r;
+      if (typeof onset !== 'number' || typeof ramp !== 'number' || typeof hold !== 'number')
+        throw new Error('onset_seconds, ramp_seconds and hold must be numbers');
+      const exempt = r.exempt ?? [];
+      if (!Array.isArray(exempt) || !exempt.every(x => typeof x === 'string')) throw new Error('exempt is not a string array');
+      checkRelease(onset, ramp, hold);
+      for (const id of exempt) {
+        const d = b.index.get(id);
+        if (d === undefined || !b.dirs[d].hidden)
+          throw invalid(`steer_release exempts '${id}', which is not a hidden direction of the bundle`);
+      }
+      b.steerRelease = { onsetSeconds: onset, rampSeconds: ramp, hold, exempt };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith(`'${path}' is not a valid`)) throw e;
+      throw invalid(`bad steer_release JSON: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   if (b.hiddenSize && b.hiddenSize !== model.nEmbd)
     throw new Error(`steering hidden directions have ${b.hiddenSize} values; the backbone hidden size is ${model.nEmbd}`);
   if (b.speakerDim && b.speakerDim !== model.speakerDim)
@@ -317,8 +385,49 @@ export function controlsDocument(b: SteerBundle, speakerDim: number): unknown {
   }
   return {
     bundle: b.name, embedding_dim: speakerDim, sets, directions: dirs,
-    timing: JSON.parse(b.timingJson), ui: JSON.parse(b.uiJson),
+    timing: JSON.parse(b.timingJson), ui: JSON.parse(b.uiJson), steer_release: releaseDocument(b),
   };
+}
+
+const RELEASE_KEYS = ['onset_seconds', 'ramp_seconds', 'hold', 'exempt'];
+
+/** Python repr() of a float for error messages. */
+function floatRepr(v: number): string {
+  if (Number.isNaN(v)) return 'nan';
+  if (!Number.isFinite(v)) return v > 0 ? 'inf' : '-inf';
+  return Number.isInteger(v) ? v.toFixed(1) : String(v);
+}
+
+/** steering.check_release: throws unless 0 <= hold <= 1 and the times are finite and >= 0. */
+export function checkRelease(onsetSeconds: number, rampSeconds: number, hold: number): void {
+  if (!(Number.isFinite(hold) && hold >= 0 && hold <= 1)) throw new Error(`steer_hold must be in [0, 1], got ${floatRepr(hold)}.`);
+  for (const [name, v] of [['steer_onset_seconds', onsetSeconds], ['steer_ramp_seconds', rampSeconds]] as const)
+    if (!(Number.isFinite(v) && v >= 0)) throw new Error(`${name} must be finite and >= 0, got ${floatRepr(v)}.`);
+}
+
+/** steering.release_document: the bundle's steer_release as {onset_seconds, ramp_seconds, hold, exempt}, or null
+ *  (/v2/controls, /v2/capabilities). */
+export function releaseDocument(b: SteerBundle | null): unknown {
+  const r = b?.steerRelease;
+  if (!r) return null;
+  return { onset_seconds: r.onsetSeconds, ramp_seconds: r.rampSeconds, hold: r.hold, exempt: r.exempt.slice() };
+}
+
+/** steering.request_release: a request's steer_hold / steer_onset_seconds / steer_ramp_seconds (null = the bundle's
+ *  default) over the bundle's steer_release (b null = no bundle), in frames at `frameRate` (Python round: halves to
+ *  even). null: the request-level controls stay constant (hold 1). A hold below 1 without the bundle key throws. */
+export function requestRelease(b: SteerBundle | null, hold: number | null, onsetSeconds: number | null,
+                               rampSeconds: number | null, frameRate: number): ReleaseFrames | null {
+  const d = b?.steerRelease;
+  if (!d) {
+    if (hold === null || hold === 1.0) return null;
+    throw new Error(b ? "steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none."
+      : `${NO_STEERING}; steer_hold below 1 needs its steer_release.`);
+  }
+  const h = hold ?? d.hold, onset = onsetSeconds ?? d.onsetSeconds, ramp = rampSeconds ?? d.rampSeconds;
+  checkRelease(onset, ramp, h);
+  if (h === 1.0) return null;
+  return { onset: roundHalfEven(onset * frameRate), ramp: roundHalfEven(ramp * frameRate), hold: h };
 }
 
 /** steering.disabled_controls: per calibrated set, in direction order, the control ids (`<set>.<name>` or
@@ -357,9 +466,12 @@ function roundHalfEven(x: number): number {
   return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
 }
 
-// zonos3_steer_resolve; `embedding` (embedding-mode speaker or null) is moved in place by raw controls.
+// zonos3_steer_resolve; `embedding` (embedding-mode speaker or null) is moved in place by raw controls. `release`: the
+// request's schedule (null = constant controls): the request-level hidden controls not exempt from the bundle's
+// steer_release go to out.release instead of out.hidden.
 export function resolveControls(b: SteerBundle, controls: Record<string, number>, spans: ControlSpan[],
-                                textChars: number, rate: number, embedding: Float32Array | null): Steering {
+                                textChars: number, rate: number, embedding: Float32Array | null,
+                                release: ReleaseFrames | null = null): Steering {
   const out = new Steering();
   out.sources = b.sources.slice();
   out.hiddenSize = b.hiddenSize;
@@ -409,7 +521,16 @@ export function resolveControls(b: SteerBundle, controls: Record<string, number>
     for (let i = 0; i < base.length; i++) base[i] = delta[i] * scale;
   }
 
-  out.hidden = hiddenVector(doses);
+  if (!release) {
+    out.hidden = hiddenVector(doses);
+  } else {  // resolve_controls(release_exempt=...): the exempt ids stay constant, the others release
+    const exempt = b.steerRelease?.exempt ?? [];
+    const kept = new Map<string, number>(), released = new Map<string, number>();
+    for (const [id, v] of doses) (exempt.includes(id) ? kept : released).set(id, v);
+    out.hidden = hiddenVector(kept);
+    out.release = hiddenVector(released);
+    if (out.release) out.releaseFrames = { ...release };
+  }
   if (spans.length === 0) return out;
   const r0 = (rate > 0 ? rate : STEER_FRAMES_PER_CHAR) * steerDurationFactor(b, doses);
   if (!(r0 > 0)) throw new Error('control_span_rate must be positive.');

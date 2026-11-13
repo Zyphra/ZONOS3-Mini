@@ -340,21 +340,24 @@ static bool laci_resume(const ServerState & s, zonos3_batch_ctx & bc, ReqJob & j
     return zonos3_batch_slot_prefill(bc, slot.index, ids.data(), slot.n_past, cond, job.logits.data());
 }
 
-// The hidden delta of the frame the slot generates next (sgl TTSReq.steer_delta): the constant delta plus the span
-// deltas, placed by the reading position (span follower) or the character-rate schedule.
+// The hidden delta of the frame the slot generates next (sgl TTSReq.steer_delta): the constant delta, the released
+// controls at that frame's weight (steer then hold) and the span deltas, placed by the reading position (span follower)
+// or the character-rate schedule.
 static void step_steer(ReqJob & jb) {
     const int frame = jb.history_rows + jb.slot.step;
+    const zonos3_steering & st = jb.gr.steering;
     if (jb.follower) {
-        std::vector<float> span;
-        const auto & hidden = jb.gr.steering.hidden;
+        std::vector<float> span, released;
+        if (!st.release.empty()) st.base_at(frame, released);
+        const auto & base = st.release.empty() ? st.hidden : released;
         if (jb.follower->delta(frame, span)) {
-            for (size_t i = 0; i < hidden.size() && i < span.size(); ++i) span[i] += hidden[i];
+            for (size_t i = 0; i < base.size() && i < span.size(); ++i) span[i] += base[i];
             jb.slot.steer = std::move(span);
         } else {
-            jb.slot.steer = hidden;
+            jb.slot.steer = base;
         }
-    } else if (!jb.gr.steering.spans.empty()) {
-        jb.gr.steering.delta_at(frame, jb.slot.steer);
+    } else if (!st.spans.empty() || !st.release.empty()) {
+        st.delta_at(frame, jb.slot.steer);
     } else {
         return;
     }

@@ -109,6 +109,10 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     steering_delta: torch.Tensor | None = None
     # Span steering [K, 3 + delta] (zonos3.tts.steering.resolve_controls), same layout as steering_delta.
     steer_schedule: torch.Tensor | None = None
+    # Steer then hold (zonos3.tts.steering.release_weight): the released request-level hidden controls (layout of
+    # steering_delta) and [onset frames, ramp frames, hold]. None: every control is in steering_delta.
+    steer_release_delta: torch.Tensor | None = None
+    steer_release: List[float] | None = None
     # Span steering that follows the reading position (zonos3.tts.span_follow; control_span_follow "reading"): the
     # character range [start, end) of ``text`` of every steer_schedule row and the gate's [lead, lag] in text tokens.
     # None: the rows keep the character-rate schedule.
@@ -230,6 +234,9 @@ class TTSUserMsg(BaseTTSBackendMsg):
     steering_delta: torch.Tensor | None = None
     # Span steering schedule (see TTSTokenizeMsg).
     steer_schedule: torch.Tensor | None = None
+    # Steer then hold (see TTSTokenizeMsg).
+    steer_release_delta: torch.Tensor | None = None
+    steer_release: List[float] | None = None
     # Span steering that follows the reading position (zonos3.tts.span_follow): the probe's head-spec key (the
     # request's language in the scheduler's LACI heads), each steer_schedule row's text-span positions [a, b) and the
     # gate's [lead, lag]. None: the character-rate schedule.

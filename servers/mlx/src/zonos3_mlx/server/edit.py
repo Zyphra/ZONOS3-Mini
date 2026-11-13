@@ -18,9 +18,9 @@ from zonos3.generation import SAMPLE_RATE, UPLOAD_MAX_SECONDS
 from zonos3.reference.synth import Sampling
 from zonos3.tts.audio import output_pcm
 from zonos3.tts.directions import RAW_SPACE
-from zonos3.tts.edit_runtime import EditRuntime, FillJob
+from zonos3.tts.edit_runtime import EditRuntime, FillJob, fill_steering, steer_fields, steer_release
 from zonos3.tts.plan import Speaker, resolve_condition_buckets, validate_text_markers
-from zonos3.tts.steering import check_controls, no_steering_message, resolve_controls
+from zonos3.tts.steering import check_controls, no_steering_message
 
 from zonos3_mlx.audio_io import decode_pcm
 from zonos3_mlx.engine import EditLayout, plan_request
@@ -49,10 +49,11 @@ class MlxEditEngine:
         return codes.to(torch.int64).numpy()
 
     async def check(
-        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
+        self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values, steer
     ) -> set[str]:
         engine = self.state.engine
         bundle = engine.steer_bundle
+        steer_release(bundle, steer, hint=engine.steer_hint)
         validate_text_markers(engine.text_tokenizer_spec, target_text, edit=True)
         raw = set()
         if doses is not None:
@@ -67,18 +68,14 @@ class MlxEditEngine:
     async def fill(self, job: FillJob) -> tuple[np.ndarray, int]:
         state, engine = self.state, self.state.engine
         c = state.config
-        embedding, delta = job.speaker_embedding, None
-        if job.controls:
-            resolved = resolve_controls(
-                engine.steer_bundle,
-                job.controls,
-                None,
-                text=job.controls_text,
-                speaker_embedding=embedding,
-                sources=engine.steering_sources,
-                hidden_size=engine.hidden_size,
-            )
-            embedding, delta = resolved.speaker_embedding, resolved.hidden_delta
+        steering = fill_steering(
+            engine.steer_bundle,
+            job,
+            hint=engine.steer_hint,
+            sources=engine.steering_sources,
+            hidden_size=engine.hidden_size,
+            frame_rate=engine.frame_rate,
+        )
         request = {
             "text": job.text,
             "language": job.language,
@@ -89,6 +86,7 @@ class MlxEditEngine:
             "condition_buckets": job.condition_buckets,
             "condition_values": job.condition_values,
             "stream": False,
+            **steer_fields(job),
         }
         layout = EditLayout(
             torch.as_tensor(job.window_codes, dtype=torch.int64),
@@ -96,8 +94,16 @@ class MlxEditEngine:
             [torch.as_tensor(f, dtype=torch.int32) for f in job.fills],
             job.min_frames,
         )
-        speaker = Speaker("embedding", embedding=embedding)
-        plan = await asyncio.to_thread(plan_request, engine, request, speaker, edit=layout, hidden_delta=delta)
+        speaker = Speaker("embedding", embedding=steering.speaker_embedding)
+        plan = await asyncio.to_thread(
+            plan_request,
+            engine,
+            request,
+            speaker,
+            edit=layout,
+            hidden_delta=steering.hidden_delta,
+            release_delta=steering.release_delta,
+        )
         sampling = replace(Sampling.from_request(plan.request), min_frames=int(job.min_frames))
         run = JobRun(state, plan, None, sampling, stop_id=c.span_end_id).start()
         try:

@@ -786,7 +786,7 @@ class TTSScheduler(SchedulerIOMixin):
             # prompt + speaker, but no hidden steering delta) that decodes in lockstep, so
             # it consumes a second table slot / cache handle.
             controls_cfg = (
-                msg.steering_delta is not None
+                (msg.steering_delta is not None or getattr(msg, "steer_release_delta", None) is not None)
                 and msg.speaker_embedding is not None
                 and float(msg.sampling_params.controls_cfg_scale) != 1.0
             )
@@ -916,6 +916,8 @@ class TTSScheduler(SchedulerIOMixin):
                 speaker_token_position=speaker_token_position,
                 steering_delta=msg.steering_delta,
                 steer_schedule=getattr(msg, "steer_schedule", None),
+                steer_release_delta=getattr(msg, "steer_release_delta", None),
+                steer_release=getattr(msg, "steer_release", None),
                 span_follower=span_follower,
                 condition_values=condition_values,
                 condition_token_start=condition_token_start,
@@ -970,6 +972,8 @@ class TTSScheduler(SchedulerIOMixin):
                     speaker_token_position=-1 if speaker_cfg else speaker_token_position,
                     steering_delta=msg.steering_delta if speaker_cfg else None,
                     steer_schedule=getattr(msg, "steer_schedule", None) if speaker_cfg else None,
+                    steer_release_delta=getattr(msg, "steer_release_delta", None) if speaker_cfg else None,
+                    steer_release=getattr(msg, "steer_release", None) if speaker_cfg else None,
                     span_follower=span_follower if speaker_cfg else None,
                     condition_values=cfg_twin_spec.condition_values if speaker_cfg else condition_values,
                     condition_token_start=cfg_twin_spec.condition_token_start if speaker_cfg else condition_token_start,

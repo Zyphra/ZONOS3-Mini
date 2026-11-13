@@ -70,6 +70,7 @@ class Context:
     accent_names = ()
     steer_bundle, steer_hint, steering_sources = None, "start it with --steer-bundle", ()
     laci_languages = ()
+    frame_rate = 15.0
     reference_max_frames = REFERENCE_MAX_FRAMES
     silence_available = True
 

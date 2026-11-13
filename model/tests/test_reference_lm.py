@@ -343,6 +343,8 @@ def test_laci_rollback_keeps_the_rows_before_the_failure(monkeypatch):
         context_codes=None,
         sources=(),
         hidden_delta=None,
+        release_delta=None,
+        release=None,
         schedule=None,
         follow_tokens=None,
         follow_gate=None,

@@ -13,7 +13,9 @@ import { outputPcm } from '../output';
 import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
-import { NO_STEERING, resolveControls, Steering, textChars, type ControlSpan } from '../request/steer';
+import {
+  NO_STEERING, requestRelease, resolveControls, Steering, textChars, type ControlSpan, type ReleaseFrames,
+} from '../request/steer';
 import { defaultSampling, vocabIds, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { acceptFrame, newSlot, type SlotState } from '../slot';
@@ -159,8 +161,19 @@ function checkAccent(body: Body): void {
   }
 }
 
-/** zonos3.tts.plan request_rules' steering controls (R10). */
+/** zonos3.tts.plan request_rules' steer then hold (R10, before the controls; refused even without controls): the
+ *  request's steer_hold / steer_onset_seconds / steer_ramp_seconds over the bundle's steer_release, in codec frames;
+ *  null = the request-level controls stay constant. */
+export function resolveRelease(e: Engine, body: Body): ReleaseFrames | null {
+  const field = (k: string) => (isSet(body, k) ? Number(body[k]) : null);
+  return as400(() => requestRelease(e.steer, field('steer_hold'), field('steer_onset_seconds'),
+    field('steer_ramp_seconds'), SAMPLE_RATE / HOP));
+}
+
+/** zonos3.tts.plan request_rules' steering controls (R10): the steer-then-hold schedule, then the controls and spans
+ *  (with a schedule, the request-level hidden controls not exempt from it release). */
 function applyControls(e: Engine, body: Body, p: Plan): void {
+  const release = resolveRelease(e, body);
   if (!truthy(body, 'controls') && !truthy(body, 'control_spans')) return;
   if (!e.steer)
     fail(400, `${NO_STEERING}; \`controls\` are unavailable.`);
@@ -168,7 +181,7 @@ function applyControls(e: Engine, body: Body, p: Plan): void {
   const spans = isSet(body, 'control_spans') ? body.control_spans as ControlSpan[] : [];
   const rate = num(body, 'control_span_rate', 0);
   const embedding = p.speakerMode === 'embedding' ? p.speakerEmbedding : null;
-  p.steering = as400(() => resolveControls(e.steer!, controls, spans, textChars(p.rawText), rate, embedding));
+  p.steering = as400(() => resolveControls(e.steer!, controls, spans, textChars(p.rawText), rate, embedding, release));
 }
 
 /** zonos3.tts.plan check_laci (R14). */
@@ -282,7 +295,7 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     p.cfgScale = speakerCfg;
     p.cfgKind = 'speaker';
   }
-  if (controlsCfg !== 1.0 && p.steering.hidden && requestEmbedding(p)) {
+  if (controlsCfg !== 1.0 && (p.steering.hidden || p.steering.release) && requestEmbedding(p)) {
     p.cfgScale = controlsCfg;
     p.twinSteered = false;
     p.cfgKind = 'controls';
@@ -429,7 +442,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
   const cfgScale = twin ? p.cfgScale : null;
   let windows: Windows = laci?.probeMask() ?? [];
   const probeCtl: ProbeControl = { textLen: probe?.textLen ?? 0, mask: null, stop: false };
-  let hidden = p.steering.hidden;
+  const steering = p.steering;
 
   // codec stream state (prefix streaming: incremental; whole: decoded at the end through the same causal stream).
   // Prefix chunks are queued, not awaited: their GPU work is submitted before the next backbone step and their host
@@ -473,21 +486,18 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
 
   const probeInput = (): ProbeInput | null => probe ? { ...probe, windows } : null;
 
-  // step_steer: the hidden steering delta of the decode that yields the attempt's frame k (k >= 1)
+  // step_steer: the hidden steering delta of the decode that yields the attempt's frame k (k >= 1): the constant delta,
+  // the released controls at that frame's weight (steer then hold) and the span deltas
   const steerAt = (k: number): Float32Array | null => {
     const frame = historyRows + k;
     if (follower) {
+      const base = steering.baseAt(frame);
       const span = follower.delta(frame);
-      if (!span) return hidden;
-      if (hidden) for (let i = 0; i < hidden.length && i < span.length; i++) span[i] += hidden[i];
+      if (!span) return base;
+      if (base) for (let i = 0; i < base.length && i < span.length; i++) span[i] += base[i];
       return span;
     }
-    if (p.steering.spans.length) {
-      const out = { v: null as Float32Array | null };
-      p.steering.deltaAt(frame, out);
-      return out.v;
-    }
-    return hidden;
+    return steering.at(frame);
   };
 
   // Sampling runs on the GPU after each decode (bb.stepSample). Without a probe readout nothing the host learns from
@@ -568,7 +578,7 @@ export async function runJob(e: Engine, p: Plan, emit: (pcm: Float32Array) => vo
           for (let r = 0; r < c.nRows; r++) ids.set(laci.stream[r].subarray(0, W), (base + r) * W);
           const cond: Conditioning = { ...p.prompt.cond };
           if (c.conditionValues) cond.buckets = c.conditionValues.slice();
-          if (c.swapDelta) hidden = c.steeringDelta;
+          if (c.swapDelta) steering.hidden = c.steeringDelta;
           Object.assign(slot, newSlot(c.nRows));
           issued = 0;
           windows = laci.probeMask() ?? [];

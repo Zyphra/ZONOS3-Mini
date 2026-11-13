@@ -6,7 +6,10 @@
 #include "ggml.h"
 #include "gguf.h"
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
+#include <optional>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -75,6 +78,49 @@ static void test_loader(const zonos3_model & model, const std::string & steer_pa
         const bool loaded = zonos3_steer_load(stale, old.c_str(), model, err);
         std::remove(old.c_str());
         CHECK(!loaded && contains(err, "missing or mistyped zonos3_steer.* metadata"), "loader: missing set.calibrations refused");
+    }
+    // Steer then hold: zonos3_steer.steer_release (absent from the dummy) loads into b.steer_release; its exempt ids must
+    // be hidden directions; /v2/controls reports it.
+    CHECK(!b.steer_release && contains(doc, "\"steer_release\":null"), "release: none without the key");
+    CHECK(zonos3_steer_release_json(nullptr) == "null", "release: null without a bundle");
+    auto with_release = [&](const char * value, zonos3_steer_bundle & out) {
+        ggml_context * data = nullptr;
+        gguf_context * g = gguf_init_from_file(steer_path.c_str(), {false, &data});
+        CHECK(g, "release: reread dummy-steer.gguf");
+        gguf_context * o = gguf_init_empty();
+        gguf_set_kv(o, g);
+        gguf_set_val_str(o, "zonos3_steer.steer_release", value);
+        for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) gguf_add_tensor(o, ggml_get_tensor(data, gguf_get_tensor_name(g, i)));
+        const std::string path = "steering-release.tmp.gguf";
+        CHECK(gguf_write_to_file(o, path.c_str(), false), "release: write steer file");
+        gguf_free(o);
+        gguf_free(g);
+        ggml_free(data);
+        const bool loaded = zonos3_steer_load(out, path.c_str(), model, err);
+        std::remove(path.c_str());
+        return loaded;
+    };
+    {
+        zonos3_steer_bundle r;
+        CHECK(with_release("{\"onset_seconds\": 4.0, \"ramp_seconds\": 1.0, \"hold\": 0.25, \"exempt\": [\"style.tempo\"]}", r),
+              ("release: loads " + err).c_str());
+        CHECK(r.steer_release && r.steer_release->onset_seconds == 4.0 && r.steer_release->ramp_seconds == 1.0 &&
+              r.steer_release->hold == 0.25 && (r.steer_release->exempt == std::vector<std::string>{"style.tempo"}),
+              "release: parsed");
+        CHECK(zonos3_steer_release_json(&r) == "{\"onset_seconds\":4.0,\"ramp_seconds\":1.0,\"hold\":0.25,\"exempt\":[\"style.tempo\"]}",
+              "release: document");
+        CHECK(contains(zonos3_steer_controls_json(r, 192), "\"steer_release\":{\"onset_seconds\":4.0,"), "release: /v2/controls");
+        CHECK(with_release("", r) && !r.steer_release, "release: \"\" = none");
+        CHECK(with_release("{\"onset_seconds\": 4, \"ramp_seconds\": 1, \"hold\": 0.5}", r) && r.steer_release &&
+              r.steer_release->exempt.empty(), "release: exempt optional");
+        CHECK(!with_release("{\"onset_seconds\": 4, \"ramp_seconds\": 1, \"hold\": 0.25, \"exempt\": [\"who.gender\"]}", r) &&
+              contains(err, "exempts 'who.gender', which is not a hidden direction"), "release: raw exempt refused");
+        CHECK(!with_release("{\"onset_seconds\": 4, \"hold\": 0.25}", r) && contains(err, "bad steer_release JSON"),
+              "release: missing key refused");
+        CHECK(!with_release("{\"onset_seconds\": 4, \"ramp_seconds\": 1, \"hold\": 0.25, \"extra\": 1}", r), "release: extra key refused");
+        CHECK(!with_release("{\"onset_seconds\": 4, \"ramp_seconds\": 1, \"hold\": 1.5}", r) && contains(err, "steer_hold must be in [0, 1]"),
+              "release: hold > 1 refused");
+        CHECK(!with_release("{\"onset_seconds\": -1, \"ramp_seconds\": 1, \"hold\": 0.5}", r), "release: negative onset refused");
     }
     zonos3_steer_bundle bad;
     CHECK(!zonos3_steer_load(bad, backbone_path.c_str(), model, err), "loader: backbone is not a steer file");
@@ -151,6 +197,84 @@ static void test_resolve() {
     CHECK(!zonos3_steer_resolve(b, {}, {out_of}, 10, 0, nullptr, st, err) && contains(err, "outside the text (0..10)"), "error: outside text");
 }
 
+// Steer then hold: the request schedule, the exempt split, the weight and the per-frame delta.
+static void test_release() {
+    zonos3_steer_bundle b = make_bundle();
+    std::string err;
+    std::optional<zonos3_steer_release_frames> rel;
+    const double nan = std::nan("");
+
+    // Request fields without the bundle key: unset or 1 = constant; below 1 refused.
+    CHECK(zonos3_steer_request_release(&b, nan, nan, nan, 15.0, rel, err) && !rel, "request: no key, unset");
+    CHECK(zonos3_steer_request_release(&b, 1.0, 2.0, nan, 15.0, rel, err) && !rel, "request: no key, hold 1");
+    CHECK(!zonos3_steer_request_release(&b, 0.5, nan, nan, 15.0, rel, err) &&
+          err == "steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none.", "request: no key, hold < 1");
+    CHECK(zonos3_steer_request_release(nullptr, nan, nan, nan, 15.0, rel, err) && !rel, "request: no bundle, unset");
+    CHECK(!zonos3_steer_request_release(nullptr, 0.0, nan, nan, 15.0, rel, err), "request: no bundle, hold < 1");
+
+    // With the key: defaults, overrides, rounding (Python round: halves to even), hold 1 = constant.
+    b.steer_release = zonos3_steer_release{4.0, 1.0, 0.25, {"style.tempo"}};
+    CHECK(zonos3_steer_request_release(&b, nan, nan, nan, 15.0, rel, err) && rel && rel->onset == 60 && rel->ramp == 15 &&
+          rel->hold == 0.25, "request: bundle defaults in frames");
+    CHECK(zonos3_steer_request_release(&b, 0.5, 0.1, 0.0, 15.0, rel, err) && rel && rel->onset == 2 && rel->ramp == 0 &&
+          rel->hold == 0.5, "request: overrides");
+    CHECK(zonos3_steer_request_release(&b, nan, 2.5, 3.5, 1.0, rel, err) && rel && rel->onset == 2 && rel->ramp == 4,
+          "request: half-to-even frames (2.5 -> 2, 3.5 -> 4)");
+    CHECK(zonos3_steer_request_release(&b, 1.0, nan, nan, 15.0, rel, err) && !rel, "request: hold 1 = constant");
+
+    // The split: exempt (style.tempo) and every hidden control without a schedule stay in `hidden`.
+    const zonos3_steer_release_frames frames{4, 4, 0.25};
+    zonos3_steering st, flat;
+    CHECK(zonos3_steer_resolve(b, {{"style.whisper", 2}, {"deep.cmn", 1}, {"style.tempo", 1}}, {}, 10, 0, nullptr, flat, err), err.c_str());
+    CHECK(flat.release.empty() && (flat.hidden == std::vector<float>{0, 3, 1, 1}), "split: none without a schedule");
+    CHECK(zonos3_steer_resolve(b, {{"style.whisper", 2}, {"deep.cmn", 1}, {"style.tempo", 1}}, {}, 10, 0, nullptr, st, err, &frames),
+          err.c_str());
+    CHECK((st.hidden == std::vector<float>{0, 0, -1, 1}) && (st.release == std::vector<float>{0, 3, 2, 0}), "split: exempt vs released");
+    CHECK(st.release_frames.onset == 4 && st.release_frames.ramp == 4 && st.release_frames.hold == 0.25, "split: frames");
+    zonos3_steering only_exempt;
+    CHECK(zonos3_steer_resolve(b, {{"style.tempo", 1}}, {}, 10, 0, nullptr, only_exempt, err, &frames), err.c_str());
+    CHECK(only_exempt.release.empty() && (only_exempt.hidden == std::vector<float>{0, 0, -1, 1}), "split: nothing to release");
+    zonos3_steering only_released;
+    CHECK(zonos3_steer_resolve(b, {{"deep.cmn", 2}}, {}, 10, 0, nullptr, only_released, err, &frames), err.c_str());
+    CHECK(only_released.hidden.empty() && only_released.hidden_active(), "split: released only is still hidden-active");
+
+    // release_weight: 1 before onset, the linear ramp, hold after; ramp 0 is a step.
+    CHECK(st.release_weight(0) == 1.0 && st.release_weight(3) == 1.0, "weight: before onset");
+    CHECK(st.release_weight(4) == 1.0 && st.release_weight(5) == 1.0 - 0.75 / 4 && st.release_weight(6) == 0.625 &&
+          st.release_weight(7) == 1.0 - 0.75 * 3 / 4, "weight: ramp");
+    CHECK(st.release_weight(8) == 0.25 && st.release_weight(1000) == 0.25, "weight: hold");
+    zonos3_steering step = st;
+    step.release_frames = {4, 0, 0.0};
+    CHECK(step.release_weight(3) == 1.0 && step.release_weight(4) == 0.0, "weight: ramp 0 = a step");
+
+    // delta_at = hidden + w * release (+ spans).
+    std::vector<float> out;
+    st.delta_at(2, out);
+    CHECK((out == std::vector<float>{0, 3, 1, 1}), "delta: before onset = the constant push");
+    st.delta_at(6, out);
+    CHECK((out == std::vector<float>{0, 0.625f * 3, -1 + 0.625f * 2, 1}), "delta: mid ramp");
+    st.delta_at(9, out);
+    CHECK((out == std::vector<float>{0, 0.75f, -0.5f, 1}), "delta: hold");
+    only_released.delta_at(20, out);
+    CHECK((out == std::vector<float>{0, 1.5f, 0, 0}), "delta: released only, no constant part");
+    zonos3_steering zero = only_released;
+    zero.release_frames = {0, 0, 0.0};
+    zero.delta_at(5, out);
+    CHECK(out.size() == 4 && out[1] == 0.0f, "delta: hold 0 keeps a zero delta");
+    st.base_at(9, out);
+    CHECK((out == std::vector<float>{0, 0.75f, -0.5f, 1}), "base_at: hidden + w * release");
+    zonos3_steering spanned = st;
+    spanned.spans.push_back({10, 20, 3, {1, 0, 0, 0}});
+    spanned.delta_at(12, out);
+    CHECK((out == std::vector<float>{1, 0.75f, -0.5f, 1}), "delta: a span adds on top");
+
+    // Hold 1 is never a release: resolve leaves the constant layout of before (bit identity).
+    CHECK(zonos3_steer_request_release(&b, 1.0, nan, nan, 15.0, rel, err) && !rel, "hold 1: no schedule");
+    zonos3_steering same;
+    CHECK(zonos3_steer_resolve(b, {{"style.whisper", 2}, {"deep.cmn", 1}, {"style.tempo", 1}}, {}, 10, 0, nullptr, same, err,
+                               rel ? &*rel : nullptr) && same.hidden == flat.hidden && same.release.empty(), "hold 1: constant delta");
+}
+
 struct run_result { std::vector<std::vector<float>> logits; };  // per step: slot 0 then slot 1
 
 static run_result run_decode(const zonos3_model & m, const zonos3_prompt & p, const zonos3_prompt & twin,
@@ -197,6 +321,29 @@ static float max_diff(const run_result & a, const run_result & b, int slot) {
     return d;
 }
 
+// One slot decoding `steps` frames with a per-step delta (zonos3_steering::delta_at of the step, like the scheduler).
+static std::vector<std::vector<float>> run_steps(const zonos3_model & m, const zonos3_prompt & p, const std::vector<int> & sources,
+                                                 const std::function<void(int, std::vector<float> &)> & steer, int steps) {
+    zonos3_batch_ctx bc;
+    CHECK(zonos3_batch_init(bc, m, 1, p.n_rows + steps + 4, sources), "release graph: batch_init");
+    const size_t stride = (size_t) m.hp.audio_vocab * m.hp.n_codebooks;
+    std::vector<float> l(stride), ids(p.ids.begin(), p.ids.end());
+    CHECK(zonos3_batch_slot_prefill(bc, 0, ids.data(), p.n_rows, p.cond, l.data()), "release graph: prefill");
+    zonos3_slot s;
+    s.index = 0; s.active = true; s.n_past = p.n_rows; s.prefill = p.prefill_frames;
+    s.next_ids.assign(m.hp.n_codebooks + 1, 1);
+    s.next_ids.back() = (int32_t) m.hp.text_vocab;
+    std::vector<std::vector<float>> out;
+    for (int i = 0; i < steps; i++) {
+        steer(i, s.steer);
+        CHECK(zonos3_batch_step(bc, {&s}), "release graph: decode step");
+        const float * x = zonos3_batch_slot_logits(bc, 0);
+        out.emplace_back(x, x + stride);
+    }
+    zonos3_batch_free(bc);
+    return out;
+}
+
 static void test_graph(zonos3_model & m, const zonos3_steer_bundle & b, const std::string & spk_path) {
     std::vector<float> speaker;
     std::string err;
@@ -240,6 +387,33 @@ static void test_graph(zonos3_model & m, const zonos3_steer_bundle & b, const st
     s.steer.assign(7, 0.0f);
     CHECK(!zonos3_batch_step(bc, {&s}), "validation: wrong delta size rejected");
     zonos3_batch_free(bc);
+
+    // Steer then hold in the decode graph: a constant push (style.whisper, source 3) released from step 2 over 2 steps to
+    // 0.25 matches the same deltas set by hand, step for step, and leaves the steps before onset bit-identical to the
+    // constant push.
+    zonos3_steering constant;
+    constant.sources = {3, 5};
+    constant.hidden_size = (int) D;
+    constant.hidden = delta_for("style.whisper", 0);
+    zonos3_steering released = constant;
+    released.release = released.hidden;
+    released.hidden.clear();
+    released.release_frames = {2, 2, 0.25};
+    const int steps = 6;
+    const auto c = run_steps(m, prompt, {3, 5}, [&](int f, std::vector<float> & d) { constant.delta_at(f, d); }, steps);
+    const auto r = run_steps(m, prompt, {3, 5}, [&](int f, std::vector<float> & d) { released.delta_at(f, d); }, steps);
+    const float w[] = {1, 1, 1, 0.625f, 0.25f, 0.25f};
+    const auto h = run_steps(m, prompt, {3, 5}, [&](int f, std::vector<float> & d) {
+        d = constant.hidden;
+        for (auto & v : d) v *= w[f];
+    }, steps);
+    for (int i = 0; i < steps; i++)
+        CHECK(!memcmp(r[i].data(), h[i].data(), r[i].size() * sizeof(float)), "release graph: per-step delta = w(f) x push");
+    for (int i = 0; i < 3; i++)
+        CHECK(!memcmp(r[i].data(), c[i].data(), r[i].size() * sizeof(float)), "release graph: before the release = constant push");
+    float diff = 0;
+    for (size_t j = 0; j < r[4].size(); j++) diff = std::max(diff, std::fabs(r[4][j] - c[4][j]));
+    CHECK(diff > 1e-4f, "release graph: the held push differs from the constant one");
 }
 
 int main(int argc, char ** argv) {
@@ -248,6 +422,7 @@ int main(int argc, char ** argv) {
     if (!zonos3_model_load(model, argv[1], false)) return 1;
     test_loader(model, argv[2], argv[1]);
     test_resolve();
+    test_release();
     zonos3_steer_bundle b;
     std::string err;
     CHECK(zonos3_steer_load(b, argv[2], model, err), err.c_str());

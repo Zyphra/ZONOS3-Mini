@@ -12,7 +12,7 @@ import pytest
 
 api_server = pytest.importorskip("zonos3_sgl.server.api_server")
 from zonos3.server.schemas import EditRequest  # noqa: E402
-from zonos3.tts.edit_runtime import EditModel, EditRuntime, region_doses  # noqa: E402
+from zonos3.tts.edit_runtime import EditModel, EditRuntime, region_doses, steer_fields  # noqa: E402
 
 
 def _set(root, name, space, vectors, source=None):
@@ -85,8 +85,9 @@ def serve(monkeypatch):
 
 def _doses(runtime, **fields):
     """The regions' doses of an edit request, after the engine checked them (returns the raw-space ids too)."""
-    doses = region_doses(EditRequest(audio_base64="", target_text="x", **fields), runtime.model)
-    return doses, asyncio.run(runtime.engine.check("x", doses, None, None))
+    req = EditRequest(audio_base64="", target_text="x", **fields)
+    doses = region_doses(req, runtime.model)
+    return doses, asyncio.run(runtime.engine.check("x", doses, None, None, steer_fields(req)))
 
 
 def _edit(runtime, **fields):
@@ -147,3 +148,15 @@ def test_raw_controls_need_a_speaker_row_checkpoint_and_hidden_ones_do_not(serve
 
 def test_controls_need_a_steering_bundle(serve):
     assert "no steering bundle (start it with --steer-bundle)" in _edit(serve(None), controls={"style.whisper": 1})
+
+
+def test_steer_hold_needs_a_bundle_with_steer_release(serve, bundle, tmp_path):
+    """Steer then hold on an edit: a hold below 1 needs the bundle's steer_release, refused before any work; hold 1
+    is the constant push of before."""
+    assert "no steering bundle (start it with --steer-bundle); steer_hold below 1" in _edit(serve(None), steer_hold=0.5)
+    assert "this server's bundle has none" in _edit(serve(bundle), controls={"style.whisper": 1}, steer_hold=0.5)
+    assert _edit(serve(bundle), controls={"style.whisper": 1}, steer_hold=1.0, steer_onset_seconds=2.0) is None
+    spec = json.loads((tmp_path / "bundle.json").read_text())
+    spec["steer_release"] = {"onset_seconds": 4.0, "ramp_seconds": 1.0, "hold": 0.25, "exempt": ["style.whisper"]}
+    (tmp_path / "release.json").write_text(json.dumps(spec))
+    assert _edit(serve(str(tmp_path / "release.json")), controls={"style.angry": 1}, steer_hold=0.5) is None

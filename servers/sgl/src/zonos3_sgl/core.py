@@ -116,6 +116,10 @@ class TTSReq:
     # Span steering (zonos3.tts.steering): [K, 3 + delta] rows of (start frame, end frame, ramp frames, delta in the
     # steering_delta layout), added on the generated frames they cover.
     steer_schedule: torch.Tensor | None = None
+    # Steer then hold (zonos3.tts.steering.release_weight): the released request-level hidden controls (layout of
+    # steering_delta) and (onset frames, ramp frames, hold); the delta is added at its frame's weight.
+    steer_release_delta: torch.Tensor | None = None
+    steer_release: tuple[int, int, float] | None = None
     # Span steering by reading position (zonos3.tts.span_follow.SpanFollower; the speaker-CFG twin shares its
     # request's): replaces the schedule's frame placement of the same span deltas.
     span_follower: "SpanFollower | None" = None
@@ -170,6 +174,13 @@ class TTSReq:
                 raise ValueError(f"steer_schedule must be [K, 3 + delta], got shape {tuple(s.shape)}")
             self.steer_schedule = s.to(dtype=torch.float32, device="cpu")
 
+        if self.steer_release_delta is not None:
+            if self.steer_release is None:
+                raise ValueError("steer_release_delta needs steer_release (onset frames, ramp frames, hold)")
+            self.steer_release_delta = self.steer_release_delta.reshape(-1).to(dtype=torch.float32, device="cpu")
+            onset, ramp, hold = self.steer_release
+            self.steer_release = (int(onset), int(ramp), float(hold))
+
         if self.speaker_token_position < 0:
             # Training convention: reserved speaker slot is at prompt position 0.
             self.speaker_token_position = 0
@@ -182,21 +193,27 @@ class TTSReq:
         return self.input_ids.shape[-1]
 
     def steer_delta(self) -> torch.Tensor | None:
-        """The hidden steering delta for the frame this request generates now: its constant
-        delta plus the span deltas active at that frame (the schedule's, or the span follower's).
-        Frames count the stream's generated frames: a LACI continuation resumes after its history_rows."""
+        """The hidden steering delta for the frame this request generates now: its constant delta, the released
+        controls at that frame's weight (steer then hold) and the span deltas active at that frame (the schedule's, or
+        the span follower's). Frames count the stream's generated frames: a LACI continuation resumes after its
+        history_rows."""
         frame = self.total_generated + self.history_rows
+        base = self.steering_delta
+        if self.steer_release_delta is not None:
+            from zonos3.tts.steering import released_delta
+
+            base = released_delta(base, self.steer_release_delta, self.steer_release, frame)
         if self.span_follower is not None:
             span = self.span_follower.delta(frame)
         elif self.steer_schedule is None:
-            return self.steering_delta
+            return base
         else:
             from zonos3.tts.steering import schedule_delta
 
             span = schedule_delta(self.steer_schedule, frame)
         if span is None:
-            return self.steering_delta
-        return span if self.steering_delta is None else self.steering_delta + span
+            return base
+        return span if base is None else base + span
 
     @property
     def remain_len(self) -> int:

@@ -62,6 +62,7 @@ def load_steer(path: str | Path) -> SteeringBundle:
             calibration=Calibration.from_document(json.loads(calibration)) if calibration else None,
         )
     raw = f.meta(k("rate_extension"), "")
+    release = f.meta(k("steer_release"), "")
     return build_bundle(
         Path(path),
         f.meta(k("name")),
@@ -69,6 +70,7 @@ def load_steer(path: str | Path) -> SteeringBundle:
         timing=json.loads(f.meta(k("timing"), "{}")),
         ui=json.loads(f.meta(k("ui"), "{}")),
         rate_extension=json.loads(raw) if raw else None,
+        steer_release=json.loads(release) if release else None,
     )
 
 

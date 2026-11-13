@@ -137,3 +137,41 @@ def test_literal_angle_text_contributes_to_span_timing(bundle):
         rate=2.0,
     )
     assert result.schedule[0, :2].tolist() == [22.0, 26.0]
+
+
+def test_request_steer_delta_weights_the_released_controls_per_frame():
+    """Steer then hold: the released delta at full dose before onset, ramped to hold, held; the constant delta and the
+    spans unchanged; a LACI continuation counts its history rows."""
+    from zonos3_sgl.core import TTSReq
+
+    def request(**kw):
+        return TTSReq(
+            input_ids=torch.zeros((2, 10), dtype=torch.int32),
+            table_idx=0,
+            cached_len=0,
+            output_len=50,
+            uid=0,
+            sampling_params=None,
+            cache_handle=None,
+            audio_pad_id=1025,
+            stop_id=1024,
+            **kw,
+        )
+
+    req = request(
+        steering_delta=torch.tensor([1.0, 0.0]),
+        steer_release_delta=torch.tensor([0.0, 4.0]),
+        steer_release=[4.0, 2.0, 0.25],
+        steer_schedule=torch.tensor([[10.0, 20.0, 1.0, 1.0, 1.0]]),
+    )
+    assert req.steer_release == (4, 2, 0.25)
+    expected = {0: 4.0, 3: 4.0, 4: 4.0, 5: 2.5, 6: 1.0, 8: 1.0}
+    for frame, w in expected.items():
+        req.total_generated = frame
+        assert torch.equal(req.steer_delta(), torch.tensor([1.0, w])), frame
+    req.total_generated = 15
+    assert torch.equal(req.steer_delta(), torch.tensor([2.0, 2.0]))  # + the span
+    cont = request(steer_release_delta=torch.tensor([0.0, 4.0]), steer_release=(4, 2, 0.25), history_rows=5)
+    assert torch.equal(cont.steer_delta(), torch.tensor([0.0, 2.5]))
+    with pytest.raises(ValueError, match="needs steer_release"):
+        request(steer_release_delta=torch.tensor([1.0]))

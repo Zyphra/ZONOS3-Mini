@@ -7,6 +7,7 @@ import languages from '../../../../model/src/zonos3/registries/languages.json';
 import {
   DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES,
 } from '../generation';
+import { releaseDocument } from '../request/steer';
 import type { Decoder, Engine } from './engine';
 
 const AUDIO_CODEC = 'opus_dual_3n_600k_sched600k_r4096_step600000';
@@ -133,6 +134,9 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     speaker_embedding_blend: embedding,
     default_voices_enabled: true,
     projects: { enabled: false },
+    // Steer then hold: the defaults of steer_hold / steer_onset_seconds / steer_ramp_seconds and the directions that stay
+    // constant (the bundle's steer_release); null = request-level controls are constant.
+    steer_release: releaseDocument(e.steer),
     speech_editing: e.edit !== null && editMaxSpans(e) > 0,
     edit_transcribe: false,
     edit_max_spans: editMaxSpans(e),

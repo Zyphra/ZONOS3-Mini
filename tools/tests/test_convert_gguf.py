@@ -303,9 +303,17 @@ def test_steer(tmp_path):
     assert strings("zonos3_steer.set.calibrations") == [calibration, ""]
     assert strings("zonos3_steer.direction.ids") == ["mood.happy", "mood.valence", "pitch.pitch"]
     assert strings("zonos3_steer.direction.kinds") == ["named", "axis", "axis"]
+    assert "zonos3_steer.steer_release" not in fields  # "" (no block): gguf-py's add_string writes no empty string
     assert [t.name for t in reader.tensors] == ["steer.dir.0", "steer.dir.1", "steer.dir.2"]
     for tensor, did in zip(reader.tensors, ("mood.happy", "mood.valence", "pitch.pitch")):
         np.testing.assert_array_equal(np.asarray(tensor.data), vectors[did])
+
+    # Steer then hold: the bundle's steer_release block travels verbatim.
+    release = {"onset_seconds": 4.0, "ramp_seconds": 1.0, "hold": 0.25, "exempt": ["mood.valence"]}
+    bundle.write_text(json.dumps({"name": "tiny", "sets": {"mood": "mood", "pitch": "pitch"}, "steer_release": release}))
+    convert_gguf.main(["steer", str(bundle), "-o", str(out)])
+    field = GGUFReader(out).fields["zonos3_steer.steer_release"]
+    assert json.loads(bytes(field.parts[field.data[0]]).decode()) == release
 
 
 def test_accents(tmp_path):

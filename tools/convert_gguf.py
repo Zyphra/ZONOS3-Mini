@@ -1622,7 +1622,7 @@ def cmd_speaker_encoder(args, parser):
 STEER_DOC = """Pack a steering bundle (`studio_bundle_*.json`, zonos3.tts.steering.load_bundle) into one steer.gguf.
 
 The bundle JSON lists direction sets (`{"sets": {name: relative-dir}, "timing": {...}, "ui": {...},
-"rate_extension": {...}}`); each set directory holds a `manifest.json`, one `.npy` per direction and optionally a
+"rate_extension": {...}, "steer_release": {...}}`); each set directory holds a `manifest.json`, one `.npy` per direction and optionally a
 `calibration.json`. Raw sets move the 192-d speaker embedding; `attnres_source` sets add to one Full AttnRes bank
 source of the decoder.
 
@@ -1638,6 +1638,8 @@ GGUF layout (read by servers/ggml/src/zonos3-steer.cpp):
   zonos3_steer.timing                  str, JSON {direction id: [[dose, duration factor], ...]}
   zonos3_steer.ui                      str, JSON (key order preserved)
   zonos3_steer.rate_extension          str, JSON of the bundle's rate_extension block, or "" without one
+  zonos3_steer.steer_release           str, JSON of the bundle's steer_release block ({onset_seconds, ramp_seconds,
+                                       hold, exempt?}: steer then hold), or "" without one
   steer.dir.<i>                        F32 [dim], vector of direction i"""
 
 STEER_ARCH = "zonos3_steer"
@@ -1705,6 +1707,9 @@ def cmd_steer(args, parser):
     w.add_string(f"{STEER_ARCH}.ui", json.dumps(bundle.ui, ensure_ascii=False))
     w.add_string(
         f"{STEER_ARCH}.rate_extension", json.dumps(spec["rate_extension"]) if spec.get("rate_extension") else ""
+    )
+    w.add_string(
+        f"{STEER_ARCH}.steer_release", json.dumps(spec["steer_release"]) if spec.get("steer_release") else ""
     )
     for i, vec in enumerate(vectors):
         w.add_tensor(f"steer.dir.{i}", vec)
