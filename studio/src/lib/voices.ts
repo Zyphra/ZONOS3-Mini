@@ -13,7 +13,7 @@ export function voiceLanguage(label: string): string | null {
  * The server language (/v2/generate `language`) a voice speaks, `fallback` (the project's) when it names none: a
  * default voice's label names it ("Liesel de F 1": de, "Meilin zh energetic F 1": cmn), and `fallback` stays when it
  * speaks the same language (an English voice in a UK English project). Other voices (their labels are the user's)
- * and languages no server language speaks (Hindi, Telugu) take `fallback`.
+ * and languages no server language speaks (Cantonese) take `fallback`.
  */
 export function voiceServerLanguage(s: { label: string; is_default: boolean } | null | undefined, fallback: string): string {
   const code = s?.is_default ? s.label.split(' ')[1] : undefined;

@@ -40,7 +40,7 @@ function load(ctx: Ctx): Promise<Fixture> {
       speakerRow: cj.speaker_row, speaker: Float32Array.from(cj.speaker_embedding), conditionRow: cj.condition_row,
       buckets: cj.condition_buckets,
     };
-    const heads = (await fetchJson<{ heads: { layer: number; head: number }[] }>(new URL('laci/zonos3_mini_mect60k_heads.json', ctx.base).href)).heads;
+    const heads = (await fetchJson<{ heads: { layer: number; head: number }[] }>(new URL('laci/zonos3_mini_heads.json', ctx.base).href)).heads;
     const span = locateTextSpan(ids);
     if (!span) throw new Error('ids.npy has no BOS..EOS text span');
     const model = await loadModel(ctx.gpu, ctx.base, 'backbone');

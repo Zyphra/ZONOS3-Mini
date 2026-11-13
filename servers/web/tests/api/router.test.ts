@@ -147,7 +147,7 @@ describe.skipIf(!haveModels)('engine api', () => {
       [{ speaker_mode: 'x' }, ''],
       [{ laci: true, language: 'en_us', speaker_embedding_id: id, speaker_cfg_scale: 1.5 }, 'LACI needs speaker_cfg_scale = controls_cfg_scale = 1'],
       [{ speaker_mode: 'embedding', speaker_embedding_id: id, speaker_cfg_scale: 1.5, controls_cfg_scale: 1.5 }, 'Speaker and controls CFG cannot be combined'],
-      [{ language: 'xx' }, "Unsupported language code: 'xx'. Supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko."],
+      [{ language: 'xx' }, "Unsupported language code: 'xx'. Supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko, ar, bn, bg, cs, da, nl, fi, ka, el, gu, he, hi, hu, id, kn, ms, ml, mr, no, or, pl, pa, ro, ru, sk, sv, tl, ta, te, th, tr, uk, ur, vi."],
       [{ controls: { 'nope.nothing': 1 } }, "Unknown control 'nope.nothing'; see /v2/controls."],
       [{ accent: 'zzz' }, "Unknown accent 'zzz'; loaded accents: none (load accent adapters)."],
       [{ max_tokens: 0 }, 'max_tokens must be positive.'],

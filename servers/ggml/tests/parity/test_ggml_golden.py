@@ -4,7 +4,7 @@
     exporter stores them) against `zonos3-cli --validate` on the F16 GGUF, checked by `tools/compare_golden.py`: every
     capture at whole-tensor cosine >= 0.9999 and exact all-row logits argmax. The element tolerance (atol 0.05,
     rtol 0.01) covers the CPU backend's F16 matmul, which rounds activations to F16 (logits reach |x| ~ 30);
-(b) the LACI alignment probe on one English prompt (assets/laci_heads/zonos3_mini_mect60k_heads.json): `zonos3-cli --generate
+(b) the LACI alignment probe on one English prompt (assets/laci_heads/zonos3_mini_heads.json): `zonos3-cli --generate
     --greedy --probe-heads --dump-probe` against `Zonos3LM.forward(probe=ProbeSpec)` teacher-forced on the rows ggml
     generated: identical argmax per decode step, centroids within 0.05 text rows.
 
@@ -38,7 +38,7 @@ LM_DIR = Path(
 )
 GGUF = Path(os.environ.get("ZONOS3_GGUF", REPO / "servers" / "ggml" / "gguf" / "backbone-f16.gguf"))
 SPEAKER = REPO / "servers" / "ggml" / "tests" / "fixtures" / "speaker-embedding.npy"
-HEADS = REPO / "assets" / "laci_heads" / "zonos3_mini_mect60k_heads.json"
+HEADS = REPO / "assets" / "laci_heads" / "zonos3_mini_heads.json"
 BUCKETS = [3, 5, 29]
 GOLDEN_TEXT = "The quick brown fox jumps."
 PROBE_TEXT = "Alignment heads follow the text one word at a time, from the first syllable to the last."

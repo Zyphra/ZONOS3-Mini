@@ -8,9 +8,11 @@ from zonos3 import languages
 from zonos3.tokenizer.textnorm import TTSTextNormalizer, collapse_line_breaks, load_normalizer, normalize_request_text
 
 
-def test_every_server_language_has_a_grammar():
-    assert {lang.nemo for lang in languages.SERVER} <= set(zyphra_textnorm.LANGUAGES)
-    assert all(zyphra_textnorm.supported(lang.nemo) for lang in languages.SERVER)
+def test_every_grammar_is_a_zyphra_grammar():
+    grammars = {lang.nemo for lang in languages.SERVER if lang.nemo is not None}
+    assert grammars <= set(zyphra_textnorm.LANGUAGES)
+    assert all(zyphra_textnorm.supported(nemo) for nemo in grammars)
+    assert TTSTextNormalizer().normalize("Ik heb 5 katten.\nJa.", "nl") == "Ik heb 5 katten. Ja."
 
 
 def test_collapse_line_breaks_only_touches_runs_with_a_break():

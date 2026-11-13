@@ -13,7 +13,7 @@
 #                               cpu on macOS)
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
 #   LACI_ALL=1                  LACI heads for every server language from LACI_HEADS_DIR (default assets/laci_heads/): the
-#                               default *_heads.json, overridden by a *_heads_<speech code>.json (the zh file for Chinese)
+#                               default *_heads.json, overridden by a *_heads_<speech code>.json (one per non-English language)
 #   PLUGINS                     "name ..." server plugins (--plugins; e.g. dub, from Zyphra/ZONOS3-dub)
 # Speech recognition (speech editing and plugins) is Qwen3-ASR in .venv-asr (tools/setup_asr_env.sh); ZONOS3_ASR_PYTHON
 # and ZONOS3_ASR_DEVICE (default mps on macOS) override its interpreter and its device.

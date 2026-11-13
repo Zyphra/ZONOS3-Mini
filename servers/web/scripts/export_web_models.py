@@ -22,7 +22,7 @@ import shutil
 import numpy as np
 from gguf import GGMLQuantizationType, GGUFReader
 from gguf.quants import quantize
-from zonos3.languages import CODES
+from zonos3.tts.laci import discover_laci_heads
 from zonos3.utils.hashing import sha256_bytes, sha256_file
 
 SHARD_CAP = 64 << 20
@@ -709,8 +709,6 @@ def export_voices(voices, out):
 # --------------------------------------------------------------------------- companions and LACI heads
 
 COMPANIONS = ("steer.gguf",)
-LACI_EN = "zonos3_mini_mect60k_heads.json"
-LACI_ZH = "zonos3_mini_mect60k_heads_zh.json"
 
 
 def export_companions(models, out):
@@ -725,20 +723,19 @@ def export_companions(models, out):
 
 
 def export_laci(laci, out):
-    """Heads for every language (servers/sgl/scripts/serve.sh DUB=1): the zh file for cmn, the English file else."""
+    """Heads for every server language (zonos3.tts.laci.discover_laci_heads): the files and laci/index.json
+    (language -> file)."""
+    try:
+        heads = discover_laci_heads(laci)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     ldir = os.path.join(out, "laci")
     if os.path.isdir(ldir):
         shutil.rmtree(ldir)
     os.makedirs(ldir)
-    for fn in sorted(os.listdir(laci)):
-        if fn.endswith(".json"):
-            shutil.copyfile(os.path.join(laci, fn), os.path.join(ldir, fn))
-    for fn in (LACI_EN, LACI_ZH):
-        if not os.path.isfile(os.path.join(ldir, fn)):
-            raise SystemExit(f"missing {os.path.join(laci, fn)}")
-    # Every server language (zonos3.languages) in its order, cmn (the zh heads) last.
-    index = {lang: LACI_EN for lang in CODES if lang != "cmn"}
-    index["cmn"] = LACI_ZH
+    for path in sorted(set(heads.values())):
+        shutil.copyfile(path, os.path.join(ldir, os.path.basename(path)))
+    index = {lang: os.path.basename(path) for lang, path in heads.items()}
     with open(os.path.join(ldir, "index.json"), "w") as f:
         json.dump(index, f, indent=1)
     print(f"laci: {len(index)} languages")

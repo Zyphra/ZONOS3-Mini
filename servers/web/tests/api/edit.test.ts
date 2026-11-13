@@ -60,7 +60,7 @@ describe.skipIf(!haveEditModels)('speech editing without speech recognition', ()
         'Audio is 31.0 s long; this server aligns at most 30 s (edit_align_max_seconds).'],
       ['/v2/edit/align', { text: '   ' }, clip(1), undefined, 400, 'text is empty.'],
       ['/v2/edit/align', { text: 'x', language: 'xx' }, clip(1), undefined, 400,
-        "Unsupported language code: 'xx'. Supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko."],
+        "Unsupported language code: 'xx'. Supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko, ar, bn, bg, cs, da, nl, fi, ka, el, gu, he, hi, hu, id, kn, ms, ml, mr, no, or, pl, pa, ro, ru, sk, sv, tl, ta, te, th, tr, uk, ur, vi."],
       ['/v2/edit/align', { text: 'x' }, clip(150), 151.25, 400, 'Audio is 151.2 s long; at most 150 s are supported here.'],
       ['/v2/edit/align', { text: 'x' }, undefined, undefined, 400, 'could not decode the audio (any container this browser decodes)'],
       ['/v2/edit', { target_text: 'x', original_words: [{ word: 'y', start: 0, end: 0.5 }] }, clip(1), undefined, 400,

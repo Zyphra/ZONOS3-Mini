@@ -19,7 +19,7 @@ mkdir -p "$O"
   --build-prompt "$TEXT" "$O/ids.npy"
 "$B/zonos3-cli" "$M/backbone-ptq.gguf" --cpu --speaker-embedding "$E" --condition-buckets 3,5,30 \
   --tts "$TEXT" "$O/tts.npy" --seed 1 --max 60 --dump-ids "$O/full_ids.npy" --dump-logits "$O/logits.npy" \
-  --probe-heads assets/laci_heads/zonos3_mini_mect60k_heads.json --dump-probe "$O/probe.npy"
+  --probe-heads assets/laci_heads/zonos3_mini_heads.json --dump-probe "$O/probe.npy"
 # --validate reads the conditioning from full_ids.cond.json (written by --dump-ids)
 "$B/zonos3-cli" "$M/backbone-ptq.gguf" --cpu --validate "$O/full_ids.npy" "$O/validate"
 "$BM/zonos3-cli" "$M/backbone-ptq.gguf" --gpu --validate "$O/full_ids.npy" "$O/validate_metal"

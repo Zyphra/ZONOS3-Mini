@@ -5,7 +5,7 @@ import registry from '../../../model/src/zonos3/registries/languages.json';
 export interface ServerLanguage {
   code: string;
   label: string;
-  nemo: string;
+  nemo: string | null;
   lexicon: string;
   speech: string;
 }

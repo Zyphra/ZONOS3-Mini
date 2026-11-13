@@ -878,8 +878,8 @@ The dubbing tool is such a plugin: [Zyphra/ZONOS3-dub](https://github.com/Zyphra
   too early or too late is retaken in the speaking-rate bucket its duration ratio asks for (with `adjust_rate`; see
   [features.md](features.md)). A take may also run on an extended speaking-rate scale (`RateBuckets`: edges, first
   bucket, its bucket and the tempo doses of steered buckets). LACI needs `--laci-heads` (`LACI_ALL=1` in the serve
-  scripts passes the `assets/laci_heads/` heads of every language: `zonos3_mini_mect60k_heads_zh.json` for `cmn`,
-  `zonos3_mini_mect60k_heads.json` for the rest; `LACI_HEADS_DIR` / `LACI_HEADS` override).
+  scripts passes the `assets/laci_heads/` heads of every language: `zonos3_mini_heads_<speech code>.json` for every
+  non-English language, `zonos3_mini_heads.json` for `en_us` / `en_gb`; `LACI_HEADS_DIR` / `LACI_HEADS` override).
 
 ### Extended speaking-rate buckets (`rate_extension`)
 

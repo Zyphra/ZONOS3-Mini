@@ -11,7 +11,7 @@
 #   ZONOS3_STUDIO_PROJECTS      shared studio project store (--studio-projects-dir); empty keeps projects in the browser
 #   LACI_HEADS                  "lang=path ..." LACI alignment heads (--laci-heads)
 #   LACI_ALL=1                  LACI heads for every server language from LACI_HEADS_DIR (default assets/laci_heads/): the
-#                               default *_heads.json, overridden by a *_heads_<speech code>.json (the zh file for Chinese)
+#                               default *_heads.json, overridden by a *_heads_<speech code>.json (one per non-English language)
 #   PLUGINS                     "name ..." server plugins (--plugins), e.g. dub (Zyphra/ZONOS3-dub)
 # Speech editing on the release LM: --accent-adapters <dir with the edit adapter> (docs/guide.md); its rows go before
 # the release text rows (pronunciation groups, the start marker, pause markers).

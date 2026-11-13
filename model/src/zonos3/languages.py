@@ -19,7 +19,7 @@ REGISTRY = Path(__file__).resolve().parent / "registries" / "languages.json"
 class ServerLanguage:
     code: str  # the request code (en_us, cmn, ...)
     label: str  # the studio's name
-    nemo: str  # NeMo text-normalization package
+    nemo: str | None  # NeMo text-normalization package; None: no grammar (text passes through)
     lexicon: str  # pronunciation lexicon language (ISO 639-3)
     speech: str  # its SPOKEN code
 

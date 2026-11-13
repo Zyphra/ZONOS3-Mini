@@ -36,7 +36,7 @@ class TTSTextNormalizer:
 
     def normalize(self, text: str, language: str) -> str:
         lang = languages.BY_CODE.get(language)
-        if lang is None:
+        if lang is None or lang.nemo is None:
             return collapse_line_breaks(text)
         out = self._tn.normalize(_TEXT_MARKER.sub(lambda m: "\ue000" + m.group() + "\ue001", text), lang.nemo)
         return _WRAPPED_MARKER.sub(r"\1", out)

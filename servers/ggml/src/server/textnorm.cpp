@@ -62,6 +62,7 @@ TextNormalizer::TextNormalizer() {
 std::string TextNormalizer::normalize(const std::string & text, const std::string & language) const {
     for (const auto & l : zonos3_server_languages())
         if (l.code == language) {
+            if (l.nemo.empty()) break;
             const std::string in = wrap_text_markers(text);
             return unwrap_text_markers(
                 owned(zyphra_textnorm_normalize(tn_.get(), in.data(), in.size(), l.nemo.data(), l.nemo.size())));

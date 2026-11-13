@@ -31,4 +31,5 @@ The previous release LM is srcmix-cond3-mect-60k (`lm/mect_60k`, uniform 10 buck
 name), `audio_codec: "opus_dual_3n_600k_sched600k_r4096_step600000"`, `speaker_embedding_codec: "ownmect_s2"` (the MECT-B2
 speaker encoder), `attention_pattern: "gdn3_global1"` and `residual_type: "full_attnres"` (the same for both LMs). Its
 `conversion.json` records the source checkpoint and step that `tools/convert_lingua_checkpoint.py` converted. The
-steering bundle's hidden-state directions, the emotion and accent directions and the LACI heads were fitted on mect_60k.
+steering bundle's hidden-state directions and the emotion and accent directions were fitted on mect_60k; the LACI heads
+were fitted on `lm/zonos3_mini`.
