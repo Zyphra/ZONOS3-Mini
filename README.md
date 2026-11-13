@@ -1,5 +1,17 @@
 # ZONOS3-Mini
 
+<div align="center">
+  <a href="https://arxiv.org/abs/2611.16525" target="_blank">
+    <img src="https://img.shields.io/badge/arXiv-2611.16525-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv">
+  </a>
+  <a href="https://huggingface.co/Zyphra/ZONOS3-Mini" target="_blank">
+    <img src="https://img.shields.io/badge/Hugging%20Face-ZONOS3--Mini-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black" alt="Hugging Face">
+  </a>
+  <a href="https://discord.gg/gTW9JwST8q" target="_blank">
+    <img src="https://img.shields.io/badge/Join%20Our%20Discord-7289DA?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
+  </a>
+</div>
+
 Inference runtime for **ZONOS3-Mini**, Zyphra's multilingual text-to-speech model: HTTP servers that serve the Zonos
 Voice Studio, an in-browser WebGPU build and an offline Python API. Model details are in
 [About ZONOS3-Mini](#about-zonos3-mini).
@@ -278,3 +290,19 @@ Chrome.
 
 ZONOS3 is released under the [MIT License](LICENSE). Third-party components are listed in [`NOTICE`](NOTICE) and
 [`third_party/licenses/`](third_party/licenses/).
+
+## Citation
+
+If you find this model useful in an academic context, please cite the technical report:
+
+```bibtex
+@misc{zyphra2026zonos3mini,
+  title         = {{ZONOS3-Mini Technical Report}},
+  author        = {Gabriel Clark and Sofian Mejjoute and George Close and Beren Millidge},
+  year          = {2026},
+  eprint        = {2611.16525},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.SD},
+  url           = {https://arxiv.org/abs/2611.16525},
+}
+```
