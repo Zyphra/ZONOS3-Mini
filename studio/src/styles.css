@@ -1798,6 +1798,9 @@ body,
 .preview-toggles .mode-btn.is-on {
   color: var(--o-text);
 }
+.icon-btn.line-start.is-on {
+  color: var(--o-text);
+}
 /* Microphone level while recording: a thin bar under the Stop label. */
 .btn-rec {
   position: relative;

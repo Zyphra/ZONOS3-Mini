@@ -28,6 +28,8 @@ export interface RequestExtras {
   language?: string;
   /** The A/B reference: the same voice with no controls at all. */
   unsteered?: boolean;
+  /** Speech from the first frame (`start_immediately`); sent only when the checkpoint has a start token. */
+  startImmediately?: boolean;
 }
 
 /** What a request needs from the backend and the project besides the design (Studio: `requestContext`). */
@@ -41,6 +43,8 @@ export interface RequestContext {
   laci: LaciMode | undefined;
   /** Languages with LACI alignment heads on the server. */
   laciLanguages: readonly string[];
+  /** The checkpoint has a start token (`/v2/capabilities.start_token`). */
+  startToken: boolean;
 }
 
 /** Keep spans attached to their words across an edit (common prefix / suffix diff). */
@@ -116,6 +120,8 @@ export function buildRequest(s: ControlsSpec, ctx: RequestContext, d: Design, te
   if (ctx.decoder) req.decoder = ctx.decoder;
   const laci = laciFields(ctx.laci, ctx.laciLanguages, x.language ?? 'en_us');
   Object.assign(req, laci);
+  // Both A/B sides: the start is not a control.
+  if (x.startImmediately && ctx.startToken) req.start_immediately = true;
   if (x.unsteered) return req;
   // Tag guidance strengthens nonverbal tags; the server takes one guidance per request, so voice guidance is off.
   // LACI needs tag guidance off (tag_cfg_scale 1), and wins.

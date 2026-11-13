@@ -71,31 +71,47 @@ def map_offsets(original: str, final: str, offsets: Sequence[int], *, end: bool 
 def token_char_ranges(text: str, spec: dict | None) -> list[tuple[int, int]]:
     """Character range of ``text`` behind each id of its text span (``TTSPromptBuilder.text_ids``): BOS and EOS are
     the empty ranges at 0 and ``len(text)``; SuperBPE tokens their offsets, a phoneme group's open id its open marker,
-    each phone id its code point, the close id the close marker; byte ids the character they encode."""
+    each phone id its code point, the close id the close marker, the start and pause ids their marker; byte ids the
+    character they encode."""
     if spec is None:
         ranges = [(i, i + 1) for i, ch in enumerate(text) for _ in ch.encode("utf-8")]
     else:
-        from .superbpe import tokenizer
+        from .superbpe import PAUSE_MARKER_RE, START_MARKER, tokenizer
 
         bpe = tokenizer(spec["path"], spec["sha256"], spec["vocab_size"])
 
         def stretch(s: str, base: int) -> list[tuple[int, int]]:
             return [(base + a, base + b) for a, b in bpe.encode(s, add_special_tokens=False).offsets] if s else []
 
-        phonemes = spec.get("phonemes")
-        if phonemes is None or (phonemes["open_marker"] not in text and phonemes["close_marker"] not in text):
-            ranges = stretch(text, 0)
-        else:
+        def payload(s: str, base: int) -> list[tuple[int, int]]:  # superbpe.payload_ids validated the text
+            if spec.get("start") is not None and START_MARKER in s:
+                return [(base, base + 1), *payload(s[1:], base + 1)]
+            if spec.get("pauses") is not None and PAUSE_MARKER_RE.search(s):
+                out, pos = [], 0
+                for match in PAUSE_MARKER_RE.finditer(s):
+                    if match.start() > pos:
+                        out += payload(s[pos : match.start()], base + pos)
+                    out.append((base + match.start(), base + match.end()))
+                    pos = match.end()
+                if pos < len(s):
+                    out += payload(s[pos:], base + pos)
+                return out
+            phonemes = spec.get("phonemes")
+            if phonemes is None or (phonemes["open_marker"] not in s and phonemes["close_marker"] not in s):
+                return stretch(s, base)
             open_, close = phonemes["open_marker"], phonemes["close_marker"]
-            ranges, pos = [], 0
-            while pos < len(text):
-                start = text.find(open_, pos)
-                ranges += stretch(text[pos:] if start < 0 else text[pos:start], pos)
+            out, pos = [], 0
+            while pos < len(s):
+                start = s.find(open_, pos)
+                out += stretch(s[pos:] if start < 0 else s[pos:start], base + pos)
                 if start < 0:
                     break
-                end = text.find(close, start + 1)  # superbpe.payload_ids validated the groups
-                ranges += [(i, i + 1) for i in range(start, end + 1)]
+                end = s.find(close, start + 1)
+                out += [(base + i, base + i + 1) for i in range(start, end + 1)]
                 pos = end + 1
+            return out
+
+        ranges = payload(text, 0)
     return [(0, 0), *ranges, (len(text), len(text))]
 
 

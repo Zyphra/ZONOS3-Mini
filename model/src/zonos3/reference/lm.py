@@ -115,7 +115,8 @@ class Zonos3LMConfig:
 
     @property
     def text_rows(self) -> int:
-        """Text embedding rows: the vocabulary, the padding row and the extra rows (edit markers, phoneme tokens)."""
+        """Text embedding rows: the vocabulary, the padding row and the extra rows (edit markers, phoneme / start /
+        pause tokens)."""
         return self.text_vocab + 1 + self.text_extra_tokens
 
     @property
@@ -178,16 +179,15 @@ class Zonos3LMConfig:
                     "text_tokenizer_spec", {k: spec.get(k) for k in ("kind", "offset", "bos", "eos", "vocab_size")}
                 )
             phonemes = spec.get("phonemes")
-            if phonemes is not None:
-                from zonos3.tts.superbpe import phoneme_token_count, rows_before_phonemes
+            if phonemes is not None and (
+                int(phonemes["open_id"]) < text_vocab + 1 or int(phonemes["close_id"]) != int(phonemes["open_id"]) + 1
+            ):
+                _unsupported("text_tokenizer_spec.phonemes ids", (phonemes["open_id"], phonemes["close_id"]))
+            from zonos3.tts.superbpe import extra_token_count, rows_before_extra_tokens
 
-                if (
-                    int(phonemes["open_id"]) < text_vocab + 1
-                    or int(phonemes["close_id"]) != int(phonemes["open_id"]) + 1
-                ):
-                    _unsupported("text_tokenizer_spec.phonemes ids", (phonemes["open_id"], phonemes["close_id"]))
-                if rows_before_phonemes(spec, text_vocab) + phoneme_token_count(spec) != extra:
-                    _unsupported("text_tokenizer_spec.phonemes vs text_extra_tokens", extra)
+            rows = extra_token_count(spec)
+            if rows and rows_before_extra_tokens(spec, text_vocab) + rows != extra:
+                _unsupported("text_tokenizer_spec tokens vs text_extra_tokens", extra)
         alpha = float(p["moe_alpha"])
         if not 0.0 < alpha <= 1.0:
             _unsupported("moe_alpha", alpha)
@@ -469,9 +469,9 @@ class Zonos3LM(nn.Module):
         return self
 
     def append_text_rows(self, extra) -> "Zonos3LM":
-        """This model with ``extra`` (a ``zonos3.models.text_extra.TextExtraRows``, e.g. phoneme tokens) after its text
-        table's rows, the extra rows it already has included; ``config.text_tokenizer_spec`` gains their phonemes.
-        Text that never reads them runs exactly as before."""
+        """This model with ``extra`` (a ``zonos3.models.text_extra.TextExtraRows``, e.g. phoneme, start and pause
+        tokens) after its text table's rows, the extra rows it already has included; ``config.text_tokenizer_spec``
+        gains their ``phonemes`` / ``start`` / ``pauses``. Text that never reads them runs exactly as before."""
         c = self.config
         spec = extra.spec(c.text_tokenizer_spec, text_vocab=c.text_vocab, existing=c.text_extra_tokens)
         table = self.multi_embedder.embedders[c.n_codebooks]

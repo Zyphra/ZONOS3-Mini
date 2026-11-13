@@ -45,8 +45,9 @@ def main(argv=None) -> int:
     parser.add_argument("--accent-adapters")
     parser.add_argument(
         "--phoneme-rows",
-        help="zonos-text-extra/1 rows (phoneme tokens) appended at load, after the "
-        "vocabulary a speech-edit adapter grows",
+        default=None,
+        help="zonos-text-extra/1 rows (phoneme / start / pause tokens; a path or hf://) appended at load, after the "
+        "vocabulary a speech-edit adapter grows (default: the release text rows with the release LM; '' loads none)",
     )
     parser.add_argument("--laci-heads", action="append", default=[], metavar="LANG=PATH")
     parser.add_argument("--dump-prompt", metavar="IDS_NPY")
@@ -61,6 +62,7 @@ def main(argv=None) -> int:
 
     from zonos3.reference.lm import Zonos3LM
     from zonos3.reference.synth import ReferenceAssets, plan_prompt, synthesize
+    from zonos3.utils import release
 
     device = torch.device(args.device)
     dtype = torch.float32 if args.dtype == "f32" else torch.bfloat16
@@ -69,10 +71,13 @@ def main(argv=None) -> int:
         steer_bundle=args.steer_bundle, accent_adapters=args.accent_adapters, laci_heads=heads
     )
     assets.grow(lm)
-    if args.phoneme_rows:
+    rows = args.phoneme_rows
+    if rows is None:
+        rows = release.RELEASE_TEXT_ROWS if args.model == release.RELEASE_LM else None
+    if rows:
         from zonos3.models.text_extra import TextExtraRows
 
-        lm.append_text_rows(TextExtraRows.load(args.phoneme_rows))
+        lm.append_text_rows(TextExtraRows.load(rows))
     if args.dump_prompt:
         plan = plan_prompt(lm, request, assets=assets, device=device)
         path = Path(args.dump_prompt)

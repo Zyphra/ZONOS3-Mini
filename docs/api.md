@@ -80,6 +80,7 @@ CORS allows every origin and exposes the response headers above.
 | `speaker_cfg_scale` | `1.0` | Reference CFG (1 = off) |
 | `condition_buckets` / `condition_values` | `null` | Condition rows (`loudness`, `fmax`, `speaking_rate`) by bucket or raw value |
 | `silence_prefill_frames` | `null` | Codec-matched silence frames prefilled before the audio: null = the server default (3), 0 = off, at most 30 (more is a 400) |
+| `start_immediately` | `false` | Speech from the first frame: the checkpoint's start marker (U+E002) goes in front of the text and the silence prefill defaults to 0 (an explicit `silence_prefill_frames` still applies); 400 without a start token (`/v2/capabilities` `start_token` null) |
 | `accent`, `accent_strength` | `null`, `1.0` | Accent adapter from `/v2/capabilities` `accents` |
 | `controls`, `control_spans`, `control_span_*` | `null` | Steering-bundle controls, whole-utterance or over character spans ([guide](guide.md#steering-controls)) |
 | `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |
@@ -91,8 +92,12 @@ CORS allows every origin and exposes the response headers above.
 On a phoneme-token checkpoint `text` may carry pronunciation groups, U+E000 IPA U+E001 (see
 [guide: Pronunciation input](guide.md#pronunciation-input-phoneme-tokens)); a malformed group or a symbol outside the
 phone inventory returns 400, as does a group sent to a checkpoint without phoneme tokens. `/v1/audio/speech` `input`
-and `/v2/edit` `target_text` follow the same rule. `text` may also carry nonverbal markup (`<laugh/>`,
-`<shouting>…</shouting>`), read by NV fine-tunes and as plain text by other checkpoints.
+and `/v2/edit` `target_text` follow the same rule. On a checkpoint with start and pause tokens (the release text rows,
+[guide: Start and pause tokens](guide.md#start-and-pause-tokens)) `text` may open with the start marker U+E002 (once,
+first) and carry pause markers U+E003 + bucket after a word and its glued punctuation; a marker the checkpoint has no
+token for returns 400 (`Pause marker U+E009 outside the 4 pause buckets`), and `/v2/edit` `target_text` takes neither.
+`text` may also carry nonverbal markup (`<laugh/>`, `<shouting>…</shouting>`), read by NV fine-tunes and as plain text
+by other checkpoints.
 
 ```bash
 # Streamed float32 PCM with a default voice, played as it arrives
@@ -131,4 +136,5 @@ the segment texts concatenate back to the input, and each word segment has
 word) or, on a phoneme-token checkpoint, `unsupported` (a symbol the model has no
 token for). `GET /v2/capabilities` reports `phonemize_enabled`,
 `phonemize_languages`, `phonemize_guess_languages` and `phoneme_tokens`
-(`null`, or the group markers and the phone symbols).
+(`null`, or the group markers and the phone symbols), and `start_token` / `pause_tokens` (`null`, or the start marker /
+the pause markers with their nominal seconds).

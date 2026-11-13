@@ -38,7 +38,7 @@ describe('span-only controls (emphasis)', () => {
 });
 
 describe('decoder', () => {
-  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'off', laciLanguages: [] };
+  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'off', laciLanguages: [], startToken: false };
 
   it('is left out for the server default', () => {
     expect('decoder' in buildRequest(spec, ctx, d, text, 1)).toBe(false);
@@ -64,7 +64,7 @@ describe('decoder', () => {
 });
 
 describe('laci', () => {
-  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'stream', laciLanguages: ['en_us'] };
+  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'stream', laciLanguages: ['en_us'], startToken: false };
 
   it('streamed: laci on with the progressive decode of the request defaults, on both A/B sides', () => {
     for (const x of [{}, { unsteered: true }]) {
@@ -88,5 +88,19 @@ describe('laci', () => {
     const line = 'Hi <laugh/> there.';
     expect('tag_cfg_scale' in buildRequest(spec, tagged, d, line, 1)).toBe(false);
     expect(buildRequest(spec, { ...tagged, laci: 'off' }, d, line, 1).tag_cfg_scale).toBe(2);
+  });
+});
+
+describe('start immediately', () => {
+  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'off', laciLanguages: [], startToken: true };
+
+  it('goes out on both A/B sides when the checkpoint has a start token', () => {
+    expect(buildRequest(spec, ctx, d, text, 1, { startImmediately: true }).start_immediately).toBe(true);
+    expect(buildRequest(spec, ctx, d, text, 1, { startImmediately: true, unsteered: true }).start_immediately).toBe(true);
+  });
+
+  it('is left out without the extra or without a start token', () => {
+    expect('start_immediately' in buildRequest(spec, ctx, d, text, 1)).toBe(false);
+    expect('start_immediately' in buildRequest(spec, { ...ctx, startToken: false }, d, text, 1, { startImmediately: true })).toBe(false);
   });
 });

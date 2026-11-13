@@ -3,16 +3,16 @@
 converted checkpoint, e.g. the release LM:
 
     python tools/add_text_extra_rows.py --base $ZONOS3_RELEASE_LM \
-        --rows <phoneme_tokens.pt> \
-        --out checkpoints/z3m_mect60k_phoneme_tokens
+        --rows <pause_tokens.pt> \
+        --out checkpoints/z3m_text_rows
 
 The rows were trained on a frozen base (text_extra_only), so the output is the base checkpoint
 with a longer text table: the rows follow the padding row, params.json gains
-``text_extra_tokens`` and, for phoneme tokens, ``text_tokenizer_spec.phonemes``. Every other
-tensor and file is copied unchanged.
+``text_extra_tokens`` and, for phoneme, start and pause tokens, ``text_tokenizer_spec.phonemes``,
+``start`` and ``pauses``. Every other tensor and file is copied unchanged.
 
 A base that already has extra rows (the speech-edit checkpoints' marker rows) keeps them at their
-ids; the new rows go after them and the phoneme ids shift by their count:
+ids; the new rows go after them and the phoneme / start / pause ids shift by their count:
 
     python tools/add_text_extra_rows.py --base checkpoints/z3m_mect_edit \
         --rows .../phoneme_tokens_s15000.pt --out .../merged_z3m_mect_edit

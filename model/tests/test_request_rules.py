@@ -102,7 +102,7 @@ def run(request: dict, ctx: Context | None = None, embedding=None, codes=None) -
 
 @pytest.mark.parametrize("entry", ERRORS, ids=[e["name"] for e in ERRORS])
 def test_every_fixture_refusal(entry):
-    assert set(entry["requires"]) <= {"conditions", "no_phoneme_tokens"}
+    assert set(entry["requires"]) <= {"conditions", "no_phoneme_tokens", "no_start_token", "no_pause_tokens"}
     with pytest.raises(ValueError):
         run(entry["request"])
 

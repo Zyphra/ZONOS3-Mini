@@ -328,9 +328,10 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--phoneme-rows",
         type=str,
         default=ServerArgs.phoneme_rows,
-        help="Phoneme-token text rows (zonos-text-extra/1, lingua apps.zonos.text_extra) appended to the text table at "
-        "load, after the vocabulary of a speech-edit adapter in --accent-adapters: pronunciation groups "
-        "(U+E000 IPA U+E001) on a checkpoint without them. Single GPU only.",
+        help="Phoneme / start / pause text rows (zonos-text-extra/1, lingua apps.zonos.text_extra; a local path or "
+        "hf://) appended to the text table at load, after the vocabulary of a speech-edit adapter in --accent-adapters: "
+        "pronunciation groups (U+E000 IPA U+E001), the start marker (U+E002) and pause markers (U+E003..) on a "
+        "checkpoint without them. Single GPU only.",
     )
     parser.add_argument(
         "--steer-bundle",
@@ -446,8 +447,9 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         from zonos3.models.text_extra import TextExtraRows
 
         kwargs["phoneme_rows"] = os.path.expanduser(kwargs["phoneme_rows"])
-        if TextExtraRows.load(kwargs["phoneme_rows"]).phonemes is None:
-            parser.error(f"--phoneme-rows {kwargs['phoneme_rows']} holds no phoneme tokens")
+        extra = TextExtraRows.load(kwargs["phoneme_rows"])
+        if extra.phonemes is None and extra.start is None and extra.pauses is None:
+            parser.error(f"--phoneme-rows {kwargs['phoneme_rows']} holds no phoneme, start or pause tokens")
     if kwargs.get("steer_bundle"):
         kwargs["steer_bundle"] = os.path.abspath(os.path.expanduser(kwargs["steer_bundle"]))
         from zonos3.tts.steering import load_bundle

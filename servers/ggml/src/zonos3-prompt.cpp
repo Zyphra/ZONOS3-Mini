@@ -17,10 +17,9 @@ bool is_pad_row(const zonos3_model & m, const float * row) {
 
 int zonos3_edit_marker_rows(const zonos3_model & model) {
     const auto & hp = model.hp;
-    if (!model.tok.has_phonemes) return (int) hp.text_extra_tokens;
-    const int markers = model.tok.phonemes.open_id - (int) hp.text_vocab - 1;
-    const int phonemes = 2 + (int) model.tok.phonemes.symbols.size();
-    return markers + phonemes == (int) hp.text_extra_tokens ? markers : -1;
+    if (model.tok.block_rows == 0) return (int) hp.text_extra_tokens;
+    const int markers = model.tok.block_first - (int) hp.text_vocab - 1;
+    return markers + model.tok.block_rows == (int) hp.text_extra_tokens ? markers : -1;
 }
 
 bool zonos3_build_prompt(const zonos3_model & model, const std::string & text,
@@ -55,7 +54,7 @@ bool zonos3_build_prompt(const zonos3_model & model, const std::string & text,
                        std::to_string(hp.cond_bucket_counts[i] - 1) + " (" + std::to_string(hp.cond_bucket_counts[i]) +
                        " = unknown)");
     }
-    const std::string groups = zonos3_check_phoneme_groups(model.tok, text);
+    const std::string groups = zonos3_check_text_markers(model.tok, text);
     if (!groups.empty()) return bad(groups);
     std::vector<int32_t> ids;
     std::string tok_err;

@@ -173,6 +173,19 @@ export function setLineVoice(id: string, voice: string | null) {
   commit((s) => ({ ...s, lines: s.lines.map((l) => (l.id === id ? { ...l, voice } : l)) }));
 }
 
+/** One line's "Start immediately" toggle; off removes the property. */
+export function setLineStart(id: string, on: boolean) {
+  commit((s) => ({
+    ...s,
+    lines: s.lines.map((l) => {
+      if (l.id !== id) return l;
+      if (on) return { ...l, startImmediately: true };
+      const { startImmediately: _, ...rest } = l;
+      return rest;
+    }),
+  }));
+}
+
 /** The gap slider's range (s); the gesture is one undo step through `scripts.begin / set / end`. */
 export const GAP_RANGE: [number, number] = [0, 1.5];
 
@@ -279,7 +292,7 @@ export function lineRequest(line: Line, seed: number): GenerateRequest {
   // this language (it has alignment heads for it), sent as the fallback otherwise.
   const reading = last?.audio.spanFollow === 'reading' && (last.request.language ?? 'en_us') === language;
   const spanRate = last && !reading ? measuredRate(last) : undefined;
-  return buildRequest(spec.value, requestContext.value, lineDesign(line), line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language });
+  return buildRequest(spec.value, requestContext.value, lineDesign(line), line.text, seed, { extra: script.value.baseline, spans: line.spans, spanRate, language, startImmediately: line.startImmediately });
 }
 
 /** Renders in flight by line id (a line's busy button cancels its own). */

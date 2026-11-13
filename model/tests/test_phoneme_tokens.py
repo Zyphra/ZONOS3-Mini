@@ -1,4 +1,5 @@
-"""Phoneme-token checkpoints: open/phone/close text ids after the padding row, as the training loader."""
+"""Phoneme-token checkpoints: open/phone/close text ids after the padding row, as the training loader; the start and
+pause tokens after them."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from zonos3.tts.superbpe import load_spec, text_ids, validate_spec  # noqa: E402
 superbpe_spec = test_superbpe_convention.spec  # the SuperBPE spec fixture
 
 O, C = "\ue000", "\ue001"
+S, P1, P2 = "\ue002", "\ue003", "\ue004"
 TEXT_VOCAB = 3 + 4
 
 
@@ -109,6 +111,112 @@ def test_phoneme_block_after_edit_markers(superbpe_spec, tmp_path):
         validate_spec({**merged, "phonemes": {**merged["phonemes"], "close_id": TEXT_VOCAB + 6}}, TEXT_VOCAB)
 
 
+def _block_spec(base, markers=0, text_vocab=TEXT_VOCAB):
+    """kæt phoneme rows, then the start row, then two pause rows, after ``markers`` edit marker rows."""
+    first = text_vocab + 1 + markers
+    return {
+        **base,
+        "phonemes": {**_phonemes(), "open_id": first, "close_id": first + 1},
+        "start": {"id": first + 5, "marker": S},
+        "pauses": {"ids": [first + 6, first + 7], "markers": [P1, P2], "seconds": [0.25, 0.5]},
+    }
+
+
+def test_start_and_pause_tokens_follow_the_phoneme_block(superbpe_spec, tmp_path):
+    """The start row follows the phoneme rows and the pause rows follow it; the start marker is one id first in the
+    text, each pause marker one id between the stretches it splits, all of them the last extra rows."""
+    from zonos3.tts.edit import edit_marker_rows
+
+    spec = _block_spec(superbpe_spec)
+    validate_spec(spec, TEXT_VOCAB)
+    assert text_ids(f"{S}hello{P2} world", spec) == [2, TEXT_VOCAB + 6, 4, TEXT_VOCAB + 8, 5, 3]
+    for text, message in (
+        (f"hello {S}world", "first character"),
+        (f"{S}hello{S}", "first character"),
+        ("hello\ue005 world", "outside the 2 pause buckets"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            text_ids(text, spec)
+    no_start = {k: v for k, v in spec.items() if k != "start"}
+    no_pauses = {k: v for k, v in spec.items() if k != "pauses"}
+    with pytest.raises(ValueError, match="no start token"):
+        text_ids(f"{S}hello", no_start)
+    with pytest.raises(ValueError, match="no pause tokens"):
+        text_ids(f"hello{P2} world", no_pauses)
+    with pytest.raises(ValueError, match="Start token ID must follow the phoneme rows"):
+        validate_spec({**spec, "start": {**spec["start"], "id": TEXT_VOCAB + 7}}, TEXT_VOCAB)
+    with pytest.raises(ValueError, match="Invalid pause markers"):
+        validate_spec({**spec, "pauses": {**spec["pauses"], "markers": [P2, P1]}}, TEXT_VOCAB)
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    for extra, ok in ((8, True), (7, False), (9, False)):
+        (model_dir / "params.json").write_text(
+            json.dumps({"model": {"text_tokenizer_spec": spec, "text_vocab": TEXT_VOCAB, "text_extra_tokens": extra}})
+        )
+        if ok:
+            assert load_spec(model_dir)["pauses"]["ids"] == [TEXT_VOCAB + 7, TEXT_VOCAB + 8]
+        else:
+            with pytest.raises(ValueError, match="do not match text_extra_tokens"):
+                load_spec(model_dir)
+    assert edit_marker_rows(3 + 8, _block_spec(superbpe_spec, 3)) == 3
+
+
+def test_start_immediately_puts_the_start_id_first_without_prefill(tmp_path):
+    """start_immediately: the prompt text opens with the start marker (once, also when typed) and the silence prefill
+    defaults to off; an explicit silence_prefill_frames still applies."""
+    import test_request_rules
+    from tiny_lm import wordlevel_spec
+    from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
+    from zonos3.utils.hashing import sha256_file
+
+    # a vocabulary past the byte range, which the prompt builder requires
+    tokenizer, size = wordlevel_spec(["hello", "world", "[UNK]", *(f"w{i}" for i in range(445))], whitespace=True)
+    (tmp_path / "superbpe.json").write_text(tokenizer)
+    text_vocab = size + 4
+    base = {
+        "kind": "superbpe",
+        "path": str(tmp_path / "superbpe.json"),
+        "sha256": sha256_file(tmp_path / "superbpe.json"),
+        "vocab_size": size,
+        "offset": 4,
+        "bos": 2,
+        "eos": 3,
+    }
+    spec = _block_spec(base, text_vocab=text_vocab)
+    validate_spec(spec, text_vocab)
+
+    class Context(test_request_rules.Context):
+        text_tokenizer_spec = spec
+
+        def __init__(self):
+            self.text_vocab = text_vocab
+            super().__init__()
+            self._builder = TTSPromptBuilder(
+                TTSPromptConfig(
+                    n_codebooks=test_request_rules.N_CB,
+                    codebook_sizes=(test_request_rules.CODEBOOK,) * test_request_rules.N_CB,
+                    audio_pad_id=self.audio_pad_id,
+                    text_vocab=text_vocab,
+                    text_tokenizer_spec=spec,
+                )
+            )
+
+    ctx = Context()
+    want = [2, text_vocab + 6, 4, 5, 3]
+    for request, prefill in (
+        ({"text": "hello world", "start_immediately": True}, 0),
+        ({"text": "hello world", "start_immediately": True, "silence_prefill_frames": 2}, 2),
+        ({"text": f"{S}hello world"}, 0),
+        ({"text": f"{S}hello world", "start_immediately": True}, 0),
+    ):
+        p = test_request_rules.run(request, ctx)
+        assert p.text == f"{S}hello world"
+        assert (0 if p.prefill_rows is None else len(p.prefill_rows)) == prefill
+        assert ctx.prompt_builder().text_ids(p.text) == want
+        column = p.cond.input_ids[:, test_request_rules.N_CB].tolist()
+        assert any(column[i : i + len(want)] == want for i in range(len(column)))
+
+
 def test_add_text_extra_rows_appends_after_existing_rows(superbpe_spec, tmp_path):
     """A base with edit marker rows keeps them; the phoneme rows and ids go after them."""
     base = tmp_path / "base"
@@ -169,9 +277,18 @@ def test_runtime_rows_follow_the_edit_vocabulary_and_leave_plain_text_alone(supe
         "close_marker": C,
         "inventory_sha256": "0" * 64,
     }
-    rows = torch.randn(5, TINY["dim"], generator=torch.Generator().manual_seed(1))
+    start = {"id": text_vocab + 6, "marker": S}
+    pauses = {"ids": [text_vocab + 7, text_vocab + 8], "markers": [P1, P2], "seconds": [0.25, 0.5]}
+    rows = torch.randn(8, TINY["dim"], generator=torch.Generator().manual_seed(1))
     torch.save(
-        {"format": "zonos-text-extra/1", "text_vocab": text_vocab, "rows": rows, "phonemes": phonemes},
+        {
+            "format": "zonos-text-extra/1",
+            "text_vocab": text_vocab,
+            "rows": rows,
+            "phonemes": phonemes,
+            "start": start,
+            "pauses": pauses,
+        },
         tmp_path / "rows.pt",
     )
 
@@ -183,7 +300,9 @@ def test_runtime_rows_follow_the_edit_vocabulary_and_leave_plain_text_alone(supe
     plain_model = Zonos3LM.load(base)
     grown = Zonos3LM.load(base).append_text_rows(TextExtraRows.load(tmp_path / "rows.pt"))
     served = grown.config.text_tokenizer_spec
-    assert (served["phonemes"]["open_id"], grown.config.text_extra_tokens) == (text_vocab + 4, 8)
+    assert (served["phonemes"]["open_id"], grown.config.text_extra_tokens) == (text_vocab + 4, 11)
+    assert served["start"]["id"] == text_vocab + 9
+    assert served["pauses"]["ids"] == [text_vocab + 10, text_vocab + 11]
     plain = prompt(text_ids("hello world", served))
     assert torch.equal(grown(plain, LMCache()).logits, plain_model(plain, LMCache()).logits)
     group = prompt(text_ids(f"hello {O}kæt{C}", served))
@@ -191,4 +310,6 @@ def test_runtime_rows_follow_the_edit_vocabulary_and_leave_plain_text_alone(supe
 
     merged = Zonos3LM.load(add_text_extra_rows.add_text_extra_rows(base, tmp_path / "rows.pt", tmp_path / "merged"))
     assert merged.config.text_tokenizer_spec["phonemes"] == served["phonemes"]
+    assert merged.config.text_tokenizer_spec["start"] == served["start"]
+    assert merged.config.text_tokenizer_spec["pauses"] == served["pauses"]
     assert torch.equal(merged(group, LMCache()).logits, grown(group, LMCache()).logits)

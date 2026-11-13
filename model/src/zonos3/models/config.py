@@ -84,7 +84,7 @@ class ModelConfig:
     codebook_sizes: tuple[int, ...] | None = None
     audio_codec: str = "opus_dual_3n_600k_sched600k_r4096_step600000"
     text_vocab: int | None = None
-    # Text rows after the padding row: phoneme tokens (text_tokenizer_spec.phonemes) or speech-edit marker rows.
+    # Text rows after the padding row: speech-edit marker rows, then phoneme / start / pause tokens (text_tokenizer_spec).
     text_extra_tokens: int = 0
     moe_n_experts: int = 1
     moe_start_from_layer: int = 0

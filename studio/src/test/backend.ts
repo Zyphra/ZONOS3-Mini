@@ -19,6 +19,7 @@ export function offlineBackend(): Backend {
     tags: null,
     decoders: FIXTURE_DECODERS,
     laciLanguages: [],
+    startToken: false,
   };
 }
 

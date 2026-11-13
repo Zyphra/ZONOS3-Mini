@@ -11,7 +11,8 @@ namespace zs {
 
 class TextNormalizer {
   public:
-    // A normalizer that keeps the nonverbal markup (zonos3_nonverbal_markup_tags()) as typed.
+    // A normalizer that keeps the nonverbal markup (zonos3_nonverbal_markup_tags()), pronunciation groups and the
+    // start / pause markers (U+E002..U+E00A) as typed.
     TextNormalizer();
     // The spoken form of `text` for a server language code, in its registry `nemo` grammar; never fails (an
     // unsupported language comes back with its line breaks collapsed, a grammar failure keeps the failing sentence as

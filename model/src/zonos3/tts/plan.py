@@ -6,7 +6,8 @@ rules R1-R16 the ggml and in-browser servers port natively and ``model/tests/fix
 1. ``request_head``: tag CFG (R1), the speaker mode (R2) and the condition rows (R3) -- everything the server needs
    before it resolves the request's speaker inputs (uploads, voices, inline codes) into a ``Speaker``.
 2. ``request_rules``: language (R4), the max_tokens budget (R5), the silence prefill (R6), the accent (R9), steering
-   controls (R10), the span-follow gate (R11), CFG (R12), pronunciation groups (R13), LACI (R14) and the seed (R16).
+   controls (R10), the span-follow gate (R11), CFG (R12), text markers: pronunciation groups, the start marker, pause
+   markers (R13), LACI (R14) and the seed (R16).
    The sgl frontend stops here (its tokenizer worker builds the rows in another process).
 3. ``build_prompt``: the prompt rows -- condition rows, the reference prefix (R7) or speaker row, the text and silence
    rows, the decode context (R8) and the CFG twin -- and the budget shrunk to the context left (R5).
@@ -44,6 +45,16 @@ from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip
 from zonos3.tts.prompt import TTSPromptBuilder, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
 from zonos3.tts.steering import SteeringBundle, no_steering_message, resolve_controls
+from zonos3.tts.superbpe import (
+    NO_PAUSE_TOKENS,
+    NO_START_TOKEN,
+    PAUSE_MARKER_RE,
+    PHONEME_CLOSE,
+    PHONEME_OPEN,
+    START_MARKER,
+    START_NOT_FIRST,
+    payload_ids,
+)
 
 # v2 GenerateRequest (servers/api/openapi.yaml): every field and its default.
 GENERATE_DEFAULTS: dict = {
@@ -51,6 +62,7 @@ GENERATE_DEFAULTS: dict = {
     "language": "en_us",
     "text_normalization": True,
     "silence_prefill_frames": None,
+    "start_immediately": False,
     "decode_context": False,
     "decode_context_frames": DECODE_CONTEXT_FRAMES,
     **SAMPLING,
@@ -380,22 +392,52 @@ def resolve_accent(names: Sequence[str], accent, strength) -> tuple[str, float] 
     return accent, strength
 
 
-def validate_phoneme_groups(spec: dict | None, text: str) -> None:
-    """R13: the text's pronunciation groups (U+E000 phonemes U+E001) need phoneme tokens and must parse."""
-    from zonos3.tts.superbpe import PHONEME_CLOSE, PHONEME_OPEN, payload_ids
+START_NEEDS_TOKEN = "start_immediately needs a checkpoint with a start token"
+EDIT_NO_MARKERS = "Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text"
 
-    phonemes = None if spec is None else spec.get("phonemes")
+
+def validate_text_markers(spec: dict | None, text: str, *, edit: bool = False) -> None:
+    """R13: the text's pronunciation groups (U+E000 phonemes U+E001) need phoneme tokens and must parse; the start
+    marker (U+E002) needs a start token and must open the text, once; pause markers (U+E003 + bucket) need pause tokens
+    and a bucket the checkpoint has. ``edit``: a speech-edit target text, which takes no start or pause markers."""
+    spec = spec or {}
+    phonemes, start, pauses = spec.get("phonemes"), spec.get("start"), spec.get("pauses")
+    has_start = START_MARKER in text
+    pause = PAUSE_MARKER_RE.search(text)
+    if edit and (has_start or pause):
+        raise ValueError(EDIT_NO_MARKERS)
     open_, close = (
         (PHONEME_OPEN, PHONEME_CLOSE) if phonemes is None else (phonemes["open_marker"], phonemes["close_marker"])
     )
-    if open_ not in text and close not in text:
-        return
-    if phonemes is None:
+    has_groups = open_ in text or close in text
+    if has_groups and phonemes is None:
         raise ValueError("This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups")
-    try:
-        payload_ids(text, spec)
-    except ValueError as exc:
-        raise ValueError(f"Pronunciation groups: {exc}") from exc
+    if has_start and start is None:
+        raise ValueError(NO_START_TOKEN)
+    if pause and pauses is None:
+        raise ValueError(NO_PAUSE_TOKENS)
+    if has_start and (not text.startswith(START_MARKER) or START_MARKER in text[1:]):
+        raise ValueError(START_NOT_FIRST)
+    if pause:
+        n = len(pauses["ids"])
+        for match in PAUSE_MARKER_RE.finditer(text):
+            if ord(match.group()) - 0xE003 >= n:
+                raise ValueError(f"Pause marker U+{ord(match.group()):04X} outside the {n} pause buckets")
+    if has_groups:
+        try:
+            payload_ids(text, spec)
+        except ValueError as exc:
+            raise ValueError(f"Pronunciation groups: {exc}") from exc
+
+
+def start_silence(requested, start: bool):
+    """R6 with a start marker: no silence prefill unless the request asks for one (an explicit value wins)."""
+    return 0 if start and requested is None else requested
+
+
+def with_start_marker(text: str) -> str:
+    """``text`` opening with the start marker once (start_immediately on a text that may already have typed it)."""
+    return text if text.startswith(START_MARKER) else START_MARKER + text
 
 
 def check_laci(ctx: RulesContext, req: Request, language: str, *, duration_target: bool = False) -> None:
@@ -443,6 +485,7 @@ class Rules:
     condition_ids: list[int] | None
     max_tokens: int  # the budget before the prompt shrinks it (R5)
     silence_frames: int  # 0 = no silence prefill (R6)
+    start: bool  # the prompt text opens with the start marker (start_immediately, or typed first)
     accent: tuple[str, float] | None
     embedding: torch.Tensor | None  # the speaker row's vector after the raw-space controls
     sources: tuple[int, ...]  # steered Full AttnRes bank sources
@@ -470,7 +513,12 @@ def request_rules(
     follow); ``duration_target``: the request carries a LACI duration target (a duration-target take)."""
     language = languages.normalize(req.language)
     max_tokens = max_tokens_budget(req.max_tokens, ctx.max_frames)
-    silence = 0 if edit else silence_prefill_frames(req.silence_prefill_frames, available=ctx.silence_available)
+    start = bool(req.start_immediately) or req.text.startswith(START_MARKER)
+    silence = (
+        0
+        if edit
+        else silence_prefill_frames(start_silence(req.silence_prefill_frames, start), available=ctx.silence_available)
+    )
     if not 1 <= int(req.stream_codebooks) <= int(ctx.n_codebooks):
         raise ValueError(f"stream_codebooks must be 1..{int(ctx.n_codebooks)}")
     accent = resolve_accent(ctx.accent_names, req.accent, req.accent_strength)
@@ -524,7 +572,9 @@ def request_rules(
         cfg_kind, cfg_scale = "tag", float(req.tag_cfg_scale)
     elif delta is not None and embedding is not None and float(req.controls_cfg_scale) != 1.0:
         cfg_kind, cfg_scale = "controls", float(req.controls_cfg_scale)
-    validate_phoneme_groups(ctx.text_tokenizer_spec, req.text)
+    validate_text_markers(ctx.text_tokenizer_spec, req.text, edit=edit)
+    if req.start_immediately and (ctx.text_tokenizer_spec or {}).get("start") is None:
+        raise ValueError(START_NEEDS_TOKEN)
     check_laci(ctx, req, language, duration_target=duration_target)
     seed = int(req.seed) if req.seed is not None else secrets.randbelow(2**31)
     return Rules(
@@ -534,6 +584,7 @@ def request_rules(
         condition_ids=head.condition_ids,
         max_tokens=max_tokens,
         silence_frames=silence,
+        start=start,
         accent=accent,
         embedding=embedding,
         sources=sources,
@@ -691,6 +742,8 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
     req, speaker = rules.request, rules.speaker
     builder = ctx.prompt_builder()
     text = ctx.normalize_text(req.text, rules.language, bool(req.text_normalization))
+    if rules.start:
+        text = with_start_marker(text)
     silence = None
     if rules.silence_frames > 0:
         silence = silence_rows_from_codes(ctx.silence_frame(), rules.silence_frames, builder.config).to(torch.int32)

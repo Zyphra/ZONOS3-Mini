@@ -31,6 +31,7 @@ export const requestContext = computed<RequestContext>(() => ({
   decoder: requestDecoder(backend.value?.decoders ?? [], projectSettings.value.decoder),
   laci: projectSettings.value.laci,
   laciLanguages: backend.value?.laciLanguages ?? [],
+  startToken: backend.value?.startToken ?? false,
 }));
 
 export const controlById = computed(() => new Map<string, ControlSpec>(spec.value.ui.controls.map((c) => [c.id, c])));

@@ -109,7 +109,7 @@ from zonos3.tts.steering import (
     disabled_controls,
     resolve_controls,
 )
-from zonos3.utils.release import resolve_dir_or_local, resolve_file
+from zonos3.utils.release import RELEASE_TEXT_ROWS, resolve_dir_or_local, resolve_file
 from zonos3.workers import asr as asr_worker
 from zonos3.workers import fusealign as fusealign_worker
 
@@ -118,19 +118,20 @@ STUDIO = ROOT / "studio"
 # One device object everywhere: synthesize() moves the LM when lm.device != device, and ReferenceAssets caches the
 # decoder by str(device). On ZeroGPU this process only emulates CUDA; the GPU exists inside @spaces.GPU calls.
 DEVICE = torch.device("cuda:0")
-# The Space serves speech editing and pronunciation groups, whose edit LoRA, phoneme tokens and lexicon are only in the
-# private release repo (the public Zyphra/ZONOS3-Mini has the plain LM): it keeps loading from there (HF_TOKEN secret).
+# The Space serves speech editing and pronunciation groups, whose edit LoRA and lexicon are only in the private release
+# repo (the public Zyphra/ZONOS3-Mini has the plain LM): it keeps loading from there (HF_TOKEN secret).
 SPACE_RELEASE_REPO = "Zyphra/ZONOS3_Mini_release_ckpts"
 SPACE_LM = f"hf://{SPACE_RELEASE_REPO}/lm/rate30_20k_r2grpo"
 CPU = torch.device("cpu")
 
 # The edit LoRA (zonos-accent-lora/3) brings the vocabulary it was trained with: its span-end audio row and edit-marker
 # text rows, which plain takes never read or sample (so they run exactly as on the release LM). Edit regions add the
-# LoRA per request (EDIT_LORA). The phoneme tokens (zonos-text-extra/1, trained on the frozen release LM) follow the
-# edit marker rows: pronunciation groups (U+E000 IPA U+E001) read them, text without groups never does. Grown on the
-# CPU, then moved: ZeroGPU's emulated CUDA refuses mixing its tensors with CPU ones in this process.
+# LoRA per request (EDIT_LORA). The release text rows (zonos-text-extra/1, trained on the frozen release LM: phoneme,
+# start and pause rows) follow the edit marker rows: pronunciation groups (U+E000 IPA U+E001), the start marker (U+E002)
+# and pause markers (U+E003..) read them, text without them never does. Grown on the CPU, then moved: ZeroGPU's emulated
+# CUDA refuses mixing its tensors with CPU ones in this process.
 EDIT_ADAPTER = load_adapter(resolve_file(f"{SPACE_LM}/edit_lora/z3m_omni3b_edit_lora.pt"))
-PHONEME_ROWS = TextExtraRows.load(resolve_file(f"{SPACE_LM}/phoneme_tokens/phoneme_tokens_s15000.pt"))
+PHONEME_ROWS = TextExtraRows.load(RELEASE_TEXT_ROWS)
 LM = (
     Zonos3LM.load(SPACE_LM, device="cpu", dtype=torch.float32)
     .grow(EDIT_ADAPTER.grown)
@@ -708,7 +709,7 @@ class SpaceEditEngine:
         return np.asarray(codes, dtype=np.int64)
 
     async def check(self, target_text: str, doses, condition_buckets, condition_values) -> set[str]:
-        P.validate_phoneme_groups(CONTEXT.text_tokenizer_spec, target_text)
+        P.validate_text_markers(CONTEXT.text_tokenizer_spec, target_text, edit=True)
         raw = set()
         if doses is not None:
             for region in doses:

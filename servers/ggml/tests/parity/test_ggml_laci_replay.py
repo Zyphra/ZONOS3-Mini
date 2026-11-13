@@ -217,6 +217,10 @@ def run_span_ranges(t: dict, monkeypatch) -> dict:
         spec = {"path": "-", "sha256": "-", "vocab_size": 0}
         if t.get("phonemes") is not None:
             spec["phonemes"] = t["phonemes"]
+        if t.get("start"):
+            spec["start"] = {"id": 0, "marker": "\ue002"}
+        if t.get("pauses"):
+            spec["pauses"] = {"ids": [0, 1], "markers": ["\ue003", "\ue004"], "seconds": [0.25, 0.5]}
     assert [list(m) for m in nonverbal_marker_spans(final)] == t["markers"]
     ops = difflib.SequenceMatcher(None, text, final, autojunk=False).get_opcodes()
     spans = [tuple(s) for s in t["spans"]]
@@ -448,7 +452,24 @@ def span_range_traces() -> dict[str, dict]:
         offsets=[0, 4, 8, 12],
         phonemes={"open_marker": "\ue000", "close_marker": "\ue001"},
     )
-    return {"span_ranges_words": words, "span_ranges_bytes": plain, "span_ranges_phonemes": phon}
+    # the start marker (inserted by start_immediately) and a pause marker, each one range
+    markers = dict(
+        words,
+        text="Say\ue004 \ue000tə\ue001 now",
+        final="\ue002Say\ue004 \ue000tə\ue001 now",
+        spans=[[0, 3], [5, 9], [10, 13]],
+        markers=[],
+        offsets=[0, 3, 4, 9, 13],
+        phonemes={"open_marker": "\ue000", "close_marker": "\ue001"},
+        start=True,
+        pauses=True,
+    )
+    return {
+        "span_ranges_words": words,
+        "span_ranges_bytes": plain,
+        "span_ranges_phonemes": phon,
+        "span_ranges_markers": markers,
+    }
 
 
 # ------------------------------------------------------------------------------------------------------------ tests

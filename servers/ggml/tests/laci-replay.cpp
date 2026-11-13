@@ -266,14 +266,16 @@ static json run_span_ranges(const json & t) {
     const std::u32string text = utf32(t.at("text").get<std::string>()), fin = utf32(t.at("final").get<std::string>());
     F::BpeOffsets bpe;
     if (t.value("bpe", json()).is_string()) bpe = word_offsets;
-    std::optional<F::PhonemeMarkers> ph;
+    F::TextMarkers markers;
     if (t.contains("phonemes") && !t["phonemes"].is_null())
-        ph = F::PhonemeMarkers{utf32(t["phonemes"].at("open_marker").get<std::string>()),
-                               utf32(t["phonemes"].at("close_marker").get<std::string>())};
+        markers.phonemes = F::PhonemeMarkers{utf32(t["phonemes"].at("open_marker").get<std::string>()),
+                                             utf32(t["phonemes"].at("close_marker").get<std::string>())};
+    markers.start = t.value("start", false);
+    markers.pauses = t.value("pauses", false);
     const auto offsets = t.at("offsets").get<std::vector<int>>();
     json ops = json::array();
     for (const auto & o : F::diff_opcodes(text, fin)) ops.push_back({o.tag, o.i1, o.i2, o.j1, o.j2});
-    const auto tok = F::token_char_ranges(fin, bpe, ph);
+    const auto tok = F::token_char_ranges(fin, bpe, markers);
     json tr = json::array(), sr = json::array();
     for (const auto & [a, b] : tok) tr.push_back({a, b});
     for (const auto & [a, b] : F::span_token_ranges(text, fin, ranges_of(t.at("spans")), tok, ranges_of(t.at("markers"))))

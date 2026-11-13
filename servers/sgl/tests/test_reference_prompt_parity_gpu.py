@@ -60,6 +60,10 @@ def _capabilities(lm, assets) -> set[str]:
     caps = {"tag_cfg"}  # every checkpoint serves tag CFG (the sgl facts' tag_cfg_available)
     if spec is not None and spec.get("phonemes") is not None:
         caps.add("phoneme_tokens")
+    if spec is not None and spec.get("start") is not None:
+        caps.add("start_token")
+    if spec is not None and spec.get("pauses") is not None:
+        caps.add("pause_tokens")
     if assets.steer_bundle is not None:
         caps.add("controls")
     return caps
@@ -85,6 +89,7 @@ def _sgl_reqs(tts, request: dict):
         laci_heads={},
         tts_audio_codec=model_config.audio_codec,
         tts_speaker_reference_max_seconds=float(model_config.speaker_reference_max_seconds),
+        text_tokenizer_spec=tts._prompt_builder.config.text_tokenizer_spec,
     )
     # api_server: the request rules on the server's context, with the speaker embedding of the request's file
     ctx = api._RulesContext(config)
@@ -104,12 +109,18 @@ def _sgl_reqs(tts, request: dict):
         controls_cfg_scale=r.controls_cfg_scale,
         tag_cfg_scale=r.tag_cfg_scale,
     )
-    msg = SimpleNamespace(sampling_params=sampling, edit_codes=None, silence_prefill_frames=r.silence_prefill_frames)
+    msg = SimpleNamespace(
+        sampling_params=sampling,
+        edit_codes=None,
+        silence_prefill_frames=plan.start_silence(r.silence_prefill_frames, rules.start),
+    )
     vocoder = TTSVocoderManager(
         n_codebooks=tts.n_codebooks, audio_pad_id=tts.audio_pad_id, audio_codec=model_config.audio_codec
     )
     builder = tts._prompt_builder
     text = tts._text_normalizer.normalize(collapse_line_breaks(r.text), rules.language)
+    if rules.start:
+        text = plan.with_start_marker(text)
     prefill = _silence_rows(msg, builder=builder, vocoder_manager=vocoder)
     text_rows = plan.text_rows(builder, text, silence=prefill)
     rows = plan.prompt_rows(

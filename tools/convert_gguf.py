@@ -63,8 +63,9 @@ verbatim. Checkpoints fine-tuned on nonverbal markup (zonos3.tts.markup.trained_
 `nonverbal: true`) get `zonos3.tag_cfg_trained = true`; the key is absent otherwise. --edit-adapter <.pt> grows the
 model to a zonos-accent-lora/3 speech-edit adapter's vocabulary first (zonos3.reference.lm.Zonos3LM.grow: span_end_id,
 the edit marker rows; plain requests never read them): serve it with that adapter in accents.gguf. --phoneme-rows <.pt>
-then appends zonos-text-extra/1 phoneme tokens after them (zonos3.models.text_extra; the spec gains their phonemes):
-text without pronunciation groups never reads them. Tensors are written in LM_NAMES order."""
+then appends zonos-text-extra/1 phoneme, start and pause tokens after them (zonos3.models.text_extra; the spec gains
+their phonemes / start / pauses): text without pronunciation groups, start or pause markers never reads them. Tensors
+are written in LM_NAMES order."""
 
 ARCH = "zonos3"
 MODEL_NAME = "bingua2-gdn-fullattnres-sbpe8k-375k-zv3ft-srcmix-cond3-mect-60k-20261015"
@@ -1831,8 +1832,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--phoneme-rows",
-        help="zonos-text-extra/1 phoneme tokens appended to the text table (after "
-        "--edit-adapter's rows): pronunciation groups",
+        help="zonos-text-extra/1 phoneme, start and pause tokens appended to the text table (after "
+        "--edit-adapter's rows; local or hf://): pronunciation groups, the start marker, pause markers",
     )
     p.add_argument("-o", "--out", required=True)
     p.add_argument(

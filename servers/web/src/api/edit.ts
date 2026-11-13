@@ -107,6 +107,8 @@ export async function alignRoute(e: Engine, req: EngineRequest, sink: Sink): Pro
  *  against the steering bundle and the condition buckets / values. Returns the buckets and the dosed ids that move
  *  the speaker embedding. */
 function checkEdit(e: Engine, body: Body, targetText: string, doses: Doses[] | null): { buckets: number[]; raw: string[] } {
+  if (/[\uE002-\uE00A]/.test(targetText))
+    fail(400, 'Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text');
   if (targetText.includes('\uE000') || targetText.includes('\uE001'))
     fail(400, 'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups');
   const raw = new Set<string>();

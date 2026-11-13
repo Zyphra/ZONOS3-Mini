@@ -158,6 +158,18 @@ def phoneme_capabilities(text_tokenizer_spec: dict | None, lexicon) -> dict:
     }
 
 
+def text_marker_capabilities(text_tokenizer_spec: dict | None) -> dict:
+    """The checkpoint's start token (U+E002 first in the text) and pause tokens (U+E003 + bucket), null without them."""
+    spec = text_tokenizer_spec or {}
+    start, pauses = spec.get("start"), spec.get("pauses")
+    return {
+        "start_token": None if start is None else {"marker": start["marker"]},
+        "pause_tokens": None
+        if pauses is None
+        else {"markers": list(pauses["markers"]), "seconds": [float(s) for s in pauses["seconds"]]},
+    }
+
+
 def capabilities_document(f: CapabilityFacts) -> dict:
     """GET /v2/capabilities (api/openapi.yaml Capabilities)."""
     modes = list(f.speaker_modes)
@@ -214,6 +226,7 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         # optional and enables transcription (edit_transcribe)
         **edit_capabilities(f.edit_model, f.edit_available, f.edit_transcribe),
         **phoneme_capabilities(f.text_tokenizer_spec, f.lexicon),
+        **text_marker_capabilities(f.text_tokenizer_spec),
         # server-side studio projects (/v2/projects, /v2/media; --studio-projects-dir)
         "projects": f.projects,
     }

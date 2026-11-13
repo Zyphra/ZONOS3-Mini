@@ -337,35 +337,40 @@ compares against.
 
 E2-TTS "X2" pronunciation control: a word can be written as its IPA. The release LM `lm/rate30_20k_r2grpo` has
 phoneme tokens trained on it in lingua (`apps/zonos/configs/z3m_rate30_r2grpo_phoneme_tokens.yaml`, see
-`lingua/apps/zonos/PHONEMES.md`), released as
-`hf://Zyphra/ZONOS3_Mini_release_ckpts/lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`
-(`zonos-text-extra/1`): 138 text rows, a group open token, a group close token and one token per IPA symbol of the
-136-symbol inventory of the gold pronunciation lexicon (`lexicons/gold_phonemes_v1` in the same repo). Only those rows
-were trained, on the frozen release LM, so on text without groups the model is the release LM bit for bit: every
-steering direction and accent adapter applies unchanged. In the lingua evaluation, a name written as IPA was said as
-written 95% of the time (18% for the release LM reading the same IPA as text), with plain-text WER unchanged.
+`lingua/apps/zonos/PHONEMES.md`): a group open token, a group close token and one token per IPA symbol of the
+136-symbol inventory of the gold pronunciation lexicon (`lexicons/gold_phonemes_v1` in the private release repo),
+138 text rows. They ship in the release text rows,
+`hf://Zyphra/ZONOS3-Mini/lm/zonos3_mini/text_rows/pause_tokens_s5000.pt` (`zonos-text-extra/1`, 143 rows: these 138
+phoneme rows byte for byte, then the start row and four pause rows, [below](#start-and-pause-tokens)). Only those rows
+were trained, on the frozen release LM, so on text without groups or markers the model is the release LM bit for bit:
+every steering direction and accent adapter applies unchanged. In the lingua evaluation, a name written as IPA was said
+as written 95% of the time (18% for the release LM reading the same IPA as text), with plain-text WER unchanged.
 
-The servers append the rows at load (`zonos3.models.text_extra`), after any extra rows the model already has:
+The servers append the rows at load (`zonos3.models.text_extra`), after any extra rows the model already has.
+`servers/sgl/scripts/serve.sh` and `python -m zonos3.reference` load the release text rows by default with the release
+LM (`zonos3.utils.release.RELEASE_TEXT_ROWS`, overridden by `ZONOS3_RELEASE_TEXT_ROWS`; `SERVE_TEXT_ROWS=` /
+`--phoneme-rows ''` load none), and the Space loads them too:
 
 ```bash
-# sgl: release LM + speech-edit adapter + phoneme rows + lexicon
-PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh --accent-adapters <dir with the edit adapter> \
-    --phoneme-rows <phoneme_tokens_s15000.pt>
+# sgl: release LM + speech-edit adapter + the release text rows (default) + lexicon
+PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh --accent-adapters <dir with the edit adapter>
+# another checkpoint: name the rows (a path or hf://)
+SERVE_MODEL=<LM> SERVE_TEXT_ROWS=<pause_tokens_s5000.pt> servers/sgl/scripts/serve.sh
 # reference
-uv run python -m zonos3.reference --model <LM> --phoneme-rows <phoneme_tokens_s15000.pt> --text '...' -o out.wav
+uv run python -m zonos3.reference --model <LM> --phoneme-rows <pause_tokens_s5000.pt> --text '...' -o out.wav
 # GGUF (ggml, MLX): the rows go into the backbone
 uv run --package zonos3-tools python tools/convert_gguf.py lm <LM dir> --outtype q4_0-exp-q8_0-mix \
-    --edit-adapter <z3m_omni3b_edit_lora.pt> --phoneme-rows <phoneme_tokens_s15000.pt> -o backbone-ptq-edit.gguf
+    --edit-adapter <z3m_omni3b_edit_lora.pt> --phoneme-rows <pause_tokens_s5000.pt> -o backbone-ptq-edit.gguf
 ```
 
-The Space (`servers/space/`) serves the release LM with both. A converted checkpoint can also carry the rows on disk:
-`tools/add_text_extra_rows.py --base <checkpoint> --rows <phoneme_tokens.pt> --out <phoneme checkpoint>` writes
-`text_extra_tokens` and `text_tokenizer_spec.phonemes` (group markers, token ids, symbols) into `params.json`.
-`text_extra_tokens` is the same field the speech-edit vocabulary uses for its marker rows. The phoneme block is always
-the last extra rows: right after the padding row, or after the edit marker rows (which stay at text_vocab + 1 + j,
-where edit training put them); `superbpe.load_spec` checks that markers plus the phoneme block fill
-`text_extra_tokens`, and `edit_max_spans` counts the marker rows. With the speech-edit vocabulary the result has
-`text_extra_tokens` 141 (3 markers, open / close 8200 / 8201, phones from 8202), `speech_editing` with
+A converted checkpoint can also carry the rows on disk: `tools/add_text_extra_rows.py --base <checkpoint> --rows
+<pause_tokens.pt> --out <checkpoint>` writes `text_extra_tokens` and `text_tokenizer_spec.phonemes` (group markers,
+token ids, symbols), `start` and `pauses` into `params.json`. `text_extra_tokens` is the same field the speech-edit
+vocabulary uses for its marker rows. The phoneme rows, then the start row, then the pause rows are always the last
+extra rows: right after the padding row, or after the edit marker rows (which stay at text_vocab + 1 + j, where edit
+training put them); `superbpe.load_spec` checks that markers plus these rows fill `text_extra_tokens`, and
+`edit_max_spans` counts the marker rows. With the speech-edit vocabulary the result has `text_extra_tokens` 146 (3
+markers, open / close 8200 / 8201, phones from 8202, start 8338, pauses 8339-8342), `speech_editing` with
 `edit_max_spans` 3 and the 136 phone symbols. `PHONEME_LEXICON` (`servers/sgl/scripts/serve.sh`) passes
 `--tts-phoneme-lexicon`; the launcher runs with the `phonemize` dependency group.
 
@@ -413,6 +418,25 @@ where edit training put them); `superbpe.load_spec` checks that markers plus the
   `phonemize_languages` (the ten Text Norm languages) and the languages espeak-ng
   guesses for (en_us, en_gb, fr_fr, de, es, it, pt_br). `POST /v2/phonemize`
   returns each word's pronunciation and whether it was guessed.
+
+## Start and pause tokens
+
+The release text rows (above) end with a start row and four pause rows, trained in lingua on the frozen release LM
+after the phoneme rows (`lingua/apps/zonos/PHONEMES.md`; `apps.zonos.start_token`, `apps.zonos.pause_tokens`). The
+spec gains `start` (`{id, marker}`) and `pauses` (`{ids, markers, seconds}`); `/v2/capabilities` reports them as
+`start_token` and `pause_tokens`.
+
+- **Start marker** U+E002 as the first character of the text, once, is the start id: it asks for speech from the
+  first generated frame. It was trained without the silence prefill, so `start_immediately: true` (which puts the
+  marker in front of the normalized text unless it is already there) also defaults `silence_prefill_frames` to 0; a
+  typed leading marker does the same. An explicit `silence_prefill_frames` still applies.
+- **Pause markers** U+E003 + bucket go after a word and its glued punctuation (`slid,\ue004 on`); each is one id asking
+  for a pause of about its nominal length: 0.2475 / 0.495 / 0.9899 / 1.9799 s for U+E003-U+E006. The text between
+  markers is encoded stretch by stretch, as the training loader does (`superbpe.payload_ids`); a marker past the
+  checkpoint's buckets is a 400.
+- Text normalization keeps both markers in place and verbalizes the text around them. Speech-edit `target_text`
+  refuses them. In the Studio, a Direct line's "Start immediately" toggle (shown when the checkpoint has a start
+  token) sends `start_immediately`; there is no pause-insertion UI.
 
 ## Nonverbal markup and tag CFG
 

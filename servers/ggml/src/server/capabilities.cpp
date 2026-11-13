@@ -113,6 +113,14 @@ json capabilities(const ServerState & s) {
     };
     for (const json & part : {edit_capabilities(s), phoneme_capabilities(s)})
         for (auto it = part.begin(); it != part.end(); ++it) caps[it.key()] = it.value();
+    // zonos3.server.capabilities.text_marker_capabilities: the start token (U+E002 first in the text) and the pause
+    // tokens (U+E003 + bucket), null without them.
+    const auto & tok = s.model.tok;
+    caps["start_token"] = tok.start_id >= 0 ? json{{"marker", ZONOS3_START_MARKER}} : json(nullptr);
+    json pause_markers = json::array();
+    for (size_t j = 0; j < tok.pause_ids.size(); ++j) pause_markers.push_back(std::string("\xEE\x80") + (char) (0x83 + j));
+    caps["pause_tokens"] = tok.pause_ids.empty() ? json(nullptr)
+                                                 : json{{"markers", pause_markers}, {"seconds", tok.pause_seconds}};
     return caps;
 }
 

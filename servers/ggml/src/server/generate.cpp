@@ -206,10 +206,11 @@ void apply_controls(ServerState & s, const json & body, GenReq & gr) {
         fail(400, err);
 }
 
-// R13 (zonos3.tts.plan.validate_phoneme_groups): pronunciation groups need a phoneme-token checkpoint and must be well
-// formed.
-void check_phoneme_groups(const ServerState & s, const std::string & text) {
-    const std::string err = zonos3_check_phoneme_groups(s.model.tok, text);
+// R13 (zonos3.tts.plan.validate_text_markers): pronunciation groups need a phoneme-token checkpoint and must be well
+// formed; the start marker needs a start token and must open the text, once; pause markers need pause tokens and a
+// bucket the checkpoint has.
+void check_text_markers(const ServerState & s, const std::string & text) {
+    const std::string err = zonos3_check_text_markers(s.model.tok, text);
     if (!err.empty()) fail(400, err);
 }
 
@@ -287,13 +288,15 @@ void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
             return out;
         };
     }
-    std::optional<zonos3_follow::PhonemeMarkers> phonemes;
-    if (tok.has_phonemes) phonemes = zonos3_follow::PhonemeMarkers{utf8_to_u32(tok.phonemes.open_marker),
-                                                                   utf8_to_u32(tok.phonemes.close_marker)};
+    zonos3_follow::TextMarkers text_markers;
+    if (tok.has_phonemes) text_markers.phonemes = zonos3_follow::PhonemeMarkers{utf8_to_u32(tok.phonemes.open_marker),
+                                                                               utf8_to_u32(tok.phonemes.close_marker)};
+    text_markers.start = tok.start_id >= 0;
+    text_markers.pauses = !tok.pause_ids.empty();
     std::vector<zonos3_follow::Range> spans, markers;
     for (const auto & sp : gr.steering.spans) spans.push_back({sp.char_start, sp.char_end});
     for (const auto & m : zonos3_nonverbal_marker_spans(gr.text)) markers.push_back(m);
-    const auto ranges = zonos3_follow::token_char_ranges(final_, bpe, phonemes);
+    const auto ranges = zonos3_follow::token_char_ranges(final_, bpe, text_markers);
     const auto tokens = zonos3_follow::span_token_ranges(text, final_, spans, ranges, markers);
     gr.follow_tokens.assign(tokens.begin(), tokens.end());
 }
@@ -307,8 +310,8 @@ bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
 
 // GenerateRequest -> GenReq in the rules' order (zonos3.tts.plan.request_head + request_rules, which sgl
 // _tts_generate_msg runs): tag CFG, speaker mode, condition rows, speaker, language, max_tokens, silence prefill,
-// stream codebooks, accent, controls, stream decode, speaker CFG, pronunciation groups, LACI; then the scheduler's CFG
-// twin choice.
+// stream codebooks, accent, controls, stream decode, speaker CFG, text markers (start_immediately), LACI; then the
+// scheduler's CFG twin choice.
 GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session) {
     GeneratePlan out;
     GenReq & gr = out.gr;
@@ -331,8 +334,12 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
         if (requested <= 0) fail(400, "max_tokens must be positive.");
         gr.max_frames = (int) std::min<int64_t>(requested, s.max_frames);
     }
-    // silence_prefill_frames: unset = the server default, else 0..the registry maximum (never clamped).
-    gr.silence_prefill = s.silence_prefill_on ? s.silence_prefill_frames : 0;
+    // start_immediately, or a typed start marker: the prompt text opens with the start marker (plan.Rules.start).
+    const bool start_flag = set(body, "start_immediately") && body["start_immediately"].get<bool>();
+    const bool start = start_flag || text.rfind(ZONOS3_START_MARKER, 0) == 0;
+    // silence_prefill_frames: unset = the server default (0 with the start marker, plan.start_silence), else 0..the
+    // registry maximum (never clamped).
+    gr.silence_prefill = start ? 0 : (s.silence_prefill_on ? s.silence_prefill_frames : 0);
     if (set(body, "silence_prefill_frames")) {
         const int max_prefill = zonos3_generation().silence_prefill_max_frames;
         const int64_t frames = body["silence_prefill_frames"].get<int64_t>();
@@ -389,7 +396,8 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
         gr.twin_steered = false;
         out.cfg_kind = "controls";
     }
-    check_phoneme_groups(s, text);
+    check_text_markers(s, text);
+    if (start_flag && s.model.tok.start_id < 0) fail(400, "start_immediately needs a checkpoint with a start token");
     check_laci(s, body, gr.language);
     if (set(body, "laci") && body["laci"].get<bool>()) gr.laci = &s.laci.at(gr.language);
 
@@ -421,6 +429,7 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     }
     // text normalization (the tokenizer's: TTSTextNormalizer when enabled and requested)
     gr.text = normalize_text(s, text, gr.language, !set(body, "text_normalization") || body["text_normalization"].get<bool>());
+    if (start && gr.text.rfind(ZONOS3_START_MARKER, 0) != 0) gr.text = ZONOS3_START_MARKER + gr.text;  // with_start_marker
     resolve_follow_tokens(s, gr);
     return out;
 }

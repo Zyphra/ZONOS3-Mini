@@ -309,9 +309,13 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     p.twinSteered = false;
     p.cfgKind = 'controls';
   }
-  // zonos3.tts.plan validate_phoneme_groups (R13): this checkpoint has no phoneme tokens
+  // zonos3.tts.plan validate_text_markers (R13): this checkpoint has no phoneme, start or pause tokens
   if (text.includes('\uE000') || text.includes('\uE001'))
     fail(400, 'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups');
+  if (text.includes('\uE002')) fail(400, 'This checkpoint has no start token: remove the U+E002 start marker');
+  if (/[\uE003-\uE00A]/.test(text))
+    fail(400, 'This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers');
+  if (bool(body, 'start_immediately')) fail(400, 'start_immediately needs a checkpoint with a start token');
   checkLaci(e, body, p.language);
   if (bool(body, 'laci')) p.laci = e.laci.get(p.language)!;
   // sampling (TTSSamplingParams; registry defaults)

@@ -112,7 +112,9 @@ class Engine:
                 raise ValueError("--phoneme-rows does not support tensor parallelism")
             key = f"multi_embedder.embedders.{self.model_config.n_codebooks}.weight"
             state_dict[key] = extra.append(state_dict[key])
-            logger.info_rank0("Text rows appended from %s: %d (phoneme tokens)", config.phoneme_rows, extra.count)
+            logger.info_rank0(
+                "Text rows appended from %s: %d (phoneme / start / pause tokens)", config.phoneme_rows, extra.count
+            )
         self._check_speaker_lda_weights(state_dict)
 
         # Debug: Check for temp keys in state_dict

@@ -57,19 +57,42 @@ def phoneme_spec(spec):
     }
 
 
+def marker_spec(spec):
+    """phoneme_spec plus the start row and three pause rows after the phoneme rows."""
+    ps = phoneme_spec(spec)
+    first = ps["phonemes"]["open_id"] + 2 + len(ps["phonemes"]["symbols"])
+    return {
+        **ps,
+        "start": {"id": first, "marker": "\ue002"},
+        "pauses": {
+            "ids": [first + 1, first + 2, first + 3],
+            "markers": ["\ue003", "\ue004", "\ue005"],
+            "seconds": [0.25, 0.5, 1.0],
+        },
+    }
+
+
 # ------------------------------------------------------------------------------------------------- token mapping
 
 
 def test_one_char_range_per_text_id(spec):
-    """token_char_ranges lines up with text_ids for words, phoneme groups and bytes (BOS / EOS included)."""
-    ps = phoneme_spec(spec)
+    """token_char_ranges lines up with text_ids for words, phoneme groups, start / pause markers and bytes (BOS / EOS
+    included); a start or pause id's range is its marker."""
+    ps, ms = phoneme_spec(spec), marker_spec(spec)
     for text, sp in (
         ("please call stella tomorrow morning .", spec),
         (f"please call {O}stɛlə{C} tomorrow .", ps),
         (f"{O}stɛlə{C}", ps),
         ("please", ps),
+        ("\ue002please call\ue004 stella", ms),
+        (f"call\ue003 {O}stɛlə{C}\ue005 now", ms),
     ):
-        assert len(token_char_ranges(text, sp)) == len(text_ids(text, sp)), text
+        ranges, ids = token_char_ranges(text, sp), text_ids(text, sp)
+        assert len(ranges) == len(ids), text
+        marker_ids = {sp["start"]["id"], *sp["pauses"]["ids"]} if "start" in sp else set()
+        for i, (a, b) in zip(ids, ranges):
+            if i in marker_ids:
+                assert b == a + 1 and text[a] in "\ue002\ue003\ue004\ue005", text
     assert len(token_char_ranges("café ü", None)) == len("café ü".encode()) + 2  # byte ids: one per UTF-8 byte
 
 

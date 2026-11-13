@@ -181,11 +181,12 @@ The studio's steering controls come from `STEER_BUNDLE`.
   (or transcripts over 1022 UTF-8 bytes) are aligned long-form, anchored by Qwen3-ASR transcripts of their
   voice-activity chunks (at most 25 s each), or without speech recognition by FuseAlign's own voice-activity map;
   FuseAlign's built-in Whisper anchoring is never used.
-- **Phoneme input** needs the release phoneme tokens (private `Zyphra/ZONOS3_Mini`,
-  `lm/rate30_20k_r2grpo/phoneme_tokens/phoneme_tokens_s15000.pt`; sgl / reference `--phoneme-rows`, GGUF
-  `convert_gguf.py lm --phoneme-rows`; `gguf/backbone-ptq-edit.gguf` already has them) or a checkpoint merged with them
-  (`tools/add_text_extra_rows.py`), and `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the same
-  private repo) for "Phonemize selection".
+- **Phoneme input, the start marker and pause markers** read the release text rows (public `Zyphra/ZONOS3-Mini`,
+  `lm/zonos3_mini/text_rows/pause_tokens_s5000.pt`: phoneme, start and pause tokens), which
+  `servers/sgl/scripts/serve.sh` and `python -m zonos3.reference` load with the release LM (other checkpoints:
+  `SERVE_TEXT_ROWS` / `--phoneme-rows`; GGUF `convert_gguf.py lm --phoneme-rows`; `gguf/backbone-ptq-edit.gguf` already
+  has them), or a checkpoint merged with them (`tools/add_text_extra_rows.py`). "Phonemize selection" needs
+  `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the private `Zyphra/ZONOS3_Mini` repo).
   `uv sync --group phonemize` adds espeak-ng guesses for `POST /v2/phonemize` (GPL-3.0, opt-in).
 - **Nonverbal tags** need a checkpoint with the NV rows.
 - **Accent adapters** need `--accent-adapters <dir>`.

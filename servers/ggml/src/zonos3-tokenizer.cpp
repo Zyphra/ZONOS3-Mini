@@ -278,9 +278,15 @@ bool zonos3_tokenizer_set_spec(zonos3_tokenizer & tok, const std::string & spec_
         }
         tok.has_phonemes = false;
         tok.phonemes = zonos3_phoneme_spec();
+        tok.start_id = -1;
+        tok.pause_ids.clear();
+        tok.pause_seconds.clear();
+        tok.block_first = -1;
+        tok.block_rows = 0;
+        zonos3_phoneme_spec ph;
+        bool has_phonemes = false;
         if (spec.contains("phonemes") && !spec["phonemes"].is_null()) {
             const auto & p = spec["phonemes"];
-            zonos3_phoneme_spec ph;
             ph.open_marker = p.at("open_marker").get<std::string>();
             ph.close_marker = p.at("close_marker").get<std::string>();
             ph.open_id = p.at("open_id").get<int32_t>();
@@ -301,14 +307,64 @@ bool zonos3_tokenizer_set_spec(zonos3_tokenizer & tok, const std::string & spec_
                 err = "Invalid phoneme symbols";
                 return false;
             }
-            const int64_t before = (int64_t) ph.open_id - text_vocab - 1;
-            if (before + 2 + (int64_t) ph.symbols.size() != (int64_t) text_extra_tokens) {
-                err = "Phoneme tokens do not match text_extra_tokens (they must be the last extra rows)";
+            has_phonemes = true;
+        }
+        const bool has_start = spec.contains("start") && !spec["start"].is_null();
+        const bool has_pauses = spec.contains("pauses") && !spec["pauses"].is_null();
+        // superbpe._block_first / phoneme_token_count
+        const int64_t first = has_phonemes ? ph.open_id
+                              : has_start  ? spec["start"].at("id").get<int64_t>()
+                              : has_pauses ? spec["pauses"].at("ids").at(0).get<int64_t>()
+                                           : -1;
+        const int64_t n_ph = has_phonemes ? 2 + (int64_t) ph.symbols.size() : 0;
+        int32_t start_id = -1;
+        if (has_start) {
+            const auto & s = spec["start"];
+            if (s.at("marker").get<std::string>() != ZONOS3_START_MARKER) {
+                err = "Invalid start marker";
                 return false;
             }
-            tok.phonemes = std::move(ph);
-            tok.has_phonemes = true;
+            start_id = s.at("id").get<int32_t>();
+            if (first < (int64_t) text_vocab + 1 || start_id != first + n_ph) {
+                err = "Start token ID must follow the phoneme rows";
+                return false;
+            }
         }
+        std::vector<int32_t> pause_ids;
+        std::vector<double> pause_seconds;
+        if (has_pauses) {
+            const auto & p = spec["pauses"];
+            pause_ids = p.at("ids").get<std::vector<int32_t>>();
+            pause_seconds = p.at("seconds").get<std::vector<double>>();
+            const auto markers = p.at("markers").get<std::vector<std::string>>();
+            bool valid = !pause_ids.empty() && pause_ids.size() <= 8 && markers.size() == pause_ids.size() &&
+                         pause_seconds.size() == pause_ids.size();
+            for (size_t j = 0; valid && j < markers.size(); ++j)
+                valid = markers[j] == std::string("\xEE\x80") + (char) (0x83 + j);
+            if (!valid) {
+                err = "Invalid pause markers";
+                return false;
+            }
+            const int64_t lo = first + n_ph + (has_start ? 1 : 0);
+            valid = first >= (int64_t) text_vocab + 1;
+            for (size_t j = 0; valid && j < pause_ids.size(); ++j) valid = pause_ids[j] == lo + (int64_t) j;
+            if (!valid) {
+                err = "Pause token IDs must follow the start row";
+                return false;
+            }
+        }
+        const int64_t rows = n_ph + (has_start ? 1 : 0) + (int64_t) pause_ids.size();  // superbpe.extra_token_count
+        if (rows > 0 && (first - text_vocab - 1) + rows != (int64_t) text_extra_tokens) {
+            err = "Phoneme / start / pause tokens do not match text_extra_tokens (they must be the last extra rows)";
+            return false;
+        }
+        if (has_phonemes) tok.phonemes = std::move(ph);
+        tok.has_phonemes = has_phonemes;
+        tok.start_id = start_id;
+        tok.pause_ids = std::move(pause_ids);
+        tok.pause_seconds = std::move(pause_seconds);
+        tok.block_first = (int32_t) first;
+        tok.block_rows = (int32_t) rows;
     } catch (const std::exception & e) {
         err = std::string("text_tokenizer_spec: ") + e.what();
         return false;
@@ -317,8 +373,38 @@ bool zonos3_tokenizer_set_spec(zonos3_tokenizer & tok, const std::string & spec_
     return true;
 }
 
-bool zonos3_payload_ids(const zonos3_tokenizer & tok, const std::string & text, std::vector<int32_t> & ids,
-                        std::string & err) {
+namespace {
+
+const char * const NO_START_TOKEN = "This checkpoint has no start token: remove the U+E002 start marker";
+const char * const NO_PAUSE_TOKENS = "This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers";
+const char * const START_NOT_FIRST = "The start marker (U+E002) must be the first character of the text, once";
+
+// Byte offset of the first pause marker (U+E003..U+E00A = EE 80 83..8A) at or after `pos`, npos without one.
+size_t find_pause(const std::string & text, size_t pos) {
+    for (size_t i = text.find('\xEE', pos); i != std::string::npos; i = text.find('\xEE', i + 1))
+        if (i + 2 < text.size() && (unsigned char) text[i + 1] == 0x80 && (unsigned char) text[i + 2] >= 0x83 &&
+            (unsigned char) text[i + 2] <= 0x8A)
+            return i;
+    return std::string::npos;
+}
+
+// Bucket (0..7) of the pause marker at byte `i`.
+int pause_bucket(const std::string & text, size_t i) { return (unsigned char) text[i + 2] - 0x83; }
+
+std::string pause_outside(int bucket, size_t n) {
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "Pause marker U+%04X outside the %zu pause buckets", 0xE003 + bucket, n);
+    return buf;
+}
+
+// The start marker is the first character of `text`, once.
+bool start_first_once(const std::string & text) {
+    return text.rfind(ZONOS3_START_MARKER, 0) == 0 && text.find(ZONOS3_START_MARKER, 3) == std::string::npos;
+}
+
+// superbpe.payload_ids past the start and pause branches: SuperBPE with pronunciation groups.
+bool phoneme_payload(const zonos3_tokenizer & tok, const std::string & text, std::vector<int32_t> & ids,
+                     std::string & err) {
     if (!tok.has_phonemes) {
         bpe_text(tok, text, ids);
         return true;
@@ -370,6 +456,45 @@ bool zonos3_payload_ids(const zonos3_tokenizer & tok, const std::string & text, 
     return true;
 }
 
+} // namespace
+
+bool zonos3_payload_ids(const zonos3_tokenizer & tok, const std::string & text, std::vector<int32_t> & ids,
+                        std::string & err) {
+    if (text.find(ZONOS3_START_MARKER) != std::string::npos) {
+        if (tok.start_id < 0) {
+            err = NO_START_TOKEN;
+            return false;
+        }
+        if (!start_first_once(text)) {
+            err = START_NOT_FIRST;
+            return false;
+        }
+        ids.push_back(tok.start_id);
+        return zonos3_payload_ids(tok, text.substr(3), ids, err);
+    }
+    size_t at = find_pause(text, 0);
+    if (at != std::string::npos) {
+        if (tok.pause_ids.empty()) {
+            err = NO_PAUSE_TOKENS;
+            return false;
+        }
+        size_t pos = 0;
+        for (; at != std::string::npos; at = find_pause(text, pos)) {
+            const int b = pause_bucket(text, at);
+            if (b >= (int) tok.pause_ids.size()) {
+                err = pause_outside(b, tok.pause_ids.size());
+                return false;
+            }
+            if (at > pos && !zonos3_payload_ids(tok, text.substr(pos, at - pos), ids, err)) return false;
+            ids.push_back(tok.pause_ids[b]);
+            pos = at + 3;
+        }
+        if (pos < text.size()) return zonos3_payload_ids(tok, text.substr(pos), ids, err);
+        return true;
+    }
+    return phoneme_payload(tok, text, ids, err);
+}
+
 bool zonos3_text_ids(const zonos3_tokenizer & tok, const std::string & utf8, std::vector<int32_t> & out,
                      std::string & err) {
     out.assign(1, tok.bos);
@@ -378,13 +503,28 @@ bool zonos3_text_ids(const zonos3_tokenizer & tok, const std::string & utf8, std
     return true;
 }
 
-std::string zonos3_check_phoneme_groups(const zonos3_tokenizer & tok, const std::string & utf8) {
+std::string zonos3_check_text_markers(const zonos3_tokenizer & tok, const std::string & utf8, bool edit) {
+    const bool has_start = utf8.find(ZONOS3_START_MARKER) != std::string::npos;
+    const bool pause = find_pause(utf8, 0) != std::string::npos;
+    if (edit && (has_start || pause))
+        return "Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text";
     const zonos3_phoneme_spec defaults;
     const auto & ph = tok.has_phonemes ? tok.phonemes : defaults;
-    if (utf8.find(ph.open_marker) == std::string::npos && utf8.find(ph.close_marker) == std::string::npos) return "";
-    if (!tok.has_phonemes) return "This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups";
-    std::vector<int32_t> ids;
-    std::string err;
-    if (!zonos3_payload_ids(tok, utf8, ids, err)) return "Pronunciation groups: " + err;
+    const bool has_groups =
+        utf8.find(ph.open_marker) != std::string::npos || utf8.find(ph.close_marker) != std::string::npos;
+    if (has_groups && !tok.has_phonemes)
+        return "This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups";
+    if (has_start && tok.start_id < 0) return NO_START_TOKEN;
+    if (pause && tok.pause_ids.empty()) return NO_PAUSE_TOKENS;
+    if (has_start && !start_first_once(utf8)) return START_NOT_FIRST;
+    for (size_t at = find_pause(utf8, 0); at != std::string::npos; at = find_pause(utf8, at + 3)) {
+        const int b = pause_bucket(utf8, at);
+        if (b >= (int) tok.pause_ids.size()) return pause_outside(b, tok.pause_ids.size());
+    }
+    if (has_groups) {
+        std::vector<int32_t> ids;
+        std::string err;
+        if (!zonos3_payload_ids(tok, utf8, ids, err)) return "Pronunciation groups: " + err;
+    }
     return "";
 }

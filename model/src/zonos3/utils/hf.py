@@ -76,7 +76,7 @@ class Zonos3Config:
     # Optional span-end audio token that ends a masked edit span (audio_pad_id + 1).
     span_end_id: Optional[int] = None
     text_vocab: Optional[int] = None
-    # Text rows after the padding row: phoneme tokens (text_tokenizer_spec.phonemes) or speech-edit marker rows.
+    # Text rows after the padding row: speech-edit marker rows, then phoneme / start / pause tokens (text_tokenizer_spec).
     text_extra_tokens: int = 0
     text_tokenizer_spec: Optional[dict] = None
     speaker_enabled: bool = False

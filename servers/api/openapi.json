@@ -1174,6 +1174,11 @@
             ],
             "default": null
           },
+          "start_immediately": {
+            "description": "Put the checkpoint's start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).",
+            "type": "boolean",
+            "default": false
+          },
           "decode_context": {
             "description": "Decode the generated frames behind the last decode_context_frames of the reference prompt.",
             "type": "boolean",
@@ -1482,6 +1487,11 @@
               "null"
             ],
             "default": null
+          },
+          "start_immediately": {
+            "description": "Put the checkpoint's start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).",
+            "type": "boolean",
+            "default": false
           },
           "decode_context": {
             "description": "Decode the generated frames behind the last decode_context_frames of the reference prompt.",
@@ -1808,6 +1818,11 @@
               "null"
             ],
             "default": null
+          },
+          "start_immediately": {
+            "description": "Put the checkpoint's start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).",
+            "type": "boolean",
+            "default": false
           },
           "decode_context": {
             "description": "Decode the generated frames behind the last decode_context_frames of the reference prompt.",
@@ -2319,6 +2334,48 @@
                 }
               }
             }
+          },
+          "start": {
+            "description": "The start token (U+E002 first in the text) when the checkpoint has one.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "marker": {
+                "type": "string"
+              }
+            }
+          },
+          "pauses": {
+            "description": "The pause tokens (U+E003 + bucket after a word) when the checkpoint has them.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "markers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "seconds": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
           }
         }
       },
@@ -2609,6 +2666,46 @@
           }
         }
       },
+      "StartToken": {
+        "description": "The checkpoint's start token (null without one): the marker as the first character of the text, once, asks for speech from the first generated frame (GenerationOptions.start_immediately adds it).",
+        "type": [
+          "object",
+          "null"
+        ],
+        "required": [
+          "marker"
+        ],
+        "properties": {
+          "marker": {
+            "type": "string"
+          }
+        }
+      },
+      "PauseTokens": {
+        "description": "The checkpoint's pause tokens (null without them): marker j after a word and its glued punctuation asks for a pause of about seconds[j].",
+        "type": [
+          "object",
+          "null"
+        ],
+        "required": [
+          "markers",
+          "seconds"
+        ],
+        "properties": {
+          "markers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "seconds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
       "ProjectsCapability": {
         "oneOf": [
           {
@@ -2692,6 +2789,8 @@
           "edit_max_seconds",
           "edit_align_max_seconds",
           "phoneme_tokens",
+          "start_token",
+          "pause_tokens",
           "phonemize_enabled",
           "phonemize_languages",
           "phonemize_guess_languages",
@@ -2891,6 +2990,12 @@
           },
           "phoneme_tokens": {
             "$ref": "#/components/schemas/PhonemeTokens"
+          },
+          "start_token": {
+            "$ref": "#/components/schemas/StartToken"
+          },
+          "pause_tokens": {
+            "$ref": "#/components/schemas/PauseTokens"
           },
           "phonemize_enabled": {
             "type": "boolean"

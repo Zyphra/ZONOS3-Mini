@@ -32,8 +32,9 @@ struct zonos3_hparams {
     std::vector<std::string> cond_names, cond_units;
     std::vector<std::vector<float>> cond_edges; // [n_cond][cond_bucket_counts[i] - 1], strictly increasing
     std::vector<int32_t> silence_frame;          // [n_codebooks] audio-silence frame
-    // Text rows beyond the padding row (text_embd rows = text_vocab + 1 + text_extra_tokens): speech-edit marker rows
-    // (text_vocab + 1 + j) then the phoneme block (tokenizer.phonemes), per zonos3/tts/{edit,superbpe}.py.
+    // Text rows beyond the padding row (text_embd rows = text_vocab + 1 + text_extra_tokens): edit marker rows
+    // (text_vocab + 1 + j), then the phoneme / start / pause rows (tokenizer.block_first / block_rows), per
+    // zonos3/tts/{edit,superbpe}.py.
     uint32_t text_extra_tokens = 0;
     // zonos3.span_end_id: the speech-edit stop id (= audio_pad_id + 1; audio_vocab grows by one); -1 = none.
     int32_t span_end_id = -1;
@@ -141,13 +142,13 @@ struct zonos3_prompt {
 };
 // Row order: [speaker row | reference prefix (frames+9)] [loudness][fmax][speaking_rate]
 // BOS text EOS [silence-prefill rows]. The text is tokenized by zonos3_text_ids (pronunciation groups become phoneme
-// ids on a phoneme-token checkpoint; nonverbal markup is ordinary SuperBPE text). Returns false on any invalid input,
-// with the reason in *err when given (else on stderr); invalid pronunciation groups give
-// zonos3_check_phoneme_groups's 400 message.
+// ids on a phoneme-token checkpoint, the start and pause markers their ids; nonverbal markup is ordinary SuperBPE
+// text). Returns false on any invalid input, with the reason in *err when given (else on stderr); invalid text
+// markers give zonos3_check_text_markers's 400 message.
 bool zonos3_build_prompt(const zonos3_model & model, const std::string & text,
                          const zonos3_prompt_options & opt, zonos3_prompt & out, std::string * err = nullptr);
-// Speech editing (zonos3/tts/edit.py): edit_marker_rows -- the extra text rows before the phoneme block (-1 when the
-// phoneme block does not end the extra rows) -- and edit_marker_id(i) = text_vocab + 1 + i.
+// Speech editing (zonos3/tts/edit.py): edit_marker_rows -- the edit marker rows, then the phoneme / start / pause rows
+// end the extra rows (-1 when those rows do not end them) -- and edit_marker_id(i) = text_vocab + 1 + i.
 int zonos3_edit_marker_rows(const zonos3_model & model);
 inline int32_t zonos3_edit_marker_id(const zonos3_model & model, int index) {
     return (int32_t) model.hp.text_vocab + 1 + index;

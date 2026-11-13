@@ -33,8 +33,8 @@ class EngineConfig:
     # Directory of accent adapters (<accent>.pt) served per request; see
     # zonos3_sgl.models.accent_adapters. None serves the base model only.
     accent_adapters: str | None = None
-    # zonos-text-extra/1 rows (phoneme tokens; zonos3.models.text_extra) appended to the text table at load, after the
-    # vocabulary a speech-edit adapter grows. None serves the checkpoint's text rows only.
+    # zonos-text-extra/1 rows (phoneme / start / pause tokens; zonos3.models.text_extra; a path or hf://) appended to
+    # the text table at load, after the vocabulary a speech-edit adapter grows. None serves the checkpoint's text rows.
     phoneme_rows: str | None = None
     # Alignment probes (zonos3_sgl.tts.align_probe) inside the decode CUDA graphs: text keys read per request (0 = graphs
     # carry no probe and any decode batch with a probe runs eager), masked requests per batch, keys per masked request.
@@ -95,8 +95,8 @@ class EngineConfig:
 
     @cached_property
     def text_tokenizer_spec(self) -> dict | None:
-        """The served text tokenizer spec: the checkpoint's (zonos3.tts.superbpe.load_spec) with the phoneme block of
-        ``phoneme_rows``, its ids after the extra rows the model already has."""
+        """The served text tokenizer spec: the checkpoint's (zonos3.tts.superbpe.load_spec) with the phonemes / start /
+        pauses of ``phoneme_rows``, their ids after the extra rows the model already has."""
         from zonos3.tts.superbpe import load_spec
 
         spec = load_spec(self.model_path)
