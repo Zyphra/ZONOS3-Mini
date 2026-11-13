@@ -10,7 +10,7 @@ import type { Span } from '../../src/state/requests';
 import { designView, type DesignView } from './design';
 import type { GenerationParams, TakeInfo } from './payload';
 
-const SAMPLING = ['temperature', 'topk', 'top_p', 'min_p', 'repetition_window', 'repetition_penalty', 'repetition_codebooks', 'speaker_cfg_scale', 'tag_cfg_scale', 'stream_decode'];
+const SAMPLING = ['temperature', 'topk', 'top_p', 'min_p', 'repetition_window', 'repetition_penalty', 'repetition_codebooks', 'speaker_cfg_scale', 'stream_decode'];
 
 /** Each sampling key as sent, else the API's default for it. */
 export function samplingOf(req: Record<string, unknown>, schema: 'GenerateRequest' | 'EditRequest'): GenerationParams['sampling'] {

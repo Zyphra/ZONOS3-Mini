@@ -1,7 +1,6 @@
 #include "server/textnorm.h"
 
 #include "zonos3-languages.h"
-#include "zonos3-markup.h"
 #include "zyphra_textnorm.h"
 
 #include <memory>
@@ -57,9 +56,7 @@ void TextNormalizer::Delete::operator()(zyphra_textnorm * tn) const {
 }
 
 TextNormalizer::TextNormalizer() {
-    std::string tags;
-    for (const std::string & tag : zonos3_nonverbal_markup_tags()) tags += (tags.empty() ? "" : "\n") + tag;
-    tn_.reset(zyphra_textnorm_new(tags.data(), tags.size()));
+    tn_.reset(zyphra_textnorm_new(nullptr, 0));
 }
 
 std::string TextNormalizer::normalize(const std::string & text, const std::string & language) const {

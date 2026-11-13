@@ -209,7 +209,7 @@ const RELEASE_HP: ModelHp = {
     ],
   ],
   silenceFrame: [1918, 746, 3544, 234, 1267, 2914, 3944, 2849, 326, 1337], speakerDim: 192, contextLength: 32768,
-  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', tagCfgTrained: false,
+  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}',
   nEmbd: 1024, nLayer: 11,
 };
 

@@ -19,7 +19,6 @@ from zonos3.tts.edit import edit_prompt_tokens, extract_fill, sheared_block, spl
 from zonos3.tts.edit_align import (
     WordDiff,
     aligned_words,
-    canonical_markup,
     diff_spans,
     edit_words,
     expected_fill_seconds,
@@ -90,7 +89,7 @@ ALIGN_TEXTS = [
     "A B. C,",
     "\uff76\uff80\uff76\uff85 text",
 ]
-MARKUP_TEXTS = [
+TARGET_TEXTS = [
     "Hello <laugh /> there",
     "<shouting>Stop it</shouting> now",
     "Say \ue000\u02c8sjo\u028a\ue001 please",
@@ -106,7 +105,7 @@ MARKUP_TEXTS = [
 
 
 def gen_tokens():
-    return [{"text": t, "out": textmatch.tokens(t)} for t in TEXTS + ALIGN_TEXTS + MARKUP_TEXTS]
+    return [{"text": t, "out": textmatch.tokens(t)} for t in TEXTS + ALIGN_TEXTS + TARGET_TEXTS]
 
 
 def gen_align_tokens():
@@ -117,11 +116,10 @@ def gen_align_tokens():
     ]
 
 
-def gen_markup():
-    canon = [{"text": t, "out": canonical_markup(t)} for t in MARKUP_TEXTS + TEXTS]
-    targets = [{"text": t, "out": target_tokens(canonical_markup(t))} for t in MARKUP_TEXTS + TEXTS]
+def gen_target_tokens():
+    targets = [{"text": t, "out": target_tokens(t)} for t in TARGET_TEXTS + TEXTS]
     chars = [{"token": tok, "out": token_chars(tok)} for case in targets for tok in case["out"][0]]
-    return canon, targets, chars
+    return targets, chars
 
 
 def synthetic_alignment(text, lang, start=0.3, overlap=True):
@@ -257,7 +255,7 @@ ORIGINALS = [
 def mutate(words, n_edits):
     words = list(words)
     for _ in range(n_edits):
-        op = rng.choice(["replace", "insert", "delete", "group", "marker"])
+        op = rng.choice(["replace", "insert", "delete", "group", "literal"])
         k = rng.randrange(len(words))
         if op == "replace":
             words[k] = rng.choice(["purple", "seven", "quickly", "Edinburgh,", "ain't", "tomorrow."])
@@ -267,7 +265,7 @@ def mutate(words, n_edits):
             del words[k]
         elif op == "group":
             words[k] = rng.choice(["\ue000\u02c8sjo\u028a\ue001", "\ue000ni\u02d0v\ue001,", "a\ue000b\ue001c"])
-        elif op == "marker":
+        elif op == "literal":
             words.insert(k, rng.choice(["<laugh/>", "<sigh />", "<shouting>loud</shouting>"]))
     return " ".join(words)
 
@@ -280,7 +278,7 @@ def gen_scenarios():
             words = aligned_words(fw, [textmatch.tokens(w) for w in align_tokens(original, "en")])
             duration = words[-1].end + 0.5
             total = math.ceil(duration * 15)
-            target = canonical_markup(mutate(original.split(), n_edits))
+            target = mutate(original.split(), n_edits)
             tt = target_tokens(target)
             target_words = target.split()
             margin = rng.choice([0.0, 0.08, 0.25])
@@ -454,12 +452,11 @@ def gen_frames():
 
 
 def main():
-    canon, targets, chars = gen_markup()
+    targets, chars = gen_target_tokens()
     sheared, prompts, fills, splices = gen_frames()
     goldens = {
         "tokens": gen_tokens(),
         "alignTokens": gen_align_tokens(),
-        "canonicalMarkup": canon,
         "targetTokens": targets,
         "tokenChars": chars,
         "alignedWords": gen_aligned_words(),

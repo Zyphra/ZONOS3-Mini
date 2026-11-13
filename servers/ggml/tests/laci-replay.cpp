@@ -278,7 +278,7 @@ static json run_span_ranges(const json & t) {
     const auto tok = F::token_char_ranges(fin, bpe, markers);
     json tr = json::array(), sr = json::array();
     for (const auto & [a, b] : tok) tr.push_back({a, b});
-    for (const auto & [a, b] : F::span_token_ranges(text, fin, ranges_of(t.at("spans")), tok, ranges_of(t.at("markers"))))
+    for (const auto & [a, b] : F::span_token_ranges(text, fin, ranges_of(t.at("spans")), tok))
         sr.push_back({a, b});
     return {{"opcodes", ops}, {"map_starts", F::map_offsets(text, fin, offsets)},
             {"map_ends", F::map_offsets(text, fin, offsets, true)}, {"token_ranges", tr}, {"span_ranges", sr}};

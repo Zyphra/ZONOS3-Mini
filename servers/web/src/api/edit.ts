@@ -11,14 +11,13 @@ import { regionDoses, type Doses } from '../edit/doses';
 import { decodeCodes, fillPrompt, runFill, type FillJob } from '../edit/fill';
 import { spliceEdit, validateEditSpans } from '../edit/frames';
 import { pyFixed, pySplit, pyStrip } from '../edit/py';
-import { alignTokens, canonicalMarkup, targetTokens, tokens } from '../edit/text';
+import { alignTokens, targetTokens, tokens } from '../edit/text';
 import {
   alignedWords, diffSpans, editWords, expectedFillSeconds, planEditWindows, secondsToSpans, wholeClipWindow, windowSpans,
   type EditWindow, type EditWord, type Span,
 } from '../edit/words';
 import { CONTEXT_CAPACITY, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING } from '../generation';
 import { NCB, type Prompt } from '../prompt';
-import { stripNonverbalMarkup } from '../request/markup';
 import { NO_STEERING, resolveControls, STEER_FRAMES_PER_CHAR, textChars } from '../request/steer';
 import { defaultSampling, type Sampling } from '../sampler';
 import { wavBytes } from '../../../../studio/src/lib/wav';
@@ -146,11 +145,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
   const edit = requireEditing(e);
   const maxSpans = editMaxSpans(e);
   const decoder = resolveDecoder(e, body);
-  if (num(body, 'tag_cfg_scale', 1) !== 1)
-    fail(400, 'tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); use 1.0.');
-  // Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt text and
-  // never reach FuseAlign (word diff, alignment; targetTokens).
-  const targetText = canonicalMarkup(pyStrip(str(body, 'target_text')!));
+  const targetText = pyStrip(str(body, 'target_text')!);
   const lang = SPEECH_CODE.get(resolveLanguage(body))!;
   if (!targetText) fail(400, 'target_text is empty.');
   const givenWords = isSet(body, 'original_words')
@@ -186,8 +181,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
   const targetWords = pySplit(targetText);
   const normalizedTarget = targetTokens(targetText);
   const minFillRatio = num(body, 'min_fill_ratio', 0.7);
-  let originalText = givenText;
-  if (originalText) originalText = stripNonverbalMarkup(originalText);
+  const originalText = givenText;
   let words: EditWord[] | null = null;
   if (givenWords) {
     const wordTokens = givenWords.map(w => w.tokens ?? tokens(w.word));

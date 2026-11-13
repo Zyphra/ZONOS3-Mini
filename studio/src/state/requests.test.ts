@@ -38,7 +38,7 @@ describe('span-only controls (emphasis)', () => {
 });
 
 describe('decoder', () => {
-  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'off', laciLanguages: [], startToken: false };
+  const ctx: RequestContext = { phonemeTokens: null, decoder: null, laci: 'off', laciLanguages: [], startToken: false };
 
   it('is left out for the server default', () => {
     expect('decoder' in buildRequest(spec, ctx, d, text, 1)).toBe(false);
@@ -64,7 +64,7 @@ describe('decoder', () => {
 });
 
 describe('laci', () => {
-  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'stream', laciLanguages: ['en_us'], startToken: false };
+  const ctx: RequestContext = { phonemeTokens: null, decoder: null, laci: 'stream', laciLanguages: ['en_us'], startToken: false };
 
   it('streamed: laci on with the progressive decode of the request defaults, on both A/B sides', () => {
     for (const x of [{}, { unsteered: true }]) {
@@ -83,16 +83,23 @@ describe('laci', () => {
     expect('laci' in buildRequest(spec, ctx, d, text, 1, { language: 'fr_fr' })).toBe(false);
   });
 
-  it('wins over tag guidance', () => {
-    const tagged = { ...ctx, tags: { min_scale: 1, max_scale: 4 }, tagStrength: 2 };
+  it('keeps literal text and configured speaker guidance in A/B and LACI modes', () => {
+    const configured = { ...spec, ui: { ...spec.ui, request_defaults: { ...spec.ui.request_defaults, speaker_cfg_scale: 1.5 } } };
     const line = 'Hi <laugh/> there.';
-    expect('tag_cfg_scale' in buildRequest(spec, tagged, d, line, 1)).toBe(false);
-    expect(buildRequest(spec, { ...tagged, laci: 'off' }, d, line, 1).tag_cfg_scale).toBe(2);
+    for (const laci of ['off', 'stream', 'whole'] as const) {
+      for (const unsteered of [false, true]) {
+        const req = buildRequest(configured, { ...ctx, laci }, d, line, 1, { unsteered });
+        expect(req.text).toBe(line);
+        expect(req.speaker_cfg_scale).toBe(1.5);
+        expect('tag_cfg_scale' in req).toBe(false);
+        expect(req.laci).toBe(laci === 'off' ? undefined : true);
+      }
+    }
   });
 });
 
 describe('start immediately', () => {
-  const ctx: RequestContext = { phonemeTokens: null, tags: null, tagStrength: 1.5, decoder: null, laci: 'off', laciLanguages: [], startToken: true };
+  const ctx: RequestContext = { phonemeTokens: null, decoder: null, laci: 'off', laciLanguages: [], startToken: true };
 
   it('goes out on both A/B sides when the checkpoint has a start token', () => {
     expect(buildRequest(spec, ctx, d, text, 1, { startImmediately: true }).start_immediately).toBe(true);

@@ -10,7 +10,7 @@ import type { ControlSpec, Dose, EditRequest, EditTake } from '../api';
 import * as player from '../audio/player';
 import { errorText, isAbort } from '../audio/render';
 import { ApiError } from '../lib/http';
-import { MIN_GAP_FRAMES, contextWindows, isTagToken, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
+import { MIN_GAP_FRAMES, contextWindows, marginFrames, normalizeTokens, planRegions, regionTargets, summarizeChanges, tokenOwners, unheard, type Change, type Word } from '../edit/regions';
 import { bytesToBase64, base64ToBytes } from '../lib/files';
 import { parseWav, wavBytes } from '../lib/wav';
 import { levelMeter } from '../lib/level';
@@ -634,11 +634,7 @@ export function takeWarnings(t: Take, g: GenFacts): TakeWarning[] {
     const fill = t.fill[k] ?? 0;
     const n = k + 1;
     const exp = t.expected[k];
-    // A region that only adds nonverbal tags has no words to time: a laugh is as long as it is.
-    const cs = changes[k] ?? [];
-    const tagsOnly = cs.length > 0 && cs.every((c) => c.i1 === c.i2 && Array.from({ length: c.j2 - c.j1 }, (_, i) => g.targetTokens[c.j1 + i]).every(isTagToken));
     if (t.stopped[k] === false) out.push({ region: k, text: `Region ${n} never stopped (it ran out of room); this take is probably broken.` });
-    else if (tagsOnly) return;
     // The server's expectation (from the alignment and the word diff) when it sent one, else the heuristics below.
     else if (exp != null && exp > 0) {
       if (fill < 0.5 * exp) out.push({ region: k, text: `Region ${n} came out ${fill.toFixed(2)} s for about ${exp.toFixed(2)} s of words: words were probably skipped.` });

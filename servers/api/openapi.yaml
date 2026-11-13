@@ -752,12 +752,6 @@ components:
           type: number
           minimum: 0
           default: 1.0
-        tag_cfg_scale:
-          description: Tagged-vs-plain guidance on nonverbal markup (1 = off).
-          type: number
-          minimum: 1
-          maximum: 4
-          default: 1.0
         accent: {type: [string, "null"], default: null}
         accent_strength: {type: number, default: 1.0}
         controls:
@@ -930,18 +924,6 @@ components:
             available: {type: boolean, enum: [false]}
             default_frames: {type: "null"}
             codec: {type: string}
-    TagCfg:
-      type: object
-      required: [available, trained, tags, min_scale, max_scale, default_scale]
-      properties:
-        available: {type: boolean}
-        trained: {type: boolean, description: The checkpoint was trained on nonverbal markup.}
-        tags:
-          type: array
-          items: {type: string}
-        min_scale: {type: number}
-        max_scale: {type: number}
-        default_scale: {type: number}
     DecodeContext:
       type: object
       required: [available, default_frames, max_frames, note]
@@ -1050,7 +1032,7 @@ components:
       required: [text_tokenizer_spec, text_normalization_enabled, text_norm_languages, accents,
                  speaker_enabled, speaker_conditioning_type, speaker_embedding_dim, speaker_embedding_codec,
                  n_codebooks, codebook_sizes, audio_codec, max_tokens, stream_decode_modes, stream_decode_default,
-                 silence_prefill, tag_cfg, decode_context, speaker_modes, speaker_mode_default, decoder, decoders,
+                 silence_prefill, decode_context, speaker_modes, speaker_mode_default, decoder, decoders,
                  condition_tokens, speaker_audio_upload, speaker_cfg_supported, speaker_cfg_modes,
                  speaker_cfg_unconditional, speaker_cfg_formula, laci_languages, plugins, speaker_embedding_upload,
                  speaker_embedding_cache, speaker_embedding_blend, default_voices_enabled, speech_editing,
@@ -1085,7 +1067,6 @@ components:
           items: {type: string, enum: [prefix, whole]}
         stream_decode_default: {enum: [prefix, whole, null]}
         silence_prefill: {$ref: "#/components/schemas/SilencePrefill"}
-        tag_cfg: {$ref: "#/components/schemas/TagCfg"}
         decode_context: {$ref: "#/components/schemas/DecodeContext"}
         speaker_modes:
           type: array
@@ -1347,10 +1328,6 @@ components:
           description: Transcribe each take with Qwen3-ASR and report WER/CER against target_text and the take's words. Needs edit_transcribe (else 503).
           type: boolean
           default: false
-        tag_cfg_scale:
-          description: Tag CFG is not offered for edits; only 1.0 is accepted.
-          type: number
-          default: 1.0
         decoder:
           description: The audio decoder of the edited clip, by id (`Capabilities.decoders`; null = the server default). An id the server does not serve is a 400.
           type: [string, "null"]

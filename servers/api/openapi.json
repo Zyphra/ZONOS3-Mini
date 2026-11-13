@@ -1383,13 +1383,6 @@
             "minimum": 0,
             "default": 1.0
           },
-          "tag_cfg_scale": {
-            "description": "Tagged-vs-plain guidance on nonverbal markup (1 = off).",
-            "type": "number",
-            "minimum": 1,
-            "maximum": 4,
-            "default": 1.0
-          },
           "accent": {
             "type": [
               "string",
@@ -1695,13 +1688,6 @@
             "description": "Reference CFG: uncond + scale * (cond - uncond) (1 = off).",
             "type": "number",
             "minimum": 0,
-            "default": 1.0
-          },
-          "tag_cfg_scale": {
-            "description": "Tagged-vs-plain guidance on nonverbal markup (1 = off).",
-            "type": "number",
-            "minimum": 1,
-            "maximum": 4,
             "default": 1.0
           },
           "accent": {
@@ -2026,13 +2012,6 @@
             "description": "Reference CFG: uncond + scale * (cond - uncond) (1 = off).",
             "type": "number",
             "minimum": 0,
-            "default": 1.0
-          },
-          "tag_cfg_scale": {
-            "description": "Tagged-vs-plain guidance on nonverbal markup (1 = off).",
-            "type": "number",
-            "minimum": 1,
-            "maximum": 4,
             "default": 1.0
           },
           "accent": {
@@ -2444,41 +2423,6 @@
           }
         ]
       },
-      "TagCfg": {
-        "type": "object",
-        "required": [
-          "available",
-          "trained",
-          "tags",
-          "min_scale",
-          "max_scale",
-          "default_scale"
-        ],
-        "properties": {
-          "available": {
-            "type": "boolean"
-          },
-          "trained": {
-            "type": "boolean",
-            "description": "The checkpoint was trained on nonverbal markup."
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "min_scale": {
-            "type": "number"
-          },
-          "max_scale": {
-            "type": "number"
-          },
-          "default_scale": {
-            "type": "number"
-          }
-        }
-      },
       "DecodeContext": {
         "type": "object",
         "required": [
@@ -2764,7 +2708,6 @@
           "stream_decode_modes",
           "stream_decode_default",
           "silence_prefill",
-          "tag_cfg",
           "decode_context",
           "speaker_modes",
           "speaker_mode_default",
@@ -2880,9 +2823,6 @@
           },
           "silence_prefill": {
             "$ref": "#/components/schemas/SilencePrefill"
-          },
-          "tag_cfg": {
-            "$ref": "#/components/schemas/TagCfg"
           },
           "decode_context": {
             "$ref": "#/components/schemas/DecodeContext"
@@ -3539,11 +3479,6 @@
             "description": "Transcribe each take with Qwen3-ASR and report WER/CER against target_text and the take's words. Needs edit_transcribe (else 503).",
             "type": "boolean",
             "default": false
-          },
-          "tag_cfg_scale": {
-            "description": "Tag CFG is not offered for edits; only 1.0 is accepted.",
-            "type": "number",
-            "default": 1.0
           },
           "decoder": {
             "description": "The audio decoder of the edited clip, by id (`Capabilities.decoders`; null = the server default). An id the server does not serve is a 400.",

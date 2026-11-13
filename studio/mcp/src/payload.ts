@@ -47,7 +47,7 @@ export interface GenerationParams {
   controlSpans: { start: number; end: number; controls: Record<string, number> }[];
   identityEstimate: number | null;
   durationFactor: number;
-  /** temperature, topk, top_p, min_p, repetition_*, speaker_cfg_scale, tag_cfg_scale, stream_decode. */
+  /** temperature, topk, top_p, min_p, repetition_*, speaker_cfg_scale, stream_decode. */
   sampling: Record<string, number | string | null>;
   /** The exact body sent; audio_base64 replaced by '<wav, N bytes>'. */
   request: Record<string, unknown>;

@@ -166,11 +166,6 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
             if (gguf_get_kv_type(gf, id) != GGUF_TYPE_UINT32) { fprintf(stderr, "zonos3: invalid span_end_id\n"); ok = false; }
             else hp.span_end_id = (int32_t) gguf_get_val_u32(gf, id);
         }
-        const int64_t tag = gguf_find_key(gf, "zonos3.tag_cfg_trained");
-        if (tag >= 0) {
-            if (gguf_get_kv_type(gf, tag) != GGUF_TYPE_BOOL) { fprintf(stderr, "zonos3: invalid tag_cfg_trained\n"); ok = false; }
-            else hp.tag_cfg_trained = gguf_get_val_bool(gf, tag);
-        }
     }
     // Text rows from the embedding's shape: text_vocab + 1 (padding) + the extra rows (edit markers, phonemes).
     const ggml_tensor * text_meta = meta ? ggml_get_tensor(meta, "text_embd.weight") : nullptr;

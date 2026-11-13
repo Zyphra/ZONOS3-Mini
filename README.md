@@ -188,7 +188,6 @@ The studio's steering controls come from `STEER_BUNDLE`.
   has them), or a checkpoint merged with them (`tools/add_text_extra_rows.py`). "Phonemize selection" needs
   `PHONEME_LEXICON=<lexicon dir>` (`lexicons/gold_phonemes_v1` of the private `Zyphra/ZONOS3_Mini` repo).
   `uv sync --group phonemize` adds espeak-ng guesses for `POST /v2/phonemize` (GPL-3.0, opt-in).
-- **Nonverbal tags** need a checkpoint with the NV rows.
 - **Accent adapters** need `--accent-adapters <dir>`.
 
 ## About ZONOS3-Mini
@@ -212,7 +211,7 @@ whispering, emotion, pace, projection, liveliness) with their control values.
 | Raw-reference and embedding voice cloning, speaker CFG, condition rows | [docs/guide.md](docs/guide.md) |
 | Steering controls (emotion axes, moods, styles, voice quality, accent directions) and accent adapters | [docs/guide.md](docs/guide.md) |
 | Speech editing | [docs/guide.md](docs/guide.md) |
-| Pronunciation input (phoneme tokens) and nonverbal tags with tag CFG | [docs/guide.md](docs/guide.md) |
+| Pronunciation input (phoneme tokens), start and pause tokens | [docs/guide.md](docs/guide.md) |
 | Zonos Voice Studio, server projects | [docs/guide.md](docs/guide.md), [studio/README.md](studio/README.md) |
 | LACI, duration targets and server plugins (Dub: [Zyphra/ZONOS3-dub](https://github.com/Zyphra/ZONOS3-dub)) | [docs/guide.md](docs/guide.md#plugins) |
 | Feature overview | [docs/features.md](docs/features.md) |

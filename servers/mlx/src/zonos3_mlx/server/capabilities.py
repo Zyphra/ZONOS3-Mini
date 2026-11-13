@@ -80,8 +80,6 @@ def facts(state: ServerState) -> CapabilityFacts:
         max_tokens=engine.max_frames,
         prefix_stream=PREFIX_STREAM,
         silence_hop=engine.decoder.hop if engine.silence_available else None,
-        tag_cfg_available=twin,
-        tag_cfg_trained=bool(c.tag_cfg_trained),
         decoder=infos[0],
         decoders=infos,
         condition_tokens=condition_tokens(state),

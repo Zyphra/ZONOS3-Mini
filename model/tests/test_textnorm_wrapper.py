@@ -1,4 +1,4 @@
-"""Text normalization through the Rust extension (zyphra_textnorm): line breaks, markup, pronunciation groups and
+"""Text normalization through the Rust extension (zyphra_textnorm): line breaks, pronunciation groups and
 the per-language fixes. Expected strings are the outputs of the pre-port reference pipeline (the oracle of
 github.com/Zyphra/zyphra-textnorm)."""
 
@@ -84,38 +84,6 @@ def test_phoneme_groups_are_kept_as_typed_and_the_text_between_normalized(tn):
     assert tn.normalize(text, "en_us") == "I paid five \ue000kæt\ue001 for \ue000dɔɡ\ue001 food."
     g = "\ue000həˈloʊ\ue001"
     assert tn.normalize(f"say  {g}  5", "en_us") == f"say  {g}  five"  # whitespace around groups kept exactly
-
-
-@pytest.mark.parametrize(
-    "language,text,expected",
-    [
-        ("en_us", "So I said <laugh/> no way, $5.", "So I said <laugh/> no way, five dollars."),
-        ("en_us", "<shouting>Get out!</shouting>  ok", "<shouting>Get out!</shouting> ok"),
-        ("en_us", "no markup 5", "no markup five"),
-        ("cmn", "我说<laugh/>不行5", "我说<laugh/>不行五"),
-        ("ko", "a <laugh/> <sigh/> b\n<cough/>", "a <laugh/> <sigh/> b <cough/>"),
-        ("xx", "keep  <laugh/>  as typed", "keep  <laugh/>  as typed"),
-        (
-            "en_us",
-            "<shouting>Get out!</shouting> It costs $5 <sigh/> today.",
-            "<shouting>Get out!</shouting> It costs five dollars <sigh/> today.",
-        ),
-        ("cmn", "<shouting>出去！</shouting>他花了5元<sigh/>。", "<shouting>出去！</shouting>他花了五元<sigh/>。"),
-        ("cmn", "我有3个 <laugh/> 苹果", "我有三个 <laugh/> 苹果"),
-        ("ja", "<shouting>出て行け！</shouting>5円です<sigh/>。", "<shouting>出て行け！</shouting>五円です<sigh/>。"),
-        # whole-text normalization raised on the ASCII space next to the marker and left "3日" unread
-        ("ja", "今日は3日 <breath/> です", "今日は三日 <breath/> です"),
-        ("ko", "<shouting>나가!</shouting> 5원이에요 <sigh/>.", "<shouting>나가!</shouting> 오 원이에요 <sigh/>."),
-    ],
-)
-def test_markup_is_never_normalized_and_keeps_its_spacing(tn, language, text, expected):
-    assert tn.normalize(text, language) == expected
-
-
-def test_markup_and_pronunciation_groups_together(tn):
-    g = "\ue000həˈloʊ\ue001"
-    assert tn.normalize(f"say {g} <laugh/> 5 times", "en_us") == f"say {g} <laugh/> five times"
-    assert tn.normalize(f"<shouting>{g} 5</shouting>", "en_us") == f"<shouting>{g} five</shouting>"
 
 
 def test_start_and_pause_markers_are_kept_and_the_text_around_them_normalized(tn):

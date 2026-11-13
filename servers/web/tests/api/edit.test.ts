@@ -62,8 +62,6 @@ describe.skipIf(!haveEditModels)('speech editing without speech recognition', ()
         "Unsupported language code: 'xx'. Supported: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn, ko."],
       ['/v2/edit/align', { text: 'x' }, clip(150), 151.25, 400, 'Audio is 151.2 s long; at most 150 s are supported here.'],
       ['/v2/edit/align', { text: 'x' }, undefined, undefined, 400, 'could not decode the audio (any container this browser decodes)'],
-      ['/v2/edit', { target_text: 'x', original_text: 'y', tag_cfg_scale: 2 }, clip(1), undefined, 400,
-        'tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); use 1.0.'],
       ['/v2/edit', { target_text: 'x', original_words: [{ word: 'y', start: 0, end: 0.5 }] }, clip(1), undefined, 400,
         'original_words needs the original_text they spell.'],
       ['/v2/edit', { target_text: 'Hi there', original_text: 'Hello there' }, clip(31), undefined, 400,

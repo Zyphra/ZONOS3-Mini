@@ -11,7 +11,6 @@ struct zonos3_generation_registry {
         int topk, repetition_window;
         int repetition_codebooks;       // < 0 in a request means every codebook
     } sampling;
-    double tag_cfg_min_scale, tag_cfg_max_scale;            // the tag-CFG scale range
     int silence_prefill_default_frames;                     // server default (ZONOS3_SILENCE_PREFILL_FRAMES overrides)
     int silence_prefill_max_frames;                         // the longest silence_prefill_frames a request may ask for
     int decode_context_frames;                              // decode_context_frames unset or 0

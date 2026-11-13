@@ -32,7 +32,6 @@ import numpy as np
 import torch
 
 from .directions import HIDDEN_SPACE, RAW_SPACE, DirectionSet
-from .markup import nonverbal_marker_spans
 
 RAMP_FRAMES = 3  # 0.2 s at 15 frames per second
 DEFAULT_FRAMES_PER_CHAR = 1.0  # release LM, embedding mode, unsteered (15 fps, ~15 characters per second)
@@ -276,13 +275,10 @@ def resolve_controls(
         for (s0, e0, _), (s1, _e1, _) in zip(cleaned, cleaned[1:]):
             if s1 < e0:
                 raise ValueError(f"control spans [{s0}, {e0}) and [{s1}, ...) overlap.")
-        # frame position of every character boundary: span characters run at their own pace; nonverbal markers
-        # (zonos3.tts.prompt: "<laugh/>", "<shouting>" ...) take no time (control_span_rate counts spoken characters)
+        # frame position of every character boundary: span characters run at their own pace
         per_char = np.full(n, rate)
         for start, end, doses in cleaned:
             per_char[start:end] = rate * _duration_factor(bundle, doses)
-        for start, end in nonverbal_marker_spans(text):
-            per_char[start:end] = 0.0
         frame_at = np.concatenate([[0.0], np.cumsum(per_char)])
         rows, chars = [], []
         for start, end, doses in cleaned:

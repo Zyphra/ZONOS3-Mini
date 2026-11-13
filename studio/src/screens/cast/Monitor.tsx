@@ -9,7 +9,6 @@ import { exportWav } from '../../audio/mix';
 import { Icon } from '../../components/Icon';
 import { isPronError, PronMarks, PronounceButton } from '../../components/Pron';
 import { openRail } from '../../components/Rail';
-import { TagButton, TagField, TagMarks } from '../../components/Tags';
 import { Waveform } from '../../components/Waveform';
 import { uid } from '../../lib/math';
 import { onZeroGpu } from '../../lib/zerogpu';
@@ -190,7 +189,6 @@ export function SpeakPanel() {
   return (
     <section class={`speak${stale || isErr ? ' is-stale' : ''}`} aria-label="Speak">
       <div class="speak-text">
-        <TagField text={text} block>
           <textarea
             ref={area}
             class="speak-area"
@@ -198,7 +196,6 @@ export function SpeakPanel() {
             value={text}
             placeholder={spec.value.ui.preview_text}
             aria-label="Text to speak"
-            data-tags
             onInput={(e) => setDraft((e.currentTarget as HTMLTextAreaElement).value)}
             onKeyDown={(e) => {
               if (e.key !== 'Enter' || e.shiftKey) return;
@@ -206,17 +203,14 @@ export function SpeakPanel() {
               go();
             }}
             onBlur={(e) => {
-              // The tag palette borrows focus and gives it back.
-              if ((e.relatedTarget as HTMLElement | null)?.closest?.('.tag-palette, .speak-go')) return;
+              if ((e.relatedTarget as HTMLElement | null)?.closest?.('.speak-go')) return;
               const typed = (e.currentTarget as HTMLTextAreaElement).value;
               if (typed !== phrase.value) setPhrase(typed);
               setDraft(null);
             }}
           />
-        </TagField>
         <div class="speak-tools">
           <PronounceButton input={() => area.current} />
-          <TagButton input={() => area.current} />
         </div>
       </div>
       <PronMarks
@@ -224,13 +218,6 @@ export function SpeakPanel() {
         replace={(s, e, t) => {
           setDraft(null);
           setPhrase(text.slice(0, s) + t + text.slice(e));
-        }}
-      />
-      <TagMarks
-        text={text}
-        replace={(next) => {
-          setDraft(null);
-          setPhrase(next);
         }}
       />
       <div class="speak-bar">

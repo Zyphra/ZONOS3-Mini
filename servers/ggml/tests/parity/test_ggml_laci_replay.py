@@ -208,7 +208,6 @@ def run_span_ranges(t: dict, monkeypatch) -> dict:
     import difflib
 
     from zonos3.tts import superbpe
-    from zonos3.tts.markup import nonverbal_marker_spans
 
     text, final = t["text"], t["final"]
     spec = None
@@ -221,7 +220,6 @@ def run_span_ranges(t: dict, monkeypatch) -> dict:
             spec["start"] = {"id": 0, "marker": "\ue002"}
         if t.get("pauses"):
             spec["pauses"] = {"ids": [0, 1], "markers": ["\ue003", "\ue004"], "seconds": [0.25, 0.5]}
-    assert [list(m) for m in nonverbal_marker_spans(final)] == t["markers"]
     ops = difflib.SequenceMatcher(None, text, final, autojunk=False).get_opcodes()
     spans = [tuple(s) for s in t["spans"]]
     return json.loads(
@@ -431,7 +429,6 @@ def span_range_traces() -> dict[str, dict]:
         "final": final,
         "bpe": "words",
         "spans": [[0, 9], [10, 17], [15, 28], [20, 28], [29, 45], [17, 20], [44, 44]],
-        "markers": [[31, 39]],
         "offsets": [0, 3, 4, 15, 16, 17, 18, 20, 45, 50],
     }
     plain = dict(
@@ -440,7 +437,6 @@ def span_range_traces() -> dict[str, dict]:
         text="Größe: 3 km — naïve café",
         final="Größe: drei Kilometer, naïve café",
         spans=[[0, 5], [7, 11], [14, 24], [5, 7]],
-        markers=[],
         offsets=[0, 6, 7, 8, 10, 11, 13, 24],
     )
     phon = dict(
@@ -448,7 +444,6 @@ def span_range_traces() -> dict[str, dict]:
         text="say \ue000tə\ue001 now",
         final="say \ue000tə\ue001 now",
         spans=[[4, 8], [0, 3], [9, 12]],
-        markers=[],
         offsets=[0, 4, 8, 12],
         phonemes={"open_marker": "\ue000", "close_marker": "\ue001"},
     )
@@ -458,17 +453,25 @@ def span_range_traces() -> dict[str, dict]:
         text="Say\ue004 \ue000tə\ue001 now",
         final="\ue002Say\ue004 \ue000tə\ue001 now",
         spans=[[0, 3], [5, 9], [10, 13]],
-        markers=[],
         offsets=[0, 3, 4, 9, 13],
         phonemes={"open_marker": "\ue000", "close_marker": "\ue001"},
         start=True,
         pauses=True,
+    )
+    literal = dict(
+        words,
+        bpe=None,
+        text="<shouting>hi</shouting> ok",
+        final="<shouting>hi</shouting> ok",
+        spans=[[0, 23]],
+        offsets=[0, 23],
     )
     return {
         "span_ranges_words": words,
         "span_ranges_bytes": plain,
         "span_ranges_phonemes": phon,
         "span_ranges_markers": markers,
+        "span_ranges_literal": literal,
     }
 
 
@@ -519,7 +522,10 @@ def test_span_follower_matches_python(tool, name):
 @pytest.mark.parametrize("name", list(span_range_traces()))
 def test_span_token_ranges_match_python(tool, monkeypatch, name):
     trace = span_range_traces()[name]
-    assert tool("laci-replay", trace) == run_span_ranges(trace, monkeypatch)
+    want = run_span_ranges(trace, monkeypatch)
+    if name == "span_ranges_literal":
+        assert want["span_ranges"] == [[1, 24]]
+    assert tool("laci-replay", trace) == want
 
 
 CTEST_CASES = (

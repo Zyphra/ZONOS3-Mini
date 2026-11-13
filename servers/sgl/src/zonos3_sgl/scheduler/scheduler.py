@@ -468,9 +468,8 @@ class TTSScheduler(SchedulerIOMixin):
         if (
             float(sampling_params.speaker_cfg_scale) != 1.0
             or float(sampling_params.controls_cfg_scale) != 1.0
-            or float(getattr(sampling_params, "tag_cfg_scale", 1.0)) != 1.0
         ):
-            raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = tag_cfg_scale = 1")
+            raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = 1")
         if sampling_params.end_token != "utterance":
             raise ValueError("LACI needs end_token = 'utterance' (no edit spans)")
         if not isinstance(self.engine.attn_backend, FlashAttentionBackend):
@@ -640,13 +639,10 @@ class TTSScheduler(SchedulerIOMixin):
         elif isinstance(msg, TTSUserMsg):
             logger.debug_rank0("Received TTS user msg: %s", msg.uid)
             input_len = len(msg.input_ids)
-            plain_input_ids = getattr(msg, "plain_input_ids", None)
-            plain_len = len(plain_input_ids) if plain_input_ids is not None else 0
             max_seq_len = self.engine.max_seq_len
-            if max(input_len, plain_len) >= max_seq_len:
+            if input_len >= max_seq_len:
                 return logger.warning_rank0(
-                    f"TTS input len {input_len} (plain twin {plain_len}) exceeds {max_seq_len}, "
-                    f"request {msg.uid} is dropped."
+                    f"TTS input len {input_len} exceeds {max_seq_len}, request {msg.uid} is dropped."
                 )
             self._request_stop_id(msg.sampling_params)
             self.waiting_reqs.append(msg)
@@ -768,19 +764,8 @@ class TTSScheduler(SchedulerIOMixin):
             msg = self.waiting_reqs[0]
             input_ids = msg.input_ids
             speaker_token_position = msg.speaker_token_position
-            # Tag CFG: the twin is the tokenizer's plain-text prompt (nonverbal markup stripped) with otherwise
-            # identical conditioning; it gets the same speaker / marker rows prepended here.
-            tag_cfg = float(getattr(msg.sampling_params, "tag_cfg_scale", 1.0)) > 1.0
-            plain_input_ids = getattr(msg, "plain_input_ids", None) if tag_cfg else None
-            if tag_cfg and plain_input_ids is None:
-                raise ValueError(f"request {msg.uid}: tag CFG needs the tokenizer's plain_input_ids")
             if msg.speaker_embedding is not None:
                 input_ids = self._with_speaker_frames(input_ids, speaker_token_position)
-                if plain_input_ids is not None:
-                    plain_with_frames = self._with_speaker_frames(plain_input_ids, speaker_token_position)
-                    if len(plain_with_frames) - len(plain_input_ids) != len(input_ids) - len(msg.input_ids):
-                        raise ValueError(f"request {msg.uid}: tag CFG branches got different speaker rows")
-                    plain_input_ids = plain_with_frames
                 speaker_token_position = 0
             # Condition rows keep their offset in the tokenizer's prompt; rows prepended here (a speaker slot or
             # marker the tokenizer did not add) shift them.
@@ -808,8 +793,6 @@ class TTSScheduler(SchedulerIOMixin):
             speaker_cfg = float(msg.sampling_params.speaker_cfg_scale) != 1.0
             if speaker_cfg and controls_cfg:
                 raise ValueError("Speaker and controls CFG cannot be combined")
-            if tag_cfg and (speaker_cfg or float(msg.sampling_params.controls_cfg_scale) != 1.0):
-                raise ValueError("Tag CFG cannot be combined with speaker or controls CFG")
             # Speaker CFG on either path: the twin is the prompt without its speaker conditioning (the reference
             # prefix or the reserved speaker row), no speaker embedding, all-unknown condition rows = the evaluation
             # generator's twin (zonos3.speaker_cfg.speaker_cfg_twin).
@@ -828,15 +811,14 @@ class TTSScheduler(SchedulerIOMixin):
                 if speaker_cfg
                 else None
             )
-            twin_input_ids = cfg_twin_spec.input_ids if speaker_cfg else plain_input_ids if tag_cfg else input_ids
-            use_cfg = speaker_cfg or controls_cfg or tag_cfg
+            twin_input_ids = cfg_twin_spec.input_ids if speaker_cfg else input_ids
+            use_cfg = speaker_cfg or controls_cfg
             needed_slots = 2 if use_cfg else 1
             if self.table_manager.available_size < needed_slots:
                 break  # don't start a CFG pair unless both slots are free
 
             input_len = len(input_ids)
-            # A twin's prompt is no longer than the request's, except a plain-text twin may tokenize longer.
-            prompt_len = max(input_len, len(twin_input_ids)) if tag_cfg else input_len
+            prompt_len = input_len
             max_seq_len = self.engine.max_seq_len
             if prompt_len >= max_seq_len:
                 logger.warning_rank0(f"TTS input len {prompt_len} exceeds {max_seq_len}, request {msg.uid} is dropped.")
@@ -944,8 +926,6 @@ class TTSScheduler(SchedulerIOMixin):
                 cfg_scale=(
                     float(msg.sampling_params.speaker_cfg_scale)
                     if speaker_cfg
-                    else float(msg.sampling_params.tag_cfg_scale)
-                    if tag_cfg
                     else float(msg.sampling_params.controls_cfg_scale)
                     if controls_cfg
                     else 1.0
@@ -959,20 +939,10 @@ class TTSScheduler(SchedulerIOMixin):
                 # Speaker CFG uses the target prompt with the full reference removed.
                 # Each branch has its own prompt length, positions and KV cache.
                 # The shared sampled target frames advance both branches together.
-                # Controls CFG retains its unsteered twin prompt; tag CFG
-                # uses the plain-text prompt with every conditioning kept. Under
-                # speaker and tag CFG the hidden-space steering (steering delta,
-                # span schedule / follower, accent adapter) applies to both
-                # branches: it is part of the generation, not of the contrast, so
-                # the guidance amplifies only the speaker / tag contrast.
-                if tag_cfg:
-                    logger.info_rank0(
-                        "Tag CFG uid=%d scale=%.3g: tagged prompt %d rows, plain twin %d rows",
-                        msg.uid,
-                        float(msg.sampling_params.tag_cfg_scale),
-                        input_len,
-                        len(twin_input_ids),
-                    )
+                # Controls CFG retains its unsteered twin prompt. Under speaker CFG
+                # the hidden-space steering (steering delta, span schedule / follower,
+                # accent adapter) applies to both branches: it is part of the generation,
+                # not of the contrast, so guidance amplifies only the speaker contrast.
                 twin_table_idx = self.table_manager.allocate()
                 twin_cache_handle = self.cache_manager.allocate_new_handle()
                 twin_ids_i32 = twin_input_ids.to(torch.int32)
@@ -992,18 +962,15 @@ class TTSScheduler(SchedulerIOMixin):
                     stop_id=stop_id,
                     eoa_policy=self.eoa_policy,
                     rng=None,
-                    # the speaker-CFG twin has every speaker conditioning removed (reference prefix or speaker row;
-                    # the controls-CFG twin keeps its speaker) and all-unknown condition rows shifted back by the
-                    # removed rows, as the evaluation generator's twin; the tag-CFG twin keeps all conditioning
-                    # (speaker, condition rows) and differs in its text rows only. The hidden-space (attnres_source)
-                    # steering delta and schedule are part of the generation, not of the speaker conditioning or
-                    # the markup: under speaker or tag CFG they steer both branches so the guidance amplifies only
-                    # the speaker / tag contrast (the follower's decisions are per frame, shared with the twin).
+                    # The speaker-CFG twin removes speaker conditioning and shifts its all-unknown condition
+                    # rows back by the removed rows; the controls-CFG twin keeps its speaker and condition rows.
+                    # Hidden-space steering is shared under speaker CFG so guidance amplifies only the speaker
+                    # contrast (the follower's decisions are per frame, shared with the twin).
                     speaker_embedding=None if speaker_cfg else msg.speaker_embedding,
                     speaker_token_position=-1 if speaker_cfg else speaker_token_position,
-                    steering_delta=msg.steering_delta if speaker_cfg or tag_cfg else None,
-                    steer_schedule=getattr(msg, "steer_schedule", None) if speaker_cfg or tag_cfg else None,
-                    span_follower=span_follower if speaker_cfg or tag_cfg else None,
+                    steering_delta=msg.steering_delta if speaker_cfg else None,
+                    steer_schedule=getattr(msg, "steer_schedule", None) if speaker_cfg else None,
+                    span_follower=span_follower if speaker_cfg else None,
                     condition_values=cfg_twin_spec.condition_values if speaker_cfg else condition_values,
                     condition_token_start=cfg_twin_spec.condition_token_start if speaker_cfg else condition_token_start,
                     is_cfg_uncond=True,

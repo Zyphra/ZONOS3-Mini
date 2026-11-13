@@ -59,8 +59,7 @@ tables' bucket counts (params condition_bucket_counts, else condition_n_buckets 
 zonos3.condition.bucket_counts. The silence frame defaults to
 <lm_dir>/../../registries/silence_frame_<audio_codec>.json; pass --silence-frame when the directory sits elsewhere.
 The silence frame (codec-silence prefill), condition edges/units, the tokenizer and the tokenizer spec are embedded
-verbatim. Checkpoints fine-tuned on nonverbal markup (zonos3.tts.markup.trained_on_tags: a config.yaml data source with
-`nonverbal: true`) get `zonos3.tag_cfg_trained = true`; the key is absent otherwise. --edit-adapter <.pt> grows the
+verbatim. --edit-adapter <.pt> grows the
 model to a zonos-accent-lora/3 speech-edit adapter's vocabulary first (zonos3.reference.lm.Zonos3LM.grow: span_end_id,
 the edit marker rows; plain requests never read them): serve it with that adapter in accents.gguf. --phoneme-rows <.pt>
 then appends zonos-text-extra/1 phoneme, start and pause tokens after them (zonos3.models.text_extra; the spec gains
@@ -236,13 +235,12 @@ class LMSource:
     params: dict  # params.json "model" table
     tokenizer: str  # tokenizer JSON text
     spec: dict  # params.text_tokenizer_spec
-    meta: dict  # name, qat, conditions, silence_frame, speaker_dim, bucket_counts, tag_cfg_trained
+    meta: dict  # name, qat, conditions, silence_frame, speaker_dim, bucket_counts
 
 
 def load_lm(lm_dir, silence_frame=None) -> LMSource:
     """Validate and strictly load an LM directory (see LM_DOC)."""
     from zonos3.reference.lm import Zonos3LM, Zonos3LMConfig
-    from zonos3.tts.markup import trained_on_tags
 
     lm_dir = Path(lm_dir).resolve()
     bake = read_json(lm_dir / "bake.json") if (lm_dir / "bake.json").exists() else None
@@ -324,7 +322,6 @@ def load_lm(lm_dir, silence_frame=None) -> LMSource:
         "silence_frame": [int(v) for v in frame],
         "speaker_dim": cfg.speaker_embedding_dim,
         "bucket_counts": list(cfg.condition_bucket_counts),
-        "tag_cfg_trained": trained_on_tags(lm_dir),
     }
     return LMSource(model, params, raw.decode("utf-8"), spec, meta)
 
@@ -513,8 +510,6 @@ def write_lm_metadata(writer, src: LMSource, outtype):
     writer.add_string(f"{ARCH}.text_tokenizer_spec", json.dumps(spec, ensure_ascii=False))
     if c.span_end_id is not None:
         writer.add_uint32(f"{ARCH}.span_end_id", c.span_end_id)
-    if meta["tag_cfg_trained"]:
-        writer.add_bool(f"{ARCH}.tag_cfg_trained", True)
     writer.add_file_type({"f32": 0, "f16": 1, "q8_0": 7, MIX_OUTTYPE: 2}[outtype])
 
 

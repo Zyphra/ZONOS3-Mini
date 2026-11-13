@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { defaultLaciConfig, LaciHeads, LaciSession, RateBuckets, type ProbeControl, type Windows } from '../../src/request/laci';
-import { defaultFollowConfig, SpanFollower, type FollowConfig, type Range } from '../../src/request/spanFollow';
+import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type FollowConfig, type Range } from '../../src/request/spanFollow';
 
 const DIR = new URL('../../../ggml/tests/fixtures/laci-replay/', import.meta.url);
 type J = Record<string, any>;
@@ -148,4 +148,12 @@ describe('laci-replay fixtures', () => {
       same(want, got);
     });
   }
+});
+
+describe('literal angle-text span ranges', () => {
+  it('includes angle-bracket words in ordinary byte token ranges', () => {
+    const text = '<shouting>hi</shouting> ok';
+    const ranges = tokenCharRanges(text, null, null);
+    expect(spanTokenRanges(text, text, [[0, 23]], ranges)).toEqual([[1, 24]]);
+  });
 });

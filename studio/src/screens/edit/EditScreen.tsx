@@ -8,13 +8,12 @@ import { FileDrop } from '../../components/FileDrop';
 import { Icon } from '../../components/Icon';
 import { closeRail, openRail, Rail, RailBar, RailToggle } from '../../components/Rail';
 import { Waveform } from '../../components/Waveform';
-import { isTagToken, normalizeTokens, planRegions, wordDiff } from '../../edit/regions';
+import { normalizeTokens, planRegions, wordDiff } from '../../edit/regions';
 import { isTyping } from '../../lib/dom';
 import { slug } from '../../lib/files';
 import { EDIT_LANGUAGES, langLabel } from '../../lib/languages';
 import { parsePron } from '../../lib/pron';
 import { PronMarks, PronounceButton } from '../../components/Pron';
-import { TagButton, TagMarks, tagsOn } from '../../components/Tags';
 import { clamp } from '../../lib/math';
 import { activeHistory, backend, notify, primaryAction, screenKeys } from '../../state/app';
 import * as E from '../../state/edit';
@@ -403,7 +402,6 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
           class="ed-area"
           value={value}
           spellcheck={false}
-          data-tags={fix ? undefined : true}
           aria-label={first ? 'What the clip says' : fix ? 'Correct transcript of the audio' : 'Edited transcript: change the words to change the speech'}
           placeholder={first ? 'Type what is said in the clip…' : undefined}
           onInput={(e) => {
@@ -416,12 +414,10 @@ function Transcript({ area }: { area: { current: HTMLTextAreaElement | null } })
           }}
         />
       </div>
-      {!fix && (E.pronEdit.value || tagsOn.value) && (
+      {!fix && E.pronEdit.value && (
         <div class="ed-pron">
-          {E.pronEdit.value && <PronounceButton input={() => area.current} />}
-          <TagButton input={() => area.current} />
-          {E.pronEdit.value && <PronMarks text={value} replace={(s, e, t) => E.setText(value.slice(0, s) + t + value.slice(e))} />}
-          <TagMarks text={value} replace={(next) => E.setText(next)} />
+          <PronounceButton input={() => area.current} />
+          <PronMarks text={value} replace={(s, e, t) => E.setText(value.slice(0, s) + t + value.slice(e))} />
         </div>
       )}
       {fix && (
@@ -675,8 +671,7 @@ function Takes() {
       </div>
     );
   }
-  // Tags are never heard: the transcript is compared with the words only.
-  const target = normalizeTokens(g.target, g.groups).filter((t) => !isTagToken(t));
+  const target = normalizeTokens(g.target, g.groups);
   const written = g.groups ? parsePron(g.target, null).groups.filter((x) => !x.empty) : [];
   const best = E.bestOf(g.takes, g);
   return (

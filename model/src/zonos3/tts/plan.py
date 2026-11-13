@@ -3,7 +3,7 @@
 One request goes through three steps, in the order the sgl frontend has always checked them (servers/api/openapi.yaml; the
 rules R1-R16 the ggml and in-browser servers port natively and ``model/tests/fixtures/request_errors.json`` pins):
 
-1. ``request_head``: tag CFG (R1), the speaker mode (R2) and the condition rows (R3) -- everything the server needs
+1. ``request_head``: the speaker mode (R2) and the condition rows (R3) -- everything the server needs
    before it resolves the request's speaker inputs (uploads, voices, inline codes) into a ``Speaker``.
 2. ``request_rules``: language (R4), the max_tokens budget (R5), the silence prefill (R6), the accent (R9), steering
    controls (R10), the span-follow gate (R11), CFG (R12), text markers: pronunciation groups, the start marker, pause
@@ -37,11 +37,8 @@ from zonos3.generation import (
     SILENCE_PREFILL_MAX_FRAMES,
     STREAM_CODEBOOKS,
     STREAM_CODEBOOKS_SCOPE,
-    TAG_CFG_MAX_SCALE,
-    TAG_CFG_MIN_SCALE,
 )
 from zonos3.speaker_cfg import speaker_cfg_twin
-from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS, has_nonverbal_markup, strip_nonverbal_markup
 from zonos3.tts.prompt import TTSPromptBuilder, silence_rows_from_codes
 from zonos3.tts.span_follow import FollowConfig
 from zonos3.tts.steering import SteeringBundle, no_steering_message, resolve_controls
@@ -90,7 +87,6 @@ GENERATE_DEFAULTS: dict = {
     "speaker_blend_t": None,
     "controls_cfg_scale": 1.0,
     "speaker_cfg_scale": 1.0,
-    "tag_cfg_scale": 1.0,
     "accent": None,
     "accent_strength": 1.0,
     "controls": None,
@@ -180,30 +176,6 @@ class Speaker:
 
 
 # ----------------------------------------------------------------------------------------------------- the rules
-
-
-def validate_tag_cfg(text: str, scale: float, *, speaker_cfg_scale: float, controls_cfg_scale: float) -> None:
-    """R1: tag CFG (tagged-vs-plain guidance on nonverbal markup). 1.0 is unguided; above it the text must carry
-    recognized markup whose removal changes it, and no speaker or controls CFG (one twin per request)."""
-    scale = float(scale)
-    if not math.isfinite(scale) or not TAG_CFG_MIN_SCALE <= scale <= TAG_CFG_MAX_SCALE:
-        raise ValueError(f"tag_cfg_scale must be finite and between {TAG_CFG_MIN_SCALE} and {TAG_CFG_MAX_SCALE}.")
-    if scale == 1.0:
-        return
-    if not has_nonverbal_markup(text) or strip_nonverbal_markup(text) == text:
-        raise ValueError(
-            "tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags "
-            + ", ".join(f"<{tag}/>" for tag in NONVERBAL_MARKUP_TAGS)
-            + " or the same names as span tags (<shouting>...</shouting>)."
-        )
-    if float(speaker_cfg_scale) != 1.0:
-        raise ValueError(
-            "tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0."
-        )
-    if float(controls_cfg_scale) != 1.0:
-        raise ValueError(
-            "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0."
-        )
 
 
 def resolve_speaker_mode(modes: Sequence[str], value: str | None) -> str | None:
@@ -454,8 +426,6 @@ def check_laci(ctx: RulesContext, req: Request, language: str, *, duration_targe
         raise ValueError(f"No LACI alignment heads for language {language!r} (configured: {', '.join(sorted(heads))})")
     if float(req.speaker_cfg_scale) != 1.0 or float(req.controls_cfg_scale) != 1.0:
         raise ValueError("LACI needs speaker_cfg_scale = controls_cfg_scale = 1")
-    if float(req.tag_cfg_scale) != 1.0:
-        raise ValueError("LACI needs tag_cfg_scale = 1")
 
 
 @dataclass(frozen=True)
@@ -467,10 +437,7 @@ class RequestHead:
 
 
 def request_head(ctx: RulesContext, req: Request) -> RequestHead:
-    """R1 tag CFG, R2 the speaker mode, R3 the condition rows."""
-    validate_tag_cfg(
-        req.text, req.tag_cfg_scale, speaker_cfg_scale=req.speaker_cfg_scale, controls_cfg_scale=req.controls_cfg_scale
-    )
+    """R2 the speaker mode, R3 the condition rows."""
     mode = resolve_speaker_mode(ctx.speaker_modes, req.speaker_mode)
     return RequestHead(mode, resolve_condition_buckets(ctx, req.condition_buckets, req.condition_values))
 
@@ -493,7 +460,7 @@ class Rules:
     schedule: torch.Tensor | None  # span schedule [K, 3 + len(sources) * dim]
     follow_chars: list[list[int]] | None  # character range of every schedule row (control_span_follow "reading")
     follow_gate: list[float] | None  # [lead, lag]
-    cfg_kind: str | None  # "speaker" | "controls" | "tag"
+    cfg_kind: str | None  # "speaker" | "controls"
     cfg_scale: float
     seed: int
 
@@ -555,7 +522,7 @@ def request_rules(
             default.lag if req.control_span_lag is None else float(req.control_span_lag),
         ]
         follow_chars = [[int(a), int(b)] for a, b in span_chars]
-    # R12: one CFG twin per request (tag CFG's exclusivity is R1's); controls CFG needs a hidden delta and a speaker row
+    # R12: one CFG twin per request; controls CFG needs a hidden delta and a speaker row
     cfg_kind, cfg_scale = None, 1.0
     if float(req.speaker_cfg_scale) != 1.0:
         has_reference = speaker.mode == "reference" and speaker.reference_codes is not None
@@ -568,8 +535,6 @@ def request_rules(
         if float(req.controls_cfg_scale) != 1.0:
             raise ValueError("Speaker and controls CFG cannot be combined")
         cfg_kind, cfg_scale = "speaker", float(req.speaker_cfg_scale)
-    elif float(req.tag_cfg_scale) > 1.0:
-        cfg_kind, cfg_scale = "tag", float(req.tag_cfg_scale)
     elif delta is not None and embedding is not None and float(req.controls_cfg_scale) != 1.0:
         cfg_kind, cfg_scale = "controls", float(req.controls_cfg_scale)
     validate_text_markers(ctx.text_tokenizer_spec, req.text, edit=edit)
@@ -640,7 +605,7 @@ class PromptPlan:
     language: str
     cond: Branch
     twin: Branch | None
-    cfg_kind: str | None  # "speaker" | "controls" | "tag"
+    cfg_kind: str | None  # "speaker" | "controls"
     cfg_scale: float
     reference_prefix_length: int
     prefill_rows: torch.Tensor | None  # [P, n_codebooks + 1] silence rows ending the prompt
@@ -668,7 +633,7 @@ class PromptPlan:
             doc["speaker_embedding"] = [float(v) for v in b.speaker_embedding.reshape(-1).tolist()]
         doc["condition_row"] = b.condition_token_start if b.condition_values is not None else -1
         doc["condition_buckets"] = [int(v) for v in (b.condition_values or [])]
-        # the speaker-CFG twin drops the reference prefix / speaker row; the tag and controls twins keep them
+        # the speaker-CFG twin drops the reference prefix / speaker row; the controls twin keeps them
         doc["speaker_rows"] = 0 if b is not self.cond and self.cfg_kind == "speaker" else self.speaker_rows
         doc["prefill_frames"] = 0 if self.prefill_rows is None else int(len(self.prefill_rows))
         return doc
@@ -703,13 +668,6 @@ class PromptRows:
     reference_prefix_length: int
     speaker_row: int  # 0 with a speaker row, else -1
     condition_token_start: int  # the first condition row; -1 without condition rows
-
-    def with_text(self, text_rows: torch.Tensor, plain_rows: torch.Tensor) -> torch.Tensor:
-        """The tag-CFG twin: these rows with the trailing ``text_rows`` replaced by the plain text's rows."""
-        lead = len(self.input_ids) - len(text_rows)
-        if lead < 0 or not torch.equal(self.input_ids[lead:], text_rows.to(self.input_ids.dtype)):
-            raise ValueError("Tag CFG: the prompt does not end with its text rows")
-        return torch.cat((self.input_ids[:lead], plain_rows.to(self.input_ids.dtype)), dim=0)
 
 
 def prompt_rows(
@@ -748,10 +706,6 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
     if rules.silence_frames > 0:
         silence = silence_rows_from_codes(ctx.silence_frame(), rules.silence_frames, builder.config).to(torch.int32)
 
-    def rows_of(t: str) -> torch.Tensor:
-        return text_rows(builder, t, silence=silence, edit=edit, span_end_id=ctx.span_end_id)
-
-    tagged = rows_of(text)
     follow_tokens = None
     if rules.follow_chars is not None:
         from zonos3.tts.span_follow import span_token_ranges
@@ -766,7 +720,7 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
     embedding = rules.embedding
     rows = prompt_rows(
         builder,
-        tagged,
+        text_rows(builder, text, silence=silence, edit=edit, span_end_id=ctx.span_end_id),
         condition_count=len(rules.condition_ids or ()),
         reference_codes=codes,
         speaker_row=embedding is not None,
@@ -788,8 +742,6 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
             condition_unknowns=tuple(ctx.condition_bucket_counts),
         )
         twin = Branch(spec.input_ids.to(torch.int32), None, -1, spec.condition_values, spec.condition_token_start)
-    elif rules.cfg_kind == "tag":
-        twin = replace(cond, input_ids=rows.with_text(tagged, rows_of(strip_nonverbal_markup(text))).to(torch.int32))
     elif rules.cfg_kind == "controls":
         twin = replace(cond, steered=False)
     prompt_len = max(len(cond.input_ids), 0 if twin is None else len(twin.input_ids))

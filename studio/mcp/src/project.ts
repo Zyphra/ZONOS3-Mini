@@ -8,7 +8,7 @@ import { encodeNpy, slug } from '../../src/lib/files';
 import { uid } from '../../src/lib/math';
 import { homePin } from '../../src/state/atlas';
 import type { Act } from '../../src/state/app';
-import { DEFAULT_SETTINGS, remapIds, SCHEMA, summaryOf, type ProjectDoc } from '../../src/state/projectSchema';
+import { DEFAULT_SETTINGS, remapIds, SCHEMA, settingsOf, summaryOf, type ProjectDoc } from '../../src/state/projectSchema';
 import { caps } from './backend';
 import { config } from './config';
 import { state } from './state';
@@ -134,6 +134,7 @@ export async function openProject(projectId?: string, opts: { create?: boolean }
   const saved = p.data as unknown as ProjectDoc;
   const map = await reconcile(id, saved, warnings);
   const doc = map.size ? (JSON.parse(remapIds(JSON.stringify(saved), map)) as ProjectDoc) : saved;
+  doc.settings = settingsOf(doc.settings);
   return { id, doc, revision: p.revision, map, warnings };
 }
 

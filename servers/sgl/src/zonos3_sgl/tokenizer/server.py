@@ -9,7 +9,6 @@ import torch
 from zonos3.condition_buckets import check_ids
 from zonos3.generation import SAMPLE_RATE
 from zonos3.tts import plan
-from zonos3.tts.markup import strip_nonverbal_markup
 from zonos3.tts.prompt import TTSPromptBuilder, TTSPromptConfig
 
 from zonos3_sgl.message import (
@@ -40,14 +39,6 @@ def _unwrap_msg(
     if isinstance(msg, BatchTTSTokenizerMsg):
         return msg.data
     return [msg]
-
-
-def _tag_cfg_plain_text(msg: TTSTokenizeMsg, text: str) -> str | None:
-    """The plain twin's text for tag CFG (tag_cfg_scale > 1.0): the request's already normalized text with its
-    nonverbal markup stripped, so both branches read the same words; None (no twin) otherwise."""
-    if float(msg.sampling_params.tag_cfg_scale) <= 1.0:
-        return None
-    return strip_nonverbal_markup(text)
 
 
 def _silence_rows(msg: TTSTokenizeMsg, *, builder: TTSPromptBuilder, vocoder_manager) -> torch.Tensor | None:
@@ -190,26 +181,6 @@ def tokenize_worker(
                         span_end_id=span_end_id,
                         quality_buckets=quality_buckets,
                     )
-                    plain_rows = None
-                    plain_text = _tag_cfg_plain_text(msg, text)
-                    if plain_text is not None:
-                        plain_rows = plan.text_rows(
-                            tts_prompt_builder,
-                            plain_text,
-                            silence=silence_rows,
-                            edit=edit,
-                            span_end_id=span_end_id,
-                            quality_buckets=quality_buckets,
-                        )
-                        logger.info(
-                            "tag CFG uid=%s scale=%s: tagged text %r (%d rows), plain twin text %r (%d rows)",
-                            msg.uid,
-                            msg.sampling_params.tag_cfg_scale,
-                            text,
-                            len(text_rows),
-                            plain_text,
-                            len(plain_rows),
-                        )
                     # Span steering by reading position: each span's characters -> the text tokens spelling them
                     # (zonos3.tts.span_follow).
                     follow_tokens = None
@@ -295,7 +266,6 @@ def tokenize_worker(
                         TTSUserMsg(
                             uid=msg.uid,
                             input_ids=t,
-                            plain_input_ids=None if plain_rows is None else rows.with_text(text_rows, plain_rows),
                             speaker_reference_prefix_length=reference_prefix_length,
                             sampling_params=msg.sampling_params,
                             speaker_embedding=msg.speaker_embedding,

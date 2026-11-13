@@ -47,7 +47,7 @@ static void usage(const char * a0) {
             "  --request <req.json> --build-prompt <ids.npy> [--steer F]\n"
             "                      [--accent-adapters F] (accents.gguf auto-detected next to the backbone)\n"
             "      the prompt POST /v2/generate builds for a v2 GenerateRequest (ids.npy + ids.cond.json, and\n"
-            "      ids.twin.npy + ids.twin.cond.json for a speaker / tag / controls CFG twin); no generation\n"
+            "      ids.twin.npy + ids.twin.cond.json for a speaker / controls CFG twin); no generation\n"
             "  --batch-test <t1|t2|...> | --decode-bench <text> [--slots N]\n"
             "  --clone <ref_audio> | --reference-codes <codes.npy> | --speaker-embedding <emb.npy>\n"
             "      mutually exclusive speaker sources; reference codes are ordinary [T,10], IDs 0..4095;\n"

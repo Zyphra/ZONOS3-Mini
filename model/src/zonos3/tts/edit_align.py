@@ -34,7 +34,6 @@ from zonos3 import languages
 
 from . import textmatch
 from .align_text import align_tokens
-from .markup import _NONVERBAL_MARKUP, has_nonverbal_markup
 
 MODEL_SRC = Path(__file__).resolve().parents[2]  # model/src: PYTHONPATH of both workers
 ASR_WORKER = MODEL_SRC / "zonos3" / "workers" / "asr.py"
@@ -368,8 +367,6 @@ def align_words(asr: AsrWorker | None, aligner: FuseAlignWorker, items: list[dic
 GROUP_OPEN, GROUP_CLOSE = "\ue000", "\ue001"
 GROUP_LETTERS_PER_SYMBOL = 1.4
 _GROUP_RE = re.compile("(\ue000[^\ue000\ue001]*\ue001)")
-# a whitespace word's pieces: pronunciation groups, nonverbal markers (zonos3.tts.prompt) and the text around them
-_PIECE_RE = re.compile(rf"({_GROUP_RE.pattern[1:-1]}|{_NONVERBAL_MARKUP.pattern})")
 
 
 def is_group_token(token: str) -> bool:
@@ -381,31 +378,18 @@ def token_chars(token: str) -> float:
     return GROUP_LETTERS_PER_SYMBOL * (len(token) - 2) if is_group_token(token) else len(token)
 
 
-def is_marker_token(token: str) -> bool:
-    return _NONVERBAL_MARKUP.fullmatch(token) is not None
-
-
-def canonical_markup(text: str) -> str:
-    """``text`` with the whitespace inside its nonverbal markers removed (``<laugh />`` -> ``<laugh/>``), so every
-    marker is one whitespace word piece."""
-    return _NONVERBAL_MARKUP.sub(lambda m: "".join(m.group(0).split()), text) if has_nonverbal_markup(text) else text
-
-
 def target_tokens(target_text: str) -> list[list[str]]:
     """``[target tokens, tokens of target word 0, of word 1, ...]`` over the whitespace words of ``target_text``
-    (``zonos3.tts.textmatch.tokens``). Without groups or markup these are the tokens of the target and of its words;
-    with them only the plain pieces between them are normalized, each group is a token and each nonverbal marker
-    (``canonical_markup`` text) none: markup is text for the model only, outside the word diff, the alignment and
-    verify."""
+    (``zonos3.tts.textmatch.tokens``). Pronunciation groups stay atomic; every other piece uses ordinary tokens."""
     words = target_text.split()
-    if GROUP_OPEN not in target_text and not has_nonverbal_markup(target_text):
+    if GROUP_OPEN not in target_text:
         return [textmatch.tokens(target_text)] + [textmatch.tokens(word) for word in words]
-    pieces = [[piece for piece in _PIECE_RE.split(word) if piece] for word in words]
+    pieces = [[piece for piece in _GROUP_RE.split(word) if piece] for word in words]
     word_tokens = [
         [
             t
             for piece in word
-            for t in ([piece] if is_group_token(piece) else [] if is_marker_token(piece) else textmatch.tokens(piece))
+            for t in ([piece] if is_group_token(piece) else textmatch.tokens(piece))
         ]
         for word in pieces
     ]

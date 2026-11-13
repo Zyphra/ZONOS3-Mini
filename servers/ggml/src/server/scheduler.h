@@ -41,7 +41,7 @@ struct GenReq {
     std::vector<int32_t> condition_buckets; // [n_cond]; hp.cond_bucket_counts[i] = unknown
     int silence_prefill = zonos3_generation().silence_prefill_default_frames;
     std::vector<int32_t> decode_context;    // decode_context: the reference's last frames, ordinary [K, n_codebooks]
-    float cfg_scale = 1.0f;                 // speaker / tag / controls CFG (1 = off; runs a twin slot)
+    float cfg_scale = 1.0f;                 // speaker / controls CFG (1 = off; runs a twin slot)
     bool twin_steered = true;               // the twin decodes with the hidden steering delta (false: controls CFG,
                                             // whose twin is the same prompt without the steering)
     int accent = -1;                        // accent adapter of model.accents (-1 = none), on both CFG branches

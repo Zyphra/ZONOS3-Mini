@@ -84,7 +84,6 @@ CORS allows every origin and exposes the response headers above.
 | `accent`, `accent_strength` | `null`, `1.0` | Accent adapter from `/v2/capabilities` `accents` |
 | `controls`, `control_spans`, `control_span_*` | `null` | Steering-bundle controls, whole-utterance or over character spans ([guide](guide.md#steering-controls)) |
 | `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |
-| `tag_cfg_scale` | `1.0` | Nonverbal-tag guidance, 1–4 ([guide](guide.md#nonverbal-markup-and-tag-cfg)) |
 | `laci` | `false` | Alignment-guarded decoding ([features](features.md#laci-alignment-guarded-decoding)) |
 | `decoder` | `null` | The audio decoder by id (`/v2/capabilities` `decoders`: `keep2_plain`, the default, or the full-size `full_mr` where served); an id the server does not serve is a 400; also on `/v2/edit` |
 | `headroom_db`, `fade_out_ms`, `decode_context` | registry, `0`, `false` | Output gain (followed by every server's soft limiter above −1 dBFS, `output_limit_dbfs` in `generation.json`), tail fade, decoding behind the reference context |
@@ -96,8 +95,8 @@ and `/v2/edit` `target_text` follow the same rule. On a checkpoint with start an
 [guide: Start and pause tokens](guide.md#start-and-pause-tokens)) `text` may open with the start marker U+E002 (once,
 first) and carry pause markers U+E003 + bucket after a word and its glued punctuation; a marker the checkpoint has no
 token for returns 400 (`Pause marker U+E009 outside the 4 pause buckets`), and `/v2/edit` `target_text` takes neither.
-`text` may also carry nonverbal markup (`<laugh/>`, `<shouting>…</shouting>`), read by NV fine-tunes and as plain text
-by other checkpoints.
+Angle-bracket strings such as `Hello <laugh/> there` are ordinary text, not annotations. The removed
+`tag_cfg_scale` field is unknown on Generate, Speech and Edit requests (422, including value `1.0`).
 
 ```bash
 # Streamed float32 PCM with a default voice, played as it arrives

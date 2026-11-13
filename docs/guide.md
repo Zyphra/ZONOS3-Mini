@@ -9,7 +9,7 @@ Request fields, server flags and behavior of the ZONOS3 Mini runtime beyond plai
 - [Accent adapters](#accent-adapters)
   - [ZONOS3 Mini release (`lm/mect_60k`)](#zonos3-mini-release-lmmect_60k)
 - [Pronunciation input (phoneme tokens)](#pronunciation-input-phoneme-tokens)
-- [Nonverbal markup and tag CFG](#nonverbal-markup-and-tag-cfg)
+- [Literal angle-bracket text](#literal-angle-bracket-text)
 - [Steering controls](#steering-controls)
   - [Hidden-space steering](#hidden-space-steering)
   - [Set calibration](#set-calibration)
@@ -438,67 +438,22 @@ spec gains `start` (`{id, marker}`) and `pauses` (`{ids, markers, seconds}`); `/
   refuses them. In the Studio, a Direct line's "Start immediately" toggle (shown when the checkpoint has a start
   token) sends `start_immediately`; there is no pause-insertion UI.
 
-## Nonverbal markup and tag CFG
+## Literal angle-bracket text
 
-**Checkpoint.** Nonverbal (NV) markup is read by an NV fine-tune of the speech-edit
-model (not released; the edit model's span-end row and 3 edit marker rows, then NV
-training steps). Serving one with pronunciation groups appends the phoneme rows after
-the edit marker rows, exactly as for the edit checkpoint:
+Angle-bracket strings such as `Hello <laugh/> there` and `<shouting>hello</shouting>` are ordinary text.
+They have no special prompt, guidance, normalization protection or editing exemption. Normalization uses the
+language's ordinary grammar; with normalization disabled, normal text encoding applies. Pronunciation groups
+and supported start/pause markers retain their existing behavior.
 
-```bash
-uv run --package zonos3-tools python tools/add_text_extra_rows.py --base <NV checkpoint> \
-    --rows <phoneme_tokens.pt> --out <NV + phoneme checkpoint>
-SERVE_MODEL=<NV + phoneme checkpoint> STEER_BUNDLE=assets/steering/studio_bundle_mect60k_x10.json LACI_ALL=1 \
-PHONEME_LEXICON=<lexicon dir> servers/sgl/scripts/serve.sh
-```
+Every character contributes to the character-rate steering schedule, including angle brackets and their words.
+Reading-position spans include all overlapping non-whitespace tokens. Speech editing tokenizes and verifies
+the enclosed words normally (`Hello <laugh/> there` → `HELLO`, `LAUGH`, `THERE`) and preserves supplied
+`original_text` without stripping angle-bracket strings.
 
-The result has `text_extra_tokens` 141 (3 edit markers, group open / close 8200 /
-8201, phones from 8202) and `edit_max_spans` 3. On text without groups it is the
-converted NV checkpoint bit for bit.
+Nonverbal-tag guidance and its capability/training metadata are removed. `tag_cfg_scale` is an unknown request
+field on Generate, Speech and Edit, even at `1.0` (422); offline request parsing rejects it too. Speaker and
+controls guidance remain available under their existing rules.
 
-**Markup.** Point tags `<laugh/>`, `<breath/>`, `<sigh/>`, `<cough/>`, `<panting/>`, `<shouting/>`, `<crying/>` and
-span tags over words, `<shouting>Get out!</shouting>`, `<crying>…</crying>` (any of the seven names,
-`</?(laugh|breath|sigh|cough|panting|shouting|crying)\s*/?>`, lower case). Other tags (`<giggle/>`, `<whispering>`,
-`<Laugh/>`) are plain text. Markup at `tag_cfg_scale` 1.0 is ordinary text on the unguided path; a checkpoint never
-trained on tags reads it as text.
-
-**Tag CFG.** `tag_cfg_scale` > 1 (`/v2/generate`, `/v1/audio/speech`) runs a plain twin next to the request: the
-same normalized text with the markers removed (enclosed words kept, whitespace collapsed) and every other
-conditioning identical; both branches advance on the same sampled frames, and every step mixes the raw logits of
-all codebooks in float32 before any sampler transform, `plain + s · (tagged − plain)`. Rules: finite `1.0`–`4.0`
-(422 otherwise); above `1.0` the text must contain a recognized tag; one twin per request, so `speaker_cfg_scale`
-and `controls_cfg_scale` must be `1.0` and `laci` false (400 otherwise). The offline `TTSLLM` does not build the twin (a request
-above 1.0 there raises). The server logs both prompts (`tag CFG uid=…` from the tokenizer, `Tag CFG uid=… plain
-twin N rows` from the scheduler).
-
-`GET /v2/capabilities` reports `tag_cfg`: `available` (always true), `trained` (the checkpoint's training config,
-`config.yaml` beside `params.json`, has a data source with `nonverbal: true`), `tags`, `min_scale` 1.0, `max_scale`
-4.0, `default_scale` 1.0.
-
-**Interactions with the rest of this runtime.**
-
-- *Normalization*: neither markers nor pronunciation groups reach a grammar. With markup, the text between markers is
-  normalized piece by piece (each piece with its groups kept as typed) and re-joined with a single space wherever
-  the input had whitespace next to a marker (the ja grammar fails on a space next to a marker).
-  Text without markup takes the previous path unchanged.
-- *Pronunciation groups*: markup and groups mix freely in one text; the plain twin keeps the groups.
-- *Steering*: `controls`, `control_spans` and accent adapters apply to BOTH branches under tag CFG
-  (the twin differs in its text rows only), as under speaker CFG: steering is part of the generation, so the
-  guidance amplifies only the tag contrast; a steered request with tag CFG is the steered request with stronger tags.
-  The reading-position follower's per-frame decisions (from the tagged branch's LACI heads) are shared with the twin.
-  Tag CFG and speaker CFG are exclusive (one twin per request): a client picks one per render.
-- *Span offsets*: `control_spans` characters index the text as sent, markup included. The character-rate schedule
-  gives markers no time (`control_span_rate` is frames per spoken character; a client measuring it from a take
-  divides by the length without markers). Reading position: a span maps to the text tokens that spell it; tokens
-  inside a marker never open or close a span that also covers words (markers inside stay in), a span over a marker
-  alone keeps the marker's tokens.
-- */v2/edit*: `tag_cfg_scale` other than 1.0 is refused. Markup in `target_text` (and `original_text`) is allowed:
-  markers ride in the model's prompt text but never reach Qwen3-ASR or FuseAlign (word diff, alignment, verify): each
-  marker is a target piece with no edit tokens, `<laugh />` is canonicalized to `<laugh/>`, and `original_text` in the response
-  is the markup-free text the workers read. A marker alone between unchanged words is therefore no edit (400 "target text
-  equals the original transcript") unless `spans` place it; a marker inside an edited region rides with the fill.
-- *Sampling*: the sampler draws each row over the narrowest vocabulary prefix (no span-end column for utterances), so
-  an edit checkpoint consumes the random numbers of the same checkpoint without that row.
 
 ## Steering controls
 
@@ -529,8 +484,8 @@ curl -X POST http://localhost:1919/v2/generate \
 same prompt and speaker, its generated frames unsteered) and mixes
 `uncond + s · (cond − uncond)` in float32 (about 2× compute). The twin runs only for
 `speaker_mode: embedding` requests with a speaker and a hidden-space control;
-`controls_cfg_scale` other than 1 is refused (400) next to `speaker_cfg_scale`,
-`tag_cfg_scale` above 1 or `laci` (one twin per request).
+`controls_cfg_scale` other than 1 is refused (400) next to `speaker_cfg_scale`
+other than 1 or `laci` (one twin per request).
 
 ### Hidden-space steering
 

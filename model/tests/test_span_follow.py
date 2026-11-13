@@ -121,6 +121,11 @@ def test_byte_tokens(spec):
     assert span_token_ranges(text, text, [(2, 6), (7, 8)], None) == [(3, 8), (9, 10)]
 
 
+def test_literal_angle_text_spans_include_all_overlapping_byte_tokens():
+    text = "<shouting>hi</shouting> ok"
+    assert span_token_ranges(text, text, [(0, 23)], None) == [(1, 24)]
+
+
 def test_offsets_follow_text_normalization(spec):
     original, final = "Call Stella at 3 tomorrow.", "Call Stella at three tomorrow."
     assert map_offsets(original, final, [5, 11]) == [5, 11]  # before the rewrite: unchanged

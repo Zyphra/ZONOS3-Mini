@@ -95,6 +95,20 @@ def test_removed_legacy_field_is_422(client, field):
     error(generate(client, {field: LEGACY_FIELDS[field]}), 422)
 
 
+@pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.parametrize(
+    "path,body",
+    [
+        ("/v2/generate", {"text": "Hello."}),
+        ("/v1/audio/speech", {"model": "zonos3", "input": "Hello."}),
+        ("/v2/edit", {"audio_base64": "x", "target_text": "Hello."}),
+    ],
+)
+def test_removed_tag_field_is_422(client, scale, path, body):
+    rejected = error(client.post(path, json={**body, "tag_cfg_scale": scale}), 422)
+    assert "tag_cfg_scale" in str(rejected["detail"])
+
+
 @pytest.mark.parametrize(
     "fields",
     [

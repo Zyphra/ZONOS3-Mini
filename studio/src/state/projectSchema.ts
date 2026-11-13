@@ -15,18 +15,26 @@ export const SCHEMA = 1;
 
 /**
  * Settings of the open project: the language (Direct renders, Edit clips, pronunciation lookups), the
- * default voice mode, the tag strength (tag guidance for lines with nonverbal tags; 1 = off), the audio
+ * default voice mode, the audio
  * decoder (`/v2/capabilities.decoders` id; null = the server default; one the server lacks renders on its default),
  * and LACI (renders in a language without alignment heads on the server run without it).
  */
 export interface ProjectSettings {
   language: string;
   voiceMode: SpeakerMode;
-  tagStrength: number;
   decoder: string | null;
   laci: LaciMode;
 }
-export const DEFAULT_SETTINGS: ProjectSettings = { language: 'en_us', voiceMode: 'embedding', tagStrength: 1.5, decoder: null, laci: 'off' };
+export const DEFAULT_SETTINGS: ProjectSettings = { language: 'en_us', voiceMode: 'embedding', decoder: null, laci: 'off' };
+
+export function settingsOf(settings?: Partial<ProjectSettings>): ProjectSettings {
+  return {
+    language: settings?.language ?? DEFAULT_SETTINGS.language,
+    voiceMode: settings?.voiceMode ?? DEFAULT_SETTINGS.voiceMode,
+    decoder: settings?.decoder ?? DEFAULT_SETTINGS.decoder,
+    laci: settings?.laci ?? DEFAULT_SETTINGS.laci,
+  };
+}
 
 /** A server voice the project created and the media that recreates it (WAV clip, or float32 embedding). */
 export interface VoiceRecord {

@@ -10,7 +10,6 @@
 #include "server/util.h"
 
 #include "zonos3-languages.h"
-#include "zonos3-markup.h"
 
 #include <cmath>
 #include <filesystem>
@@ -88,8 +87,6 @@ json capabilities(const ServerState & s) {
         {"stream_decode_modes", {"prefix", "whole"}},
         {"stream_decode_default", s.stream_decode_default},
         {"silence_prefill", silence_prefill(s)},
-        // `trained`: the checkpoint was fine-tuned on nonverbal markup (GGUF zonos3.tag_cfg_trained; sgl reads config.yaml).
-        {"tag_cfg", {{"available", s.batch_slots >= 2}, {"trained", s.model.hp.tag_cfg_trained}, {"tags", zonos3_nonverbal_markup_tags()}, {"min_scale", limits.tag_cfg_min_scale}, {"max_scale", limits.tag_cfg_max_scale}, {"default_scale", 1.0}}},
         {"decode_context", {{"available", true}, {"default_frames", limits.decode_context_frames}, {"max_frames", 450}, {"note", "decode the generated frames behind the last decode_context_frames of the raw-reference prompt "
                                                                                                                                  "(their audio dropped), so the first generated frame is not the decoder's position 0; "
                                                                                                                                  "no-op without a reference prompt"}}},

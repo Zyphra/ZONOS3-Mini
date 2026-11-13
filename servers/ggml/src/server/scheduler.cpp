@@ -386,7 +386,7 @@ static void worker_loop(ServerState & s) {
             std::shared_ptr<ReqJob> job;
             { std::lock_guard<std::mutex> lk(s.sched_mtx); if (!s.incoming.empty()) job = s.incoming.front(); }
             if (!job) break;
-            // A CFG job (speaker / tag / controls) needs two slots (conditional + twin); the FIFO head waits for them.
+            // A CFG job (speaker / controls) needs two slots (conditional + twin); the FIFO head waits for them.
             const bool cfg = job->gr.cfg_scale != 1.0f;
             int primary = -1, twin = -1;
             for (int i = 0; i < B; ++i) {
@@ -420,7 +420,7 @@ static void worker_loop(ServerState & s) {
                 job->twin_slot.index = twin; job->twin_slot.active = true;
                 job->twin_slot.n_past = job->twin.n_rows;
                 job->twin_slot.prefill = job->prompt.prefill_frames;
-                // The speaker / tag twin shares the hidden delta (not the speaker row); the controls twin runs unsteered.
+                // The speaker twin shares the hidden delta (not the speaker row); the controls twin runs unsteered.
                 if (job->gr.twin_steered) job->twin_slot.steer = job->gr.steering.hidden;
                 job->twin_slot.accent = job->gr.accent;   // the accent adapter applies to both branches
                 job->twin_slot.accent_strength = job->gr.accent_strength;

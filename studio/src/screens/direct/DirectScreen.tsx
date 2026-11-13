@@ -67,8 +67,6 @@ import {
 import { confirm } from '../../components/ConfirmDialog';
 import { MoodControls, type Binding } from '../cast/QuickControls';
 import { canEdit, openClip } from '../../state/edit';
-import { guidanceNote, openTagPaletteAt, TagButton, TagMarks, tagsOn } from '../../components/Tags';
-import { parseTags, TAG_INFO } from '../../lib/tags';
 import type { SpanFollow } from '../../api';
 
 const SCRIPT_ID = 'script';
@@ -189,7 +187,7 @@ function wordRanges(text: string): [number, number][] {
   return out;
 }
 
-/** The offset into the line text under the point (x, y) in `root`'s segments; null off its words (tag chips included). */
+/** The offset into the line text under the point (x, y) in `root`'s segments; null off its words. */
 function offsetAt(root: HTMLElement, x: number, y: number): number | null {
   let node: Node | null = null;
   let off = 0;
@@ -202,7 +200,7 @@ function offsetAt(root: HTMLElement, x: number, y: number): number | null {
   }
   if (!node || !root.contains(node)) return null;
   const seg = (node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement))?.closest<HTMLElement>('[data-start]');
-  if (!seg || seg.dataset.end) return null;
+  if (!seg) return null;
   return Number(seg.dataset.start) + (node.nodeType === Node.TEXT_NODE ? off : 0);
 }
 
@@ -214,8 +212,6 @@ function selectionIn(el: HTMLElement): { start: number; end: number; rect: DOMRe
   const offset = (node: Node, off: number) => {
     const seg = (node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement))?.closest<HTMLElement>('[data-start]');
     if (!seg) return node === el ? (off ? Number.MAX_SAFE_INTEGER : 0) : 0;
-    // A tag chip is atomic: its label isn't the markup it stands for.
-    if (seg.dataset.end) return off ? Number(seg.dataset.end) : Number(seg.dataset.start);
     return Number(seg.dataset.start) + (node.nodeType === Node.TEXT_NODE ? off : 0);
   };
   const a = offset(range.startContainer, range.startOffset);
@@ -235,12 +231,6 @@ function LineText({ line }: { line: Line }) {
   for (const g of groups) {
     cuts.add(g.start);
     cuts.add(g.end);
-  }
-  // Nonverbal tags render as chips; span tags mark their words.
-  const tagged = tagsOn.value ? parseTags(line.text) : null;
-  for (const t of tagged?.tokens ?? []) {
-    cuts.add(t.start);
-    cuts.add(t.end);
   }
   const replaceGroup = (s: number, e: number, t: string) => setLineText(line.id, line.text.slice(0, s) + t + line.text.slice(e));
   const sel = brush.value?.lineId === line.id ? brush.value : null;
@@ -304,7 +294,7 @@ function LineText({ line }: { line: Line }) {
     const s = window.getSelection();
     if (!root || !s) return;
     if (!range) return s.removeAllRanges();
-    const segs = [...root.querySelectorAll<HTMLElement>('.seg[data-start]')].filter((x) => !x.dataset.end);
+    const segs = [...root.querySelectorAll<HTMLElement>('.seg[data-start]')];
     const at = (pos: number) => {
       // The text node holding `pos`, and the offset inside it.
       for (const seg of segs) {
@@ -369,17 +359,6 @@ function LineText({ line }: { line: Line }) {
     >
       {marks.slice(0, -1).map((from, i) => {
         const to = marks[i + 1];
-        const tag = tagged?.tokens.find((t) => t.start === from);
-        if (tag) {
-          return tag.kind === 'close' ? (
-            <span data-start={from} data-end={to} class="seg tag-close" aria-hidden="true" />
-          ) : (
-            <span data-start={from} data-end={to} class={`seg tag-inline${tag.kind === 'open' ? ' is-span' : ''}${TAG_INFO[tag.name].weak ? ' is-weak' : ''}`} title={`<${tag.name}${tag.kind === 'point' ? '/' : ''}>: ${TAG_INFO[tag.name].note}`}>
-              {tag.kind === 'open' ? `‹${tag.name}›` : tag.name}
-            </span>
-          );
-        }
-        const inTag = tagged?.spans.find((s) => from >= s.open.end && from < s.close.start);
         const span = line.spans.find((sp) => from >= sp.start && from < sp.end);
         const picked = sel && from >= sel.start && to <= sel.end;
         const g = groups.find((x) => from >= x.start && from < x.end);
@@ -389,7 +368,7 @@ function LineText({ line }: { line: Line }) {
           <span
             data-start={from}
             data-ipa={g && to === g.end ? `${g.ipa}${check ? ' · check' : ''}` : undefined}
-            class={`seg${inTag ? ` tag-words is-${inTag.name}` : ''}${span ? ' is-painted' : ''}${picked ? ' is-picked' : ''}${g ? ' is-pron' : ''}${g?.unknown.length ? ' is-pron-bad' : ''}${check ? ' is-pron-check' : ''}`}
+            class={`seg${span ? ' is-painted' : ''}${picked ? ' is-picked' : ''}${g ? ' is-pron' : ''}${g?.unknown.length ? ' is-pron-bad' : ''}${check ? ' is-pron-check' : ''}`}
             style={span ? { background: underline(span.values) } : undefined}
             onClick={
               g
@@ -495,19 +474,6 @@ function BrushBar() {
             /ə/ Pronounce
           </button>
         )}
-        {tagsOn.value && (
-          <button
-            class="btn sm ghost"
-            onClick={(e) => {
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              brush.value = null;
-              openTagPaletteAt(r, line.text, b.start, b.end, (next) => setLineText(line.id, next));
-            }}
-            title="A nonverbal tag: at the start of the selection, or around its words"
-          >
-            ‹› Tag
-          </button>
-        )}
         <button class="btn sm ghost" onClick={() => (scripts.begin(), paint(line.id, b.start, b.end, null, 0), scripts.end())} title="Remove every painted value from these words">
           Clear paint
         </button>
@@ -577,11 +543,6 @@ function TakeStrip({ line }: { line: Line }) {
             {why && (
               <span class="chip take-stale" title="The line changed since this take was rendered; Regenerate makes a fresh one">
                 {why}
-              </span>
-            )}
-            {guidanceNote(t.request) && (
-              <span class="take-follow is-tags" title={`${guidanceNote(t.request)}: the server takes one guidance per render`} aria-label={guidanceNote(t.request)!}>
-                tags
               </span>
             )}
             <button class={`icon-btn sm star${t.starred ? ' is-on' : ''}`} onClick={() => starTake(line.id, t.id)} aria-label={`Make take ${i + 1} the keeper`} aria-pressed={t.starred} title="Script plays this one">
@@ -726,7 +687,6 @@ function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
                 class="input line-edit"
                 rows={1}
                 value={draft}
-                data-tags
                 placeholder="What do they say?"
                 aria-label={`Line ${n} text`}
                 aria-invalid={emptyWarn || undefined}
@@ -747,8 +707,7 @@ function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
                   }
                 }}
                 onBlur={(e) => {
-                  // The tag palette borrows focus and gives it back: still editing.
-                  if ((e.relatedTarget as HTMLElement | null)?.closest?.('.tag-palette, .pron-editor')) return;
+                  if ((e.relatedTarget as HTMLElement | null)?.closest?.('.pron-editor')) return;
                   // The element's value: an edit right before blurring may not be rendered into `draft` yet.
                   const v = (e.currentTarget as HTMLTextAreaElement).value;
                   if (!v.trim() && line.text.trim() && editNew.peek() !== line.id) return finish('', true);
@@ -756,17 +715,14 @@ function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
                 }}
               />
               <PronounceButton input={() => editEl.current} />
-              <TagButton input={() => editEl.current} />
             </div>
             <p class={`hint line-edit-hint${emptyWarn ? ' is-bad' : ''}`}>{emptyWarn ? 'Text can’t be empty — Esc to cancel or delete the line' : 'Enter saves · Esc cancels'}</p>
             <PronMarks text={draft} />
-            <TagMarks text={draft} />
           </>
         ) : (
           <div onDblClick={() => lastPointer !== 'touch' && startEdit()}>
             <LineText line={line} />
             <PronMarks text={line.text} issuesOnly />
-            <TagMarks text={line.text} replace={(next) => setLineText(line.id, next)} />
           </div>
         )}
         <TakeStrip line={line} />
@@ -886,7 +842,6 @@ function ScriptText() {
         class="input"
         rows={10}
         value={text}
-        data-tags
         onInput={(e) => {
           const v = (e.currentTarget as HTMLTextAreaElement).value;
           scriptDraft.value = v === linesAsText() ? null : v;
@@ -959,7 +914,7 @@ function Sidebar() {
           )}
         </div>
         <p class="hint">
-          Language {langLabel(projectSettings.value.language)} (library voices speak their own) · tag strength {backend.value?.tags ? (projectSettings.value.tagStrength > 1 ? projectSettings.value.tagStrength.toFixed(1) : 'off') : 'n/a'}
+          Language {langLabel(projectSettings.value.language)} (library voices speak their own)
           {(backend.value?.decoders.length ?? 0) > 1 && ` · decoder ${decoderName(requestContext.value.decoder ?? backend.value!.decoders[0].id)}`}
           {(backend.value?.laciLanguages.length ?? 0) > 0 && ` · LACI ${LACI_LABEL[projectSettings.value.laci].toLowerCase()}`} —{' '}
           <button class="link" onClick={() => (settingsOpen.value = true)}>

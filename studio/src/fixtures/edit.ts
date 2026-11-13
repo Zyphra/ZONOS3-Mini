@@ -8,7 +8,7 @@
 import { ApiError } from '../lib/http';
 import { type Alignment, type ControlsSpec, type Dose, type EditCaps, type EditRequest, type EditResponse, type EditTake, type EditWord } from '../api';
 import { resample } from '../audio/mix';
-import { contextWindows, diffOpcodes, isTagToken, normalizeTokens, textWords, tokenOwners, wordDiff } from '../edit/regions';
+import { contextWindows, diffOpcodes, normalizeTokens, textWords, tokenOwners, wordDiff } from '../edit/regions';
 import { base64ToBytes, bytesToBase64 } from '../lib/files';
 import { parseWav, wavBytes } from '../lib/wav';
 import { ipaGloss } from '../lib/pron';
@@ -16,7 +16,6 @@ import { EDIT_LANGUAGES } from '../lib/languages';
 import { hash32, rng } from '../lib/math';
 import { syntheticEmbedding } from './embeddings';
 import { synthesizeWords, type SynthWord } from './synth';
-import { stripTags } from '../lib/tags';
 
 const SR = 44100;
 
@@ -295,8 +294,8 @@ export async function edit(spec: ControlsSpec, caps: EditCaps, req: EditRequest,
   await wait(700 + 320 * n + spans.length * 150, signal);
   const fills = spans.map(([s, e]) => fillText(words, req.target_text, s, e));
   // Expected fill length: the region's seconds × target / original length of its words (as the server does).
-  // (A group counts its IPA symbols; nonverbal tags count nothing, the server keeps them out of the diff.)
-  const letters = (t: string) => normalizeTokens(t).filter((x) => !isTagToken(x)).join('').replace(/[\ue000\ue001]/g, '').length;
+  // A pronunciation group counts its IPA symbols.
+  const letters = (t: string) => normalizeTokens(t).join('').replace(/[\ue000\ue001]/g, '').length;
   const expected = spans.map(([s, e], i) => {
     const orig = words.filter((w) => (w.start + w.end) / 2 >= s && (w.start + w.end) / 2 < e).map((w) => w.word).join(' ');
     return round3((e - s) * (letters(fills[i]) / Math.max(1, letters(orig) || letters(fills[i]))));
@@ -335,9 +334,7 @@ export async function edit(spec: ControlsSpec, caps: EditCaps, req: EditRequest,
       const fillGroups = [...fills[i].matchAll(SENT_GROUP)].map((m) => m[1]);
       if (dropped) fill = new Float32Array(Math.round(SR * 0.07));
       else if (text) {
-        // Markers ride with the fill but are not spoken (the server's NV model would voice them; the babble does not).
-        const spoken = stripTags(text);
-        const syn = synthesizeWords(spec, { text: runaway ? `${spoken} ${spoken} ${spoken}` : spoken, embedding, controls: sumDoses(k?.controls, req.controls, req.region_controls?.[i]), seed });
+        const syn = synthesizeWords(spec, { text: runaway ? `${text} ${text} ${text}` : text, embedding, controls: sumDoses(k?.controls, req.controls, req.region_controls?.[i]), seed });
         // Trim the synthesizer's lead-in / tail so the fill sits tight between the kept audio.
         const lead = Math.max(0, Math.round(((syn.words[0]?.start ?? 0.1) - 0.05) * SR));
         const tail = Math.min(syn.pcm.length, Math.round(((syn.words[syn.words.length - 1]?.end ?? 0) + 0.06) * SR));

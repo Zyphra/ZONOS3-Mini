@@ -11,12 +11,9 @@ from zonos3 import languages
 from zonos3.generation import (
     DECODE_CONTEXT_FRAMES,
     SAMPLE_RATE,
-    TAG_CFG_MAX_SCALE,
-    TAG_CFG_MIN_SCALE,
 )
 from zonos3.server.speech import STREAM_DECODE_MODES, stream_decode_default
 from zonos3.tts.edit_runtime import EditModel, edit_capabilities
-from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
 from zonos3.tts.plan import silence_prefill_default
 
 
@@ -38,8 +35,6 @@ class CapabilityFacts:
     max_tokens: int  # the frame budget of a request
     prefix_stream: bool  # progressive (prefix) streaming (speech.prefix_stream_supported)
     silence_hop: int | None  # the codec's hop when codec-matched silence frames can be prefilled, else None
-    tag_cfg_available: bool
-    tag_cfg_trained: bool  # zonos3.tts.markup.trained_on_tags
     decoder: dict | None  # the default audio decoder (decoder_capabilities for the matched codecs)
     decoders: list[dict]  # every decoder a request may pick, the default first
     condition_tokens: dict | None  # condition_spec; None without condition rows
@@ -113,17 +108,6 @@ def silence_prefill_spec(audio_codec: str, hop: int | None) -> dict:
     }
 
 
-def tag_cfg_capabilities(available: bool, trained: bool) -> dict:
-    return {
-        "available": available,
-        "trained": trained,
-        "tags": list(NONVERBAL_MARKUP_TAGS),
-        "min_scale": TAG_CFG_MIN_SCALE,
-        "max_scale": TAG_CFG_MAX_SCALE,
-        "default_scale": 1.0,
-    }
-
-
 def decoder_capabilities(audio_codec: str, served=None) -> tuple[dict | None, list[dict]]:
     """(Capabilities.decoder, Capabilities.decoders) of a matched codec: its default iSTFT head with its headroom, and
     every decoder a request may pick (``served``: those ids, default first; None = every registry decoder). Not a
@@ -193,7 +177,6 @@ def capabilities_document(f: CapabilityFacts) -> dict:
         "stream_decode_modes": list(STREAM_DECODE_MODES) if f.prefix_stream else ["whole"],
         "stream_decode_default": stream_decode_default(f.prefix_stream),
         "silence_prefill": silence_prefill_spec(f.audio_codec, f.silence_hop),
-        "tag_cfg": tag_cfg_capabilities(f.tag_cfg_available, f.tag_cfg_trained),
         "decode_context": {
             "available": True,
             "default_frames": DECODE_CONTEXT_FRAMES,

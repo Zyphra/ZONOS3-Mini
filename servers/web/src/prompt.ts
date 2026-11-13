@@ -18,7 +18,6 @@ export interface ModelHp {
   condNames: string[]; condEdges: number[][]; silenceFrame: number[]; speakerDim: number; contextLength: number;
   condUnits: string[];          // condition.units (capabilities)
   textTokenizerSpec: string;    // text_tokenizer_spec JSON (capabilities)
-  tagCfgTrained: boolean;       // tag_cfg_trained (absent = false)
   nEmbd: number; nLayer: number;
 }
 
@@ -79,7 +78,6 @@ export function modelHp(meta: Record<string, unknown>): ModelHp {
     contextLength: num(meta, 'context_length'),
     condUnits: Array.isArray(meta['condition.units']) ? meta['condition.units'].map(String) : [],
     textTokenizerSpec: typeof meta.text_tokenizer_spec === 'string' ? meta.text_tokenizer_spec : '{}',
-    tagCfgTrained: meta.tag_cfg_trained === true,
     nEmbd: num(meta, 'embedding_length'),
     nLayer: num(meta, 'block_count'),
   };

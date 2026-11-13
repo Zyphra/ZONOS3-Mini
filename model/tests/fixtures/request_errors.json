@@ -7,8 +7,6 @@
    "error": "max_tokens must be positive."},
   {"name": "language_unknown", "requires": [], "request": {"text": "Hello there.", "language": "klingon"},
    "error": "Unsupported language code: 'klingon'. Supported: "},
-  {"name": "tag_cfg_without_markup", "requires": [], "request": {"text": "Hello there.", "tag_cfg_scale": 2.0},
-   "error": "tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text"},
   {"name": "condition_name_unknown", "requires": ["conditions"],
    "request": {"text": "Hello there.", "condition_values": {"pitch": 1.0}},
    "error": "condition_values: unknown condition name(s) ['pitch']; expected ['loudness', 'fmax', 'speaking_rate']"},

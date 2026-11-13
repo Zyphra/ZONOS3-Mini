@@ -70,7 +70,6 @@ class LMConfig:
     gdn_period: int
     silence_frame: tuple[int, ...]
     text_tokenizer_spec: dict
-    tag_cfg_trained: bool = False
     # Not in the GGUF: the release architecture tools/convert_gguf.py validate_config accepts.
     audio_codec: str = "opus_dual_3n_600k_sched600k_r4096_step600000"
     speaker_embedding_codec: str = "ownmect_s2"
@@ -134,7 +133,6 @@ class LMConfig:
             gdn_period=int(pattern.group(1)) + 1,
             silence_frame=tuple(int(v) for v in f.meta(_key("silence_frame"))),
             text_tokenizer_spec=spec,
-            tag_cfg_trained=bool(f.meta(_key("tag_cfg_trained"), False)),
         )
 
     @property

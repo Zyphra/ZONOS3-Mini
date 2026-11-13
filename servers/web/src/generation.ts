@@ -7,9 +7,6 @@ import registry from '../../../model/src/zonos3/registries/generation.json';
 export const SAMPLE_RATE = registry.sample_rate;
 /** The v2 sampling defaults (temperature, topk, top_p, min_p, repetition_penalty / _window / _codebooks). */
 export const SAMPLING: Readonly<typeof registry.sampling> = Object.freeze({ ...registry.sampling });
-/** The tag-CFG scale range. */
-export const TAG_CFG_MIN_SCALE = registry.tag_cfg_scale.min;
-export const TAG_CFG_MAX_SCALE = registry.tag_cfg_scale.max;
 /** The silence prefill a request without silence_prefill_frames gets, and the longest a request may ask for. */
 export const SILENCE_PREFILL_DEFAULT_FRAMES = registry.silence_prefill_frames.default;
 export const SILENCE_PREFILL_MAX_FRAMES = registry.silence_prefill_frames.max;

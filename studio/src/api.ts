@@ -21,7 +21,6 @@ import { synthesizeWords } from './fixtures/synth';
 import * as fixtureEdit from './fixtures/edit';
 import * as fixturePron from './fixtures/phonemize';
 import * as fixtureProjects from './fixtures/projects';
-import * as fixtureNv from './fixtures/nv';
 import fixturePhonemes from './fixtures/phonemes.json';
 import { unknownDecoder } from './lib/decoders';
 import { ApiError, bodyOf, createHttp, errorOf, MissingMedia, newSessionId, readError, readFloat32Stream, RevisionConflict } from './lib/http';
@@ -150,8 +149,6 @@ export interface Backend {
   pron: PronCaps;
   /** Shared projects on the server (`/v2/capabilities.projects`); null: projects stay in this browser. */
   projects: ProjectCaps | null;
-  /** Nonverbal markup + tag guidance (`/v2/capabilities.tag_cfg`); null: tags are plain text to this server. */
-  tags: TagCaps | null;
   /** Audio decoders a request may pick with `decoder` (`/v2/capabilities.decoders`, the default first); [] when none. */
   decoders: DecoderInfo[];
   /** Languages with LACI alignment heads (`/v2/capabilities.laci_languages`); [] offline or without heads. */
@@ -164,9 +161,6 @@ type Capabilities = Schemas['Capabilities'];
 
 /** An audio decoder of the server's codec (`/v2/capabilities.decoders`). */
 export type DecoderInfo = Schemas['DecoderInfo'];
-
-/** `/v2/capabilities.tag_cfg` of a checkpoint trained on tags; `fixture`: renders run on the client-side synth. */
-export type TagCaps = Omit<Schemas['TagCfg'], 'available' | 'trained'> & { fixture: boolean };
 
 /** `/v2/capabilities.projects` when enabled; `fixture`: /v2/projects and /v2/media run on the client-side fixture store. */
 export type ProjectCaps = Omit<Extract<Schemas['ProjectsCapability'], { enabled: true }>, 'enabled'> & { fixture: boolean };
@@ -285,27 +279,6 @@ function pronCaps(kind: BackendKind, c: Capabilities | null): PronCaps {
   };
 }
 
-const FIXTURE_TAGS: TagCaps = { tags: ['laugh', 'breath', 'sigh', 'cough', 'panting', 'shouting', 'crying'], min_scale: 1, max_scale: 4, default_scale: 1, fixture: true };
-
-/**
- * Nonverbal tags: the server's `tag_cfg` when available, the fixture synth offline.
- * `?nv=fixture` forces the fixture (renders then run on the client-side synth), `?nv=0` a server without tags.
- */
-function tagCaps(kind: BackendKind, c: Schemas['TagCfg'] | undefined): TagCaps | null {
-  const want = params.get('nv');
-  if (want === '0' || want === 'off') return null;
-  if (want === 'fixture' || kind === 'offline') return FIXTURE_TAGS;
-  // Tag guidance runs on any byte / SuperBPE checkpoint, but only one trained on tags reads them: else none at all.
-  if (!c?.available || !c.trained) return null;
-  return {
-    tags: c.tags.length ? c.tags : FIXTURE_TAGS.tags,
-    min_scale: c.min_scale,
-    max_scale: c.max_scale,
-    default_scale: c.default_scale,
-    fixture: false,
-  };
-}
-
 const FIXTURE_PROJECTS: ProjectCaps = { max_media_bytes: 2e9, max_project_bytes: 20e6, fixture: true };
 
 /**
@@ -351,7 +324,6 @@ export async function connect(opts: ConnectOptions = {}): Promise<Backend> {
       edit: editCaps(as, caps),
       pron: pronCaps(as, caps),
       projects: projectCaps(caps?.projects),
-      tags: tagCaps(as, caps?.tag_cfg),
       // Audio decoders: the server's when one answers, the fixture's two offline.
       decoders: kind === 'offline' ? FIXTURE_DECODERS : (caps?.decoders ?? []),
       laciLanguages: caps?.laci_languages ?? [],
@@ -497,8 +469,7 @@ export async function generate(req: GenerateRequest, opts: GenerateOptions = {})
     delete body.control_spans;
   }
   if (!body.control_spans?.length) delete body.control_span_follow;
-  if (!b.tags || (body.tag_cfg_scale ?? 1) <= 1) delete body.tag_cfg_scale;
-  if (b.kind === 'offline' || b.tags?.fixture) return offlineGenerate(body, opts, t0);
+  if (b.kind === 'offline') return offlineGenerate(body, opts, t0);
 
   const res = await transport(`${server}/v2/generate`, { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body), signal: opts.signal });
   if (!res.ok) throw await readError(res);
@@ -552,18 +523,9 @@ async function offlineGenerate(req: GenerateRequest, opts: GenerateOptions, t0: 
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].start < sorted[i - 1].end) throw new ApiError(400, `control spans [${sorted[i - 1].start}, ${sorted[i - 1].end}) and [${sorted[i].start}, ...) overlap.`);
   }
-  // The server's tag-guidance rules: a recognized tag, and one twin per request (no speaker / controls CFG).
-  const tagScale = req.tag_cfg_scale ?? 1;
-  const nv = b.tags ? fixtureNv.prepare(req.text, req.control_spans ?? undefined) : null;
-  if (tagScale > 1) {
-    if (!nv?.tagged) throw new ApiError(400, 'tag_cfg_scale > 1 needs a recognized nonverbal tag in the text.');
-    if ((req.speaker_cfg_scale ?? 1) !== 1) throw new ApiError(400, 'tag_cfg_scale cannot be combined with speaker_cfg_scale ≠ 1.');
-  }
   const { embedding } = await getEmbedding(speaker);
-  const spoken = nv ?? { text: req.text, spans: req.control_spans ?? undefined };
-  const said = synthesizeWords(b.spec, { text: spoken.text, embedding, controls, spans: spoken.spans, seed: req.seed ?? 0 });
-  const { pcm, words } = nv ? fixtureNv.voice(said.pcm, SAMPLE_RATE, said.words, nv, tagScale, req.seed ?? 0) : said;
-  fixtureEdit.remember(pcm, SAMPLE_RATE, { text: spoken.text, words, embedding, controls });
+  const { pcm, words } = synthesizeWords(b.spec, { text: req.text, embedding, controls, spans: req.control_spans ?? undefined, seed: req.seed ?? 0 });
+  fixtureEdit.remember(pcm, SAMPLE_RATE, { text: req.text, words, embedding, controls });
   // Emulate the measured latency and streaming so the UI's scheduling is exercised.
   const wait = (ms: number) => {
     const { promise, resolve, reject } = Promise.withResolvers<void>();

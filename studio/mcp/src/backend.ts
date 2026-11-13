@@ -45,11 +45,8 @@ export const NO_STEERING =
   'This server has no steering bundle (start it with STEER_BUNDLE=assets/steering/studio_bundle_mect60k_x10.json, or the MLX server with steer.gguf next to the backbone).';
 
 export function requestContext(c: zonos.Capabilities, doc: ProjectDoc | null): RequestContext {
-  const t = c.tag_cfg;
   return {
     phonemeTokens: c.phoneme_tokens ?? null,
-    tags: t.available && t.trained ? { min_scale: t.min_scale, max_scale: t.max_scale } : null,
-    tagStrength: doc?.settings.tagStrength ?? DEFAULT_SETTINGS.tagStrength,
     // The project's decoder (set in the Studio's project settings) where this server serves it, else the default.
     decoder: requestDecoder(c.decoders ?? [], doc?.settings.decoder),
     // The project's LACI mode (set in the Studio's project settings); languages without heads here run without it.

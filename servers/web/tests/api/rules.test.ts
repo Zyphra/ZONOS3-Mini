@@ -29,6 +29,46 @@ describe('request_errors.json', () => {
   }
 });
 
+describe('removed tag contract (without exported assets)', () => {
+  for (const scale of [1, 2]) {
+    for (const [path, body] of [
+      ['/v2/generate', { text: 'Hello.' }],
+      ['/v1/audio/speech', { model: 'zonos3', input: 'Hello.' }],
+      ['/v2/edit', { audio_base64: 'x', target_text: 'Hello.' }],
+    ] as const) {
+      it(`${path} rejects tag_cfg_scale ${scale}`, async () => {
+        const r = await call(bareApi().api, 'POST', path, { ...body, tag_cfg_scale: scale });
+        expect(r.status).toBe(422);
+        expect(JSON.stringify(r.json())).toContain('tag_cfg_scale');
+      });
+    }
+  }
+
+  it('does not advertise tag capabilities', async () => {
+    const r = await call(bareApi().api, 'GET', '/v2/capabilities');
+    expect(r.status).toBe(200);
+    expect(r.json()).not.toHaveProperty('tag_cfg');
+  });
+
+  it('prefills literal angle text once, while speaker guidance still has its twin', async () => {
+    for (const guided of [false, true]) {
+      const { api, engine, backbone } = bareApi();
+      const p = await planGenerate(engine, new Speakers(engine), {
+        text: 'Hello <laugh/> there', text_normalization: false,
+      }, null, undefined);
+      expect(p.text).toBe('Hello <laugh/> there');
+      expect(p.twin).toBeNull();
+      const r = await call(api, 'POST', '/v2/generate', {
+        text: 'Hello <laugh/> there', text_normalization: false, stream: false,
+        ...(guided ? { speaker_mode: 'embedding', speaker_embedding_id: 'v0', speaker_cfg_scale: 1.5 } : {}),
+      });
+      expect(r.status).toBe(200);
+      expect(backbone.prefills).toHaveLength(guided ? 2 : 1);
+      if (guided) expect(backbone.prefills[1].rows).toBe(backbone.prefills[0].rows - 1);
+    }
+  });
+});
+
 describe('request rules', () => {
   const { api, engine } = bareApi();
   const spk = new Speakers(engine);

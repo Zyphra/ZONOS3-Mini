@@ -235,24 +235,6 @@ def test_release_schema_maps_to_the_gguf_tensors():
     ]
 
 
-@pytest.mark.parametrize("nonverbal", [False, True])
-def test_lm_tag_cfg_trained(tmp_path, nonverbal):
-    lm_dir, silence = make_tiny_lm_dir(tmp_path / "lm")
-    flag = "true" if nonverbal else "false"
-    (lm_dir / "config.yaml").write_text(
-        f"model: {{}}\ndata:\n  codec: {CODEC}\n  text_tokenizer: superbpe\n  text_tokenizer_vocab_size: 16\n"
-        f"  sources:\n    full: {{weight: 0.55, nonverbal: false}}\n    zv3subsample: {{weight: 0.45, nonverbal: {flag}}}\n"
-    )
-    out = tmp_path / "lm.gguf"
-    convert_gguf.main(["lm", str(lm_dir), "--outtype", "f32", "--silence-frame", str(silence), "-o", str(out)])
-    fields = GGUFReader(out).fields
-    # written only when true, so checkpoints without nonverbal training keep their GGUF unchanged
-    assert ("zonos3.tag_cfg_trained" in fields) == nonverbal
-    if nonverbal:
-        field = fields["zonos3.tag_cfg_trained"]
-        assert bool(field.parts[field.data[0]][0])
-
-
 def test_lm_mix_outtype_ptq(tmp_path):
     # moe_alpha 0.5: the routed experts' rows (32) fit the 32-element quant block
     lm_dir, silence = make_tiny_lm_dir(tmp_path / "lm", moe_alpha=0.5)

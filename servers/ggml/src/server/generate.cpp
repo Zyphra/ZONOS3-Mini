@@ -10,7 +10,6 @@
 
 #include "wav.h"
 #include "zonos3-languages.h"
-#include "zonos3-markup.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,23 +38,6 @@ double num(const json & j, const char * key, double d) {
 // Python truthiness of an optional container (None, {} and [] are false).
 bool truthy(const json & j, const char * key) {
     return set(j, key) && !j[key].empty();
-}
-
-// R1 (zonos3.tts.plan.validate_tag_cfg): tagged-vs-plain guidance needs recognized markup and no other CFG.
-void validate_tag_cfg(const std::string & text, double scale, double speaker_cfg, double controls_cfg) {
-    const zonos3_generation_registry & limits = zonos3_generation();
-    if (!std::isfinite(scale) || scale < limits.tag_cfg_min_scale || scale > limits.tag_cfg_max_scale)
-        fail(400, "tag_cfg_scale must be finite and between " + json(limits.tag_cfg_min_scale).dump() + " and " +
-                      json(limits.tag_cfg_max_scale).dump() + ".");
-    if (scale == 1.0) return;
-    if (!zonos3_has_nonverbal_markup(text) || zonos3_strip_nonverbal_markup(text) == text) {
-        std::string tags;
-        for (const auto & t : zonos3_nonverbal_markup_tags()) tags += (tags.empty() ? "" : ", ") + ("<" + t + "/>");
-        fail(400, "tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags " + tags +
-                      " or the same names as span tags (<shouting>...</shouting>).");
-    }
-    if (speaker_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.");
-    if (controls_cfg != 1.0) fail(400, "tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.");
 }
 
 // R2 (zonos3.tts.plan.resolve_speaker_mode).
@@ -243,7 +225,6 @@ void check_laci(const ServerState & s, const json & body, const std::string & la
     }
     if (num(body, "speaker_cfg_scale", 1.0) != 1.0 || num(body, "controls_cfg_scale", 1.0) != 1.0)
         fail(400, "LACI needs speaker_cfg_scale = controls_cfg_scale = 1");
-    if (num(body, "tag_cfg_scale", 1.0) != 1.0) fail(400, "LACI needs tag_cfg_scale = 1");
 }
 
 // R11 (zonos3.tts.plan.request_rules' span follow): the request's spans follow the reading position when it asks for
@@ -293,11 +274,10 @@ void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
                                                                                utf8_to_u32(tok.phonemes.close_marker)};
     text_markers.start = tok.start_id >= 0;
     text_markers.pauses = !tok.pause_ids.empty();
-    std::vector<zonos3_follow::Range> spans, markers;
+    std::vector<zonos3_follow::Range> spans;
     for (const auto & sp : gr.steering.spans) spans.push_back({sp.char_start, sp.char_end});
-    for (const auto & m : zonos3_nonverbal_marker_spans(gr.text)) markers.push_back(m);
     const auto ranges = zonos3_follow::token_char_ranges(final_, bpe, text_markers);
-    const auto tokens = zonos3_follow::span_token_ranges(text, final_, spans, ranges, markers);
+    const auto tokens = zonos3_follow::span_token_ranges(text, final_, spans, ranges);
     gr.follow_tokens.assign(tokens.begin(), tokens.end());
 }
 
@@ -309,7 +289,7 @@ bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
 }
 
 // GenerateRequest -> GenReq in the rules' order (zonos3.tts.plan.request_head + request_rules, which sgl
-// _tts_generate_msg runs): tag CFG, speaker mode, condition rows, speaker, language, max_tokens, silence prefill,
+// _tts_generate_msg runs): speaker mode, condition rows, speaker, language, max_tokens, silence prefill,
 // stream codebooks, accent, controls, stream decode, speaker CFG, text markers (start_immediately), LACI; then the
 // scheduler's CFG twin choice.
 GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session) {
@@ -319,7 +299,6 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     gr.decoder = resolve_decoder(s, body);
     gr.raw_text = text;
     const double speaker_cfg = num(body, "speaker_cfg_scale", 1.0), controls_cfg = num(body, "controls_cfg_scale", 1.0);
-    validate_tag_cfg(text, num(body, "tag_cfg_scale", 1.0), speaker_cfg, controls_cfg);
     const std::string mode = resolve_speaker_mode(s, body);
     gr.condition_buckets = resolve_condition_buckets(s, body);
     ResolvedSpeaker spk = resolve_request_speaker(s, body, session, mode);
@@ -379,14 +358,6 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
         if (s.batch_slots < 2) fail(400, "speaker CFG needs --batch >= 2 (the CFG twin takes a second slot)");
         gr.cfg_scale = (float) speaker_cfg;
         out.cfg_kind = "speaker";
-    }
-    // Tag CFG (validated above, exclusive with speaker / controls CFG): the twin is the same prompt on
-    // strip_nonverbal_markup(text), guided like speaker CFG (scheduler._schedule_prefill).
-    const double tag_cfg = num(body, "tag_cfg_scale", 1.0);
-    if (tag_cfg > 1.0) {
-        if (s.batch_slots < 2) fail(400, "tag CFG needs --batch >= 2 (the CFG twin takes a second slot)");
-        gr.cfg_scale = (float) tag_cfg;
-        out.cfg_kind = "tag";
     }
     // Controls CFG (scheduler._schedule_prefill): a request with a hidden steering delta and a speaker embedding runs
     // an unconditional twin on the same prompt without the delta; otherwise controls_cfg_scale does nothing.
@@ -584,10 +555,6 @@ GeneratePlan plan_generate(ServerState & s, const json & body, const std::option
     if (plan.cfg_kind == "speaker") {
         if (!zonos3_build_cfg_twin(s.model, plan.prompt, plan.twin))
             fail(400, "could not build the speaker-CFG twin prompt");
-    } else if (plan.cfg_kind == "tag") {
-        // Same speaker, condition and silence rows; the text without its nonverbal markup.
-        if (!zonos3_build_prompt(s.model, zonos3_strip_nonverbal_markup(gr.text), opt, plan.twin, &err))
-            fail(400, "could not build the tag-CFG twin prompt: " + err);
     } else if (plan.cfg_kind == "controls") {
         // The same prompt and speaker (the scheduler leaves the twin unsteered).
         plan.twin = plan.prompt;

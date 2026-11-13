@@ -1,20 +1,12 @@
 // The texts of a speech edit: edit tokens (zonos3.tts.textmatch.tokens), forced-alignment tokens
-// (zonos3.tts.align_text.align_tokens), nonverbal markup and pronunciation groups in a target
-// (zonos3.tts.edit_align canonical_markup / target_tokens / token_chars). Offsets and lengths are code points.
+// (zonos3.tts.align_text.align_tokens), and pronunciation groups in a target
+// (zonos3.tts.edit_align target_tokens / token_chars). Offsets and lengths are code points.
 import languages from '../../../../model/src/zonos3/registries/languages.json';
-import { NONVERBAL_MARKUP_TAGS, pyIsSpace } from '../request/markup';
-import { pyLen, pySplit } from './py';
+import { pyIsSpace, pyLen, pySplit } from './py';
 
-/** Python's str.isspace() code points as a regex class body (markup.ts pyIsSpace). */
-const SPACE = '\\t-\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
-const MARKER = `</?(?:${NONVERBAL_MARKUP_TAGS.join('|')})[${SPACE}]*/?>`;
-/** zonos3.tts.markup _NONVERBAL_MARKUP. */
-const MARKER_G = new RegExp(MARKER, 'gu');
-const MARKER_ANY = new RegExp(MARKER, 'u');
-const MARKER_FULL = new RegExp(`^${MARKER}$`, 'u');
 export const GROUP_OPEN = '\ue000', GROUP_CLOSE = '\ue001';
-/** A whitespace word's pieces: pronunciation groups, nonverbal markers and the text around them (_PIECE_RE). */
-const PIECE = new RegExp(`(\ue000[^\ue000\ue001]*\ue001|${MARKER})`, 'u');
+/** A whitespace word's pieces: pronunciation groups and the text around them (_GROUP_RE). */
+const PIECE = /(\ue000[^\ue000\ue001]*\ue001)/u;
 /** Letter-equivalents per IPA symbol of a pronunciation group (edit_align GROUP_LETTERS_PER_SYMBOL). */
 export const GROUP_LETTERS_PER_SYMBOL = 1.4;
 
@@ -114,11 +106,6 @@ export function alignTokens(text: string, lang: string): string[] {
   return unitTexts(text).map(u => pySplit(u).join('')).filter(Boolean);
 }
 
-/** `text` with the whitespace inside its nonverbal markers removed (`<laugh />` -> `<laugh/>`). */
-export function canonicalMarkup(text: string): string {
-  return text.replace(MARKER_G, m => pySplit(m).join(''));
-}
-
 export function isGroupToken(token: string): boolean {
   return token.startsWith(GROUP_OPEN) && token.endsWith(GROUP_CLOSE);
 }
@@ -130,13 +117,13 @@ export function tokenChars(token: string): { value: number; int: boolean } {
     : { value: pyLen(token), int: true };
 }
 
-/** `[target tokens, tokens of target word 0, of word 1, ...]` over the whitespace words of a canonical target: plain
- *  pieces normalized, each pronunciation group one token, each nonverbal marker none. */
+/** `[target tokens, tokens of target word 0, of word 1, ...]` over the whitespace words of a target: plain
+ *  pieces normalized, each pronunciation group one token. */
 export function targetTokens(targetText: string): string[][] {
   const words = pySplit(targetText);
-  if (!targetText.includes(GROUP_OPEN) && !MARKER_ANY.test(targetText))
+  if (!targetText.includes(GROUP_OPEN))
     return [tokens(targetText), ...words.map(tokens)];
   const wordTokens = words.map(word => word.split(PIECE).filter(Boolean).flatMap(piece =>
-    isGroupToken(piece) ? [piece] : MARKER_FULL.test(piece) ? [] : tokens(piece)));
+    isGroupToken(piece) ? [piece] : tokens(piece)));
   return [wordTokens.flat(), ...wordTokens];
 }

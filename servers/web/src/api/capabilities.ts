@@ -5,10 +5,8 @@
 import { ALIGN_MAX_SECONDS } from '../aligner/host';
 import languages from '../../../../model/src/zonos3/registries/languages.json';
 import {
-  DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES, TAG_CFG_MAX_SCALE,
-  TAG_CFG_MIN_SCALE,
+  DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES,
 } from '../generation';
-import { NONVERBAL_MARKUP_TAGS } from '../request/markup';
 import type { Decoder, Engine } from './engine';
 
 const AUDIO_CODEC = 'opus_dual_3n_600k_sched600k_r4096_step600000';
@@ -111,10 +109,6 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
       note: 'codec-matched silence frames open the audio stream before the model starts (their audio is not ' +
         'emitted); a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 ' +
         'turns it off and silence_prefill_frames=N sets the length',
-    },
-    tag_cfg: {
-      available: true, trained: hp.tagCfgTrained, tags: NONVERBAL_MARKUP_TAGS,
-      min_scale: TAG_CFG_MIN_SCALE, max_scale: TAG_CFG_MAX_SCALE, default_scale: 1.0,
     },
     decode_context: {
       available: true, default_frames: DECODE_CONTEXT_FRAMES, max_frames: 450,

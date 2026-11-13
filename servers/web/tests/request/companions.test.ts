@@ -1,9 +1,8 @@
-// Steering, markup, LACI detector and span follower against the ggml fixtures and the shipped steer.gguf.
+// Steering, LACI detector and span follower against the ggml fixtures and the shipped steer.gguf.
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseGguf } from '../../src/gguf';
 import { defaultLaciConfig, Detector } from '../../src/request/laci';
-import { hasNonverbalMarkup, nonverbalMarkerSpans, stripNonverbalMarkup } from '../../src/request/markup';
 import { SpanFollower } from '../../src/request/spanFollow';
 import {
   Calibration, controlsDocument, disabledControls, loadSteer, resolveControls, steerIndex, Steering, textChars,
@@ -148,15 +147,6 @@ describe('steer', () => {
   });
 });
 
-describe('markup', () => {
-  it('finds and strips markers', () => {
-    const t = 'Hi <laugh/> there <shouting >loud</shouting> é';
-    expect(hasNonverbalMarkup(t)).toBe(true);
-    expect(nonverbalMarkerSpans(t)).toEqual([[3, 11], [18, 29], [33, 44]]);
-    expect(stripNonverbalMarkup(t)).toBe('Hi there loud é');
-    expect(hasNonverbalMarkup('<laughter>')).toBe(false);
-  });
-});
 
 describe('laci detector', () => {
   it('monotone readout passes, a stall is a hallucination', () => {

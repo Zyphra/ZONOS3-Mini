@@ -38,9 +38,6 @@ struct zonos3_hparams {
     uint32_t text_extra_tokens = 0;
     // zonos3.span_end_id: the speech-edit stop id (= audio_pad_id + 1; audio_vocab grows by one); -1 = none.
     int32_t span_end_id = -1;
-    // zonos3.tag_cfg_trained: the checkpoint was fine-tuned on nonverbal markup (zonos3.tts.markup.trained_on_tags);
-    // the converter writes the key only when true.
-    bool tag_cfg_trained = false;
 };
 
 struct zonos3_layer {

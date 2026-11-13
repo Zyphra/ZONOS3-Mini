@@ -81,7 +81,7 @@ def reference(request, tmp_path_factory):
 def _caps(lm, assets) -> set[str]:
     from zonos3.reference.synth import prompt_builder
 
-    caps = {"tag_cfg"}
+    caps = set()
     spec = prompt_builder(lm).config.text_tokenizer_spec
     if spec is not None and spec.get("phonemes") is not None:
         caps.add("phoneme_tokens")

@@ -21,8 +21,6 @@ const zonos3_generation_registry & zonos3_generation() {
         out.sampling.topk = sampling.at("topk").get<int>();
         out.sampling.repetition_window = sampling.at("repetition_window").get<int>();
         out.sampling.repetition_codebooks = sampling.at("repetition_codebooks").get<int>();
-        out.tag_cfg_min_scale = doc.at("tag_cfg_scale").at("min").get<double>();
-        out.tag_cfg_max_scale = doc.at("tag_cfg_scale").at("max").get<double>();
         out.silence_prefill_default_frames = doc.at("silence_prefill_frames").at("default").get<int>();
         out.silence_prefill_max_frames = doc.at("silence_prefill_frames").at("max").get<int>();
         out.decode_context_frames = doc.at("decode_context_frames").get<int>();

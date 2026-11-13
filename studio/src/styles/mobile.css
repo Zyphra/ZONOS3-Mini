@@ -692,7 +692,6 @@
     left: calc(12px + env(safe-area-inset-left));
     right: calc(12px + env(safe-area-inset-right));
   }
-  .tag-palette,
   .pron-editor,
   .proj-menu {
     max-width: calc(100vw - 16px);

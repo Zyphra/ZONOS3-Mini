@@ -101,7 +101,6 @@ from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
 from zonos3.tts.laci import discover_laci_heads
-from zonos3.tts.markup import trained_on_tags
 from zonos3.tts.phonemes import PhonemeLexicon
 from zonos3.tts.steering import (
     check_controls,
@@ -188,8 +187,6 @@ def capabilities() -> dict:
             max_tokens=CONTEXT.max_frames,
             prefix_stream=prefix_stream_supported(c.audio_codec),
             silence_hop=dual_codec_hop(c.audio_codec),
-            tag_cfg_available=True,
-            tag_cfg_trained=trained_on_tags(resolve_dir_or_local(SPACE_LM)),
             decoder=decoder,
             decoders=decoders,
             condition_tokens=None
@@ -374,7 +371,7 @@ def gpu_seconds(body) -> int:
     if isinstance(body, tuple):
         return 90
     clip = 60 if body["speaker_mode"] == "reference" and body["speaker_audio_base64"] else 0
-    guided = any(float(body[k]) != 1.0 for k in ("speaker_cfg_scale", "tag_cfg_scale", "controls_cfg_scale"))
+    guided = any(float(body[k]) != 1.0 for k in ("speaker_cfg_scale", "controls_cfg_scale"))
     return min(240, int(10 + clip + 0.15 * len(body["text"]) * (2 if guided else 1)))
 
 

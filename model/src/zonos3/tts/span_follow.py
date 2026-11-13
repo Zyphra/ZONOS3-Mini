@@ -28,7 +28,6 @@ from typing import Sequence
 
 import torch
 
-from .markup import nonverbal_marker_spans
 from .steering import RAMP_FRAMES
 
 
@@ -120,9 +119,7 @@ def span_token_ranges(
 ) -> list[tuple[int, int]]:
     """Text-span positions [a, b) of the tokens spelling each character span [start, end) of ``text``, once the text
     is ``final`` (normalized): the tokens whose characters, outer whitespace trimmed, overlap the span's trimmed
-    characters. A span that maps onto no token keeps the token at its start (a zero-width span never steers).
-    Tokens inside a nonverbal marker (``<laugh/>``, ``<shouting>``; zonos3.tts.prompt) do not open or close a span
-    that also covers spoken tokens (markers inside it stay in it); a span over markers only keeps them."""
+    characters. A span that maps onto no token keeps the token at its start (a zero-width span never steers)."""
     ranges = token_char_ranges(final, spec)
     trimmed = []
     for a, b in ranges:
@@ -131,8 +128,6 @@ def span_token_ranges(
         while b > a and final[b - 1].isspace():
             b -= 1
         trimmed.append((a, b))
-    markers = nonverbal_marker_spans(final)
-    in_marker = [a < b and any(s <= a and b <= e for s, e in markers) for a, b in trimmed]
     out = []
     for start, end in spans:
         while start < end and text[start].isspace():
@@ -141,10 +136,7 @@ def span_token_ranges(
             end -= 1
         s, e = map_offsets(text, final, [start])[0], map_offsets(text, final, [end], end=True)[0]
         hit = [i for i, (a, b) in enumerate(trimmed) if a < b and a < e and s < b]
-        spoken = [i for i in hit if not in_marker[i]]
-        if spoken:
-            out.append((spoken[0], spoken[-1] + 1))
-        elif hit:
+        if hit:
             out.append((hit[0], hit[-1] + 1))
         else:
             first = next((i for i, (a, b) in enumerate(trimmed) if a < b and b > s), len(ranges) - 1)

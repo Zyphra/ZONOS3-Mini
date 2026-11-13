@@ -1,4 +1,4 @@
-/** The open project's settings in one dialog: language, voice mode, tag strength, decoder, LACI, and what opening it did to its voices. */
+/** The open project's settings in one dialog: language, voice mode, decoder, LACI, and what opening it did to its voices. */
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { decoderName } from '../lib/decoders';
 import { LACI_LABEL, LACI_MODES, type LaciMode } from '../lib/laci';
@@ -56,7 +56,7 @@ export function LaciPicker() {
         ))}
       </select>
       <span class="hint" id="settings-laci-hint">
-        Watches the model read the text and regenerates a take from where it skipped words, babbled or stopped early. Streamed: playback starts about a phrase later. Whole take: audio comes when the take is done, and every fix restarts exactly at its slip. While it is on, lines with nonverbal tags render without tag guidance.
+        Watches the model read the text and regenerates a take from where it skipped words, babbled or stopped early. Streamed: playback starts about a phrase later. Whole take: audio comes when the take is done, and every fix restarts exactly at its slip.
         {!languages.includes(st.language) && ` No alignment heads for ${langLabel(st.language)} on this server: its renders run without LACI.`}
       </span>
     </label>
@@ -80,7 +80,6 @@ export function ProjectSettings() {
   if (!open || !p) return null;
   const close = () => (settingsOpen.value = false);
   const st = projectSettings.value;
-  const tags = backend.value?.tags;
   const r = restoreReport.value;
   return (
     <div class="sheet-backdrop" onClick={close}>
@@ -116,27 +115,6 @@ export function ProjectSettings() {
               How the Cast bench starts when a recorded voice is picked: designable (its embedding, every control works) or an exact clone of the clip (delivery and mood only).
             </span>
           </label>
-          {tags && (
-            <label class="settings-row">
-              <span>Tag strength</span>
-              <span class="settings-range">
-                <input
-                  type="range"
-                  min={Math.max(1, tags.min_scale)}
-                  max={tags.max_scale}
-                  step={0.1}
-                  value={st.tagStrength}
-                  onInput={(e) => setSettings({ tagStrength: Number(e.currentTarget.value) })}
-                  aria-valuetext={st.tagStrength > 1 ? `${st.tagStrength.toFixed(1)}, tag guidance on` : '1, off'}
-                  aria-describedby="settings-tags-hint"
-                />
-                <span class="mono">{st.tagStrength > 1 ? st.tagStrength.toFixed(1) : 'off'}</span>
-              </span>
-              <span class="hint" id="settings-tags-hint">
-                Guidance for lines with nonverbal tags (laugh, sigh…): stronger makes the tags louder. On those lines it replaces voice guidance (the server allows one at a time); 1 turns it off.
-              </span>
-            </label>
-          )}
           <DecoderPicker />
           <LaciPicker />
         </div>

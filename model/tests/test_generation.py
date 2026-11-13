@@ -21,8 +21,6 @@ def test_openapi_sampling_defaults_are_the_registry(schema):
 @pytest.mark.parametrize("schema", ["GenerationOptions", "GenerateRequest", "SpeechRequest"])
 def test_openapi_request_limits_are_the_registry(schema):
     properties = SCHEMAS[schema]["properties"]
-    tag_cfg = properties["tag_cfg_scale"]
-    assert (tag_cfg["minimum"], tag_cfg["maximum"]) == (generation.TAG_CFG_MIN_SCALE, generation.TAG_CFG_MAX_SCALE)
     assert properties["decode_context_frames"]["default"] == generation.DECODE_CONTEXT_FRAMES
     assert properties["stream_codebooks"]["default"] == generation.STREAM_CODEBOOKS
     assert properties["stream_codebooks_scope"]["default"] == generation.STREAM_CODEBOOKS_SCOPE

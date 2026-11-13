@@ -7,12 +7,11 @@ import type { ProbeInput } from '../backbone';
 import { locateTextSpan, probeReduce } from '../probe';
 import {
   ALIGN_PROBE_MAX_TEXT, CONTEXT_CAPACITY, DECODE_CONTEXT_FRAMES, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPLING, SILENCE_PREFILL_MAX_FRAMES,
-  STREAM_CODEBOOKS, STREAM_CODEBOOKS_SCOPE, TAG_CFG_MAX_SCALE, TAG_CFG_MIN_SCALE,
+  STREAM_CODEBOOKS, STREAM_CODEBOOKS_SCOPE,
 } from '../generation';
 import { outputPcm } from '../output';
 import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
-import { hasNonverbalMarkup, NONVERBAL_MARKUP_TAGS, nonverbalMarkerSpans, stripNonverbalMarkup } from '../request/markup';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
 import { NO_STEERING, resolveControls, Steering, textChars, type ControlSpan } from '../request/steer';
 import { defaultSampling, vocabIds, type Sampling } from '../sampler';
@@ -23,7 +22,7 @@ import { applyFade } from '../wav';
 import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
 import type { Decoder, Engine } from './engine';
 import {
-  bool, fail, HttpError, isSet, num, parseBody, pyFloat, pyList, pyRepr, sessionId, str, truthy, type EngineRequest,
+  bool, fail, HttpError, isSet, num, parseBody, pyList, pyRepr, sessionId, str, truthy, type EngineRequest,
   type Sink,
 } from './http';
 import type { Speakers } from './speakers';
@@ -46,7 +45,7 @@ interface Plan {
   silencePrefill: number;
   decodeContext: Int32Array | null;   // the reference's last frames, ordinary [K][10]
   cfgScale: number;
-  cfgKind: '' | 'speaker' | 'tag' | 'controls';
+  cfgKind: '' | 'speaker' | 'controls';
   twinSteered: boolean;
   decoder: Decoder;
   headroomDb: number;                 // -1 = the decoder's
@@ -80,20 +79,6 @@ export function as400<T>(f: () => T): T {
 }
 
 // ------------------------------------------------------------------------------------------------ resolve
-
-/** zonos3.tts.plan validate_tag_cfg (R1). */
-function validateTagCfg(text: string, scale: number, speakerCfg: number, controlsCfg: number): void {
-  if (!Number.isFinite(scale) || scale < TAG_CFG_MIN_SCALE || scale > TAG_CFG_MAX_SCALE)
-    fail(400, `tag_cfg_scale must be finite and between ${pyFloat(TAG_CFG_MIN_SCALE)} and ${pyFloat(TAG_CFG_MAX_SCALE)}.`);
-  if (scale === 1.0) return;
-  if (!hasNonverbalMarkup(text) || stripNonverbalMarkup(text) === text) {
-    const tags = NONVERBAL_MARKUP_TAGS.map(t => `<${t}/>`).join(', ');
-    fail(400, `tag_cfg_scale above 1.0 requires recognized nonverbal markup in the text: point tags ${tags}` +
-      ' or the same names as span tags (<shouting>...</shouting>).');
-  }
-  if (speakerCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with speaker_cfg_scale; set speaker_cfg_scale to 1.0.');
-  if (controlsCfg !== 1.0) fail(400, 'tag_cfg_scale above 1.0 cannot be combined with controls_cfg_scale; set controls_cfg_scale to 1.0.');
-}
 
 /** zonos3.tts.plan resolve_condition_buckets (R3): explicit ids win, raw values map through the edges, anything else is
  *  unknown (the row's bucket count n; ids 0..n-1 are buckets). */
@@ -194,7 +179,6 @@ function checkLaci(e: Engine, body: Body, language: string): void {
     fail(400, `No LACI alignment heads for language ${pyRepr(language)} (configured: ${laciLanguages(e).join(', ')})`);
   if (num(body, 'speaker_cfg_scale', 1) !== 1 || num(body, 'controls_cfg_scale', 1) !== 1)
     fail(400, 'LACI needs speaker_cfg_scale = controls_cfg_scale = 1');
-  if (num(body, 'tag_cfg_scale', 1) !== 1) fail(400, 'LACI needs tag_cfg_scale = 1');
 }
 
 /** The tokenizer's follow tokens (span_follow.span_token_ranges). */
@@ -224,7 +208,7 @@ function resolveFollowTokens(e: Engine, p: Plan): void {
   };
   const spans: Range[] = p.steering.spans.map(s => [s.charStart, s.charEnd]);
   const ranges = tokenCharRanges(p.text, bpe, null);
-  p.followTokens = spanTokenRanges(p.rawText, p.text, spans, ranges, nonverbalMarkerSpans(p.text));
+  p.followTokens = spanTokenRanges(p.rawText, p.text, spans, ranges);
 }
 
 /** GenerateRequest -> Plan (generate.cpp resolve + plan_generate). */
@@ -233,7 +217,6 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   const text = str(body, 'text')!;
   const decoder = resolveDecoder(e, body);
   const speakerCfg = num(body, 'speaker_cfg_scale', 1), controlsCfg = num(body, 'controls_cfg_scale', 1);
-  validateTagCfg(text, num(body, 'tag_cfg_scale', 1), speakerCfg, controlsCfg);
   // zonos3.tts.plan resolve_speaker_mode (R2)
   const modes = spk.checkpointModes();
   let mode = modes.length ? modes[0] : '';
@@ -299,11 +282,6 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     p.cfgScale = speakerCfg;
     p.cfgKind = 'speaker';
   }
-  const tagCfg = num(body, 'tag_cfg_scale', 1);
-  if (tagCfg > 1.0) {
-    p.cfgScale = tagCfg;
-    p.cfgKind = 'tag';
-  }
   if (controlsCfg !== 1.0 && p.steering.hidden && requestEmbedding(p)) {
     p.cfgScale = controlsCfg;
     p.twinSteered = false;
@@ -350,22 +328,17 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     buckets: p.conditionBuckets,
     silencePrefill: p.silencePrefill,
   };
-  const build = (t: string, what: string) => {
-    try {
-      return buildPrompt(e.tokenizer, t, opt, e.hp);
-    } catch (err) {
-      fail(400, `${what}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-  p.prompt = build(p.text, 'could not build the prompt');
+  try {
+    p.prompt = buildPrompt(e.tokenizer, p.text, opt, e.hp);
+  } catch (err) {
+    fail(400, `could not build the prompt: ${err instanceof Error ? err.message : String(err)}`);
+  }
   if (p.cfgKind === 'speaker') {
     try {
       p.twin = buildCfgTwin(p.prompt, e.hp.condBucketCounts);
     } catch {
       fail(400, 'could not build the speaker-CFG twin prompt');
     }
-  } else if (p.cfgKind === 'tag') {
-    p.twin = build(stripNonverbalMarkup(p.text), 'could not build the tag-CFG twin prompt');
   } else if (p.cfgKind === 'controls') {
     // The same prompt and speaker, run without the hidden steering (twinSteered = false).
     p.twin = { ...p.prompt, cond: { ...p.prompt.cond } };

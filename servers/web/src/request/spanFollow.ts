@@ -4,7 +4,7 @@
 // Strings are handled as code-point arrays so offsets equal Python str indices. Types: FollowConfig {lead, lag,
 // smooth, ramp}, Range = [start, end), Opcode {tag, i1, i2, j1, j2}, BpeOffsets (code-point offsets of the SuperBPE
 // tokens of a string), PhonemeMarkers {open, close}.
-import { pyIsSpace } from './markup';
+import { pyIsSpace } from '../edit/py';
 import { STEER_RAMP_FRAMES } from './steer';
 
 export interface FollowConfig { lead: number; lag: number; smooth: number; ramp: number }
@@ -143,7 +143,7 @@ export function tokenCharRanges(text: string, bpe: BpeOffsets | null, phonemes: 
 }
 
 // Text-span positions [a, b) of the tokens spelling each character span of `text` once it is `final`.
-export function spanTokenRanges(text: string, final: string, spans: Range[], ranges: Range[], markers: Range[]): Range[] {
+export function spanTokenRanges(text: string, final: string, spans: Range[], ranges: Range[]): Range[] {
   const tc = codePoints(text), fc = codePoints(final);
   const trimmed: Range[] = ranges.map(([a0, b0]) => {
     let a = a0, b = b0;
@@ -151,18 +151,16 @@ export function spanTokenRanges(text: string, final: string, spans: Range[], ran
     while (b > a && pyIsSpace(fc[b - 1])) b--;
     return [a, b];
   });
-  const inMarker = trimmed.map(([a, b]) => a < b && markers.some(([s, e]) => s <= a && b <= e));
   const out: Range[] = [];
   for (let [start, end] of spans) {
     while (start < end && pyIsSpace(tc[start])) start++;
     while (end > start && pyIsSpace(tc[end - 1])) end--;
     const s = mapOffsets(text, final, [start])[0], e = mapOffsets(text, final, [end], true)[0];
-    const hit: number[] = [], spoken: number[] = [];
+    const hit: number[] = [];
     trimmed.forEach(([a, b], i) => {
-      if (a < b && a < e && s < b) { hit.push(i); if (!inMarker[i]) spoken.push(i); }
+      if (a < b && a < e && s < b) hit.push(i);
     });
-    if (spoken.length) out.push([spoken[0], spoken[spoken.length - 1] + 1]);
-    else if (hit.length) out.push([hit[0], hit[hit.length - 1] + 1]);
+    if (hit.length) out.push([hit[0], hit[hit.length - 1] + 1]);
     else {
       let first = ranges.length - 1;
       for (let i = 0; i < trimmed.length; i++)

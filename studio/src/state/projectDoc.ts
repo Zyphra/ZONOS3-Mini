@@ -20,7 +20,7 @@ import { MediaSink, prime } from './media';
 import { load } from './persist';
 import { failedLines, holdStaleToast, lineBusy, lineError, lineRequest, newScript, script, scripts, takes, type Script, type Take } from './script';
 import { voiceOrigins } from './who';
-import { DEFAULT_SETTINGS, SCHEMA, summaryOf, type ProjectDoc, type ProjectHead, type ProjectSettings, type StoredAudio, type StoredEditDoc } from './projectSchema';
+import { DEFAULT_SETTINGS, SCHEMA, settingsOf, summaryOf, type ProjectDoc, type ProjectHead, type ProjectSettings, type StoredAudio, type StoredEditDoc } from './projectSchema';
 
 type OldScene = NonNullable<ProjectDoc['scene']>['scene'];
 
@@ -156,7 +156,7 @@ export async function restore(doc: ProjectDoc, read: (hash: string) => Promise<B
       holdPreview();
       holdStaleToast();
       failedLines.value = [];
-      projectSettings.value = { ...DEFAULT_SETTINGS, ...doc.settings };
+      projectSettings.value = settingsOf(doc.settings);
       ownVoices.value = voices;
       designs.reset(doc.cast.design);
       cast.value = doc.cast.personas;

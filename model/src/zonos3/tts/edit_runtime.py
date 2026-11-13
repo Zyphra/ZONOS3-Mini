@@ -36,7 +36,6 @@ from zonos3.tts.audio import pcm16_wav_bytes
 from zonos3.tts.edit import extract_fill, splice_edit, validate_edit_spans
 from zonos3.tts.edit_align import (
     GROUP_OPEN,
-    canonical_markup,
     diff_spans,
     edit_words,
     expected_fill_seconds,
@@ -47,7 +46,6 @@ from zonos3.tts.edit_align import (
     whole_clip_window,
     wildcard_verify,
 )
-from zonos3.tts.markup import strip_nonverbal_markup
 
 
 @dataclass(frozen=True)
@@ -289,15 +287,8 @@ class EditRuntime:
 
         m = self.model
         self.require_editing()
-        if req.tag_cfg_scale != 1.0:
-            raise ValueError(
-                "tag_cfg_scale is not supported by /v2/edit (speech-edit requests run without tag CFG); use 1.0."
-            )
         frame_rate, n_cb = m.frame_rate, m.n_codebooks
-        # Nonverbal markup is text for the model only: markers (canonical, no inner whitespace) ride in the prompt
-        # text and never reach the ASR or FuseAlign (word diff, alignment, verify; target_tokens).
-        target_text = canonical_markup(req.target_text.strip())
-        plain_target_text = strip_nonverbal_markup(target_text)
+        target_text = req.target_text.strip()
         edit_lang = self.language(req.language)  # every ASR and FuseAlign call of the edit
         if not target_text:
             raise ValueError("target_text is empty.")
@@ -337,8 +328,6 @@ class EditRuntime:
             # [target tokens, tokens of each target word]; a pronunciation group is one target token.
             normalized_target = target_tokens(target_text)
             original_text, words = req.original_text, None
-            if original_text:
-                original_text = strip_nonverbal_markup(original_text)  # what the workers read (and the response)
             if req.original_words is not None:
                 given = [w.model_dump() for w in req.original_words]
                 for w in given:
@@ -451,14 +440,14 @@ class EditRuntime:
                     # The take's transcript (Qwen3-ASR) and its anchors for the alignment of the take's words.
                     heard = await self._transcribe(edited_path, edit_lang)
                     if verify_reference is None:
-                        scored = textmatch.verify(plain_target_text, heard.text)
+                        scored = textmatch.verify(target_text, heard.text)
                         verify = {
                             "asr_text": heard.text,
                             "wer": scored["word_errors"] / max(1, scored["ref_words"]),
                             "cer": scored["cer"],
                         }
                         take_words = public_words(
-                            await self._aligned_words(edited_path, plain_target_text, edit_lang, heard.utterances)
+                            await self._aligned_words(edited_path, target_text, edit_lang, heard.utterances)
                         )
                     else:
                         # Groups are wildcard words: any one recognized word matches; the take's words come from
@@ -470,7 +459,7 @@ class EditRuntime:
                             "cer": scored["cer"],
                             "groups": scored["groups"],
                         }
-                        heard_text = fill_groups(plain_target_text, [g["heard"] for g in scored["groups"]])
+                        heard_text = fill_groups(target_text, [g["heard"] for g in scored["groups"]])
                         if heard_text:
                             take_words = public_words(
                                 await self._aligned_words(edited_path, heard_text, edit_lang, heard.utterances)

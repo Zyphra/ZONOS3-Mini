@@ -10,7 +10,6 @@
  */
 
 import { parsePron, xsampaToIpa } from '../lib/pron';
-import { parseTags } from '../lib/tags';
 
 /** An aligned word (`/v2/edit/align`, `/v2/edit/transcribe`): seconds, and its edit tokens. */
 export interface Word {
@@ -99,13 +98,6 @@ const SENT_GROUP = /\ue000[^\ue000\ue001]*\ue001/g;
 /** A pronunciation-group token (one target word, matched by any one recognized word). */
 export const isGroupToken = (t: string) => t.startsWith(OPEN);
 
-const TAG = '\ue002';
-/**
- * A nonverbal-tag token: part of the diff (a tag inserted between unchanged words plans a region there, so it is
- * rendered), never heard by speech recognition (the server keeps markers out of Qwen3-ASR and FuseAlign).
- */
-export const isTagToken = (t: string) => t.startsWith(TAG);
-
 interface Chunk {
   /** [from, to): a whitespace-separated word of the text, or one word of a Han / kana run (a group may hold spaces). */
   from: number;
@@ -113,10 +105,9 @@ interface Chunk {
   tokens: string[];
 }
 
-/** The text's words and their tokens; groups and nonverbal tags are atomic, one token each. */
+/** The text's words and their tokens; pronunciation groups are atomic, one token each. */
 function chunks(text: string, groups: boolean): Chunk[] {
   const atoms = new Map<number, { end: number; token: string }>();
-  for (const t of parseTags(text).tokens) atoms.set(t.start, { end: t.end, token: TAG + text.slice(t.start, t.end) });
   if (groups) for (const g of parsePron(text, null).groups) if (!g.empty) atoms.set(g.start, { end: g.end, token: OPEN + g.ipa + CLOSE });
   if (text.includes(OPEN)) for (const m of text.matchAll(SENT_GROUP)) atoms.set(m.index ?? 0, { end: (m.index ?? 0) + m[0].length, token: m[0] });
   if (!atoms.size) return [...text.matchAll(/\S+/g)].flatMap((m) => wordChunks(m[0], m.index ?? 0));
@@ -374,7 +365,6 @@ export const HEARD_SIMILARITY = 0.6;
  * when any recognized word is left between those anchors.
  */
 export function unheard(target: string[], asr: string, want: number[]): number[] {
-  want = want.filter((j) => !isTagToken(target[j]));
   if (!want.length) return [];
   const hyp = normalizeTokens(asr);
   const { equalMap } = diffOpcodes(target, hyp);

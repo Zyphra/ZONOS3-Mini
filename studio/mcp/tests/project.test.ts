@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { remapIds, summaryOf } from '../../src/state/projectSchema';
+import { DEFAULT_SETTINGS, remapIds, settingsOf, summaryOf } from '../../src/state/projectSchema';
 import { MediaBag, newProjectDoc, sha256 } from '../src/project';
+import { samplingOf } from '../src/params';
 
 describe('project documents', () => {
+  it('projects old settings onto supported fields without losing current settings', () => {
+    const old = { language: 'fr_fr', voiceMode: 'reference' as const, decoder: 'full_mr', laci: 'whole' as const, tagStrength: 2 };
+    expect(settingsOf(old)).toEqual({ language: 'fr_fr', voiceMode: 'reference', decoder: 'full_mr', laci: 'whole' });
+  });
+
+  it('fills missing settings with current defaults', () => {
+    expect(settingsOf()).toEqual(DEFAULT_SETTINGS);
+    expect(settingsOf({ language: 'ja' })).toEqual({ ...DEFAULT_SETTINGS, language: 'ja' });
+  });
+
+  it('reports supported sampling without retired guidance', () => {
+    const sampling = samplingOf({ tag_cfg_scale: 2, speaker_cfg_scale: 1.5 }, 'GenerateRequest');
+    expect(sampling.speaker_cfg_scale).toBe(1.5);
+    expect(sampling).not.toHaveProperty('tag_cfg_scale');
+  });
+
   it('a take appended to a new project counts in the summary and registers its media', () => {
     const doc = newProjectDoc('p1', 'Test', 'en_us');
     const media = new MediaBag(doc);

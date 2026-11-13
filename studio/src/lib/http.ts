@@ -63,7 +63,6 @@ const FIELD_NAMES: Record<string, string> = {
   target_text: 'text',
   original_text: 'transcript',
   num_takes: 'takes',
-  tag_cfg_scale: 'tag strength',
 };
 const fieldName = (p: unknown) => (typeof p === 'string' ? (FIELD_NAMES[p] ?? p.replace(/_/g, ' ')) : String(p));
 

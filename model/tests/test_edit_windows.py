@@ -192,6 +192,13 @@ def test_a_pronunciation_group_is_one_target_word():
     assert target_tokens("i was twelve") == [["I", "WAS", "TWELVE"], ["I"], ["WAS"], ["TWELVE"]]
 
 
+def test_literal_angle_text_and_pronunciation_groups_are_target_words():
+    from zonos3.tts.edit_align import target_tokens
+
+    assert target_tokens("Hello <laugh/> there")[0] == ["HELLO", "LAUGH", "THERE"]
+    assert target_tokens(f"Hello <laugh/> {GROUP} there")[0] == ["HELLO", "LAUGH", GROUP, "THERE"]
+
+
 def test_window_text_keeps_groups_as_typed():
     original = [f"w{k}" for k in range(30)]
     target = " ".join(original).replace("w20", GROUP)

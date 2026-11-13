@@ -23,7 +23,7 @@ Destructive and replacing actions (reset, presets, loading a cast member, deleti
 **Direct** is one script whose every line has its own voice. A new project starts with no lines (**Paste a script** /
 **Add a line**). The left rail sets the **default voice** (a cast member, or the voice from Cast) that lines follow,
 with a “{name} says…” button per cast member that adds a line in that voice (an empty cast offers to add the Cast
-voice), plus the language, tag strength, decoder and LACI (in Project settings), baseline performance, pronunciation help and the
+voice), plus the language, decoder and LACI (in Project settings), baseline performance, pronunciation help and the
 brushes legend. Each line has a voice select (“Default · {name}”, or any cast member; one undo step) and a colored edge
 in its voice's color (pinned per voice in the script document); select words, or focus the line and use ⇧← / ⇧→ then
 Enter, to paint delivery onto them (the paint bar opens under the line); each line keeps its takes and a **keeper**:
@@ -171,7 +171,7 @@ client-side fixture store (`src/fixtures/projects.ts`, its own IndexedDB, shared
 (uploads, recordings, saved designs), the Direct script (lines with their voices, the gap) and its takes, the
 Edit clip with its versions, plus per-project settings (default language for new Edit clips and pronunciation
 lookups, default
-voice mode: the Cast bench takes it when it leaves an embedding-only voice; tag strength; decoder; LACI). Undo history, drafts (the Edit text and
+voice mode: the Cast bench takes it when it leaves an embedding-only voice; decoder; LACI). Undo history, drafts (the Edit text and
 regions, the last generation's takes) and in-flight work stay per session.
 
 - **Header switcher**: the open project's name and save state (dot: saved / saving / error / changed elsewhere /
@@ -245,34 +245,17 @@ take (`control_span_rate`) is sent only as the fallback: not once a take of that
 `reading`. Offline, the fixture answers `reading` for `en_us` / `fr_fr` and the estimate otherwise. Lead / lag
 (`control_span_lead` / `control_span_lag`) stay at the server defaults.
 
-## Nonverbal tags
+## Literal text and older projects
 
-On a server with `/v2/capabilities.tag_cfg.available` (the NV checkpoint), every text that is synthesized (Direct
-lines and the script text, the Cast preview line, the Edit text) takes
-nonverbal markup: point tags `<laugh/> <breath/> <sigh/> <cough/> <panting/> <shouting/> <crying/>` and span tags
-over words `<shouting>…</shouting>`, `<crying>…</crying>` (`src/lib/tags.ts`). **`<`** in such a field (or the `‹›`
-button beside it; Direct: “‹› Tag” in the paint bar) opens the palette: a point tag goes in at the caret (padded with
-spaces), a span tag around the selected words (grown to whole words); a first letter jumps to a tag, Esc closes (and
-types “<” when the palette came from the key). Tags show as chips, not angle brackets: inline in Direct's lines and
-over a resting field (the field shows the text as typed while focused), and as a row of chips under the field to
-remove a tag or turn it into a point / span (⇄). Tags the NV model barely follows are marked **weak** (cough ≈ no
-effect; shouting and crying no better than without). Unclosed span tags and unknown names are read as plain text
-and say so. Markup travels in the text as typed, so painted spans and pronunciation groups keep their offsets on the
-sent text. The palette appears only when the served checkpoint was trained on tags (`tag_cfg.trained`; the NV
-checkpoint); otherwise it is gone and existing markup is flagged “read as text” (an older server without `trained`
-gets the palette with a note that only the NV checkpoint reads tags). Markers take no time: the measured
-`control_span_rate` is per spoken character.
+Angle-bracket strings are ordinary editable text in Cast, Direct and Edit. Typing `<` inserts that character;
+there is no tag palette, chip rendering or strength control. Pronunciation input, word selection and delivery
+painting keep their ordinary offsets. `?nv=fixture` is inert: live renders still use the connected backend,
+and offline renders synthesize the literal text.
 
-**Tag strength** (Direct rail; per project, default 1.5, range from the capabilities) is tag guidance:
-a line with tags renders with `tag_cfg_scale` = the strength, and since the server allows one guidance per render
-its voice guidance is off (`speaker_cfg_scale` 1); such takes show **tags** (“tag guidance on · voice guidance off”).
-Strength 1, or a line without tags, renders as before (the bundle's `request_defaults`: speaker embedding, no speaker
-CFG — CFG 1.5 and top-k 40 made the rate30 LM run on past the text). Edit texts go out at scale 1 (the server
-refuses tag guidance there): the markers reach the model but stay out of recognition, so a
-tag is its own token in the word diff (inserting one between unchanged words plans a region there, which the server
-then fills) and is never “not heard”; a region that only adds tags skips the length warnings. Offline (and with
-`?nv=fixture`) the synth voices laugh, breath, sigh and panting (stronger with tag strength), barely a cough, and
-shapes shouting / crying words mildly; `?nv=0` simulates a server without tags.
+Opening an older project keeps its authored text, painting, takes, media and historical request provenance.
+Active settings retain only language, voice mode, decoder and LACI; unsupported strength settings are dropped
+when the project is saved. New renders use the current request builder rather than replaying obsolete guidance.
+
 
 ## Decoder
 
@@ -296,9 +279,8 @@ On, streamed, or On, whole take (`settings.laci`: `off` / `stream` / `whole`; `s
 in a language with heads sends `laci: true` (Cast previews on both A/B sides, Direct lines, the MCP server's
 `zonos_speak`); whole take also sends `stream_decode: "whole"`, so the server holds the take until it is final and
 every fix restarts at its own row, while streamed keeps the request defaults' prefix decode (playback about one text
-bin behind generation). Renders in a language without heads leave LACI out, which the select's hint says. LACI needs
-tag guidance off, so it wins: tagged lines render without `tag_cfg_scale` while it is on. A Direct take made under
-another LACI mode reads **LACI changed**, and the Direct rail's settings line shows the current mode.
+bin behind generation). Renders in a language without heads leave LACI out, which the select's hint says.
+A Direct take made under another LACI mode reads **LACI changed**, and the Direct rail's settings line shows the current mode.
 
 ## Pronunciation input
 

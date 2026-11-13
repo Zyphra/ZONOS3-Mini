@@ -81,7 +81,6 @@ from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit import edit_marker_rows
 from zonos3.tts.edit_align import AsrWorker, FuseAlignWorker, fusealign_installed
 from zonos3.tts.edit_runtime import EditModel, EditRuntime, FillJob
-from zonos3.tts.markup import trained_on_tags
 from zonos3.tts.steering import (
     SteeringBundle,
     check_controls,
@@ -420,12 +419,6 @@ def _get_phoneme_lexicon(config: ServerArgs) -> "PhonemeLexicon | None":
 def _text_tokenizer_spec(config: ServerArgs) -> dict | None:
     """The served text tokenizer spec (EngineConfig.text_tokenizer_spec: the checkpoint's, with --phoneme-rows)."""
     return config.text_tokenizer_spec
-
-
-@functools.lru_cache(maxsize=4)
-def _model_trained_on_tags(model_path: str) -> bool:
-    """zonos3.tts.markup.trained_on_tags, memoized per checkpoint path."""
-    return trained_on_tags(model_path)
 
 
 def _speaker_document(config: ServerArgs, entry: CachedSpeakerReference | DefaultVoice) -> dict:
@@ -1208,7 +1201,6 @@ async def _tts_generate_msg(
             seed=rules.seed,
             controls_cfg_scale=req.controls_cfg_scale,
             speaker_cfg_scale=req.speaker_cfg_scale,
-            tag_cfg_scale=req.tag_cfg_scale,
             stream_decode=stream_decode,
             stream_codebooks=req.stream_codebooks,
             stream_codebooks_scope=req.stream_codebooks_scope,
@@ -1485,8 +1477,6 @@ def _capability_facts(config: ServerArgs) -> CapabilityFacts:
         max_tokens=int(config.max_seq_len),
         prefix_stream=prefix_stream_supported(codec),
         silence_hop=dual_codec_hop(codec),
-        tag_cfg_available=True,
-        tag_cfg_trained=_model_trained_on_tags(str(config.model_path)),
         decoder=default_decoder,
         decoders=decoders,
         condition_tokens=_condition_spec(config),

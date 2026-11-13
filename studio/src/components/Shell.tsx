@@ -88,7 +88,6 @@ export function BackendPanel() {
     ['Speech editing', yesNo(b.edit.speech_editing)],
     ['Speech recognition', yesNo(b.edit.edit_transcribe)],
     ['Pronunciation input', yesNo(!!b.pron.phoneme_tokens)],
-    ['Nonverbal tags', yesNo(!!b.tags)],
     ['Projects on the server', yesNo(!!b.projects)],
   ];
   return createPortal(
@@ -217,8 +216,6 @@ const ROWS: [string, string][] = [
   ['+ − Delete', 'a mood landmark: stronger, weaker, off'],
   ['(S@vQn)', 'X-SAMPA pronunciation in a line (phoneme-token checkpoints); click its IPA chip to edit'],
   ['/ə/', 'look up the selected words’ pronunciations'],
-  ['<', 'in a text field: nonverbal tag palette (point tag at the caret, span tag around the selected words; NV checkpoint)'],
-  ['‹› Tag', 'Direct: tag the selected words from the paint bar'],
   ['?', 'this sheet'],
 ];
 const DIRECT_ROWS: [string, string][] = [

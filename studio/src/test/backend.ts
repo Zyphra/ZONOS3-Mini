@@ -16,7 +16,6 @@ export function offlineBackend(): Backend {
     edit: { speech_editing: false, edit_transcribe: false, edit_max_spans: 3, edit_frame_rate: 15, edit_max_seconds: 150, edit_align_max_seconds: 150, fixture: false },
     pron: { phoneme_tokens: null, phonemize_enabled: false, phonemize_languages: [], phonemize_guess_languages: [], fixture: false },
     projects: null,
-    tags: null,
     decoders: FIXTURE_DECODERS,
     laciLanguages: [],
     startToken: false,

@@ -17,8 +17,6 @@ _data = json.loads(REGISTRY.read_text(encoding="utf-8"))
 SAMPLE_RATE: int = int(_data["sample_rate"])
 # temperature, topk, top_p, min_p, repetition_penalty, repetition_window, repetition_codebooks
 SAMPLING = MappingProxyType(dict(_data["sampling"]))
-TAG_CFG_MIN_SCALE: float = float(_data["tag_cfg_scale"]["min"])
-TAG_CFG_MAX_SCALE: float = float(_data["tag_cfg_scale"]["max"])
 SILENCE_PREFILL_DEFAULT_FRAMES: int = int(_data["silence_prefill_frames"]["default"])
 SILENCE_PREFILL_MAX_FRAMES: int = int(_data["silence_prefill_frames"]["max"])
 DECODE_CONTEXT_FRAMES: int = int(_data["decode_context_frames"])

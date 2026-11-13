@@ -1,7 +1,11 @@
 // Python semantics the speech-edit port needs to reproduce exactly: str.split() / str.strip() over Python whitespace,
 // round() (half to even), format(x, '.Nf') (correctly rounded, exact ties to even) and CPython 3.12's sum() of a mix
 // of ints and floats (Neumaier-compensated float additions, plain int additions). Strings are handled as code points.
-import { pyIsSpace } from '../request/markup';
+// Python str.isspace() for one code point.
+export function pyIsSpace(cp: number): boolean {
+  return (cp >= 0x09 && cp <= 0x0d) || (cp >= 0x1c && cp <= 0x20) || cp === 0x85 || cp === 0xa0 || cp === 0x1680 ||
+    (cp >= 0x2000 && cp <= 0x200a) || cp === 0x2028 || cp === 0x2029 || cp === 0x202f || cp === 0x205f || cp === 0x3000;
+}
 
 const isSpace = (ch: string) => pyIsSpace(ch.codePointAt(0)!);
 

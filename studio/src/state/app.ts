@@ -26,8 +26,6 @@ export const pronTokens = computed(() => backend.value?.pron.phoneme_tokens ?? n
 /** Backend and project inputs of every generate request (`buildRequest`). */
 export const requestContext = computed<RequestContext>(() => ({
   phonemeTokens: pronTokens.value,
-  tags: backend.value?.tags ?? null,
-  tagStrength: projectSettings.value.tagStrength,
   decoder: requestDecoder(backend.value?.decoders ?? [], projectSettings.value.decoder),
   laci: projectSettings.value.laci,
   laciLanguages: backend.value?.laciLanguages ?? [],

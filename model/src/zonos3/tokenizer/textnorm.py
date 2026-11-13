@@ -1,8 +1,8 @@
 """TTS text normalization: zyphra_textnorm (Rust ports of the NeMo grammars, github.com/Zyphra/zyphra-textnorm).
 
 Converts written text to its spoken form ("$5.32" -> "five dollars thirty two cents") before tokenization, in the
-grammar of the request language's ``nemo`` package (registries/languages.json), with the nonverbal markup the model
-reads, pronunciation groups and the start / pause markers kept as typed. Disable globally with ZONOS3_TTS_NORM=0, or
+grammar of the request language's ``nemo`` package (registries/languages.json), with pronunciation groups and the
+start / pause markers kept as typed. Disable globally with ZONOS3_TTS_NORM=0, or
 per request via the text_normalization flag.
 """
 
@@ -14,7 +14,6 @@ import re
 import zyphra_textnorm
 
 from zonos3 import languages
-from zonos3.tts.markup import NONVERBAL_MARKUP_TAGS
 
 collapse_line_breaks = zyphra_textnorm.collapse_line_breaks
 
@@ -29,11 +28,11 @@ def normalization_enabled() -> bool:
 
 
 class TTSTextNormalizer:
-    """The Rust normalizer for server language codes, keeping the nonverbal markup; memoized inside. ``normalize``
+    """The Rust normalizer for server language codes, memoized inside. ``normalize``
     never raises: unsupported languages come back with line breaks collapsed."""
 
     def __init__(self) -> None:
-        self._tn = zyphra_textnorm.Normalizer(NONVERBAL_MARKUP_TAGS)
+        self._tn = zyphra_textnorm.Normalizer()
 
     def normalize(self, text: str, language: str) -> str:
         lang = languages.BY_CODE.get(language)

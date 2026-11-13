@@ -13,8 +13,6 @@ from zonos3.generation import (
     SAMPLING,
     STREAM_CODEBOOKS,
     STREAM_CODEBOOKS_SCOPE,
-    TAG_CFG_MAX_SCALE,
-    TAG_CFG_MIN_SCALE,
 )
 
 
@@ -90,8 +88,6 @@ class GenerationOptions(_Strict):
     controls_cfg_scale: float = 1.0
     # Reference CFG: uncond + scale * (cond - uncond) (1 = off).
     speaker_cfg_scale: float = Field(default=1.0, ge=0.0, allow_inf_nan=False)
-    # Tagged-vs-plain guidance on nonverbal markup (1 = off; above 1 needs markup and speaker / controls CFG at 1).
-    tag_cfg_scale: float = Field(default=1.0, ge=TAG_CFG_MIN_SCALE, le=TAG_CFG_MAX_SCALE)
     # An accent adapter of GET /v2/capabilities "accents" (None = the base model).
     accent: str | None = None
     accent_strength: float = 1.0
@@ -225,8 +221,6 @@ class EditRequest(_Strict):
     min_fill_ratio: float = Field(default=0.7, ge=0.0, le=1.0)
     # Transcribe the edited audio with Qwen3-ASR and report WER/CER against target_text (and its FuseAlign words).
     verify: bool = False
-    # Tag CFG is not offered for edits: any value other than 1.0 is refused (400) rather than ignored.
-    tag_cfg_scale: float = 1.0
     # The audio decoder of the edited clip by id (Capabilities.decoders; None = the server default; unknown: 400).
     decoder: str | None = None
 

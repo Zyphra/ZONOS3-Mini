@@ -1,6 +1,5 @@
 /** Direct: a script split into lines, each with its own voice, delivery painted onto character spans, takes per line. */
 import { computed, effect, signal, untracked } from '@preact/signals';
-import { parseTags } from '../lib/tags';
 import type { GenerateRequest, Rendered } from '../api';
 import { sequence } from '../audio/mix';
 import { errorText, isAbort, render } from '../audio/render';
@@ -273,10 +272,8 @@ function measuredRate(t: Take): number | undefined {
   if (!n) return undefined;
   const frames = (t.audio.pcm.length / t.audio.sr) * FPS;
   const global = durationFactor(s, t.request.controls ?? {});
-  const markers = parseTags(t.request.text).tokens;
   let chars = 0;
   for (let i = 0; i < n; i++) {
-    if (markers.some((m) => i >= m.start && i < m.end)) continue;
     const sp = t.request.control_spans?.find((x) => i >= x.start && i < x.end);
     chars += sp ? durationFactor(s, sp.controls) : 1;
   }

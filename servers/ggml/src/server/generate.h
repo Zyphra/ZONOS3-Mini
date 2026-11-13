@@ -21,8 +21,7 @@ struct GeneratePlan {
     GenReq gr;
     zonos3_prompt prompt;
     zonos3_prompt twin; // n_rows == 0: no CFG twin
-    // "" | "speaker" (speaker row / reference prefix dropped) | "tag" (markup stripped) | "controls" (same prompt,
-    // no steering delta)
+    // "" | "speaker" (speaker row / reference prefix dropped) | "controls" (same prompt, no steering delta)
     std::string cfg_kind;
     std::string span_follow; // X-Control-Span-Follow: "" (no control_spans) | "rate" | "reading"
 };

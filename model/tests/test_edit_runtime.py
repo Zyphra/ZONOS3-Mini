@@ -174,6 +174,27 @@ def test_verify_reports_the_take_transcript_and_words():
     assert len(aligner.aligned) == 1  # the take only: explicit spans never align the original
 
 
+def test_literal_angle_text_survives_editing_and_verification():
+    original = "hello <laugh /> old world"
+    target = "hello <laugh /> new world"
+    runtime = EditRuntime(FakeEngine(), FakeAsr(heard="hello laugh new world"), FakeAligner(enabled=True))
+    out = asyncio.run(
+        runtime.edit(
+            EditRequest(
+                audio_base64=CLIP,
+                original_text=original,
+                target_text=target,
+                verify=True,
+                min_fill_ratio=0.0,
+                seed=5,
+            )
+        )
+    )
+    assert out["original_text"] == original
+    (take,) = out["takes"]
+    assert take["verify"] == {"asr_text": "hello laugh new world", "wer": 0.0, "cer": 0.0}
+
+
 ASR_DETAIL = "Speech recognition is not available on this server: "
 NO_ASR = [None, AsrWorker(python="/nonexistent/.venv-asr/bin/python")]  # no worker; worker not installed
 

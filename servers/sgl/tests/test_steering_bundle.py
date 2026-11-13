@@ -127,3 +127,13 @@ def test_request_steer_delta_adds_the_active_spans_to_the_constant_delta():
     assert torch.equal(req.steer_delta(), torch.tensor([1.0, 1.0]))  # frame 0: outside the span
     req.total_generated = 4
     assert torch.equal(req.steer_delta(), torch.tensor([1.0, 5.0]))
+
+
+def test_literal_angle_text_contributes_to_span_timing(bundle):
+    result = resolve(
+        bundle,
+        spans=[{"start": 11, "end": 13, "controls": {"style.whisper": 1.0}}],
+        text="ab <laugh/>cd",
+        rate=2.0,
+    )
+    assert result.schedule[0, :2].tolist() == [22.0, 26.0]

@@ -42,10 +42,6 @@ class TTSSamplingParams:
     # amplifying the hidden-space controls in output space.
     controls_cfg_scale: float = 1.0
     speaker_cfg_scale: float = 1.0
-    # Tagged-versus-plain classifier-free guidance on nonverbal markup (1.0 = off, the unguided path). Above 1.0 the
-    # scheduler runs a twin on the same prompt with the markup stripped from its text and combines raw logits:
-    # guided = plain + scale * (tagged - plain). Exclusive with controls and speaker CFG.
-    tag_cfg_scale: float = 1.0
     # Progressive decode for the matched long-context codecs: "prefix" streams
     # chunks of an incremental decode on a stateful codec stream, flushed at EOS
     # (equal to the whole decode); None = one exact chunk at EOS (default).
@@ -224,9 +220,6 @@ class TTSUserMsg(BaseTTSBackendMsg):
     uid: int
     input_ids: torch.Tensor  # 2D tensor (seq_len, frame_width)
     sampling_params: TTSSamplingParams
-    # Tag CFG (sampling_params.tag_cfg_scale > 1.0): the same prompt built from the normalized text with its
-    # nonverbal markup stripped; every row before and after the text rows is identical to input_ids.
-    plain_input_ids: torch.Tensor | None = None
     # Exact number of delayed reference rows before the text, including its pad tail.
     speaker_reference_prefix_length: int = 0
     # Optional speaker embedding for voice cloning; shape: (speaker_embedding_dim,)

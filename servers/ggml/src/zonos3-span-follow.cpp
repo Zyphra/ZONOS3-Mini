@@ -205,8 +205,7 @@ std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffse
 }
 
 std::vector<Range> span_token_ranges(const std::u32string & text, const std::u32string & final_,
-                                     const std::vector<Range> & spans, const std::vector<Range> & ranges,
-                                     const std::vector<Range> & markers) {
+                                     const std::vector<Range> & spans, const std::vector<Range> & ranges) {
     std::vector<Range> trimmed;
     trimmed.reserve(ranges.size());
     for (auto [a, b] : ranges) {
@@ -214,30 +213,19 @@ std::vector<Range> span_token_ranges(const std::u32string & text, const std::u32
         while (b > a && py_isspace(final_[b - 1])) b--;
         trimmed.push_back({a, b});
     }
-    std::vector<bool> in_marker;
-    in_marker.reserve(trimmed.size());
-    for (const auto & [a, b] : trimmed) {
-        bool in = false;
-        if (a < b)
-            for (const auto & [s, e] : markers) in = in || (s <= a && b <= e);
-        in_marker.push_back(in);
-    }
     std::vector<Range> out;
     for (auto [start, end] : spans) {
         while (start < end && py_isspace(text[start])) start++;
         while (end > start && py_isspace(text[end - 1])) end--;
         const int s = map_offsets(text, final_, {start})[0], e = map_offsets(text, final_, {end}, true)[0];
-        std::vector<int> hit, spoken;
+        std::vector<int> hit;
         for (int i = 0; i < (int) trimmed.size(); i++) {
             const auto [a, b] = trimmed[i];
             if (a < b && a < e && s < b) {
                 hit.push_back(i);
-                if (!in_marker[i]) spoken.push_back(i);
             }
         }
-        if (!spoken.empty()) {
-            out.push_back({spoken.front(), spoken.back() + 1});
-        } else if (!hit.empty()) {
+        if (!hit.empty()) {
             out.push_back({hit.front(), hit.back() + 1});
         } else {
             int first = (int) ranges.size() - 1;

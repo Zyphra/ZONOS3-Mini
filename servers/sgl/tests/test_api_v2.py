@@ -305,6 +305,22 @@ def test_schema_violations_are_422(client, frontend, fields):
     assert not frontend.sent
 
 
+@pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.parametrize(
+    "path, body",
+    [
+        ("/v2/generate", {"text": "Hello."}),
+        ("/v1/audio/speech", {"model": "zonos3", "input": "Hello."}),
+        ("/v2/edit", {"audio_base64": "x", "target_text": "Hello."}),
+    ],
+)
+def test_removed_tag_field_is_422(client, frontend, path, body, scale):
+    response = client.post(path, json={**body, "tag_cfg_scale": scale})
+    assert response.status_code == 422
+    assert "tag_cfg_scale" in str(response.json()["detail"])
+    assert not frontend.sent
+
+
 def _default_voice(client):
     (voice,) = client.get("/v2/speakers").json()["speakers"]
     return voice

@@ -121,8 +121,8 @@ class TTSReq:
     span_follower: "SpanFollower | None" = None
     # Classifier-free guidance. On the conditional request, cfg_scale != 1.0 and
     # cfg_twin points at its paired twin request with its own prompt and cache:
-    # controls CFG drops the steering delta and schedule, speaker CFG the speaker conditioning,
-    # tag CFG the nonverbal markup in the text. is_cfg_uncond marks the twin
+    # controls CFG drops the steering delta and schedule, speaker CFG the speaker conditioning.
+    # is_cfg_uncond marks the twin
     # (internal, emits no output). guided = twin + cfg_scale*(cond - twin).
     cfg_scale: float = 1.0
     is_cfg_uncond: bool = False

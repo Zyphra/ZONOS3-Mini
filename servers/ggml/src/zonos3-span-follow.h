@@ -60,11 +60,9 @@ struct TextMarkers {
 std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffsets & bpe, const TextMarkers & markers);
 
 // Text-span positions [a, b) of the tokens spelling each character span [start, end) of `text`, once the text is
-// `final_`. `ranges` = token_char_ranges(final_, ...); `markers` = nonverbal_marker_spans(final_)
-// (zonos3.tts.markup): tokens inside a marker do not open or close a span that also covers spoken tokens.
+// `final_`. `ranges` = token_char_ranges(final_, ...); all overlapping non-whitespace tokens participate.
 std::vector<Range> span_token_ranges(const std::u32string & text, const std::u32string & final_,
-                                     const std::vector<Range> & spans, const std::vector<Range> & ranges,
-                                     const std::vector<Range> & markers);
+                                     const std::vector<Range> & spans, const std::vector<Range> & ranges);
 
 // The span gate of one request. observe(frame, pos) takes the readout of the step that generated `frame` (frames
 // count the stream's generated rows: a LACI continuation's start at its history_rows); delta(frame) decides and

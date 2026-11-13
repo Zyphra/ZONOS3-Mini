@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { regionDoses, type Doses } from '../../src/edit/doses';
 import { editPromptTokens, extractFill, shearedBlock, spliceEdit, validateEditSpans, type EditLayout } from '../../src/edit/frames';
 import { pyFixed, pyRound, pySumFloats } from '../../src/edit/py';
-import { alignTokens, canonicalMarkup, targetTokens, tokenChars, tokens } from '../../src/edit/text';
+import { alignTokens, targetTokens, tokenChars, tokens } from '../../src/edit/text';
 import {
   alignedWords, diffSpans, editWords, expectedFillSeconds, opcodes, planEditWindows, secondsToSpans, WordDiff,
   type EditWord, type FuseAlignWord, type Span, type WordIn,
@@ -23,7 +23,6 @@ type Scenario = {
 interface Goldens {
   tokens: { text: string; out: string[] }[];
   alignTokens: { text: string; lang: string; out: string[] }[];
-  canonicalMarkup: { text: string; out: string }[];
   targetTokens: { text: string; out: string[][] }[];
   tokenChars: { token: string; out: number }[];
   alignedWords: ({ words: FuseAlignWord[]; wordTokens: string[][] } & Outcome<EditWord[]>)[];
@@ -54,13 +53,16 @@ function expectOutcome<T>(f: () => T, o: Outcome<unknown>, label: string): void 
   expect(f(), label).toEqual(o.out);
 }
 
-describe('edit text (textmatch, align_text, markup)', () => {
+describe('edit text (textmatch, align_text, target text)', () => {
   it('tokens', () => { for (const c of g.tokens) expect(tokens(c.text), c.text).toEqual(c.out); });
   it('alignTokens', () => {
     for (const c of g.alignTokens) expect(alignTokens(c.text, c.lang), `${c.lang} ${c.text}`).toEqual(c.out);
   });
-  it('canonicalMarkup', () => { for (const c of g.canonicalMarkup) expect(canonicalMarkup(c.text), c.text).toBe(c.out); });
-  it('targetTokens', () => { for (const c of g.targetTokens) expect(targetTokens(canonicalMarkup(c.text)), c.text).toEqual(c.out); });
+  it('targetTokens', () => { for (const c of g.targetTokens) expect(targetTokens(c.text), c.text).toEqual(c.out); });
+  it('treats angle-bracket words as ordinary text and pronunciation groups as atomic', () => {
+    expect(targetTokens('Hello <laugh/> there')[0]).toEqual(['HELLO', 'LAUGH', 'THERE']);
+    expect(targetTokens('Hello \uE000ab\uE001 there')[0]).toEqual(['HELLO', '\uE000ab\uE001', 'THERE']);
+  });
   it('tokenChars', () => { for (const c of g.tokenChars) expect(tokenChars(c.token).value, c.token).toBe(c.out); });
 });
 

@@ -3,7 +3,6 @@ import type { ControlSpan, ControlsSpec, Dose, GenerateRequest } from '../api';
 import { laciFields, type LaciMode } from '../lib/laci';
 import { clamp } from '../lib/math';
 import { toSent, type PronTokens, type Sent } from '../lib/pron';
-import { hasTags } from '../lib/tags';
 import { mixAt } from './atlas';
 import type { Design } from './design';
 import { controlDose, controlUsable, toDoses, type Values } from './engine';
@@ -35,8 +34,6 @@ export interface RequestExtras {
 /** What a request needs from the backend and the project besides the design (Studio: `requestContext`). */
 export interface RequestContext {
   phonemeTokens: PronTokens | null;
-  tags: { min_scale: number; max_scale: number } | null;
-  tagStrength: number;
   /** The `decoder` to send (`requestDecoder`): null = the server default, left out of the request. */
   decoder: string | null;
   /** The project's LACI mode (`laciFields`); undefined = off. */
@@ -123,14 +120,6 @@ export function buildRequest(s: ControlsSpec, ctx: RequestContext, d: Design, te
   // Both A/B sides: the start is not a control.
   if (x.startImmediately && ctx.startToken) req.start_immediately = true;
   if (x.unsteered) return req;
-  // Tag guidance strengthens nonverbal tags; the server takes one guidance per request, so voice guidance is off.
-  // LACI needs tag guidance off (tag_cfg_scale 1), and wins.
-  const tags = ctx.tags;
-  const strength = ctx.tagStrength;
-  if (!laci.laci && tags && strength > 1 && hasTags(text)) {
-    req.tag_cfg_scale = Math.round(clamp(strength, Math.max(1, tags.min_scale), tags.max_scale) * 100) / 100;
-    req.speaker_cfg_scale = 1;
-  }
   const controls = toDoses(s, mergeValues(s, d.values, x.extra), mixAt(d.pin, s.ui.accents), d.mode);
   if (Object.keys(controls).length) req.controls = controls;
   const spans = controlSpans(s, x.spans, d, text, sent.map);

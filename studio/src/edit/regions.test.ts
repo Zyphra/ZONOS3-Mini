@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
 // zonos3.tts.textmatch.tokens on fixed texts, written by servers/web/tests/edit/make_goldens.py.
 import goldens from '../../../servers/web/tests/edit/goldens.json';
-import { normalizeTokens, planRegions, textWords, type Word } from './regions';
+import { normalizeTokens, planRegions, textWords, unheard, type Word } from './regions';
 
 describe('edit tokens', () => {
   it("equal the server's (textmatch.tokens), CJK words included", () => {
-    // Markup and pronunciation groups are tokens of their own here, by design.
-    const plain = goldens.tokens.filter((c) => !/[<\ue000]/.test(c.text));
+    // Only pronunciation sent-form groups are atomic rather than ordinary edit tokens.
+    const plain = goldens.tokens.filter((c) => !/\ue000/.test(c.text));
     expect(plain.some((c) => /[\u4e00-\u9fff]/.test(c.text))).toBe(true);
     for (const c of plain) expect(normalizeTokens(c.text), c.text).toEqual(c.out);
+  });
+
+  it('treats angle-bracket words as ordinary words when checking what was heard', () => {
+    const target = normalizeTokens('Hello <laugh/> there');
+    expect(target).toEqual(['HELLO', 'LAUGH', 'THERE']);
+    expect(unheard(target, 'Hello there', [0, 1, 2])).toEqual([1]);
+    expect(unheard(target, 'Hello laugh there', [0, 1, 2])).toEqual([]);
   });
 });
 

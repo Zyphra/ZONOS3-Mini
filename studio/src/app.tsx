@@ -12,7 +12,6 @@ import { CastScreen } from './screens/cast/CastScreen';
 import { DirectScreen } from './screens/direct/DirectScreen';
 import { EditScreen } from './screens/edit/EditScreen';
 import { PronEditor } from './components/Pron';
-import { TagPalette } from './components/Tags';
 import { ZyphraMark, ZyphraWord } from './components/Brand';
 import { ProjectLauncher, ProjectSwitcher } from './components/Projects';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -234,7 +233,6 @@ export function App() {
       <BackendPanel />
       <ProjectSettings />
       <PronEditor />
-      <TagPalette />
       <ProjectLauncher />
       <ConfirmDialog />
     </div>

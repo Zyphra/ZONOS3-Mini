@@ -57,7 +57,7 @@ def _capabilities(lm, assets) -> set[str]:
     from zonos3.tts.superbpe import load_spec
 
     spec = load_spec(lm.root)
-    caps = {"tag_cfg"}  # every checkpoint serves tag CFG (the sgl facts' tag_cfg_available)
+    caps = set()
     if spec is not None and spec.get("phonemes") is not None:
         caps.add("phoneme_tokens")
     if spec is not None and spec.get("start") is not None:
@@ -76,7 +76,7 @@ def _sgl_reqs(tts, request: dict):
     from zonos3.utils.release import resolve_dir_or_local
     from zonos3_sgl.message.tts import TTSSamplingParams, TTSUserMsg
     from zonos3_sgl.server import api_server as api
-    from zonos3_sgl.tokenizer.server import _silence_rows, _tag_cfg_plain_text
+    from zonos3_sgl.tokenizer.server import _silence_rows
     from zonos3_sgl.tokenizer.vocoder import TTSVocoderManager
 
     model_config = tts.engine.model_config
@@ -107,7 +107,6 @@ def _sgl_reqs(tts, request: dict):
         seed=rules.seed,
         speaker_cfg_scale=r.speaker_cfg_scale,
         controls_cfg_scale=r.controls_cfg_scale,
-        tag_cfg_scale=r.tag_cfg_scale,
     )
     msg = SimpleNamespace(
         sampling_params=sampling,
@@ -130,14 +129,10 @@ def _sgl_reqs(tts, request: dict):
         reference_codes=codes,
         speaker_row=rules.embedding is not None,
     )
-    plain_text = _tag_cfg_plain_text(msg, text)
     prefill = None if prefill is None else prefill.to(torch.int32)
     user = TTSUserMsg(
         uid=10_000 + len(tts.waiting_reqs),
         input_ids=rows.input_ids,
-        plain_input_ids=None
-        if plain_text is None
-        else rows.with_text(text_rows, plan.text_rows(builder, plain_text, silence=prefill)),
         speaker_reference_prefix_length=rows.reference_prefix_length,
         sampling_params=sampling,
         speaker_embedding=rules.embedding,

@@ -314,9 +314,11 @@ def test_duplicate_decoder_ids_are_refused(files):
     assert list(engine.decoders) == ["full_mr"] and engine.decoder.id == "full_mr"
 
 
-def test_edit_refuses_tag_cfg(client):
-    r = client.post("/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hi", "tag_cfg_scale": 2.0})
-    assert r.status_code == 400 and r.json()["detail"]
+@pytest.mark.parametrize("scale", [1.0, 2.0])
+def test_edit_rejects_removed_tag_cfg(client, scale):
+    r = client.post("/v2/edit", json={"audio_base64": wav_b64(), "target_text": "hi", "tag_cfg_scale": scale})
+    assert r.status_code == 422
+    assert "tag_cfg_scale" in str(r.json()["detail"])
 
 
 class FakeAligner:
