@@ -65,6 +65,16 @@ describe('lite script → requests', () => {
     expect(messages('@language en_us\n@language de\nHi')).toEqual(['2: @language is set twice (first on line 1).']);
   });
 
+  it('puts each error on the characters it is about', () => {
+    const slice = (t: string) => {
+      const e = compile(t).errors[0];
+      return t.slice(e.from, e.to);
+    };
+    expect(slice('Ann {gender 1}: Hi')).toBe('gender 1');
+    expect(slice('@foo\nHi')).toBe('@foo');
+    expect(slice('Hi [ ]{happy 1}')).toBe('[ ]{happy 1}');
+  });
+
   it('takes @seed over Advanced’s seed over a random one, and a default voice’s own language', () => {
     expect(compile('@seed 3\nHi', { seed: 9 }).render!.seed).toBe(3);
     expect(compile('Hi', { seed: 9 }).render!.seed).toBe(9);
@@ -78,7 +88,7 @@ describe('lite script → requests', () => {
     const r = compile('@laci whole\nHi.\nlie: Hallo.');
     expect(r.render!.parts[0].request).toMatchObject({ laci: true, stream_decode: 'whole' });
     expect(r.render!.parts[1].request.laci).toBeUndefined();
-    expect(r.warnings).toEqual([{ line: 3, message: 'No alignment heads for German: its lines run without LACI.' }]);
+    expect(r.warnings).toEqual([{ line: 3, from: 21, to: 27, message: 'No alignment heads for German: its lines run without LACI.' }]);
   });
 
   it('renders plain lines without a steering bundle and refuses controls', () => {
@@ -97,7 +107,7 @@ describe('lite script → requests', () => {
       ['Ann: hi', 'Ann en British F 1'],
       ['Note: hi', 'Ann en British F 1'],
     ]);
-    expect(r.warnings).toEqual([{ line: 3, message: '“Note:” is spoken: no voice is named Note.' }]);
+    expect(r.warnings).toEqual([{ line: 3, from: 16, to: 20, message: '“Note:” is spoken: no voice is named Note.' }]);
     expect(compile('Ann: hi').render!.parts[0].text).toBe('hi');
   });
 });

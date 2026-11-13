@@ -128,8 +128,15 @@
             <textarea id="text" class="input" rows="4" required>Hello! This is my cloned voice.</textarea>
           </div>
           <div id="panel-script" hidden>
-            <label class="field" for="script">Script <span class="hint-inline">Studio’s controls as text · ⌘↵ / Ctrl+Enter generates</span></label>
-            <textarea id="script" class="input script-input" rows="10" spellcheck="false" autocomplete="off" placeholder="# Lines speak with the voice of step 1.&#10;@voice Bright {pitch 1, bright 2}&#10;Hello! This is my cloned voice.&#10;Bright {happy 3}: And this is [a designed one]{projection 1.5}."></textarea>
+            <label class="field" id="script-label">Script <span class="hint-inline">Studio’s controls as text · Tab completes · ⌘↵ / Ctrl+Enter generates</span></label>
+            <div id="script-editor" class="script-editor">
+              <div id="script" class="input script-input" contenteditable="plaintext-only" role="textbox" aria-multiline="true" aria-labelledby="script-label" aria-describedby="script-issues" spellcheck="false" autocapitalize="off" autocorrect="off" translate="no" data-placeholder="# Lines speak with the voice of step 1.&#10;@voice Bright {pitch 1, bright 2}&#10;Hello! This is my cloned voice.&#10;Bright {happy 3}: And this is [a designed one]{projection 1.5}."></div>
+              <div id="script-complete" class="script-complete" hidden>
+                <ul id="script-complete-list" role="listbox" aria-label="Suggestions"></ul>
+                <p class="sc-info"></p>
+                <p class="sc-keys">Tab inserts · ↑ ↓ choose · Esc closes</p>
+              </div>
+            </div>
             <ul id="script-issues" class="script-issues" aria-live="polite" hidden></ul>
             <details class="pro script-help">
               <summary>Syntax</summary>

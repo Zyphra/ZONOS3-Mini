@@ -8,6 +8,7 @@ import '@fontsource/jetbrains-mono/latin-500.css';
 import './lite.css';
 import type { ControlsSpec } from '../api';
 import { mountChrome, setLabel } from '../lib/chrome';
+import { editableText } from '../lib/dom';
 import { bytesToBase64, download, encodeNpy, slug } from '../lib/files';
 import { levelMeter } from '../lib/level';
 import { wavBytes } from '../lib/wav';
@@ -33,6 +34,7 @@ import {
   type GenerateRequest,
   type Speaker,
 } from './api';
+import type { ScriptEditor } from './editor';
 import { StreamPlayer } from './player';
 import type * as ScriptModule from './script';
 import type { Issue, ScriptEnv, ScriptResult } from './script';
@@ -77,7 +79,10 @@ const ui = {
   textPanel: $('panel-text'),
   scriptPanel: $('panel-script'),
   text: $<HTMLTextAreaElement>('text'),
-  script: $<HTMLTextAreaElement>('script'),
+  script: $<HTMLDivElement>('script'),
+  scriptBox: $<HTMLDivElement>('script-editor'),
+  scriptComplete: $<HTMLDivElement>('script-complete'),
+  scriptLabel: $<HTMLLabelElement>('script-label'),
   scriptIssues: $<HTMLUListElement>('script-issues'),
   scriptVocab: $<HTMLParagraphElement>('script-vocab'),
   language: $<HTMLSelectElement>('language'),
@@ -129,6 +134,8 @@ interface Kit {
 let kit: Kit | null = null;
 let kitLoading: Promise<void> | null = null;
 let kitError: string | null = null;
+/** The Script box's coloring, squiggles and completion, mounted with the kit. */
+let editor: ScriptEditor | null = null;
 /** The script's last check: its issues show under it; Generate is off while it has errors. */
 let checked: ScriptResult | null = null;
 let generation: AbortController | null = null;
@@ -226,6 +233,8 @@ function disableAll(text: string) {
   )) {
     el.disabled = true;
   }
+  ui.script.contentEditable = 'false';
+  ui.script.setAttribute('aria-disabled', 'true');
 }
 
 // ── Voices ────────────────────────────────────────────────────────────────────────────────────────
@@ -421,7 +430,7 @@ async function toggleRecording() {
 
 function updateGenerate() {
   if (input === 'script') {
-    const why = generation ? '' : (kitError ?? (!kit ? 'Loading Studio’s controls…' : !ui.script.value.trim() ? 'Write a script first' : checked?.errors.length ? 'Fix the script first' : null));
+    const why = generation ? '' : (kitError ?? (!kit ? 'Loading Studio’s controls…' : !editableText(ui.script).trim() ? 'Write a script first' : checked?.errors.length ? 'Fix the script first' : null));
     ui.generate.disabled = why !== null;
     show(ui.why, why || null);
     return;
@@ -455,14 +464,15 @@ function showInput(next: 'text' | 'script') {
 function loadKit(): Promise<void> {
   kitLoading ??= (async () => {
     try {
-      const [m, spec] = await Promise.all([import('./script'), controls()]);
+      const [m, ed, spec] = await Promise.all([import('./script'), import('./editor'), controls()]);
       kit = { m, spec: spec ?? m.NO_CONTROLS, steering: !!spec };
+      editor ??= ed.mountScriptEditor({ el: ui.script, root: ui.scriptBox, popup: ui.scriptComplete });
       ui.scriptVocab.textContent = m.vocabulary(kit.spec, kit.steering);
       kitError = null;
       checkScript();
     } catch (e) {
       kitError = `Couldn’t load Studio’s controls: ${message(e)}`;
-      showIssues({ errors: [{ line: 0, message: kitError }], warnings: [] });
+      showIssues({ errors: [{ line: 0, from: 0, to: 0, message: kitError }], warnings: [] });
       kitLoading = null;
     } finally {
       updateGenerate();
@@ -494,9 +504,12 @@ let checkTimer = 0;
 function checkScript() {
   clearTimeout(checkTimer);
   if (!kit || !serverCaps) return;
-  checked = kit.m.compileScript(ui.script.value, scriptEnv(kit, serverCaps));
+  const text = editableText(ui.script);
+  const env = scriptEnv(kit, serverCaps);
+  editor?.setEnv(env);
+  checked = kit.m.compileScript(text, env);
   // A blank script says so beside Generate, not as an issue under the box.
-  showIssues(ui.script.value.trim() ? checked : { errors: [], warnings: [] });
+  showIssues(text.trim() ? checked : { errors: [], warnings: [] });
   updateGenerate();
 }
 
@@ -514,8 +527,10 @@ function showIssues(result: { errors: Issue[]; warnings: Issue[] }) {
   const item = (issue: Issue, className: string) => Object.assign(document.createElement('li'), { className, textContent: issue.line ? `Line ${issue.line}: ${issue.message}` : issue.message });
   ui.scriptIssues.replaceChildren(...result.errors.map((x) => item(x, 'is-error')), ...result.warnings.map((x) => item(x, 'is-warn')));
   ui.scriptIssues.hidden = !result.errors.length && !result.warnings.length;
+  editor?.setIssues(result);
 }
 
+ui.scriptLabel.addEventListener('click', () => ui.script.focus());
 ui.script.addEventListener('input', scheduleCheck);
 ui.script.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -622,7 +637,7 @@ async function generateText() {
 async function generateScript() {
   if (!kit || !serverCaps || generation) return;
   const ctrl = startGeneration();
-  let result = kit.m.compileScript(ui.script.value, scriptEnv(kit, serverCaps));
+  let result = kit.m.compileScript(editableText(ui.script), scriptEnv(kit, serverCaps));
   if (!result.render && !result.errors.length && result.usesSelected) {
     // Step 1's clip not yet cloned: clone it, then the script speaks with it.
     ui.status.textContent = 'Cloning the clip…';
@@ -631,7 +646,7 @@ async function generateScript() {
     } catch (e) {
       return fail(message(e));
     }
-    result = kit.m.compileScript(ui.script.value, scriptEnv(kit, serverCaps));
+    result = kit.m.compileScript(editableText(ui.script), scriptEnv(kit, serverCaps));
   }
   checked = result;
   showIssues(result);

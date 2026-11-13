@@ -16,12 +16,16 @@ import { controlUsable, presetToValues, type Values } from '../state/engine';
 import { DEFAULT_GAP, GAP_RANGE } from '../state/lines';
 import { DEFAULT_SETTINGS } from '../state/projectSchema';
 import { buildRequest, capsContext } from '../state/requests';
-import { findSpeaker, layerSpans, modeFor, resolveAccents, resolveValues } from '../state/resolve';
+import { findSpeaker, layerSpans, modeFor, resolveAccents, resolveValues, type AccentResolution } from '../state/resolve';
 import type { Capabilities, GenerateRequest, Speaker } from './api';
+import { DIRECTIVES, NUMBER, parseScript, speakerNames, VOICE_NAME_MAX, type ItemList, type Loc, type ScriptLine } from './syntax';
 
 export interface Issue {
   /** 1-based line of the script; 0: the whole script. */
   line: number;
+  /** The characters it is about (absolute offsets); 0, 0 for line 0. */
+  from: number;
+  to: number;
   message: string;
 }
 
@@ -80,16 +84,28 @@ export const NO_CONTROLS: ControlsSpec = {
   ui: { groups: [], controls: [], accents: [], presets: {}, preview_text: '', request_defaults: {}, identity_threshold: 0 },
 };
 
-const DIRECTIVES = ['language', 'mode', 'seed', 'laci', 'decoder', 'tags', 'gap', 'baseline', 'voice'];
-const NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
-const VOICE = /^([^:{}\[\]=@#,\\]+?)\s*(?:=\s*([^{}]+?))?\s*(?:\{([^{}]*)\})?$/;
-/** After a voice name at the start of a line: optional `{delivery}`, then the colon. */
-const PREFIX = /^\s*(?:\{([^{}]*)\})?\s*:/;
-const SPAN = /\[([^\[\]]*)\]\{([^{}]*)\}/g;
-const NO_STEERING = 'This server has no steering bundle (GET /v2/controls answers 404): controls, presets and accents are off.';
+export const NO_STEERING = 'This server has no steering bundle (GET /v2/controls answers 404): controls, presets and accents are off.';
 const SEED_MAX = 4294967295;
 
 const isMode = (s: string): s is SpeakerMode => s === 'embedding' || s === 'reference';
+
+/** An error about `loc`, not the whole line. */
+class LocError extends Error {
+  constructor(
+    message: string,
+    readonly loc: Loc,
+  ) {
+    super(message);
+  }
+}
+
+/** `loc`, or the trimmed line when `loc` is empty. */
+function fix(l: { loc: Loc }, loc: Loc): Loc {
+  const r = loc.to > loc.from ? loc : l.loc;
+  return { from: r.from, to: r.to };
+}
+
+type Warn = (messages: readonly string[], loc: Loc) => void;
 
 interface Items {
   values: Record<string, number>;
@@ -97,54 +113,80 @@ interface Items {
   /** The preset's key in `spec.ui.presets`. */
   preset?: string;
   mode?: SpeakerMode;
+  /** Where each was written, by control id, `accent:<id>`, `preset` or `mode`; a later repeat wins. */
+  locs: Record<string, Loc>;
 }
 
 /** `control value, …` (on a @voice also `preset Name`, `accent id strength`, `mode m`); a later repeat wins. */
-function parseItems(body: string, spec: ControlsSpec, steering: boolean, onVoice: boolean): Items {
-  const out: Items = { values: {}, accents: {} };
-  for (const raw of body.split(',')) {
-    const item = raw.trim();
-    if (!item) continue;
-    const words = item.split(/\s+/);
+function readItems(list: ItemList | null, spec: ControlsSpec, steering: boolean, onVoice: boolean): Items {
+  const out: Items = { values: {}, accents: {}, locs: {} };
+  for (const item of list?.items ?? []) {
+    const words = [item.head.text, ...item.args.map((w) => w.text)];
     const head = words[0].toLowerCase();
     const special = head === 'preset' || head === 'accent' || head === 'mode';
-    if (special && !onVoice) throw new Error('preset, accent and mode go on a @voice line.');
+    if (special && !onVoice) throw new LocError('preset, accent and mode go on a @voice line.', item);
     if (head === 'mode') {
       const mode = words[1]?.toLowerCase() ?? '';
-      if (words.length !== 2 || !isMode(mode)) throw new Error('mode takes embedding or reference.');
+      if (words.length !== 2 || !isMode(mode)) throw new LocError('mode takes embedding or reference.', item);
       out.mode = mode;
+      out.locs.mode = item;
       continue;
     }
-    if (!special && (words.length !== 2 || !NUMBER.test(words[1]))) throw new Error(`Expected “control value” (e.g. age 1), got “${item}”.`);
-    if (!steering) throw new Error(NO_STEERING);
+    if (!special && (words.length !== 2 || !NUMBER.test(words[1]))) throw new LocError(`Expected “control value” (e.g. age 1), got “${item.text}”.`, item);
+    if (!steering) throw new LocError(NO_STEERING, item);
     if (head === 'preset') {
-      const name = item.slice(words[0].length).trim();
+      const name = item.text.slice(item.head.text.length).trim();
       const presets = Object.keys(spec.ui.presets);
       const key = Object.hasOwn(spec.ui.presets, name) ? name : presets.find((k) => k.toLowerCase() === name.toLowerCase());
-      if (!key) throw new Error(`Unknown preset '${name}'. Presets: ${presets.join(', ')}`);
+      if (!key) throw new LocError(`Unknown preset '${name}'. Presets: ${presets.join(', ')}`, item);
       out.preset = key;
+      out.locs.preset = item;
     } else if (head === 'accent') {
-      if (words.length !== 3 || !NUMBER.test(words[2])) throw new Error('accent takes an id and a strength: accent irish 1.2.');
-      out.accents[words[1].toLowerCase()] = Number(words[2]);
-    } else out.values[head] = Number(words[1]);
+      if (words.length !== 3 || !NUMBER.test(words[2])) throw new LocError('accent takes an id and a strength: accent irish 1.2.', item);
+      const id = words[1].toLowerCase();
+      out.accents[id] = Number(words[2]);
+      out.locs[`accent:${id}`] = item;
+    } else {
+      out.values[head] = Number(words[1]);
+      out.locs[head] = item;
+    }
   }
   return out;
 }
 
-/** Delivery over a whole line (or every line: @baseline): delivery controls, none of them span-only. */
-function wholeLine(spec: ControlsSpec, items: Items, warn: (messages: string[]) => void): Values {
-  const r = resolveValues(spec, items.values, 'delivery');
-  warn(r.warnings);
-  for (const id of Object.keys(r.values)) {
-    const c = spec.ui.controls.find((x) => x.id === id)!;
-    if (c.span_only) throw new Error(`${c.label} goes on words, not a whole line: [words]{${c.id} 4}.`);
+/** `resolveValues` per item, so each error and warning lands on its item; the warnings once all resolve. */
+function resolveItems(spec: ControlsSpec, items: Items, kind: 'design' | 'delivery', warn: Warn): Values {
+  const values: Values = {};
+  const said: [string[], Loc][] = [];
+  for (const [id, v] of Object.entries(items.values)) {
+    let r: ReturnType<typeof resolveValues>;
+    try {
+      r = resolveValues(spec, { [id]: v }, kind);
+    } catch (e) {
+      throw new LocError(e instanceof Error ? e.message : String(e), items.locs[id]);
+    }
+    Object.assign(values, r.values);
+    said.push([r.warnings, items.locs[id]]);
   }
-  return r.values;
+  for (const [messages, loc] of said) warn(messages, loc);
+  return values;
+}
+
+/** Delivery over a whole line (or every line: @baseline): delivery controls, none of them span-only. */
+function wholeLine(spec: ControlsSpec, items: Items, warn: Warn): Values {
+  const values = resolveItems(spec, items, 'delivery', warn);
+  for (const id of Object.keys(values)) {
+    const c = spec.ui.controls.find((x) => x.id === id)!;
+    if (c.span_only) throw new LocError(`${c.label} goes on words, not a whole line: [words]{${c.id} 4}.`, items.locs[id]);
+  }
+  return values;
 }
 
 interface VoiceDef {
   name: string;
   line: number;
+  /** The voice's item list, else its name: where errors about the voice as a whole go. */
+  loc: Loc;
   /** The library voice after `=`; null: step 1's voice (`fromSelected`), or a reference that failed. */
   base: Speaker | null;
   fromSelected: boolean;
@@ -171,6 +213,8 @@ function voiceMode(spec: ControlsSpec, def: VoiceDef, base: Speaker, preferred: 
 
 interface Speech {
   line: number;
+  /** The line's text after its prefix. */
+  loc: Loc;
   voice: VoiceDef | null;
   /** A library voice named at the start of the line. */
   speaker: Speaker | null;
@@ -179,42 +223,43 @@ interface Speech {
   placed: { start: number; end: number; values: Values }[];
 }
 
+type DirectiveLine = Extract<ScriptLine, { kind: 'directive' }>;
+
 export function compileScript(text: string, env: ScriptEnv, random: () => number = Math.random): ScriptResult {
   const { spec, steering } = env;
   const errors: Issue[] = [];
   const warnings: Issue[] = [];
-  const at = (line: number, run: () => void) => {
+  /** Runs `run` for line `l`: what it throws is an error on its LocError's range, else on `loc`. */
+  const at = (l: { line: number; loc: Loc }, loc: Loc, run: () => void) => {
     try {
       run();
     } catch (e) {
-      errors.push({ line, message: e instanceof Error ? e.message : String(e) });
+      errors.push({ line: l.line, ...fix(l, e instanceof LocError ? e.loc : loc), message: e instanceof Error ? e.message : String(e) });
     }
   };
-  const warnOn = (line: number) => (messages: string[]) => {
-    for (const message of messages) warnings.push({ line, message });
-  };
+  const warnAt =
+    (l: { line: number; loc: Loc }): Warn =>
+    (messages, loc) => {
+      for (const message of messages) warnings.push({ line: l.line, ...fix(l, loc), message });
+    };
 
-  // Pass 1: directives (global, anywhere) and the speech lines.
+  const tree = parseScript(text, speakerNames(env.speakers));
+  // Pass 1: directives (global, anywhere).
   const set: { language?: string; mode?: SpeakerMode; seed?: number; laci?: LaciMode; decoder?: string; tags?: number; gap?: number; baseline?: Values } = {};
-  const seen = new Map<string, number>();
+  const seen = new Map<string, DirectiveLine>();
   const voices = new Map<string, VoiceDef>();
-  const lines: { line: number; text: string; escaped: boolean }[] = [];
-  text.split(/\r?\n/).forEach((raw, i) => {
-    const line = i + 1;
-    const s = raw.trim();
-    if (!s || s.startsWith('#')) return;
-    if (s.startsWith('\\')) return void lines.push({ line, text: s.slice(1), escaped: true });
-    if (!s.startsWith('@')) return void lines.push({ line, text: s, escaped: false });
-    at(line, () => {
-      const m = /^@([a-z]+)\b\s*(.*)$/i.exec(s);
-      const kw = m?.[1].toLowerCase() ?? s.slice(1).split(/\s/)[0];
-      if (!m || !DIRECTIVES.includes(kw)) throw new Error(`Unknown directive @${kw}. Directives: ${DIRECTIVES.map((d) => `@${d}`).join(', ')}.`);
-      const arg = m[2];
+  for (const l of tree) {
+    if (l.kind !== 'directive') continue;
+    // Errors about the argument go on it.
+    at(l, l.arg, () => {
+      const kw = l.name ?? l.at.text.slice(1);
+      if (!l.name || !DIRECTIVES.includes(kw)) throw new LocError(`Unknown directive @${kw}. Directives: ${DIRECTIVES.map((d) => `@${d}`).join(', ')}.`, l.at);
+      const arg = l.arg.text;
       const a = arg.toLowerCase();
       if (kw !== 'voice') {
         const first = seen.get(kw);
-        if (first) throw new Error(`@${kw} is set twice (first on line ${first}).`);
-        seen.set(kw, line);
+        if (first) throw new LocError(`@${kw} is set twice (first on line ${first.line}).`, l.at);
+        seen.set(kw, l);
       }
       switch (kw) {
         case 'language': {
@@ -255,44 +300,49 @@ export function compileScript(text: string, env: ScriptEnv, random: () => number
           break;
         }
         case 'baseline':
-          set.baseline = wholeLine(spec, parseItems(arg, spec, steering, false), warnOn(line));
+          set.baseline = wholeLine(spec, readItems(l.items, spec, steering, false), warnAt(l));
           break;
         case 'voice': {
-          const v = VOICE.exec(arg);
-          if (!v) throw new Error('Write @voice Name = library voice {…}, or @voice Name {…} for the voice of step 1.');
-          const name = v[1].trim();
-          if (name.length > 40) throw new Error('A voice name has at most 40 characters.');
+          const v = l.voice!;
+          if (!v.valid) throw new Error('Write @voice Name = library voice {…}, or @voice Name {…} for the voice of step 1.');
+          const name = v.name.text;
+          if (name.length > VOICE_NAME_MAX) throw new LocError(`A voice name has at most ${VOICE_NAME_MAX} characters.`, v.name);
           const first = voices.get(name.toLowerCase());
-          if (first) throw new Error(`Voice “${name}” is defined twice (first on line ${first.line}).`);
+          if (first) throw new LocError(`Voice “${name}” is defined twice (first on line ${first.line}).`, v.name);
           // Registered before its checks: lines naming a broken voice report only the voice's own error.
-          const def: VoiceDef = { name, line, base: null, fromSelected: v[2] === undefined, values: {}, pin: homePin() };
+          const def: VoiceDef = { name, line: l.line, loc: fix(l, v.items ?? v.name), base: null, fromSelected: v.eq === null, values: {}, pin: homePin() };
           voices.set(name.toLowerCase(), def);
-          if (v[2] !== undefined) {
-            const ref = v[2].trim();
-            const base = findSpeaker(env.speakers, ref);
-            if (!base) throw new Error(`No library voice “${ref}”. Voices: ${env.speakers.map((s) => s.label).join(', ')}.`);
+          if (v.ref) {
+            const base = findSpeaker(env.speakers, v.ref.text);
+            if (!base) throw new LocError(`No library voice “${v.ref.text}”. Voices: ${env.speakers.map((s) => s.label).join(', ')}.`, v.ref);
             def.base = base;
           }
           // Studio's order whatever the written one: preset, values, accents, mode.
-          const items = parseItems(v[3] ?? '', spec, steering, true);
+          const items = readItems(v.items, spec, steering, true);
           if (items.preset) {
-            if (items.mode === 'reference') throw new Error('A preset sets mode embedding.');
+            if (items.mode === 'reference') throw new LocError('A preset sets mode embedding.', items.locs.preset);
             const p = presetToValues(spec.ui.presets[items.preset]);
             def.values = p.values;
             def.pin = pinForMix(p.accents, spec.ui.accents, def.pin.tab);
             def.mode = 'embedding';
           }
           if (Object.keys(items.values).length) {
-            const r = resolveValues(spec, items.values, 'design');
-            warnOn(line)(r.warnings);
+            const values = resolveItems(spec, items, 'design', warnAt(l));
             for (const id of Object.keys(items.values)) {
-              if (r.values[id]) def.values[id] = r.values[id];
+              if (values[id]) def.values[id] = values[id];
               else delete def.values[id];
             }
           }
           if (Object.keys(items.accents).length) {
-            const r = resolveAccents(spec, items.accents);
-            warnOn(line)(r.warnings);
+            const list = v.items!;
+            let r: AccentResolution;
+            try {
+              r = resolveAccents(spec, items.accents);
+            } catch (e) {
+              const bad = Object.keys(items.accents).find((id) => !spec.ui.accents.some((x) => x.id === id));
+              throw new LocError(e instanceof Error ? e.message : String(e), bad ? items.locs[`accent:${bad}`] : list);
+            }
+            warnAt(l)(r.warnings, list);
             def.pin = r.pin;
           }
           if (items.mode) def.mode = items.mode;
@@ -300,74 +350,56 @@ export function compileScript(text: string, env: ScriptEnv, random: () => number
         }
       }
     });
-  });
+  }
 
   const preferred = set.mode ?? 'embedding';
   // Each voice against its base: a library voice's now, step 1's when it has one (after the clone, else).
   for (const def of voices.values()) {
     const base = def.fromSelected ? env.selected : def.base;
-    if (base && !errors.some((e) => e.line === def.line)) at(def.line, () => (def.speaks = voiceMode(spec, def, base, preferred)));
+    if (base && !errors.some((e) => e.line === def.line)) at(def, def.loc, () => (def.speaks = voiceMode(spec, def, base, preferred)));
   }
   const laci = set.laci ?? env.laci;
   const ctx = capsContext(env.caps, { tagStrength: set.tags ?? DEFAULT_SETTINGS.tagStrength, decoder: set.decoder ?? null, laci });
-  if (set.tags !== undefined && !ctx.tags) warnOn(seen.get('tags')!)(['This checkpoint doesn’t read nonverbal tags: @tags does nothing.']);
+  const tagsLine = seen.get('tags');
+  if (set.tags !== undefined && !ctx.tags) warnAt(tagsLine!)(['This checkpoint doesn’t read nonverbal tags: @tags does nothing.'], tagsLine!.arg);
 
-  // Pass 2: speech lines, after every @voice is known (a voice may be defined after its first line).
-  const candidates = [
-    ...[...voices.values()].map((voice) => ({ name: voice.name, voice, speaker: null })),
-    ...env.speakers.map((speaker) => ({ name: speaker.label, voice: null, speaker })),
-    ...env.speakers.map((speaker) => ({ name: speaker.id, voice: null, speaker })),
-  ].sort((x, y) => y.name.length - x.name.length);
+  // Pass 2: speech lines (the parse resolved their names against every @voice, wherever it is defined).
   const speech: Speech[] = [];
-  for (const raw of lines) {
-    at(raw.line, () => {
-      const warn = warnOn(raw.line);
-      let rest = raw.text;
-      let voice: VoiceDef | null = null;
-      let speaker: Speaker | null = null;
-      let braces: string | undefined;
-      if (!raw.escaped) {
-        const hit = candidates.find((c) => rest.slice(0, c.name.length).toLowerCase() === c.name.toLowerCase() && PREFIX.test(rest.slice(c.name.length)));
-        if (hit) {
-          const m = PREFIX.exec(rest.slice(hit.name.length))!;
-          ({ voice, speaker } = hit);
-          braces = m[1];
-          rest = rest.slice(hit.name.length + m[0].length);
-        } else {
-          const m = /^\{([^{}]*)\}\s*:/.exec(rest);
-          if (m) {
-            braces = m[1];
-            rest = rest.slice(m[0].length);
-          } else {
-            const w = /^([\p{L}\p{N}_'’-]+)\s*:\s/u.exec(rest);
-            if (w) warn([`“${w[1]}:” is spoken: no voice is named ${w[1]}.`]);
-          }
-        }
-      }
-      const delivery = braces === undefined ? null : wholeLine(spec, parseItems(braces, spec, steering, false), warn);
+  let anySpeech = false;
+  for (const l of tree) {
+    if (l.kind !== 'speech') continue;
+    anySpeech = true;
+    at(l, l.loc, () => {
+      const warn = warnAt(l);
+      // The parse's pick among voices, labels and ids; the same order resolves it here.
+      const k = l.prefix?.name?.text.toLowerCase();
+      const voice = k === undefined ? null : (voices.get(k) ?? null);
+      const speaker = k === undefined || voice ? null : (env.speakers.find((s) => s.label.toLowerCase() === k) ?? env.speakers.find((s) => s.id.toLowerCase() === k) ?? null);
+      if (l.stray) warn([`“${l.stray.text}:” is spoken: no voice is named ${l.stray.text}.`], l.stray);
+      const delivery = l.prefix?.items ? wholeLine(spec, readItems(l.prefix.items, spec, steering, false), warn) : null;
       // Spans: `[words]{items}` → the words, painted; other brackets stay text.
+      const rest = l.text.text;
       let said = '';
       let from = 0;
       const placed: Speech['placed'] = [];
-      for (const m of rest.matchAll(SPAN)) {
-        said += rest.slice(from, m.index);
-        const words = m[1];
-        if (!words.trim()) throw new Error('A [ ]{…} span needs words.');
-        const r = resolveValues(spec, parseItems(m[2], spec, steering, false).values, 'delivery');
-        warn(r.warnings);
+      for (const sp of l.spans) {
+        said += rest.slice(from, sp.from - l.text.from);
+        const words = sp.words.text;
+        if (!words.trim()) throw new LocError('A [ ]{…} span needs words.', sp);
+        const values = resolveItems(spec, readItems(sp.items, spec, steering, false), 'delivery', warn);
         const start = said.length + words.length - words.trimStart().length;
-        placed.push({ start, end: start + words.trim().length, values: r.values });
+        placed.push({ start, end: start + words.trim().length, values });
         said += words;
-        from = m.index + m[0].length;
+        from = sp.to - l.text.from;
       }
       said += rest.slice(from);
       const lead = said.length - said.trimStart().length;
       const spoken = said.trim();
       if (!spoken) throw new Error('Nothing to say on this line.');
-      speech.push({ line: raw.line, voice, speaker, text: spoken, delivery, placed: placed.map((p) => ({ ...p, start: p.start - lead, end: p.end - lead })) });
+      speech.push({ line: l.line, loc: l.text, voice, speaker, text: spoken, delivery, placed: placed.map((p) => ({ ...p, start: p.start - lead, end: p.end - lead })) });
     });
   }
-  if (!lines.length) errors.push({ line: 0, message: 'Nothing to say: write a line of text.' });
+  if (!anySpeech) errors.push({ line: 0, from: 0, to: 0, message: 'Nothing to say: write a line of text.' });
   const usesSelected = speech.some((s) => (s.voice ? s.voice.fromSelected : !s.speaker));
 
   let render: ScriptRender | null = null;
@@ -379,7 +411,7 @@ export function compileScript(text: string, env: ScriptEnv, random: () => number
     const noHeads = new Set<string>();
     let waiting = false;
     for (const s of speech) {
-      at(s.line, () => {
+      at(s, s.loc, () => {
         const base = s.voice ? (s.voice.base ?? env.selected) : (s.speaker ?? env.selected);
         if (!base) {
           if (env.selectedWhy) throw new Error(`This line speaks with the voice of step 1: ${env.selectedWhy}.`);
@@ -395,10 +427,10 @@ export function compileScript(text: string, env: ScriptEnv, random: () => number
         const pron = pronProblem(s.text, ctx.phonemeTokens);
         if (pron) throw new Error(pron);
         const tags = tagProblem(s.text);
-        if (tags) warnOn(s.line)([tags]);
+        if (tags) warnAt(s)([tags], s.loc);
         if (laci !== 'off' && !env.caps.laci_languages.includes(lang) && !noHeads.has(lang)) {
           noHeads.add(lang);
-          warnOn(s.line)([`No alignment heads for ${langLabel(lang)}: its lines run without LACI.`]);
+          warnAt(s)([`No alignment heads for ${langLabel(lang)}: its lines run without LACI.`], s.loc);
         }
         const spans = layerSpans(s.text.length, s.delivery, s.placed);
         const request = buildRequest(spec, ctx, design, s.text, seed, { extra: set.baseline, spans, language: lang });
