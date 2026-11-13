@@ -2,6 +2,7 @@
 #include "zac-encoder.h"
 #include "ssl-encoder.h"
 #include "compat.h"
+#include "backend-device.h"
 #include "ggml-alloc.h"
 #include "ggml-cpu.h"
 #include "gguf.h"
@@ -326,11 +327,10 @@ bool zac_encoder_load(zac_encoder_model & model, const char * path, bool use_gpu
         m.stages.push_back(hp);
     }
     if (m.stages.back().out_dim != 1024) return reject("latent dimension");
-    ggml_backend_dev_t dev = use_gpu ? ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) : nullptr;
-    if (!dev) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    ggml_backend_dev_t dev = zonos3_backend_device(use_gpu);
     if (!dev || !(m.backend = ggml_backend_dev_init(dev,nullptr))) return reject("backend");
     m.buft = ggml_backend_dev_buffer_type(dev);
-    m.is_gpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU;
+    m.is_gpu = zonos3_backend_is_gpu(dev);
     if (!m.is_gpu) {
         const char * threads = getenv("ZAC_THREADS");
         if (threads) ggml_backend_cpu_set_n_threads(m.backend,std::max(1,atoi(threads)));

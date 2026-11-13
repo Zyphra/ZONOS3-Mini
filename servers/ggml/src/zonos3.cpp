@@ -1,6 +1,7 @@
 #include "zonos3.h"
 
 #include "compat.h"
+#include "backend-device.h"
 #include "gguf.h"
 
 #include <cmath>
@@ -214,8 +215,7 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
             fprintf(stderr, "zonos3: invalid expert count in layer %u\n", i); return fail();
         }
     }
-    ggml_backend_dev_t dev = use_gpu ? ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) : nullptr;
-    if (!dev) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    ggml_backend_dev_t dev = zonos3_backend_device(use_gpu);
     if (!dev) { fprintf(stderr, "zonos3: no backend\n"); return fail(); }
     // Match distributed.matmul_allow_tf32=false before CUDA/cuBLAS is initialized.
     setenv("NVIDIA_TF32_OVERRIDE", "0", 0);
@@ -224,7 +224,7 @@ bool zonos3_model_load(zonos3_model & m, const char * path, bool use_gpu) {
     if (use_gpu) setenv("GGML_METAL_NCB", "4", 0);
     m.backend = ggml_backend_dev_init(dev, nullptr);
     m.buft = ggml_backend_dev_buffer_type(dev);
-    m.is_gpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU;
+    m.is_gpu = zonos3_backend_is_gpu(dev);
     m.ctx_w = meta;
     if (!m.backend) { fprintf(stderr, "zonos3: backend initialization failed\n"); return fail(); }
     std::vector<ggml_backend_buffer_type_t> extra_bufts;

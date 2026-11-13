@@ -10,6 +10,7 @@
 #include "pocketfft_hdronly.hpp"
 
 #include "compat.h"
+#include "backend-device.h"
 #include "ggml-alloc.h"
 #include "ggml-cpu.h"
 #include "gguf.h"
@@ -56,7 +57,7 @@ static bool zac_init_backend(zac_model & m, ggml_backend_dev_t dev) {
     m.backend = ggml_backend_dev_init(dev, nullptr);
     if (!m.backend) return false;
     m.buft = ggml_backend_dev_buffer_type(dev);
-    m.is_gpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU;
+    m.is_gpu = zonos3_backend_is_gpu(dev);
     if (!m.is_gpu) {
         const char * th = getenv("ZAC_THREADS");
         if (th) ggml_backend_cpu_set_n_threads(m.backend, std::max(1, atoi(th)));
@@ -212,9 +213,7 @@ bool zac_load(zac_model & m, const char * path, bool use_gpu) {
         if (!bad.empty()) return reject(("tensor '" + bad + "' missing or wrongly shaped").c_str());
     }
 
-    ggml_backend_dev_t dev = nullptr;
-    if (use_gpu) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
-    if (!dev) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    ggml_backend_dev_t dev = zonos3_backend_device(use_gpu);
     if (!zac_init_backend(m, dev)) return reject("cannot init backend");
     // MAT = transformer / semantic-head / iSTFT-head matrices: F16 on GPU, F32 on CPU (Accelerate
     // sgemm). Q8_0 on GPU measured no faster on M3 Metal (buffered RTF 0.123 vs 0.122 F16). Quantized

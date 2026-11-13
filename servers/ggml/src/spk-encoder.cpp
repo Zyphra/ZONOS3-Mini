@@ -1,6 +1,7 @@
 // ZONOS3 Mini speaker encoder (ownmect_s2): host Kaldi fbank + MECT-B2 + ASTP as one ggml graph.
 // The GGUF layout and data flow are documented in `tools/convert_gguf.py speaker-encoder --help`.
 #include "compat.h"
+#include "backend-device.h"
 #include "spk-encoder.h"
 #include "ggml-cpu.h"
 #include "gguf.h"
@@ -170,11 +171,10 @@ bool spk_load(spk_model & m, const char * path, bool use_gpu) {
         if (t->type != GGML_TYPE_F32) { fprintf(stderr, "spk: %s must be F32\n", item.first.c_str()); return fail(); }
     }
 
-    ggml_backend_dev_t dev = use_gpu ? ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) : nullptr;
     ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
     if (!cpu_dev) return fail();
-    if (!dev) dev = cpu_dev;
-    m.is_gpu = dev != cpu_dev;
+    ggml_backend_dev_t dev = zonos3_backend_device(use_gpu);
+    m.is_gpu = zonos3_backend_is_gpu(dev);
     m.backend_cpu = ggml_backend_dev_init(cpu_dev, nullptr);
     if (!m.backend_cpu) return fail();
     {

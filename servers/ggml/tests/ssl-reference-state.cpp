@@ -27,7 +27,7 @@ int main(int argc, char ** argv) {
     if (argc == 3 && !gpu) return 2;
     ssl_model model;
     if (!ssl_load(model, argv[1], gpu)) return 1;
-    if (gpu && ggml_backend_dev_type(ggml_backend_get_device(model.backend)) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+    if (gpu && !model.is_gpu) {
         fprintf(stderr, "requested GPU is unavailable; refusing CPU fallback\n");
         ssl_free(model);
         return 1;

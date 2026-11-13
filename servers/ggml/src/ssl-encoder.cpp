@@ -1,5 +1,6 @@
 // Sixteen-layer semantic teacher and SeamlessM4T frontend.
 #include "compat.h"
+#include "backend-device.h"
 #include "ssl-encoder.h"
 #include "ggml.h"
 #include "ggml-alloc.h"
@@ -123,13 +124,12 @@ bool ssl_load(ssl_model & m, const char * path, bool use_gpu) {
             fprintf(stderr,"ssl: frontend table dtype mismatch\n"); return fail();
         }
     }
-    ggml_backend_dev_t dev = use_gpu ? ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) : nullptr;
-    if (!dev) dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    ggml_backend_dev_t dev = zonos3_backend_device(use_gpu);
     if (!dev) return fail();
     m.backend = ggml_backend_dev_init(dev,nullptr);
     if (!m.backend) return fail();
     m.buft = ggml_backend_dev_buffer_type(dev);
-    m.is_gpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU;
+    m.is_gpu = zonos3_backend_is_gpu(dev);
     if (!m.is_gpu) ggml_backend_cpu_set_n_threads(m.backend,std::max(1u,std::thread::hardware_concurrency()));
     m.ctx_w = meta;
     m.buf_w = ggml_backend_alloc_ctx_tensors(meta,m.backend);
