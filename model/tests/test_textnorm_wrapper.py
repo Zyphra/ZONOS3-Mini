@@ -8,11 +8,9 @@ from zonos3 import languages
 from zonos3.tokenizer.textnorm import TTSTextNormalizer, collapse_line_breaks, load_normalizer, normalize_request_text
 
 
-def test_every_grammar_is_a_zyphra_grammar():
-    grammars = {lang.nemo for lang in languages.SERVER if lang.nemo is not None}
-    assert grammars <= set(zyphra_textnorm.LANGUAGES)
-    assert all(zyphra_textnorm.supported(nemo) for nemo in grammars)
-    assert TTSTextNormalizer().normalize("Ik heb 5 katten.\nJa.", "nl") == "Ik heb 5 katten. Ja."
+def test_every_server_language_has_a_grammar():
+    assert {lang.nemo for lang in languages.SERVER} == set(zyphra_textnorm.LANGUAGES)
+    assert all(zyphra_textnorm.supported(lang.nemo) for lang in languages.SERVER)
 
 
 def test_collapse_line_breaks_only_touches_runs_with_a_break():
@@ -71,6 +69,11 @@ def test_english_end_to_end(tn, text, expected):
         ("pt_br", "Página 3 (de 10).", "Página três (de dez)."),
         ("pt_br", "Ele chegou às 9h.", "Ele chegou às nove horas."),
         ("de", "Seit 1990. Danach nichts.", "Seit ein tausend neun hundert neunzig. Danach nichts."),
+        ("nl", "Ik heb 5 katten.\nJa.", "Ik heb vijf katten. Ja."),
+        ("no", "Det koster 5 kroner.\nNeste.", "Det koster fem kroner. Neste."),
+        ("ar", "لدي 3 كتب.", "لدي ثلاثة كتب."),
+        ("hi", "मेरे पास 5 किताबें हैं।", "मेरे पास पाँच किताबें हैं।"),
+        ("vi", "Tôi có 3 cuốn sách.", "Tôi có ba cuốn sách."),
     ],
 )
 def test_other_languages_end_to_end(tn, language, text, expected):

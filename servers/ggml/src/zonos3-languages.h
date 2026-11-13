@@ -7,7 +7,7 @@
 
 struct zonos3_server_language {
     std::string code;    // TTS request language code
-    std::string nemo;    // text-normalization grammar (NeMo package: en, zh, ...); empty: none (the text passes through)
+    std::string nemo;    // text-normalization grammar (NeMo package: en, zh, ...)
     std::string lexicon; // pronunciation lexicon language (ISO 639-3)
 };
 

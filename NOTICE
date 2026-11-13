@@ -18,16 +18,17 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
 ================================================================================
 2. NVIDIA NeMo-text-processing
    https://github.com/NVIDIA/NeMo-text-processing
-   Copyright (c) 2020-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2020-2026 NVIDIA CORPORATION & AFFILIATES
    Portions Copyright 2015 and onwards Google, Inc.
    SPDX-License-Identifier: Apache-2.0
    Full license: third_party/licenses/nemo-Apache-2.0.txt
 
    Ported in zyphra-textnorm (Rust, https://github.com/Zyphra/zyphra-textnorm:
    the submodule third_party/zyphra-textnorm, linked into the ggml server, and
-   the PyPI package the Python servers install): its Rust grammars and tables
-   are a port of the r1.2.0 grammars and their data files. Its NOTICE and
-   licenses/ cover it.
+   the PyPI package the Python servers install): the original nine Rust grammar
+   packages and tables port the r1.2.0 grammars, and the additional 34 packages
+   port Zyphra's locale grammars in the NeMo-derived architecture. Its NOTICE
+   and licenses/ cover it.
 
 ================================================================================
 3. sacremoses
@@ -40,7 +41,16 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    zyphra-textnorm (third_party/zyphra-textnorm: src/moses.rs,
    data/perluniprops/).
 ================================================================================
-4. mlx-lm
+4. Unicode Common Locale Data Repository (CLDR), release 49
+   https://github.com/unicode-org/cldr/tree/release-49
+   Copyright © 2001–2026 Unicode, Inc.
+   SPDX-License-Identifier: Unicode-3.0
+   Full license: third_party/licenses/unicode-3.0.txt
+
+   Number vocabularies, morphology and lexical tables of the added locale
+   grammars in zyphra-textnorm (third_party/zyphra-textnorm: data/, src/lang/).
+================================================================================
+5. mlx-lm
    https://github.com/ml-explore/mlx-lm
    Copyright (c) 2023 Apple Inc.
    SPDX-License-Identifier: MIT
@@ -50,7 +60,7 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    servers/mlx/src/zonos3_mlx/models/gdn_kernel.py are adapted from
    mlx_lm/models/gated_delta.py.
 ================================================================================
-5. FuseAlign (fusealign-multilingual)
+6. FuseAlign (fusealign-multilingual)
    https://github.com/Zyphra/fusealign-multilingual
    Copyright (c) 2026 Zyphra, Inc.
    SPDX-License-Identifier: Apache-2.0
@@ -60,7 +70,7 @@ text of each third-party license is reproduced in the third_party/licenses/ dire
    third_party/fusealign-multilingual (Python package fusealign_hub), shipped
    unmodified as python/fusealign_hub/ in the ggml server's release packages.
 ================================================================================
-6. z-speech-alignment (textmatch)
+7. z-speech-alignment (textmatch)
    https://github.com/Zyphra/z-speech-alignment
    Copyright (c) 2026 Sofian Mejjoute
    SPDX-License-Identifier: MIT

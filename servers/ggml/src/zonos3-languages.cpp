@@ -19,8 +19,7 @@ const registry & languages() {
             std::string((const char *) zonos3_languages_json, zonos3_languages_json_len));
         registry out;
         for (const auto & row : doc.at("server")) {
-            out.server.push_back({row.at("code").get<std::string>(),
-                                  row.at("nemo").is_null() ? std::string() : row.at("nemo").get<std::string>(),
+            out.server.push_back({row.at("code").get<std::string>(), row.at("nemo").get<std::string>(),
                                   row.at("lexicon").get<std::string>()});
             out.codes.push_back(out.server.back().code);
         }

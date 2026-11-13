@@ -66,7 +66,7 @@ CORS allows every origin and exposes the response headers above.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `de`, `es`, `it`, `pt_br`, `ja`, `cmn`, `ko` (the `server` rows of `model/src/zonos3/registries/languages.json`) |
+| `language` | `en_us` | Text-normalization language: `en_us`, `en_gb`, `fr_fr`, `pt_br`, `cmn`, or any of the other 39 codes in `model/src/zonos3/registries/languages.json` (`server`, 43 languages; `/v2/capabilities` `text_norm_languages`) |
 | `text_normalization` | `true` | Verbalize numbers, dates and currency first |
 | `stream` | `true` | Chunked PCM; `stream_decode` (`prefix` / `whole`, null = server default) picks the decode |
 | `stream_codebooks`, `stream_codebooks_scope` | `1`, `first` | Prefix decode (every server): decode a frame once its first k codebooks arrived (missing residual codebooks left out), first audio up to 9 rows earlier; scope `first` (default) only for the first chunk, `all` for every chunk; k = n_codebooks waits for complete frames (defaults: `generation.json` `stream_codebooks`) |

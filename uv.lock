@@ -3583,7 +3583,7 @@ requires-dist = [
     { name = "torch" },
     { name = "torchaudio", specifier = "==2.9.1" },
     { name = "transformers", specifier = ">=4.56.0,<=4.57.3" },
-    { name = "zyphra-textnorm", specifier = "==0.1.0" },
+    { name = "zyphra-textnorm", specifier = "==0.2.0" },
 ]
 
 [[package]]
@@ -3740,14 +3740,14 @@ requires-dist = [
 
 [[package]]
 name = "zyphra-textnorm"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/22/92/838cbb9bb93327a3c36b7f3215a2492fb3ba31738790285a8b42444db999/zyphra_textnorm-0.1.0.tar.gz", hash = "sha256:02cd3cc09c8670ecfa86c611563ff0ca6a4c2fe4b2faae1256a40e3edbbff8ce", size = 549490, upload-time = "2026-11-11T01:29:59.346Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/2f/7343069d6e6cd91cf7dcbc49e3a567fbf53759627c79ba8d5952ea0b66ed/zyphra_textnorm-0.2.0.tar.gz", hash = "sha256:835735bfe9a18ed6139fe3679f30a0050e411462a81224918d16600fec53bcf3", size = 1583916, upload-time = "2026-11-13T17:47:51.995946Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/28/261f7f95fc151db13b798f211cf951cf47c0bd20da75030f601d363b027d/zyphra_textnorm-0.1.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:efb99aefeb2547d538eae13449145a7aee94f9cd22e62e9259ea1bc91c08631d", size = 1340801, upload-time = "2026-11-11T01:30:00.317Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/6a/2e46f057b6e5680c7113a6697b59d5ea135ee3e9d45bf57e587df8d5b6f4/zyphra_textnorm-0.1.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:886144098a94bd081e737ce3cace51d1d4c59824054317a06035aa61bca2eaa0", size = 1297802, upload-time = "2026-11-11T01:29:58.136Z" },
-    { url = "https://files.pythonhosted.org/packages/80/9c/d70b06a198f6017c51da38b76fe3d550785ec4d1748d3e80c124bee519c3/zyphra_textnorm-0.1.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:fcb6dc5a7022c30d591b8bb5f608134d12e69064535c4769fce6269111e292d3", size = 1359200, upload-time = "2026-11-11T01:29:56.376Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/33/1e7c1e1659c2f1556eb2d788c3b146f621127d8e55d0ebfb316feef352a7/zyphra_textnorm-0.1.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:12dd8e79ed0bcd65fa1450fd420e7268b6dd2bd63d713f5dca04ec1924c552cd", size = 1392302, upload-time = "2026-11-11T01:30:02.775Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/77/4d54d5a8ed315fb2706d6b046e1f57adb4a0d1db15c1bcb0f4657a66880c/zyphra_textnorm-0.1.0-cp39-abi3-win_amd64.whl", hash = "sha256:9f376b109e97cb19728dbccdb9965a52dd5bce315d9bd82f3f5e91f3a130a258", size = 1284289, upload-time = "2026-11-11T01:29:54.866Z" },
-    { url = "https://files.pythonhosted.org/packages/82/66/14321b2397461d99867b1e457aae48f1601cfa5f755d231b058da0c5c41f/zyphra_textnorm-0.1.0-cp39-abi3-win_arm64.whl", hash = "sha256:378bc77471fedc07278705ca1b97bc9fc6055b81386c6d4a5e7aac9a62aaf473", size = 1220245, upload-time = "2026-11-11T01:30:01.462Z" },
+    { url = "https://files.pythonhosted.org/packages/83/81/5b2ceb2aa9201ac4cf3f62fe11a5bedb2450b2e47a5f10029dc26cd13346/zyphra_textnorm-0.2.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:237ae3ab94da7612fac953612ac757dad31a782b7709510e200f0041370d4372", size = 5365684, upload-time = "2026-11-13T17:47:45.175088Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/d4/8d396500e8ed596bf915f5896547229a6f0bbedac220a9266b76c2ad2f81/zyphra_textnorm-0.2.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:2412afd2bb71eb096c8cf9270e8748ee364daad5a720b09c72887942f9928fde", size = 5228664, upload-time = "2026-11-13T17:47:47.344716Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/38/411ec0114e1c4b0c8da6cfff8852e0b2eb8ab260b85193cbfbc6ee9666db/zyphra_textnorm-0.2.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:619a6e173d004c69c585096469d1efcbb346f9d1a124efacbf1df46e3ee869ac", size = 5472826, upload-time = "2026-11-13T17:47:35.979939Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/6e/319b51d9fcbe933e231a32832084fd2f9bc32fd7d4bdc5cc2f4e15f894ce/zyphra_textnorm-0.2.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:fe6c6530190ae378fb357f22b6808b57c94aa1bc752f574a97ec0984a8bf43d2", size = 5702897, upload-time = "2026-11-13T17:47:34.180043Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/34/1d48dec871ea5cf772744583db18b07c0b5cf490e3abee1d5c71453637bc/zyphra_textnorm-0.2.0-cp39-abi3-win_amd64.whl", hash = "sha256:dfe6dcb4a61f6f7443f47b09d8373895bb8787be611f272f811d0018f4a52047", size = 5776651, upload-time = "2026-11-13T17:47:49.074970Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/61/75668292ddce48d9775cc0df449a98abc2c70a0f6f572e9bae1061ac64d7/zyphra_textnorm-0.2.0-cp39-abi3-win_arm64.whl", hash = "sha256:47d76b873173c4eeec6e24a7534aa7038c77bfcc0939d1ae8bb7189c2157beaf", size = 5292131, upload-time = "2026-11-13T17:47:50.655551Z" },
 ]
