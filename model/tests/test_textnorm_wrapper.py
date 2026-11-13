@@ -116,3 +116,8 @@ def test_markup_and_pronunciation_groups_together(tn):
     g = "\ue000həˈloʊ\ue001"
     assert tn.normalize(f"say {g} <laugh/> 5 times", "en_us") == f"say {g} <laugh/> five times"
     assert tn.normalize(f"<shouting>{g} 5</shouting>", "en_us") == f"<shouting>{g} five</shouting>"
+
+
+def test_start_and_pause_markers_are_kept_and_the_text_around_them_normalized(tn):
+    assert tn.normalize("\ue002It costs $5\ue004 today.", "en_us") == "\ue002It costs five dollars\ue004 today."
+    assert tn.normalize("say \ue000kæt\ue001\ue003 5 times", "en_us") == "say \ue000kæt\ue001\ue003 five times"

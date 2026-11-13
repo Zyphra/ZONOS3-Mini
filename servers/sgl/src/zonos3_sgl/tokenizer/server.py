@@ -175,6 +175,8 @@ def tokenize_worker(
                 ]
                 user_msgs = []
                 for msg, text in zip(tts_tokenize_msg, normalized_texts, strict=True):
+                    if msg.start_immediately:
+                        text = plan.with_start_marker(text)
                     # The byte / SuperBPE text rows and what follows them (zonos3.tts.plan.text_rows): the edit layout
                     # of a speech-edit fill, else the silence prefill rows. ``quality_buckets``: the quality tokens of a
                     # legacy quality-conditioned checkpoint (zonos3.tts.conditioning.default_quality_buckets).

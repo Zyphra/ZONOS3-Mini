@@ -50,6 +50,7 @@ import {
   scripts,
   setBaseline,
   setLineText,
+  setLineStart,
   setLineVoice,
   setVoice,
   splitScript,
@@ -799,6 +800,17 @@ function LineRow({ line, n, count }: { line: Line; n: number; count: number }) {
             <option value={p.id}>{p.name}</option>
           ))}
         </select>
+        {backend.value?.startToken && (
+          <button
+            class={`icon-btn sm line-start${line.startImmediately ? ' is-on' : ''}`}
+            aria-pressed={!!line.startImmediately}
+            onClick={() => setLineStart(line.id, !line.startImmediately)}
+            aria-label={`Start line ${n} immediately`}
+            title={line.startImmediately ? 'Starts at once, no lead-in silence (click to allow it)' : 'Start immediately: speech from the first frame, no lead-in silence'}
+          >
+            <Icon name="start" size={13} />
+          </button>
+        )}
         <button
           class={`btn sm${busy ? ' is-busy' : ''}${stale ? ' is-stale' : ''}`}
           onClick={() => (busy ? cancelLine(line.id) : void renderLine(line.id))}

@@ -2,9 +2,9 @@
 """Build every zonos3.cpp GGUF from the PyTorch modules of the `zonos3` model package.
 
     T="uv run --package zonos3-tools python tools/convert_gguf.py"
-    $T lm RELEASE/lm/rate30_20k_r2grpo [--outtype f32|f16|q8_0] [--silence-frame J] -o zonos3-f16.gguf
-    $T lm RELEASE/lm/rate30_20k_r2grpo --outtype q4_0-exp-q8_0-mix -o zonos3-ptq.gguf   (PTQ)
-    $T lm lm/mect_60k_q4q8_qat -o zonos3-qat.gguf               (QAT directory: bake.json present)
+    $T lm RELEASE/lm/rate30_20k_r2grpo [--outtype f32|f16|q8_0] [--silence-frame J] -o backbone-f16.gguf
+    $T lm RELEASE/lm/rate30_20k_r2grpo --outtype q4_0-exp-q8_0-mix -o backbone-ptq.gguf   (PTQ)
+    $T lm lm/mect_60k_q4q8_qat -o backbone-qat.gguf               (QAT directory: bake.json present)
     $T codec-decoder RELEASE/autoencoder/generator.pt --head RELEASE/autoencoder/heads/full_mr -o zac.gguf
     $T codec-encoder RELEASE/autoencoder/generator.pt -o zac-encoder.gguf
     $T ssl-teacher RELEASE/autoencoder/teacher -o ssl-teacher.gguf
@@ -63,8 +63,9 @@ verbatim. Checkpoints fine-tuned on nonverbal markup (zonos3.tts.markup.trained_
 `nonverbal: true`) get `zonos3.tag_cfg_trained = true`; the key is absent otherwise. --edit-adapter <.pt> grows the
 model to a zonos-accent-lora/3 speech-edit adapter's vocabulary first (zonos3.reference.lm.Zonos3LM.grow: span_end_id,
 the edit marker rows; plain requests never read them): serve it with that adapter in accents.gguf. --phoneme-rows <.pt>
-then appends zonos-text-extra/1 phoneme tokens after them (zonos3.models.text_extra; the spec gains their phonemes):
-text without pronunciation groups never reads them. Tensors are written in LM_NAMES order."""
+then appends zonos-text-extra/1 phoneme, start and pause tokens after them (zonos3.models.text_extra; the spec gains
+their phonemes / start / pauses): text without pronunciation groups, start or pause markers never reads them. Tensors
+are written in LM_NAMES order."""
 
 ARCH = "zonos3"
 MODEL_NAME = "bingua2-gdn-fullattnres-sbpe8k-375k-zv3ft-srcmix-cond3-mect-60k-20261015"
@@ -1831,8 +1832,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--phoneme-rows",
-        help="zonos-text-extra/1 phoneme tokens appended to the text table (after "
-        "--edit-adapter's rows): pronunciation groups",
+        help="zonos-text-extra/1 phoneme, start and pause tokens appended to the text table (after "
+        "--edit-adapter's rows; local or hf://): pronunciation groups, the start marker, pause markers",
     )
     p.add_argument("-o", "--out", required=True)
     p.add_argument(

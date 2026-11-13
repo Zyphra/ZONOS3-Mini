@@ -55,6 +55,7 @@ export function requestContext(c: zonos.Capabilities, doc: ProjectDoc | null): R
     // The project's LACI mode (set in the Studio's project settings); languages without heads here run without it.
     laci: doc?.settings.laci ?? DEFAULT_SETTINGS.laci,
     laciLanguages: c.laci_languages,
+    startToken: c.start_token != null,
   };
 }
 

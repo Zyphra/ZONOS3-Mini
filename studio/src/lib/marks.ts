@@ -26,6 +26,7 @@ export const WORD_VIEWBOX = '200 200 2058 200';
 export const ICONS: Record<string, string> = {
   play: 'M7 4.5v15l12-7.5z',
   stop: 'M6 6h12v12H6z',
+  start: 'M6 5v14M10 5.5v13l9-6.5z',
   dice: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm3 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm8 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm-4-3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
   star: 'M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.9l-5.3 2.8 1-5.9-4.2-4.1 5.9-.8z',
   trash: 'M5 7h14M10 7V4.5h4V7m-7 0 1 13h8l1-13',

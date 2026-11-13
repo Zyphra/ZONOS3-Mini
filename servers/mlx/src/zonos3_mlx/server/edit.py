@@ -19,7 +19,7 @@ from zonos3.reference.synth import Sampling
 from zonos3.tts.audio import output_pcm
 from zonos3.tts.directions import RAW_SPACE
 from zonos3.tts.edit_runtime import EditRuntime, FillJob
-from zonos3.tts.plan import Speaker, resolve_condition_buckets, validate_phoneme_groups
+from zonos3.tts.plan import Speaker, resolve_condition_buckets, validate_text_markers
 from zonos3.tts.steering import check_controls, no_steering_message, resolve_controls
 
 from zonos3_mlx.audio_io import decode_pcm
@@ -53,7 +53,7 @@ class MlxEditEngine:
     ) -> set[str]:
         engine = self.state.engine
         bundle = engine.steer_bundle
-        validate_phoneme_groups(engine.text_tokenizer_spec, target_text)
+        validate_text_markers(engine.text_tokenizer_spec, target_text, edit=True)
         raw = set()
         if doses is not None:
             if bundle is None:

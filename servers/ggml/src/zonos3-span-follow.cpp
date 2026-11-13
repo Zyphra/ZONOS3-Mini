@@ -153,8 +153,7 @@ std::vector<int> map_offsets(const std::u32string & original, const std::u32stri
     return out;
 }
 
-std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffsets & bpe,
-                                     const std::optional<PhonemeMarkers> & phonemes) {
+std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffsets & bpe, const TextMarkers & markers) {
     const int n = (int) text.size();
     std::vector<Range> ranges = {{0, 0}};
     if (!bpe) {
@@ -165,20 +164,41 @@ std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffse
             if (s.empty()) return;
             for (const auto & [a, b] : bpe(s)) ranges.push_back({base + a, base + b});
         };
-        if (!phonemes || (text.find(phonemes->open) == std::u32string::npos &&
-                          text.find(phonemes->close) == std::u32string::npos)) {
-            stretch(text, 0);
-        } else {
+        auto is_pause = [](char32_t c) { return c >= 0xE003 && c <= 0xE00A; };
+        // superbpe.payload_ids validated the text: the start marker opens it, groups are balanced.
+        std::function<void(const std::u32string &, int)> payload = [&](const std::u32string & s, int base) {
+            if (markers.start && s.find(U'\uE002') != std::u32string::npos) {
+                ranges.push_back({base, base + 1});
+                payload(s.substr(1), base + 1);
+                return;
+            }
+            if (markers.pauses && std::any_of(s.begin(), s.end(), is_pause)) {
+                size_t pos = 0;
+                for (size_t i = 0; i < s.size(); i++) {
+                    if (!is_pause(s[i])) continue;
+                    if (i > pos) payload(s.substr(pos, i - pos), base + (int) pos);
+                    ranges.push_back({base + (int) i, base + (int) i + 1});
+                    pos = i + 1;
+                }
+                if (pos < s.size()) payload(s.substr(pos), base + (int) pos);
+                return;
+            }
+            const auto & ph = markers.phonemes;
+            if (!ph || (s.find(ph->open) == std::u32string::npos && s.find(ph->close) == std::u32string::npos)) {
+                stretch(s, base);
+                return;
+            }
             size_t pos = 0;
-            while (pos < text.size()) {
-                const size_t start = text.find(phonemes->open, pos);
-                stretch(start == std::u32string::npos ? text.substr(pos) : text.substr(pos, start - pos), (int) pos);
+            while (pos < s.size()) {
+                const size_t start = s.find(ph->open, pos);
+                stretch(start == std::u32string::npos ? s.substr(pos) : s.substr(pos, start - pos), base + (int) pos);
                 if (start == std::u32string::npos) break;
-                const size_t end = text.find(phonemes->close, start + 1); // superbpe.payload_ids validated the groups
-                for (size_t i = start; i <= end; i++) ranges.push_back({(int) i, (int) i + 1});
+                const size_t end = s.find(ph->close, start + 1);
+                for (size_t i = start; i <= end; i++) ranges.push_back({base + (int) i, base + (int) i + 1});
                 pos = end + 1;
             }
-        }
+        };
+        payload(text, 0);
     }
     ranges.push_back({n, n});
     return ranges;

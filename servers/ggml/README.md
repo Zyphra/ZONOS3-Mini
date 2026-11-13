@@ -28,10 +28,10 @@ The optional desktop shell uses `-DZONOS3_APP=ON`, CMake >= 3.31, a compatible C
 
 ## Prepare models
 
-The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model `zonos3-ptq.gguf` (0.66 GB, `lm/zonos3_mini`). The converted files are the `gguf/` folder of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini); run these from `servers/ggml`:
+The default backbone is the Q4_0-expert/Q8_0-mixer post-training-quantized model `backbone-ptq.gguf` (0.66 GB, `lm/zonos3_mini`). The converted files are the `gguf/` folder of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini); run these from `servers/ggml`:
 
 ```bash
-hf download Zyphra/ZONOS3-Mini gguf/zonos3-ptq.gguf gguf/zac-keep2.gguf gguf/spk-encoder.gguf --local-dir .
+hf download Zyphra/ZONOS3-Mini gguf/backbone-ptq.gguf gguf/zac-keep2.gguf gguf/spk-encoder.gguf --local-dir .
 # Optional raw-reference cloning companions:
 hf download Zyphra/ZONOS3-Mini gguf/zac-encoder.gguf gguf/ssl-teacher.gguf --local-dir .
 # Optional voice-direction steering bundle (request `controls`: voice design, emotion, accent directions; the
@@ -41,21 +41,23 @@ hf download Zyphra/ZONOS3-Mini gguf/steer.gguf --local-dir .
 hf download Zyphra/ZONOS3-Mini --include 'gguf/voices/*' --local-dir .
 # Optional speech editing (/v2/edit; also needs spk-encoder.gguf, the encoder companions above and --worker-python):
 # the release LM with the speech-edit LoRA's vocabulary, and the LoRA as an edit adapter bank. Keep edit/accents.gguf
-# where it lands: as gguf/accents.gguf it would be picked up by zonos3-ptq.gguf, which refuses it.
-hf download Zyphra/ZONOS3-Mini gguf/zonos3-ptq-edit.gguf gguf/edit/accents.gguf --local-dir .
-./build/zonos3-server gguf/zonos3-ptq-edit.gguf --accent-adapters gguf/edit/accents.gguf --worker-python <PY>
+# where it lands: as gguf/accents.gguf it would be picked up by backbone-ptq.gguf, which refuses it.
+hf download Zyphra/ZONOS3-Mini gguf/backbone-ptq-edit.gguf gguf/edit/accents.gguf --local-dir .
+./build/zonos3-server gguf/backbone-ptq-edit.gguf --accent-adapters gguf/edit/accents.gguf --worker-python <PY>
 ```
 
 `hf download Zyphra/ZONOS3-Mini --include 'gguf/*' --local-dir .` fetches the whole folder (9.3 GB, with the full-size
-decoder `zac.gguf`). `zonos3-qat.gguf` (the previous `lm/mect_60k` QAT backbone, `--quant qat`) is not published there;
+decoder `zac.gguf`). `backbone-qat.gguf` (the previous `lm/mect_60k` QAT backbone, `--quant qat`) is not published there;
 convert it as below.
 
-The server picks up every companion it finds next to the backbone. `zonos3-ptq.gguf` carries per-table condition bucket
+The server picks up every companion it finds next to the backbone. Backbones were named `zonos3-*.gguf` before
+2026-11-11; rename local copies to `backbone-*.gguf` (the launcher looks for `backbone-<quant>.gguf`).
+`backbone-ptq.gguf` carries per-table condition bucket
 counts (`zonos3.condition.bucket_counts`) and needs a build that reads them. Backbones downloaded before 2026-11-01 lack
-`zonos3.text_tokenizer_spec` and are refused: re-download `zonos3-qat.gguf`. A `steer.gguf` without
+`zonos3.text_tokenizer_spec` and are refused: re-download `backbone-qat.gguf`. A `steer.gguf` without
 `zonos3_steer.set.calibrations` (converted before 2026-11-03) is refused as well: re-download or reconvert it. Files
 downloaded before 2026-10-27 are the previous fullenc_120k release; re-download
-`zonos3-qat.gguf` and `spk-encoder.gguf` together (the backbone expects embeddings from the matching speaker encoder).
+`backbone-qat.gguf` and `spk-encoder.gguf` together (the backbone expects embeddings from the matching speaker encoder).
 
 Or convert the checkpoints locally as below.
 
@@ -71,14 +73,14 @@ hf download Zyphra/ZONOS3-Mini --include 'lm/*' --include 'autoencoder/*' --incl
 T="uv run --package zonos3-tools python ../../tools/convert_gguf.py"   # from servers/ggml
 mkdir -p gguf
 # F16 reference backbone:
-$T lm "$R/lm/zonos3_mini" --outtype f16 -o gguf/zonos3-f16.gguf
+$T lm "$R/lm/zonos3_mini" --outtype f16 -o gguf/backbone-f16.gguf
 # Default backbone: the same LM quantized post-training (round to nearest): Q4_0 experts, Q8_0 mixers.
-$T lm "$R/lm/zonos3_mini" --outtype q4_0-exp-q8_0-mix -o gguf/zonos3-ptq.gguf
+$T lm "$R/lm/zonos3_mini" --outtype q4_0-exp-q8_0-mix -o gguf/backbone-ptq.gguf
 # Previous backbone (--quant qat): mect_60k QAT directory (same layout as the release LM plus bake.json; step 3462;
 # not published). Q4_0 experts and Q8_0 mixers are stored bit-exactly, so there is no outtype to choose.
 $T lm QAT/lm/mect_60k_q4q8_qat \
   --silence-frame "$R/registries/silence_frame_opus_dual_3n_600k_sched600k_r4096_step600000.json" \
-  -o gguf/zonos3-qat.gguf
+  -o gguf/backbone-qat.gguf
 $T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/keep2_plain" -o gguf/zac-keep2.gguf
 $T speaker-encoder "$R/speaker_encoders/ownmect_s2/ckpt_0037.pth" -o gguf/spk-encoder.gguf
 
@@ -96,9 +98,9 @@ $T codec-decoder "$R/autoencoder/generator.pt" --head "$R/autoencoder/heads/full
 
 ```text
 gguf/
-  zonos3-ptq.gguf     default backbone (Q4_0 experts, Q8_0 mixers) + embedded tokenizer, condition edges and silence frame
-  zonos3-qat.gguf     optional previous mect_60k QAT backbone (select with --quant qat)
-  zonos3-f16.gguf     optional F16 reference backbone (select with --quant f16)
+  backbone-ptq.gguf     default backbone (Q4_0 experts, Q8_0 mixers) + embedded tokenizer, condition edges and silence frame
+  backbone-qat.gguf     optional previous mect_60k QAT backbone (select with --quant qat)
+  backbone-f16.gguf     optional F16 reference backbone (select with --quant f16)
   zac-keep2.gguf      default MR-iSTFT waveform decoder (keep2_plain: 2 layers per stage); needed for WAV/PCM output
   zac.gguf            optional full-size decoder (full_mr; CLI: select with --zac; server: an extra decoder requests pick with `decoder`)
   spk-encoder.gguf    speaker encoder; speaker-embedding cloning from audio
@@ -117,7 +119,7 @@ ZONOS3_SERVER_BIN="$PWD/build/zonos3-server" ZONOS3_MODEL_DIR="$PWD/gguf" \
   bash ./scripts/start-zonos3.sh -y --no-browser
 ```
 
-Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.bat`. The launcher defaults to `zonos3-ptq.gguf`; `--quant qat` selects the previous mect_60k backbone `zonos3-qat.gguf`, `--quant f16` selects `zonos3-f16.gguf` and `--quant q8_0` selects `zonos3-q8_0.gguf`. `--zac Z` picks the default decoder `models/Z.gguf` (default `zac-keep2`; `zac` = the full-size one); the other of `zac-keep2.gguf` / `zac.gguf`, when present, is passed as an extra `--zac` that requests can select. It checks the required local models, passes `--spk-encoder`, `--zac-encoder` and `--ssl-teacher` when those files exist (printing a note when `spk-encoder.gguf` is missing: speaker-embedding cloning is then disabled), and starts the UI at `http://127.0.0.1:1919/`. Models are never downloaded by the launcher or desktop app. ffmpeg is fetched only when unavailable locally or on `PATH`.
+Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.bat`. The launcher defaults to `backbone-ptq.gguf`; `--quant qat` selects the previous mect_60k backbone `backbone-qat.gguf`, `--quant f16` selects `backbone-f16.gguf` and `--quant q8_0` selects `backbone-q8_0.gguf`. `--zac Z` picks the default decoder `models/Z.gguf` (default `zac-keep2`; `zac` = the full-size one); the other of `zac-keep2.gguf` / `zac.gguf`, when present, is passed as an extra `--zac` that requests can select. It checks the required local models, passes `--spk-encoder`, `--zac-encoder` and `--ssl-teacher` when those files exist (printing a note when `spk-encoder.gguf` is missing: speaker-embedding cloning is then disabled), and starts the UI at `http://127.0.0.1:1919/`. Models are never downloaded by the launcher or desktop app. ffmpeg is fetched only when unavailable locally or on `PATH`.
 
 `zonos3-app` offers local file pickers, including an optional speaker-encoder picker; its decoder picker selects the one decoder the app's server loads (the default). Its one-time configuration migration preserves valid settings but requires selecting the new backbone; incompatible embedding/emotion state is discarded.
 
@@ -125,25 +127,25 @@ Extracted releases place the server beside `start-zonos3.sh` or `start-zonos3.ba
 
 ```bash
 # Decoder is discovered beside the backbone.
-./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Hello, world.' out.wav --seed 1
+./build/zonos3-cli gguf/backbone-ptq.gguf --tts 'Hello, world.' out.wav --seed 1
 
 # Clone from audio with the speaker embedding (default) and save the embedding.
-./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Hello again.' clone.wav \
+./build/zonos3-cli gguf/backbone-ptq.gguf --tts 'Hello again.' clone.wav \
   --clone ../../assets/default_voices/AmericanFemale.mp3 --save-speaker-embedding voice-emb.npy --seed 1
 
 # Reuse a saved embedding without loading the speaker encoder.
-./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'A cached embedding.' cached.wav \
+./build/zonos3-cli gguf/backbone-ptq.gguf --tts 'A cached embedding.' cached.wav \
   --speaker-embedding voice-emb.npy --condition-buckets 4,3,10 --seed 1
 
 # Raw reference: encode once, save the codes, reuse them.
-./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Raw reference.' ref.wav \
+./build/zonos3-cli gguf/backbone-ptq.gguf --tts 'Raw reference.' ref.wav \
   --clone ../../assets/default_voices/AmericanFemale.mp3 --speaker-mode reference \
   --save-reference voice-codes.npy --seed 1
-./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Cached codes.' ref2.wav \
+./build/zonos3-cli gguf/backbone-ptq.gguf --tts 'Cached codes.' ref2.wav \
   --reference-codes voice-codes.npy --seed 1
 
 # Speaker CFG (two-slot generation; needs a speaker prompt).
-./build/zonos3-cli gguf/zonos3-ptq.gguf --tts 'Guided.' cfg.wav \
+./build/zonos3-cli gguf/backbone-ptq.gguf --tts 'Guided.' cfg.wav \
   --speaker-embedding voice-emb.npy --cfg-scale 1.5 --seed 1
 ```
 
@@ -174,7 +176,7 @@ For file cloning, install ffmpeg or set `ZONOS3_FFMPEG`. `--max` limits generate
 `zonos3-server` serves the v2 HTTP API of `api/openapi.yaml` (the same contract as the CUDA server in `servers/sgl`): the native routes under `/v2/`, the OpenAI-compatible `GET /v1/models` and `POST /v1/audio/speech`, and the studio build (`studio/dist` of the checkout, or `--studio-dir`): a chooser at `/`, Zonos Voice Studio at `/studio` and the lite voice-cloning page at `/lite`.
 
 ```bash
-./build/zonos3-server gguf/zonos3-ptq.gguf \
+./build/zonos3-server gguf/backbone-ptq.gguf \
   --tts-default-voices-dir ../../assets/default_voices --studio-projects-dir ~/.zonos3/projects --port 1919
 curl -fsS http://127.0.0.1:1919/v2/capabilities
 curl -fsS http://127.0.0.1:1919/v2/generate \
@@ -213,19 +215,19 @@ Requests accept `controls` (`{"delivery.tempo": 2, "identity.gender": -1}`), `co
 ## Standalone tools
 
 ```bash
-./build/zonos3-cli gguf/zonos3-ptq.gguf --build-prompt 'Hello.' ids.npy   # + ids.cond.json
+./build/zonos3-cli gguf/backbone-ptq.gguf --build-prompt 'Hello.' ids.npy   # + ids.cond.json
 ./build/zac-cli gguf/zac-keep2.gguf codes.npy decoded.wav
 ./build/spk-encoder-cli gguf/spk-encoder.gguf --audio voice.mp3 voice-emb.npy --cpu
 ./build/zac-encoder-cli gguf/zac-encoder.gguf gguf/ssl-teacher.gguf \
   --audio voice.mp3 voice-codes.npy --cpu
-./build/quantize-cli gguf/zonos3-f16.gguf gguf/zonos3-q8_0.gguf q8_0
-./build/quantize-cli gguf/zonos3-f16.gguf gguf/zonos3-q6_k-exp.gguf \
+./build/quantize-cli gguf/backbone-f16.gguf gguf/backbone-q8_0.gguf q8_0
+./build/quantize-cli gguf/backbone-f16.gguf gguf/backbone-q6_k-exp.gguf \
   q6_k --experts-only --spine-f16
 ```
 
 Prompt dumps carry a `.cond.json` sidecar (speaker vector, condition buckets, row layout) next to the ids. `zac-cli` honours `<codes>.eos.npy` (`[eos]` or `[eos, prefill]`), `--skip-frames N`, and `--headroom-db X`.
 
-The default `zonos3-ptq.gguf` quantizes the BF16 `lm/rate30_20k_r2grpo` weights post-training (round to nearest) into the QAT file's layout (30 Q4_0 and 28 Q8_0 tensors); no QAT run exists for this LM. On six speaker-less CLI prompts × three seeds its Qwen3-ASR WER is 11.1% against 22.2% for its F16 backbone (0.0% vs 6.7% without the one prompt every backbone, the previous QAT included, misreads on this path; [details](docs/INTERNALS.md#quantization)). The previous `zonos3-qat.gguf` matches the mect_60k QAT checkpoint's baked weights exactly and was checked against its F16 backbone (golden logits cos 0.99995, eight-sentence Whisper-large-v3 WER 3.5% for both). Quantized backbones run their F16 logits head as q8_0, quantized at load (single-slot decode 14% faster on Metal and 17% on CPU on an M3; the F16 backbone keeps its F16 head; [details](docs/INTERNALS.md#quantization)); the WER figures above predate it. Other post-training quantization profiles (`quantize-cli`), pruning and calibration artifacts have not been qualified for Mini, and earlier (375k) measurements do not transfer. See [quantization](docs/INTERNALS.md#quantization) and [reference comparison](docs/INTERNALS.md#reference-comparison).
+The default `backbone-ptq.gguf` quantizes the BF16 `lm/rate30_20k_r2grpo` weights post-training (round to nearest) into the QAT file's layout (30 Q4_0 and 28 Q8_0 tensors); no QAT run exists for this LM. On six speaker-less CLI prompts × three seeds its Qwen3-ASR WER is 11.1% against 22.2% for its F16 backbone (0.0% vs 6.7% without the one prompt every backbone, the previous QAT included, misreads on this path; [details](docs/INTERNALS.md#quantization)). The previous `backbone-qat.gguf` matches the mect_60k QAT checkpoint's baked weights exactly and was checked against its F16 backbone (golden logits cos 0.99995, eight-sentence Whisper-large-v3 WER 3.5% for both). Quantized backbones run their F16 logits head as q8_0, quantized at load (single-slot decode 14% faster on Metal and 17% on CPU on an M3; the F16 backbone keeps its F16 head; [details](docs/INTERNALS.md#quantization)); the WER figures above predate it. Other post-training quantization profiles (`quantize-cli`), pruning and calibration artifacts have not been qualified for Mini, and earlier (375k) measurements do not transfer. See [quantization](docs/INTERNALS.md#quantization) and [reference comparison](docs/INTERNALS.md#reference-comparison).
 
 ## Verify
 

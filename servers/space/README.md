@@ -9,6 +9,7 @@ short_description: Multilingual TTS with voice cloning and steering controls
 startup_duration_timeout: 1h
 models:
   - Zyphra/ZONOS3_Mini_release_ckpts
+  - Zyphra/ZONOS3-Mini
 ---
 
 # ZONOS3 Mini

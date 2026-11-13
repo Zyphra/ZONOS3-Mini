@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m zonos3_mlx", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("model", help="backbone GGUF (zonos3-ptq.gguf / zonos3-f16.gguf)")
+    p.add_argument("model", help="backbone GGUF (backbone-ptq.gguf / backbone-f16.gguf)")
     p.add_argument(
         "--zac",
         action="append",

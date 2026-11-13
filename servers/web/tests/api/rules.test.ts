@@ -14,7 +14,7 @@ interface RequestError { name: string; requires: string[]; request: Record<strin
 const fixtures: RequestError[] = JSON.parse(readFileSync(
   fileURLToPath(new URL('../../../../model/tests/fixtures/request_errors.json', import.meta.url)), 'utf8'));
 /** The fixture `requires` tags this server meets: condition rows, and never phoneme tokens. */
-const SERVES = new Set(['conditions', 'no_phoneme_tokens']);
+const SERVES = new Set(['conditions', 'no_phoneme_tokens', 'no_start_token', 'no_pause_tokens']);
 
 /** [frames][10] reference codes; frame f holds f on every codebook. */
 const referenceCodes = (frames: number) => Array.from({ length: frames }, (_, f) => new Array<number>(10).fill(f));

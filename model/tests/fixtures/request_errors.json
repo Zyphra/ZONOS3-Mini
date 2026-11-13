@@ -23,5 +23,14 @@
    "error": "LACI is not enabled on this server (start it with --laci-heads LANG=PATH)"},
   {"name": "pronunciation_groups_without_phonemes", "requires": ["no_phoneme_tokens"],
    "request": {"text": "Say \ue000h\u0259\u02c8lo\u028a\ue001 now."},
-   "error": "This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups"}
+   "error": "This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups"},
+  {"name": "start_immediately_without_start_token", "requires": ["no_start_token"],
+   "request": {"text": "Hello there.", "start_immediately": true},
+   "error": "start_immediately needs a checkpoint with a start token"},
+  {"name": "start_marker_without_start_token", "requires": ["no_start_token"],
+   "request": {"text": "\ue002Hello there."},
+   "error": "This checkpoint has no start token: remove the U+E002 start marker"},
+  {"name": "pause_markers_without_pause_tokens", "requires": ["no_pause_tokens"],
+   "request": {"text": "Hello,\ue004 there."},
+   "error": "This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers"}
 ]

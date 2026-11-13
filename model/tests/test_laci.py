@@ -162,6 +162,21 @@ class DetectorTest(unittest.TestCase):
         for row in range(last + 1, last + 400):
             self.assertIsNone(det.observe(row, TEXT_LEN - 1))
 
+    def test_text_done_waits_for_the_reading_to_reach_the_end(self):
+        """Two bins: the pace prior's share of the last bin fills a second before the reading reaches the last token;
+        the text is done only once it is there (the tail then never clips the end of a slow reading)."""
+        det = Detector(14, 3.5, CFG, min_rollback_row=0)
+        self.assertEqual(det.nb, 2)
+        row = 0
+        for pos in [p for p in range(13) for _ in range(6)]:  # slow reading of positions 0..12, EOS (13) not reached
+            row += 1
+            self.assertIsNone(det.observe(row, pos))
+        self.assertGreaterEqual(det.counts[1], 3.5 * 6)  # the last bin's share is long read
+        self.assertIsNone(det.done_row)
+        row += 1
+        det.observe(row, 13)
+        self.assertEqual(det.done_row, row)
+
     def test_truncate_matches_fresh(self):
         stream = list(reading())
         k = stream[150][0]

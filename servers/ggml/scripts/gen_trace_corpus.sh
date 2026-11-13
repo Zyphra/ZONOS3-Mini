@@ -44,7 +44,7 @@ case "$1" in
   *) echo 'usage: bash scripts/gen_trace_corpus.sh {kld|calib}' >&2; exit 2 ;;
 esac
 BUILD=${BUILD:-build-cuda}
-MODEL=${MODEL:-out/zonos3-f16.gguf}
+MODEL=${MODEL:-out/backbone-f16.gguf}
 ZAC=${ZAC:-out/zac.gguf}
 ZAC_ENCODER=${ZAC_ENCODER:-out/zac-encoder.gguf}
 SSL_TEACHER=${SSL_TEACHER:-out/ssl-teacher.gguf}

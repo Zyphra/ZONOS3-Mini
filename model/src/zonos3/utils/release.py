@@ -18,6 +18,10 @@ PREFIX = "hf://"
 RELEASE_REPO = os.environ.get("ZONOS3_RELEASE_REPO", "Zyphra/ZONOS3-Mini")
 RELEASE_LM = os.environ.get("ZONOS3_RELEASE_LM", f"{PREFIX}{RELEASE_REPO}/lm/zonos3_mini")
 RELEASE_SPEAKER_REGISTRY = f"{PREFIX}{RELEASE_REPO}/registries/speaker_encoder_registry.json"
+# The release LM's phoneme, start and pause rows (zonos-text-extra/1), loaded by default with RELEASE_LM.
+RELEASE_TEXT_ROWS = os.environ.get(
+    "ZONOS3_RELEASE_TEXT_ROWS", f"{PREFIX}{RELEASE_REPO}/lm/zonos3_mini/text_rows/pause_tokens_s5000.pt"
+)
 
 
 def is_hf(path) -> bool:

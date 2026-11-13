@@ -45,6 +45,9 @@ class GenerationOptions(_Strict):
     # Codec-matched silence frames prefilled into the audio stream (None = the server default; 0 = off; at most the
     # registry's maximum, checked by the request rules: 400).
     silence_prefill_frames: int | None = None
+    # The checkpoint's start marker in front of the text (speech from the first frame); the silence prefill then
+    # defaults to 0. 400 without a start token.
+    start_immediately: bool = False
     # Decode the generated frames behind the last decode_context_frames of the reference prompt.
     decode_context: bool = False
     decode_context_frames: int = DECODE_CONTEXT_FRAMES  # 0 = the registry's

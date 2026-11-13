@@ -19,6 +19,9 @@ struct zonos3_sampler {
     // min_frames (sgl TTSSamplingParams.min_frames): the stop id in codebook c is masked while fewer than
     // min_frames + c frames were generated.
     int min_frames = 0;
+    // LACI's stop boost (LaciSession::stop_boost): added to the stop id's logit in every codebook before the filters;
+    // set before each frame's sample() calls.
+    float stop_bias = 0.0f;
     int generated = 0;                 // frames accepted so far
     std::vector<std::deque<int>> hist; // recent tokens per codebook (for rep penalty)
 

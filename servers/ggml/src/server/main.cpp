@@ -197,7 +197,7 @@ int server_run(int argc, char ** argv, zonos3_server_ctl * ctl) {
     }
     if (!mp_file_exists(model_path)) {
         fprintf(stderr, "failed to load model %s\n", model_path.c_str());
-        mp_print_missing_hint("zonos3-f16.gguf (or another quant)", model_path);
+        mp_print_missing_hint("backbone-f16.gguf (or another quant)", model_path);
         return 1;
     }
     s.model_path = model_path;

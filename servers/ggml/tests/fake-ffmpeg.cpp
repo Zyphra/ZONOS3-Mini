@@ -7,9 +7,10 @@
 #include <vector>
 
 int main(int argc, char ** argv) {
+    // audio_decode_file's command line; "" = the input path (checked below), "60" = the default max_seconds (-t).
     const std::vector<std::string> expected = {
         "-nostdin", "-v", "error", "-i", "", "-ac", "1",
-        "-ar", "24000", "-f", "f32le", "-",
+        "-ar", "24000", "-t", "60", "-f", "f32le", "-",
     };
     if (argc != (int) expected.size() + 1) {
         fprintf(stderr, "fake-ffmpeg: expected %zu arguments, got %d\n", expected.size(), argc - 1);

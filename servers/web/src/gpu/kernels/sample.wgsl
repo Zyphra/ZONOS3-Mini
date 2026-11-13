@@ -1,6 +1,7 @@
 // Sampler.sample (src/sampler.ts) plus a frame's cold start on the GPU (src/gpu/sampler.ts GpuSampler): one 256-thread
 // workgroup per codebook cb samples logits[cb*V .. +V) (CFG: twin + cfg_scale * (logits - twin)). Order as the host
-// sampler: the audio pad and the special ids other than stop_id masked (stop_id until generated >= min_frames + cb),
+// sampler: the audio pad and the special ids other than stop_id masked (stop_id until generated >= min_frames + cb), the
+// stop id's logit raised by stop_bias (LACI's stop boost),
 // repetition penalty on every id among the ring's last rep_window entries, greedy argmax (lowest index on ties),
 // temperature, top-k (ties at the threshold kept), softmax, top-p on the mass before each token (equal probabilities in
 // index order), min-p, then the first kept id in index order whose inclusive prefix mass reaches u[cb] * kept mass
@@ -15,6 +16,7 @@ struct Smp {
   min_p: f32, rep_penalty: f32, rep_window: u32, rep_codebooks: u32,
   cfg: u32, cfg_scale: f32, W: u32, neg_inf: u32,
   u: array<vec4<f32>, 3>,
+  stop_bias: f32,
 }
 @group(0) @binding(0) var<storage, read> logits: array<f32>;
 @group(0) @binding(1) var<storage, read> twin: array<f32>;
@@ -176,6 +178,7 @@ fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u, 
       v = t + smp.cfg_scale * (v - t);
     }
     if (i >= smp.codebook_size && (i == smp.pad_id || i != smp.stop_id || gate)) { v = NEG; }
+    if (i == smp.stop_id && smp.stop_bias != 0.0 && !gate) { v = v + smp.stop_bias; }
     l[j] = v;
   }
 

@@ -156,6 +156,8 @@ export interface Backend {
   decoders: DecoderInfo[];
   /** Languages with LACI alignment heads (`/v2/capabilities.laci_languages`); [] offline or without heads. */
   laciLanguages: string[];
+  /** The checkpoint has a start token (/v2/capabilities.start_token). */
+  startToken: boolean;
 }
 
 type Capabilities = Schemas['Capabilities'];
@@ -353,6 +355,7 @@ export async function connect(opts: ConnectOptions = {}): Promise<Backend> {
       // Audio decoders: the server's when one answers, the fixture's two offline.
       decoders: kind === 'offline' ? FIXTURE_DECODERS : (caps?.decoders ?? []),
       laciLanguages: caps?.laci_languages ?? [],
+      startToken: caps?.start_token != null,
     });
   };
   if (forced === 'offline') return make('offline', fixture);

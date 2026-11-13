@@ -476,11 +476,12 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     REQUIRE(rtwin.n_rows == ref.n_rows - prefix_rows && rows_equal(rtwin, 0, plain, 0, plain.n_rows, W), "reference twin drops exactly the prefix");
     REQUIRE(!zonos3_build_cfg_twin(model, plain, twin), "CFG without a speaker prompt must be rejected");
 
-    // (8) tokenizer spec: pronunciation groups (superbpe.payload_ids) and edit marker rows (edit.edit_marker_rows)
+    // (8) tokenizer spec: pronunciation groups, start and pause markers (superbpe.payload_ids, plan.validate_text_markers)
+    // and edit marker rows (edit.edit_marker_rows)
     const std::string group_text = "Say \xEE\x80\x80t\xC9\x99\xEE\x80\x81 again.";   // Say U+E000 tə U+E001 again.
     std::string err;
     REQUIRE(!model.tok.has_phonemes && !model.tok.spec_json.empty(), "the dummy spec has no phonemes");
-    REQUIRE(zonos3_check_phoneme_groups(model.tok, group_text) ==
+    REQUIRE(zonos3_check_text_markers(model.tok, group_text) ==
             "This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups", "groups need phonemes");
     REQUIRE(!zonos3_build_prompt(model, group_text, zonos3_prompt_options{}, bad, &err) &&
             err.rfind("This checkpoint has no phoneme", 0) == 0,
@@ -502,26 +503,75 @@ static bool prompt_contract(zonos3_model & model, const std::vector<float> & spe
     want.insert(want.end(), again.begin(), again.end());
     want.push_back(3);
     REQUIRE(got == want, "group ids: open, open+2+index per phone, close; BPE between groups");
-    REQUIRE(zonos3_check_phoneme_groups(tok, "a \xEE\x80\x80\xEE\x80\x81 b") ==
+    REQUIRE(zonos3_check_text_markers(tok, "a \xEE\x80\x80\xEE\x80\x81 b") ==
             "Pronunciation groups: Unbalanced or empty phoneme group", "empty group");
-    REQUIRE(zonos3_check_phoneme_groups(tok, "a \xEE\x80\x81 b") == "Pronunciation groups: Unbalanced phoneme group markers",
+    REQUIRE(zonos3_check_text_markers(tok, "a \xEE\x80\x81 b") == "Pronunciation groups: Unbalanced phoneme group markers",
             "stray close marker");
-    REQUIRE(zonos3_check_phoneme_groups(tok, "\xEE\x80\x80xtx'\xEE\x80\x81") ==
+    REQUIRE(zonos3_check_text_markers(tok, "\xEE\x80\x80xtx'\xEE\x80\x81") ==
             "Pronunciation groups: Phones outside the inventory: [\"'\", 'x']", "unknown phones, sorted, Python repr");
-    REQUIRE(zonos3_check_phoneme_groups(tok, "no groups") == "", "no groups");
+    REQUIRE(zonos3_check_text_markers(tok, "no groups") == "", "no groups");
     REQUIRE(!zonos3_tokenizer_set_spec(tok, spec_base + R"(, "phonemes": {"open_marker": "\ue000", "close_marker": "\ue001",
         "open_id": 8196, "close_id": 8197, "symbols": ["t"]}})", 8196, 3, err), "phoneme ids must follow the padding row");
     REQUIRE(!zonos3_tokenizer_set_spec(tok, R"({"kind": "superbpe", "vocab_size": 8000, "offset": 4, "bos": 2, "eos": 3})",
                                        8196, 0, err) && err == "SuperBPE ID convention mismatch", "vocab convention");
+    // the phoneme rows (8199..8203), then the start row (8204) and two pause rows (8205, 8206) end the extra rows
+    const std::string phonemes = R"(, "phonemes": {"open_marker": "\ue000", "close_marker": "\ue001",
+        "open_id": 8199, "close_id": 8200, "symbols": ["t", "\u0259", "\u02c8"]})";
+    const std::string pauses = R"(, "pauses": {"ids": [8205, 8206], "markers": ["\ue003", "\ue004"], "seconds": [0.25, 0.5]})";
+    const std::string block = spec_base + phonemes + R"(, "start": {"id": 8204, "marker": "\ue002"})" + pauses + "}";
+    REQUIRE(!zonos3_tokenizer_set_spec(tok, block, 8196, 9, err) && err.find("text_extra_tokens") != std::string::npos,
+            "phoneme / start / pause rows must end the extra rows");
+    REQUIRE(zonos3_tokenizer_set_spec(tok, block, 8196, 10, err) && tok.start_id == 8204 && tok.pause_ids.size() == 2 &&
+                tok.block_first == 8199 && tok.block_rows == 8,
+            "block spec accepted");
+    const std::string marked = "\xEE\x80\x82Say\xEE\x80\x84 again.";  // U+E002 Say U+E004 again.
+    std::vector<int32_t> marked_ids, say_plain;
+    REQUIRE(zonos3_text_ids(tok, marked, marked_ids, err) && zonos3_payload_ids(tok, "Say", say_plain, err),
+            "start and pause markers encode");
+    std::vector<int32_t> want_marked{2, 8204};
+    want_marked.insert(want_marked.end(), say_plain.begin(), say_plain.end());
+    want_marked.push_back(8206);
+    want_marked.insert(want_marked.end(), again.begin(), again.end());
+    want_marked.push_back(3);
+    REQUIRE(marked_ids == want_marked, "start id first, pause id per marker, SuperBPE between");
+    REQUIRE(zonos3_check_text_markers(tok, marked) == "", "valid markers");
+    REQUIRE(zonos3_check_text_markers(tok, "Say \xEE\x80\x82" "again.") ==
+                "The start marker (U+E002) must be the first character of the text, once",
+            "start marker not first");
+    REQUIRE(zonos3_check_text_markers(tok, "\xEE\x80\x82Say \xEE\x80\x82" "again.") ==
+                "The start marker (U+E002) must be the first character of the text, once",
+            "start marker twice");
+    REQUIRE(zonos3_check_text_markers(tok, "Say\xEE\x80\x85 again.") == "Pause marker U+E005 outside the 2 pause buckets",
+            "pause bucket outside the spec");
+    REQUIRE(zonos3_check_text_markers(tok, marked, /*edit=*/true) ==
+                "Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text",
+            "edit target takes no markers");
+    REQUIRE(zonos3_check_text_markers(model.tok, marked) ==
+                "This checkpoint has no start token: remove the U+E002 start marker",
+            "start marker needs a start token");
+    REQUIRE(zonos3_check_text_markers(model.tok, "Say\xEE\x80\x84 again.") ==
+                "This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers",
+            "pause marker needs pause tokens");
+    zonos3_tokenizer scratch = model.tok;
+    REQUIRE(!zonos3_tokenizer_set_spec(scratch, spec_base + phonemes + R"(, "start": {"id": 8205, "marker": "\ue002"})" + pauses + "}",
+                                       8196, 10, err) && err == "Start token ID must follow the phoneme rows",
+            "start id after the phoneme rows");
+    REQUIRE(!zonos3_tokenizer_set_spec(scratch, spec_base + phonemes + R"(, "start": {"id": 8204, "marker": "\ue002"}, "pauses": {"ids": [8205, 8206], "markers": ["\ue004", "\ue003"], "seconds": [0.25, 0.5]}})",
+                                       8196, 10, err) && err == "Invalid pause markers",
+            "pause markers in bucket order");
     const zonos3_tokenizer saved_tok = model.tok;
     const uint32_t saved_extra = model.hp.text_extra_tokens;
     REQUIRE(zonos3_tokenizer_set_spec(model.tok, spec, 8196, 7, err), "phoneme spec on the model");
     model.hp.text_extra_tokens = 7;
     const int markers = zonos3_edit_marker_rows(model);
+    REQUIRE(zonos3_tokenizer_set_spec(model.tok, block, 8196, 10, err), "block spec on the model");
+    model.hp.text_extra_tokens = 10;
+    const int markers_block = zonos3_edit_marker_rows(model);
     model.hp.text_extra_tokens = 4;
     const int markers_plain = (model.tok = saved_tok, zonos3_edit_marker_rows(model));
     model.hp.text_extra_tokens = saved_extra;
-    REQUIRE(markers == 2 && markers_plain == 4 && zonos3_edit_marker_id(model, 1) == 8198, "edit marker rows / ids");
+    REQUIRE(markers == 2 && markers_block == 2 && markers_plain == 4 && zonos3_edit_marker_id(model, 1) == 8198,
+            "edit marker rows / ids");
     REQUIRE(!zonos3_supports_editing(model), "the dummy has no span_end_id");
     return true;
 }

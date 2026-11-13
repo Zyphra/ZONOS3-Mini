@@ -64,6 +64,7 @@ void Detector::reset() {
     frontier_ = 0;
     last_advance_row_.reset();
     done_row_.reset();
+    read_row_.reset();
 }
 
 int Detector::tokens(int b) const { return std::min(cfg.bin_tokens, text_len - b * cfg.bin_tokens); }
@@ -155,8 +156,10 @@ std::optional<Failure> Detector::step(int row, int pos) {
         }
     }
 
-    // 4. text done
-    if (!done_row_ && frontier_ >= nb - 2 && counts_[nb - 1] >= share(nb - 1)) done_row_ = row;
+    // 4. text done: the last bin read for its share, and the reading has reached the last text token (with two bins the
+    // share alone, a pace prior, can call the text read a second before the end is spoken)
+    if (!read_row_ && pos >= text_len - 1) read_row_ = row;
+    if (!done_row_ && read_row_ && frontier_ >= nb - 2 && counts_[nb - 1] >= share(nb - 1)) done_row_ = row;
     return std::nullopt;
 }
 
@@ -392,6 +395,13 @@ std::optional<Windows> LaciSession::window(int center) const {
 std::optional<Windows> LaciSession::probe_mask() const {
     if (!probation_) return std::nullopt;
     return window(probation_->second.center);
+}
+
+double LaciSession::stop_boost() const {
+    if (!detector_ || !detector_->done_row() ||
+        (int)stream_.size() < *detector_->done_row() + p_.cfg.stop_boost_delay)
+        return 0.0;
+    return p_.cfg.stop_boost;
 }
 
 void LaciSession::on_step(ProbeControl & probe, int step, int pos, double m) {

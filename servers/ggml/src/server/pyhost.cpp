@@ -237,11 +237,13 @@ json call_encode(ServerState & s, const json & c) {
     return {{"codes", rows_json(encode_audio_codes(s, pcm, (int) std::ceil(max_seconds)), (int) s.model.hp.n_codebooks)}};
 }
 
-// EditEngine.check: the target's pronunciation groups, every region's doses against the steering bundle and the
-// condition buckets / values; the dosed ids whose direction is raw (moves the speaker embedding), sorted.
+// EditEngine.check: the target's text markers (pronunciation groups; no start or pause markers), every region's doses
+// against the steering bundle and the condition buckets / values; the dosed ids whose direction is raw (moves the
+// speaker embedding), sorted.
 json call_check(const ServerState & s, const json & c) {
-    const std::string groups = zonos3_check_phoneme_groups(s.model.tok, c.at("target_text").get<std::string>());
-    if (!groups.empty()) fail(400, groups);
+    const std::string markers =
+        zonos3_check_text_markers(s.model.tok, c.at("target_text").get<std::string>(), /*edit=*/true);
+    if (!markers.empty()) fail(400, markers);
     std::vector<std::string> raw;
     if (set(c, "doses")) {
         if (!s.steer_loaded)

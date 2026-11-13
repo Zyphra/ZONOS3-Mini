@@ -46,19 +46,25 @@ export function laciLanguages(e: Engine): string[] {
 export const ACCENT_ADAPTERS: string[] = [];
 
 /** Edit regions per request: the speech-edit backbone's marker rows (zonos3.tts.edit edit_marker_rows, ggml
- *  zonos3_edit_marker_rows): the extra text rows before the tokenizer's phoneme block (open, close, symbols), all of them
- *  without one; 0 when the phoneme block does not end the extra rows. */
+ *  zonos3_edit_marker_rows): the extra text rows before the tokenizer's phoneme / start / pause rows, all of them
+ *  without any; 0 when those rows do not end the extra rows. */
 export function editMaxSpans(e: Engine): number {
   if (!e.edit) return 0;
   const hp = e.edit.hp;
   const spec: unknown = JSON.parse(hp.textTokenizerSpec);
-  const phonemes = spec && typeof spec === 'object' && 'phonemes' in spec ? spec.phonemes : undefined;
-  if (!phonemes) return hp.textExtraTokens;
-  if (typeof phonemes !== 'object' || !('open_id' in phonemes) || !('symbols' in phonemes)) return 0;
-  const { open_id: openId, symbols } = phonemes;
-  if (typeof openId !== 'number' || !Array.isArray(symbols)) return 0;
-  const markers = openId - hp.textVocab - 1;
-  return markers + 2 + symbols.length === hp.textExtraTokens ? Math.max(markers, 0) : 0;
+  const block = (spec && typeof spec === 'object' ? spec : {}) as Record<string, unknown>;
+  const obj = (v: unknown) => (v && typeof v === 'object' ? v as Record<string, unknown> : undefined);
+  const phonemes = obj(block.phonemes), start = obj(block.start), pauses = obj(block.pauses);
+  if (!block.phonemes && !block.start && !block.pauses) return hp.textExtraTokens;
+  if ((block.phonemes && !phonemes) || (block.start && !start) || (block.pauses && !pauses)) return 0;
+  const symbols = phonemes?.symbols, pauseIds = pauses?.ids;
+  if (phonemes && !Array.isArray(symbols)) return 0;
+  if (pauses && !Array.isArray(pauseIds)) return 0;
+  const first = phonemes ? phonemes.open_id : start ? start.id : (pauseIds as unknown[])[0];
+  if (typeof first !== 'number') return 0;
+  const rows = (phonemes ? 2 + (symbols as unknown[]).length : 0) + (start ? 1 : 0) + (pauses ? (pauseIds as unknown[]).length : 0);
+  const markers = first - hp.textVocab - 1;
+  return markers + rows === hp.textExtraTokens ? Math.max(markers, 0) : 0;
 }
 
 function conditionTokens(e: Engine): unknown {
@@ -140,6 +146,8 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     edit_max_seconds: EDIT_MAX_SECONDS,
     edit_align_max_seconds: ALIGN_MAX_SECONDS,
     phoneme_tokens: null,
+    start_token: null,
+    pause_tokens: null,
     phonemize_enabled: false,
     phonemize_languages: [],
     phonemize_guess_languages: [],

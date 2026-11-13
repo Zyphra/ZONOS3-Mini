@@ -10,7 +10,7 @@
 
 Inputs (skipped when absent): the backbone checkpoint directory ``ZONOS3_TEST_MODEL`` (default
 /data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted) and the GGUF converted from it,
-``ZONOS3_GGUF`` (default servers/ggml/gguf/zonos3-f16.gguf, `convert_gguf.py lm --outtype f16`).
+``ZONOS3_GGUF`` (default servers/ggml/gguf/backbone-f16.gguf, `convert_gguf.py lm --outtype f16`).
 
     uv run --package zonos3-tools pytest servers/ggml/tests/parity/test_ggml_golden.py --ggml-build servers/ggml/build -s
 """
@@ -36,7 +36,7 @@ LM_DIR = Path(
         "ZONOS3_TEST_MODEL", "/data/groups/audio/checkpoints/george_post_training/zonos3-rate30-20k-r2grpo/converted"
     )
 )
-GGUF = Path(os.environ.get("ZONOS3_GGUF", REPO / "servers" / "ggml" / "gguf" / "zonos3-f16.gguf"))
+GGUF = Path(os.environ.get("ZONOS3_GGUF", REPO / "servers" / "ggml" / "gguf" / "backbone-f16.gguf"))
 SPEAKER = REPO / "servers" / "ggml" / "tests" / "fixtures" / "speaker-embedding.npy"
 HEADS = REPO / "assets" / "laci_heads" / "zonos3_mini_mect60k_heads.json"
 BUCKETS = [3, 5, 29]

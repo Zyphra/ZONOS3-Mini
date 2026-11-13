@@ -213,15 +213,15 @@ def silence_frame(codec: str, device) -> torch.Tensor:
 
 
 def prompt_builder(lm: Zonos3LM) -> TTSPromptBuilder:
-    """The LM's prompt builder: its checkpoint's tokenizer spec (path resolved), with the phoneme block of its config
-    (rows appended at load, ``Zonos3LM.append_text_rows``)."""
+    """The LM's prompt builder: its checkpoint's tokenizer spec (path resolved), with the phonemes / start / pauses of
+    its config (rows appended at load, ``Zonos3LM.append_text_rows``)."""
     from zonos3.tts.superbpe import load_spec
 
     c = lm.config
     spec = load_spec(lm.root) if lm.root is not None else None
-    phonemes = (c.text_tokenizer_spec or {}).get("phonemes")
-    if spec is not None and phonemes is not None:
-        spec = {**spec, "phonemes": phonemes}
+    extra = {k: v for k in ("phonemes", "start", "pauses") if (v := (c.text_tokenizer_spec or {}).get(k)) is not None}
+    if spec is not None and extra:
+        spec = {**spec, **extra}
     return TTSPromptBuilder(
         TTSPromptConfig(
             n_codebooks=c.n_codebooks,
@@ -448,8 +448,10 @@ def sample_row(
     history_rows: int,
     stop_id: int,
     generator: torch.Generator,
+    stop_bias: float = 0.0,
 ) -> torch.Tensor:
-    """One sampled row; ``config`` supplies n_codebooks, codebook_size, codebook_sizes, audio_pad_id and text_vocab."""
+    """One sampled row; ``config`` supplies n_codebooks, codebook_size, codebook_sizes, audio_pad_id and text_vocab.
+    ``stop_bias``: added to the stop id's logit in every codebook before the filters (LACI's stop boost)."""
     c = config
     n_cb = c.n_codebooks
     device = logits.device
@@ -481,6 +483,7 @@ def sample_row(
         text_vocab=c.text_vocab,
         generators=[generator],
         stop_blocked=stop_blocked,
+        stop_bias=torch.tensor([stop_bias], dtype=torch.float32) if stop_bias else None,
     )[0].cpu()
 
 
@@ -503,7 +506,8 @@ def generate_rows(
 ) -> Attempt:
     """One request's autoregressive generation (TTSScheduler prefill + decode steps, non-overlapped): ``steer(frame)``
     is the hidden delta (flattened per source) for generated frame ``frame`` or None; ``observer.on_step`` gets the probe
-    readout of every decode step (LACI, span follow); ``on_row(row, eos_frame)`` sees every generated row."""
+    readout of every decode step (LACI, span follow) and, when it has ``stop_boost()`` (a LaciSession), biases the stop
+    id of the next row; ``on_row(row, eos_frame)`` sees every generated row."""
     c = lm.config
     n_cb, pad = c.n_codebooks, c.audio_pad_id
     device = lm.device
@@ -539,7 +543,10 @@ def generate_rows(
         if twin is not None:
             logits = guided_logits(logits, outs[1].logits[-1].float(), cfg_scale)
         total_generated = len(rows)
-        token = sample_row(lm.config, logits, sampling, history, total_generated, history_rows, stop_id, generator)
+        stop_bias = observer.stop_boost() if hasattr(observer, "stop_boost") else 0.0
+        token = sample_row(
+            lm.config, logits, sampling, history, total_generated, history_rows, stop_id, generator, stop_bias
+        )
         apply_cold_start_delay(token, total_generated, n_codebooks=n_cb, pad_id=pad, has_audio_prefix=has_audio_prefix)
         if step > 0 and probe is not None and observer is not None:
             probe.steps += 1

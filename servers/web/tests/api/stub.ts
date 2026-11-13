@@ -76,8 +76,9 @@ class StubBackbone {
     this.smp = smp;
     this.cfgScale = s.cfgScale;
   }
-  private sample(row: number): Int32Array {
+  private sample(row: number, stopBias = 0): Int32Array {
     const smp = this.smp!;
+    smp.stopBias = stopBias;
     let src = this.last[0];
     if (this.cfgScale !== null) {
       const s = Math.fround(this.cfgScale), c = this.last[0], t = this.last[1];
@@ -92,7 +93,8 @@ class StubBackbone {
   async sampleFirst(row: number) {
     return this.sample(row);
   }
-  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null) {
+  async stepSample(row: number, steer: Float32Array | null, twinSteer: Float32Array | null, probe: ProbeInput | null,
+                   stopBias = 0) {
     this.steps[0]++;
     this.steered.push(steer);
     this.probes.push(probe);
@@ -102,7 +104,7 @@ class StubBackbone {
       this.twinSteered.push(twinSteer);
       this.last[1] = this.logits(1);
     }
-    const frame = this.sample(row);
+    const frame = this.sample(row, stopBias);
     let read = false;
     const self = this;
     return {
@@ -178,7 +180,7 @@ export function stubApi(opts: { frames?: number; editFrames?: number; partialFra
   codec.clock = full.clock = () => backbone.consumed;
   const edit = haveEditModels ? editStubs(steer.sources, opts.editFrames ?? 6) : null;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, tokenizer: createTokenizer(),
+    hp, modelFile: 'backbone-ptq.gguf', backbone, tokenizer: createTokenizer(),
     decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec), stubDecoder('full_mr', 'zac.gguf', full)],
     steer, controlsDoc: controlsDocument(steer, hp.speakerDim), laci,
     voices: voices.map(v => ({
@@ -219,7 +221,7 @@ export function bareApi(opts: { frames?: number; partialFrames?: boolean } = {})
   const codec = new StubCodec(opts.partialFrames);
   codec.clock = () => backbone.consumed;
   const engine: Engine = {
-    hp, modelFile: 'zonos3-ptq.gguf', backbone, decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec)],
+    hp, modelFile: 'backbone-ptq.gguf', backbone, decoders: [stubDecoder('keep2_plain', 'zac-keep2.gguf', codec)],
     tokenizer: createTokenizer(),
     steer: null, controlsDoc: null, laci: new Map(),
     voices: [{ id: 'v0', label: 'Voice 0', file: 'v0.mp3', pcm: new Float32Array(44100).fill(0.1), codes: new Int32Array(20).fill(5), embedding: null }],

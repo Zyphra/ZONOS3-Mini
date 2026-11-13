@@ -24,7 +24,7 @@ EXTRA_ARGS=()
 usage() {
     cat <<EOF
 usage: $0 [options] [-- <extra zonos3-server args>]
-  --quant Q      backbone file models/zonos3-Q.gguf (default ptq; qat = the previous mect_60k backbone)
+  --quant Q      backbone file models/backbone-Q.gguf (default ptq; qat = the previous mect_60k backbone)
   --zac Z        default decoder file models/Z.gguf (default zac-keep2, the keep2 decoder; zac = the full-size one);
                  the other of zac-keep2.gguf / zac.gguf, when present, is served too (requests pick it by id)
   --cpu | --gpu  backend (archive default: $GPU_DEFAULT)
@@ -96,7 +96,7 @@ ffmpeg_download() {
 
 [ -x "$ZONOS3_SERVER_BIN" ] || die "zonos3-server not found at $ZONOS3_SERVER_BIN (run this script from the extracted release archive, or set ZONOS3_SERVER_BIN)"
 
-BACKBONE="zonos3-$ZONOS3_QUANT.gguf"
+BACKBONE="backbone-$ZONOS3_QUANT.gguf"
 DECODER="$ZONOS3_ZAC.gguf"
 MISSING=()
 for f in "$BACKBONE" "$DECODER"; do

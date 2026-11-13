@@ -77,11 +77,13 @@ def sample_row_mx(
     total_generated: int,
     has_audio_prefix: bool,
     text_vocab: int,
+    stop_bias: float = 0.0,
 ) -> mx.array:
     """One sampled row ``[n_codebooks + 1]`` int32 (lazy): the reference ``sample_row`` on ``logits``
     ``[n_codebooks, V]`` with the draws ``noise`` (``noise_for``, width ``max(stop_id, audio_pad_id) + 1``), the cold
     start delay applied and the text placeholder appended. ``repetition``: ``repetition_ids``; ``stop_blocked``: the
-    codebooks whose stop id is masked (min_frames), None for none."""
+    codebooks whose stop id is masked (min_frames), None for none; ``stop_bias``: added to the stop id's logit in every
+    codebook before the filters (LACI's stop boost)."""
     n_cb, vocab = logits.shape
     invalid = _invalid_mask(n_cb, vocab, codebook_size, tuple(codebook_sizes or ()), audio_pad_id, stop_id)
     if stop_blocked is not None:
@@ -89,6 +91,8 @@ def sample_row_mx(
         blocked[:, stop_id] = np.asarray(stop_blocked, dtype=bool)
         invalid = invalid | mx.array(blocked)
     x = mx.where(invalid, -mx.inf, logits.astype(mx.float32))
+    if stop_bias:
+        x = mx.where(mx.arange(vocab)[None, :] == stop_id, x + float(stop_bias), x)
     if repetition is not None:
         repeated = np.zeros((n_cb, vocab), dtype=bool)
         rows, cols = np.nonzero(repetition >= 0)

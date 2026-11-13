@@ -1192,7 +1192,8 @@ async def _tts_generate_msg(
         text=req.text,
         language=rules.language,
         text_normalization=req.text_normalization,
-        silence_prefill_frames=req.silence_prefill_frames,
+        silence_prefill_frames=plan.start_silence(req.silence_prefill_frames, rules.start),
+        start_immediately=rules.start,
         decode_context=req.decode_context,
         decode_context_frames=int(req.decode_context_frames or DECODE_CONTEXT_FRAMES),
         sampling_params=TTSSamplingParams(
@@ -1605,7 +1606,7 @@ class _SglEditEngine:
         self, target_text: str, doses: list[dict[str, float]] | None, condition_buckets, condition_values
     ) -> set[str]:
         ctx = _RulesContext(get_global_state().config)
-        plan.validate_phoneme_groups(ctx.text_tokenizer_spec, target_text)
+        plan.validate_text_markers(ctx.text_tokenizer_spec, target_text, edit=True)
         raw: set[str] = set()
         if doses is not None:
             bundle = ctx.steer_bundle

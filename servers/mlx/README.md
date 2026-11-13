@@ -5,7 +5,7 @@ Voice Studio, running every network in [MLX](https://github.com/ml-explore/mlx) 
 
 | Network | GGUF | Notes |
 | --- | --- | --- |
-| LM backbone | `zonos3-ptq.gguf` (default, `lm/rate30_20k_r2grpo`), `zonos3-qat.gguf` (previous `lm/mect_60k`, `SERVE_MODEL`) or `zonos3-f16.gguf` | GDN + global attention, Full AttnRes, latent MoE; Q4_0 / Q8_0 blocks become MLX affine-quantized weights, bit-exact; per-table condition bucket counts |
+| LM backbone | `backbone-ptq.gguf` (default, `lm/rate30_20k_r2grpo`), `backbone-qat.gguf` (previous `lm/mect_60k`, `SERVE_MODEL`) or `backbone-f16.gguf` | GDN + global attention, Full AttnRes, latent MoE; Q4_0 / Q8_0 blocks become MLX affine-quantized weights, bit-exact; per-table condition bucket counts |
 | Codec decoders | `zac-keep2.gguf` (default, `keep2_plain` head) and `zac.gguf` (full-size `full_mr` head) | causal multi-resolution iSTFT heads, 44.1 kHz; a request picks one with `decoder` |
 | Speaker encoder | `spk-encoder.gguf` | MECT-B2 + ASTP, 192-d embeddings (`speaker_mode=embedding`) |
 | Reference encoder | `zac-encoder.gguf` + `ssl-teacher.gguf` | raw-reference cloning and speech editing; the BF16 autocast recipe of the release; loaded on first use, freed after `--reference-idle-unload` idle seconds |
@@ -75,8 +75,8 @@ uv run --package zonos3-mlx pytest servers/mlx/tests                       # tin
 uv run --package zonos3-api pytest servers/api/tests/conformance --base-url http://127.0.0.1:1919
 ```
 
-Against the release goldens of `tools/dump_golden.py`: the F16 backbone (`zonos3-f16.gguf`) matches the reference
-logits at cosine 1.000000 with 100 % argmax agreement. The quantized backbones (`zonos3-ptq.gguf`, `zonos3-qat.gguf`)
+Against the release goldens of `tools/dump_golden.py`: the F16 backbone (`backbone-f16.gguf`) matches the reference
+logits at cosine 1.000000 with 100 % argmax agreement. The quantized backbones (`backbone-ptq.gguf`, `backbone-qat.gguf`)
 run their F16 logits head as Q8_0 (quantized at load, the quants the web server ships; about 43 % faster decode steps
 on an M-series GPU): against the same model with its F16 head, the logits on the web goldens' `full_ids.npy` agree at
 cosine ≥ 0.99996 (prefill) / 0.999999 (decode) with 98.4 % / 100 % argmax agreement. On the CPU device (`--cpu`) the

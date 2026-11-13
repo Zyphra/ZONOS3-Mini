@@ -9,6 +9,8 @@ export interface Line {
   spans: Span[];
   /** Persona id; absent / null: the script's voice. */
   voice?: string | null;
+  /** Speech from the first frame (start_immediately); absent = off. */
+  startImmediately?: boolean;
 }
 
 export const newLine = (text: string, voice?: string | null): Line => ({ id: uid(), text, spans: [], ...(voice ? { voice } : {}) });
@@ -55,6 +57,7 @@ export function staleReason(stored: GenerateRequest, fresh: GenerateRequest, opt
   if (stored.text !== fresh.text) return 'text changed';
   if (stored.speaker_embedding_id !== fresh.speaker_embedding_id || stored.speaker_mode !== fresh.speaker_mode) return 'voice changed';
   if ((stored.language ?? 'en_us') !== (fresh.language ?? 'en_us')) return 'language changed';
+  if ((stored.start_immediately ?? false) !== (fresh.start_immediately ?? false)) return 'start changed';
   if (JSON.stringify(stored.control_spans ?? []) !== JSON.stringify(fresh.control_spans ?? [])) return 'painting changed';
   // The whole-line controls: the voice's design edited since, or the script baseline.
   if (JSON.stringify(stored.controls ?? {}) !== JSON.stringify(fresh.controls ?? {})) return opts.voiceEdited ? 'voice edited' : 'baseline changed';

@@ -46,12 +46,18 @@ std::vector<int> map_offsets(const std::u32string & original, const std::u32stri
 // Character offsets (code points into s) of the SuperBPE tokens of s (tokenizers' encode(...).offsets).
 using BpeOffsets = std::function<std::vector<Range>(const std::u32string & s)>;
 struct PhonemeMarkers { std::u32string open, close; };
+// The tokenizer spec's text markers: pronunciation groups (`phonemes`, when the spec has them), the start token
+// (U+E002) and the pause tokens (U+E003..U+E00A).
+struct TextMarkers {
+    std::optional<PhonemeMarkers> phonemes;
+    bool start = false;
+    bool pauses = false;
+};
 
 // Character range of `text` behind each id of its text span: BOS and EOS are the empty ranges at 0 and len(text).
 // Without a tokenizer spec (`bpe` empty) one range per UTF-8 byte; otherwise SuperBPE offsets, with a phoneme group
-// (`phonemes`, when the spec has them) one range per character from its open to its close marker.
-std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffsets & bpe,
-                                     const std::optional<PhonemeMarkers> & phonemes);
+// one range per character from its open to its close marker, and the start and pause ids their marker.
+std::vector<Range> token_char_ranges(const std::u32string & text, const BpeOffsets & bpe, const TextMarkers & markers);
 
 // Text-span positions [a, b) of the tokens spelling each character span [start, end) of `text`, once the text is
 // `final_`. `ranges` = token_char_ranges(final_, ...); `markers` = nonverbal_marker_spans(final_)

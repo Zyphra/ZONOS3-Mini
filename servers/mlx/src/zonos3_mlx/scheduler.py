@@ -340,6 +340,7 @@ class Scheduler:
             total_generated=total_generated,
             has_audio_prefix=a.has_audio_prefix,
             text_vocab=c.text_vocab,
+            stop_bias=0.0 if a.session is None else a.session.stop_boost(),
         )
 
     def _tick(self, a: _Active) -> None:

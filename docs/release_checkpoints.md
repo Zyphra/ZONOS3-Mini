@@ -14,6 +14,11 @@ override it); the registries in `model/src/zonos3/registries/` (`codec_registry.
 overrides the speaker one); the tokenizer path in a checkpoint may be relative to its folder. Local paths pass through
 unchanged.
 
+The backbone GGUFs in `gguf/` are named `backbone-*.gguf` so that `gguf/backbone-ptq-edit.gguf` sorts first: the Hub
+shows the parameter count and architecture of one GGUF per repo (the shallowest path, then case-insensitive name
+order), and with the earlier `zonos3-*.gguf` names it picked `gguf/spk-encoder.gguf` (`mect_spk`, 11.3M params). A
+GGUF added to `gguf/` (or above it) must not sort before the backbones.
+
 The codec code is vendored in `model/src/zonos3/codec`.
 
 The default LM is zonos3-rate30-20k-r2grpo (`lm/rate30_20k_r2grpo`, added in revision

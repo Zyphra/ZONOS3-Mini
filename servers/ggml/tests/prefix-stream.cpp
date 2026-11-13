@@ -24,7 +24,8 @@
 
 using json = nlohmann::json;
 
-static constexpr int NCB = 10, PAD = 4097, P = 3;   // the release geometry: 10 codebooks, audio pad 4097, prefill 3
+// Not NCB: <windows.h> (through httplib.h) declares a typedef NCB (nb30.h), MSVC error C2377.
+static constexpr int N_CB = 10, PAD = 4097, P = 3;   // the release geometry: 10 codebooks, audio pad 4097, prefill 3
 
 // ------------------------------------------------------------------------------------------------- the ready rule
 
@@ -38,14 +39,14 @@ static std::vector<Chunk> run_rule(int k, bool first_only, int n_rows, int eos_f
     std::vector<Chunk> out;
     int emitted = P;
     for (int H = 1; H <= n_rows; ++H) {
-        std::vector<int32_t> row(NCB, 7);
+        std::vector<int32_t> row(N_CB, 7);
         row[0] = 5;
         for (const auto & [r, v] : code0) if (r == H - 1) row[0] = v;
         rows.insert(rows.end(), row.begin(), row.end());
         const int eos = eos_frame >= 0 && H > eos_frame ? eos_frame : -1;   // known once its row was sampled
-        int complete = H - (NCB - 1);
+        int complete = H - (N_CB - 1);
         if (eos >= 0) complete = std::min(complete, eos);
-        const int ready = zs::prefix_ready(rows.data(), H, NCB, PAD, complete, eos, emitted, P, k, first_only);
+        const int ready = zs::prefix_ready(rows.data(), H, N_CB, PAD, complete, eos, emitted, P, k, first_only);
         const int end = zs::prefix_chunk_end(ps, ready, emitted, P);
         if (end < 0) continue;
         CHECK(end > emitted, "a chunk moves forward");
@@ -60,7 +61,7 @@ static std::vector<Chunk> run_complete(int n_rows, int eos_frame, const zs::Pref
     std::vector<Chunk> out;
     int emitted = P;
     for (int H = 1; H <= n_rows; ++H) {
-        int complete = H - (NCB - 1);
+        int complete = H - (N_CB - 1);
         if (eos_frame >= 0 && H > eos_frame) complete = std::min(complete, eos_frame);
         const int decodable = complete - ps.hold_back_frames;
         const int need = std::min(ps.chunk_frames, ps.first_chunk_frames + emitted - P);
@@ -83,12 +84,12 @@ static void test_ready_rule() {
     CHECK(!c1.empty() && c1[0].rows == P + 1 && c1[0].end == P + 1, "k=1: the first chunk after the first generated row");
     auto c3 = run_rule(3, true, 60);
     CHECK(!c3.empty() && c3[0].rows == P + 3 && c3[0].end == P + 1, "k=3: the first chunk after three generated rows");
-    auto c10 = run_rule(NCB, true, 60);
-    CHECK(!c10.empty() && c10[0].rows == P + NCB && c10[0].end == P + 1, "k=ncb: the first chunk once the frame is complete");
+    auto c10 = run_rule(N_CB, true, 60);
+    CHECK(!c10.empty() && c10[0].rows == P + N_CB && c10[0].end == P + 1, "k=ncb: the first chunk once the frame is complete");
 
-    // Scope first: the chunks after the first wait for complete frames (frame P + 1 complete at row P + 1 + NCB, need 2).
-    CHECK(c1.size() >= 2 && c1[1].rows == P + 2 + NCB - 1 + 1 && c1[1].end == P + 3, "scope first: the second chunk is complete");
-    for (size_t i = 1; i < c1.size(); ++i) CHECK(c1[i].end <= c1[i].rows - (NCB - 1), "scope first: later chunks complete");
+    // Scope first: the chunks after the first wait for complete frames (frame P + 1 complete at row P + 1 + N_CB, need 2).
+    CHECK(c1.size() >= 2 && c1[1].rows == P + 2 + N_CB - 1 + 1 && c1[1].end == P + 3, "scope first: the second chunk is complete");
+    for (size_t i = 1; i < c1.size(); ++i) CHECK(c1[i].end <= c1[i].rows - (N_CB - 1), "scope first: later chunks complete");
     // Scope all: every chunk early (need 2 -> two more generated rows).
     auto all = run_rule(1, false, 60);
     CHECK(all.size() >= 2 && all[1].rows == P + 3 && all[1].end == P + 3, "scope all: the second chunk early too");
@@ -97,8 +98,8 @@ static void test_ready_rule() {
     zs::PrefixStreamSettings hold;
     hold.hold_back_frames = 2;
     for (bool first : {true, false}) {
-        CHECK(same(run_rule(NCB, first, 80), run_complete(80, -1, {})), "k=ncb: unchanged ramp");
-        CHECK(same(run_rule(NCB, first, 80, 30, {}, hold), run_complete(80, 30, hold)), "k=ncb: unchanged with hold-back/EOS");
+        CHECK(same(run_rule(N_CB, first, 80), run_complete(80, -1, {})), "k=ncb: unchanged ramp");
+        CHECK(same(run_rule(N_CB, first, 80, 30, {}, hold), run_complete(80, 30, hold)), "k=ncb: unchanged with hold-back/EOS");
     }
 
     // EOS caps the early frames: EOS at frame 4 (its row sampled), k=1 never decodes past it.
@@ -114,7 +115,7 @@ static void test_ready_rule() {
 // --------------------------------------------------------------------------------------------------- the codec
 
 static std::vector<int32_t> lcg_codes(int rows) {
-    std::vector<int32_t> c((size_t) rows * NCB);
+    std::vector<int32_t> c((size_t) rows * N_CB);
     uint32_t x = 12345;
     for (auto & v : c) { x = x * 1664525u + 1013904223u; v = (int32_t) ((x >> 8) % 4096); }
     return c;
@@ -150,7 +151,7 @@ static void test_codec(const char * zac_path, bool gpu) {
     {
         std::vector<float> part, full;
         zac_stream a, b;
-        CHECK(zac_stream_decode(m, a, codes.data(), n + NCB - 2, n, part), "partial chunk");
+        CHECK(zac_stream_decode(m, a, codes.data(), n + N_CB - 2, n, part), "partial chunk");
         CHECK(zac_stream_decode(m, b, codes.data(), 40, n - 1, full), "complete chunk");
         CHECK(!full.empty() && part.size() >= full.size(), "the partial chunk emits as far");
         CHECK(max_diff(part, full, full.size()) == 0.0, "complete frames bit-identical next to a partial one");
@@ -159,24 +160,24 @@ static void test_codec(const char * zac_path, bool gpu) {
     // A missing residual code drops its codebook's whole term: with table row X of every residual codebook set to
     // -res.{c}.bias (code X adds nothing), a frame missing its codes decodes like one coded X.
     const int X = 123;
-    for (int c = 0; c + 1 < NCB; ++c) {
+    for (int c = 0; c + 1 < N_CB; ++c) {
         std::vector<float> row(m.res_cb_bias.begin() + (size_t) c * L, m.res_cb_bias.begin() + (size_t) (c + 1) * L);
         for (float & v : row) v = -v;
         ggml_tensor * t = m.get("res." + std::to_string(c) + ".table");
         CHECK(t && t->type == GGML_TYPE_F32, "F32 residual table");
         ggml_backend_tensor_set(t, row.data(), (size_t) X * L * sizeof(float), (size_t) L * sizeof(float));
     }
-    std::vector<int32_t> coded(codes.begin(), codes.begin() + (size_t) (n + NCB - 1) * NCB), minus = coded, zero = coded;
-    for (int r = n; r < n + NCB - 1; ++r)
-        for (int c = 1; c < NCB; ++c) {
-            coded[(size_t) r * NCB + c] = X;
-            minus[(size_t) r * NCB + c] = -1;
-            zero[(size_t) r * NCB + c] = 0;
+    std::vector<int32_t> coded(codes.begin(), codes.begin() + (size_t) (n + N_CB - 1) * N_CB), minus = coded, zero = coded;
+    for (int r = n; r < n + N_CB - 1; ++r)
+        for (int c = 1; c < N_CB; ++c) {
+            coded[(size_t) r * N_CB + c] = X;
+            minus[(size_t) r * N_CB + c] = -1;
+            zero[(size_t) r * N_CB + c] = 0;
         }
     const std::vector<float> missing = stream(m, codes, n, {n});   // rows past H: frames n - 9 .. n - 1 partial
-    const std::vector<float> neg = stream(m, minus, n + NCB - 1, {n}); // the same cells as -1
-    const std::vector<float> as_x = stream(m, coded, n + NCB - 1, {n});
-    const std::vector<float> as_0 = stream(m, zero, n + NCB - 1, {n});
+    const std::vector<float> neg = stream(m, minus, n + N_CB - 1, {n}); // the same cells as -1
+    const std::vector<float> as_x = stream(m, coded, n + N_CB - 1, {n});
+    const std::vector<float> as_0 = stream(m, zero, n + N_CB - 1, {n});
     CHECK(missing.size() == as_x.size() && neg.size() == as_x.size() && as_0.size() == as_x.size(), "lengths");
     double peak = 0;
     for (float v : as_x) peak = std::max(peak, (double) std::fabs(v));

@@ -491,6 +491,7 @@ static void worker_loop(ServerState & s) {
                 // LACI: the session owns the stream; only rows no later rollback can change reach job->codes
                 // (scheduler._process_last_data). A finishing attempt drains after finish_attempt (step 4).
                 std::vector<int32_t> sampled;
+                job->smp->stop_bias = (float) job->laci->stop_boost();
                 zonos3_slot_sample(s.model, job->slot, *job->smp, source, sampled, job->attempt_max, {});
                 std::optional<int> eos;   // the attempt's aligned EOS frame, counted in its own generated rows
                 if (job->slot.eos_frame >= 0) eos = std::max(0, job->slot.eos_frame - job->laci->attempt_start());

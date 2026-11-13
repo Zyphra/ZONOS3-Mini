@@ -8,16 +8,17 @@ from .prompt import TTSPromptConfig, shear
 
 
 def edit_marker_rows(text_extra_tokens: int, text_tokenizer_spec: dict | None) -> int:
-    """Edit marker rows of a checkpoint: the extra text rows before the phoneme block (all of
-    them without phoneme tokens). Markers sit at text_vocab + 1 + j, where edit training put
-    them; superbpe.load_spec checks the phoneme block fills the rest of text_extra_tokens."""
-    from .superbpe import phoneme_token_count, rows_before_phonemes
+    """Edit marker rows of a checkpoint: the extra text rows before the phoneme / start / pause rows (all of them
+    without those tokens). Markers sit at text_vocab + 1 + j, where edit training put them; superbpe.load_spec checks
+    the phoneme / start / pause rows fill the rest of text_extra_tokens."""
+    from .superbpe import extra_token_count, rows_before_extra_tokens
 
-    if text_tokenizer_spec is None or text_tokenizer_spec.get("phonemes") is None:
+    rows = extra_token_count(text_tokenizer_spec)
+    if rows == 0:
         return int(text_extra_tokens)
-    markers = rows_before_phonemes(text_tokenizer_spec, int(text_tokenizer_spec["vocab_size"]) + 4)
-    if markers + phoneme_token_count(text_tokenizer_spec) != int(text_extra_tokens):
-        raise ValueError("Phoneme tokens must be the last extra text rows")
+    markers = rows_before_extra_tokens(text_tokenizer_spec, int(text_tokenizer_spec["vocab_size"]) + 4)
+    if markers + rows != int(text_extra_tokens):
+        raise ValueError("Phoneme / start / pause tokens must be the last extra text rows")
     return markers
 
 

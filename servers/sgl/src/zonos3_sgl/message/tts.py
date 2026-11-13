@@ -93,6 +93,9 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     # Silence prefill (2026-10-17): on a matched codec, this many codec-matched silence frames (15 fps -> 3 = 0.2 s)
     # open the audio stream as sheared prompt rows; the LM continues after them. None = the server default, 0 = off.
     silence_prefill_frames: int | None = None
+    # The prompt text opens with the start marker (start_immediately, zonos3.tts.plan.Rules.start): the tokenizer
+    # worker prepends it to the normalized text unless the text already starts with it.
+    start_immediately: bool = False
     # Decode context (2026-10-17): decode the generated frames behind the last decode_context_frames of the
     # request's reference prompt codes (their audio dropped), so the first generated frame is not the decoder's
     # position 0.
