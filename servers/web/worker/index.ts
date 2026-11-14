@@ -1,12 +1,13 @@
-// Cloudflare Worker: the studio (with web-engine/) from Workers Static Assets; /models/* streamed from R2. There is no
-// API server on this origin: /v1/* and /v2/* answer 503, so the studio's `auto` backend picks the in-browser server
-// (a 404 there would read as a ZONOS server without /v2/controls, the fixture backend).
+// Cloudflare Worker: the studio (with web-engine/) from Workers Static Assets; /models/* redirects to the web/ folder of
+// Zyphra/ZONOS3-Mini on the Hugging Face Hub, which serves the shards with CORS. There is no API server on this
+// origin: /v1/* and /v2/* answer 503, so the studio's `auto` backend picks the in-browser server (a 404 there would
+// read as a ZONOS server without /v2/controls, the fixture backend).
 interface Env {
   ASSETS: Fetcher;
-  MODELS: R2Bucket;
 }
 
 const PREFIX = '/models/';
+const MODELS = 'https://huggingface.co/Zyphra/ZONOS3-Mini/resolve/main/web/';
 
 export default {
   async fetch(req, env): Promise<Response> {
@@ -19,16 +20,10 @@ export default {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return new Response('method not allowed', { status: 405, headers: { allow: 'GET, HEAD' } });
     }
-    const key = decodeURIComponent(url.pathname.slice(PREFIX.length));
-    if (!key || key.split('/').includes('..')) return new Response('not found', { status: 404 });
-    const obj = await env.MODELS.get(key);
-    if (!obj) return new Response('not found', { status: 404 });
-    const headers = new Headers();
-    obj.writeHttpMetadata(headers);
-    headers.set('etag', obj.httpEtag);
-    headers.set('content-length', String(obj.size));
-    // The app caches shards itself in Cache Storage (CACHE_NAME in src/gpu/weights.ts); keep the browser HTTP cache from storing a second copy.
-    headers.set('cache-control', 'no-store');
-    return new Response(req.method === 'HEAD' ? null : obj.body, { headers });
+    const key = url.pathname.slice(PREFIX.length);
+    if (!key || decodeURIComponent(key).split('/').includes('..')) return new Response('not found', { status: 404 });
+    // The app caches shards itself in Cache Storage (CACHE_NAME in src/gpu/weights.ts); the redirect is not cached so
+    // a new Hub commit is picked up by the next uncached load.
+    return new Response(null, { status: 302, headers: { location: MODELS + key, 'cache-control': 'no-store' } });
   },
 } satisfies ExportedHandler<Env>;

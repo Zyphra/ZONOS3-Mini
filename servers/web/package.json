@@ -13,7 +13,6 @@
     "goldens": "cd ../.. && bash servers/web/scripts/make_goldens.sh",
     "parity": "node harness/parity.mjs",
     "harness": "pnpm build && node harness/server.mjs --port 1920",
-    "upload-models": "bash scripts/upload_models.sh",
     "deploy": "pnpm --dir ../../studio build && pnpm --dir ../../studio build:web && wrangler deploy"
   },
   "devDependencies": {

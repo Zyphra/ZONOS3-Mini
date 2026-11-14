@@ -32,7 +32,7 @@ the lite page).
 | `src/gpu/sampler.ts`, `sample.wgsl` | Sampling on the GPU, in the decode's submission: CFG mix, stop gate, repetition penalty, temperature, top-k, top-p, min-p, the multinomial draw (MT19937 seeded as the native servers, two draws per codebook and frame) and the cold-start pads; the sampled row feeds the next decode directly, so the generation loop keeps one step in flight when no probe readout steers it. `src/sampler.ts` is its host oracle (unit tests, the API stubs, the `sampler.gpu` parity check); GPU float sums make same-seed streams differ from the ggml server's |
 | `scripts/export_web_models.py` | GGUF → sharded web format (`zonos3-web-v1`; the backbone's `output.weight` becomes q8_0; the codec's per-codebook residual biases `res.{i}.bias` as `res.biases` when the GGUF has them), the backbone's text table with the release text rows appended (phoneme, start and pause rows, `--text-rows`, default `ZONOS3_RELEASE_TEXT_ROWS`, as the Python servers load them), the decoders (`zac/` from `zac-keep2.gguf`; `zac-full_mr/` from `zac.gguf` when the models directory has it), the speech-edit adapter `edit/` (grown vocabulary rows, f16 LoRA factors, shifted router biases), voices, companions, LACI heads. `scripts/check_edit_export.py` checks `edit/` against the MLX runtime adapter and writes the `backbone_edit` goldens |
 | `harness/` | Headless-Chrome harness: `server.mjs` (HTTP front for conformance), `parity.mjs` (WebGPU parity checks), `bench.mjs` (desktop / Android benchmark) |
-| `worker/`, `wrangler.jsonc` | Cloudflare deployment: the studio with the engine as static assets, models from R2 |
+| `worker/`, `wrangler.jsonc` | Cloudflare deployment: the studio with the engine as static assets; `/models/*` redirects to the `web/` folder of [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini/tree/main/web) on the Hub |
 
 ## Build and run
 
@@ -91,8 +91,10 @@ and prints the codec gemm plan. `--android` opens the page in the phone's browse
 ## Deploy (Cloudflare)
 
 ```bash
-pnpm --dir servers/web upload-models --remote      # public/models -> R2 bucket zonos3-studio-models
 pnpm --dir servers/web deploy                      # studio build + engine -> Workers Static Assets
 ```
 
-`pnpm --dir servers/web upload-models --local && pnpm --dir servers/web exec wrangler dev` runs it locally.
+The models are the `web/` folder of Zyphra/ZONOS3-Mini: the deployed worker redirects `/models/*` there, so a new
+export reaches the site by uploading it to the Hub (`hf upload Zyphra/ZONOS3-Mini servers/web/public/models web`; a
+change that reuses shard URLs also bumps `CACHE_NAME` in `src/gpu/weights.ts`). `pnpm --dir servers/web exec wrangler
+dev` runs the worker locally.

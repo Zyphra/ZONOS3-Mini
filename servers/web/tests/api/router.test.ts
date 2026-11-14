@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import languages from '../../../../model/src/zonos3/registries/languages.json';
 import { validate } from '../../src/api/validate';
 import { resolveControls } from '../../src/request/steer';
 import { bareApi, call, haveEditModels, haveModels, stubApi } from './stub';
@@ -18,7 +19,8 @@ describe.skipIf(!haveModels)('engine api', () => {
       speaker_modes: ['reference', 'embedding'], speaker_cfg_supported: true, plugins: [], speech_editing: haveEditModels,
       edit_transcribe: false, edit_max_spans: haveEditModels ? 3 : 0, edit_frame_rate: haveEditModels ? 15 : null,
       edit_max_seconds: 150, edit_align_max_seconds: 30,
-      projects: { enabled: false }, laci_languages: ['cmn', 'de', 'en_gb', 'en_us', 'es', 'fr_fr', 'it', 'ja', 'ko', 'pt_br'],
+      // the export ships heads for every server language (zonos3.tts.laci.discover_laci_heads)
+      projects: { enabled: false }, laci_languages: languages.server.map(l => l.code).sort(),
       accents: [],
     });
     const info = (id: string, checkpoint: string) => ({
