@@ -23,7 +23,12 @@ export default {
     const key = url.pathname.slice(PREFIX.length);
     if (!key || decodeURIComponent(key).split('/').includes('..')) return new Response('not found', { status: 404 });
     // The app caches shards itself in Cache Storage (CACHE_NAME in src/gpu/weights.ts); the redirect is not cached so
-    // a new Hub commit is picked up by the next uncached load.
-    return new Response(null, { status: 302, headers: { location: MODELS + key, 'cache-control': 'no-store' } });
+    // a new Hub commit is picked up by the next uncached load. no-referrer: the Hub's CDN answers 404 (without CORS
+    // headers) to requests whose Referer is a workers.dev page, and the browser follows a redirect under the
+    // redirect's Referrer-Policy.
+    return new Response(null, {
+      status: 302,
+      headers: { location: MODELS + key, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
+    });
   },
 } satisfies ExportedHandler<Env>;
