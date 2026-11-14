@@ -17,7 +17,7 @@ import { modelHp, TEXT_PAD, type Conditioning, type ModelHp } from '../../src/pr
 import { Sampler } from '../../src/sampler';
 import { LaciHeads } from '../../src/request/laci';
 import { controlsDocument, loadSteer } from '../../src/request/steer';
-import { createTokenizer } from '../../src/tokenizer';
+import { createTokenizer, NO_TEXT_MARKERS } from '../../src/tokenizer';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const models = root + 'public/models/';
@@ -209,7 +209,7 @@ const RELEASE_HP: ModelHp = {
     ],
   ],
   silenceFrame: [1918, 746, 3544, 234, 1267, 2914, 3944, 2849, 326, 1337], speakerDim: 192, contextLength: 32768,
-  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}',
+  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', textMarkers: NO_TEXT_MARKERS,
   nEmbd: 1024, nLayer: 11,
 };
 

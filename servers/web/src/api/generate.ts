@@ -19,6 +19,7 @@ import {
 import { defaultSampling, vocabIds, type Sampling } from '../sampler';
 import { buildIdx, BLOCK } from '../schedule';
 import { acceptFrame, newSlot, type SlotState } from '../slot';
+import { checkTextMarkers, START_MARKER, START_NEEDS_TOKEN } from '../tokenizer';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { applyFade } from '../wav';
 import { ACCENT_ADAPTERS, laciLanguages, SILENCE_PREFILL, TEXT_NORM_LANGUAGES } from './capabilities';
@@ -197,30 +198,10 @@ function checkLaci(e: Engine, body: Body, language: string): void {
 /** The tokenizer's follow tokens (span_follow.span_token_ranges). */
 function resolveFollowTokens(e: Engine, p: Plan): void {
   if (!p.follow) return;
-  const tok = e.tokenizer;
-  const enc = new TextEncoder();
-  // SuperBPE offsets: a token's characters run from the character of its first byte to the one of its last.
-  const bpe = (piece: string): Range[] => {
-    const out: Range[] = [];
-    const utf8 = enc.encode(piece);
-    const nChars = Array.from(piece).length;
-    const charOf = new Array<number>(utf8.length + 1).fill(nChars);
-    for (let b = 0, c = 0; b < utf8.length; b++) {
-      if (b > 0 && (utf8[b] & 0xc0) !== 0x80) c++;
-      charOf[b] = c;
-    }
-    const ids = tok.encode(piece);
-    let at = 0;
-    for (let i = 1; i + 1 < ids.length; i++) {
-      const n = tok.tokenBytes(ids[i]);
-      if (n === 0) continue;
-      out.push([charOf[at], charOf[at + n - 1] + 1]);
-      at += n;
-    }
-    return out;
-  };
+  const m = e.hp.textMarkers;
   const spans: Range[] = p.steering.spans.map(s => [s.charStart, s.charEnd]);
-  const ranges = tokenCharRanges(p.text, bpe, null);
+  const ranges = tokenCharRanges(p.text, s => e.tokenizer.charOffsets(s),
+    { phonemes: m.phonemes, start: m.start !== null, pauses: m.pauses !== null });
   p.followTokens = spanTokenRanges(p.rawText, p.text, spans, ranges);
 }
 
@@ -257,7 +238,11 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     if (requested <= 0) fail(400, 'max_tokens must be positive.');
     p.maxFrames = Math.min(requested, MAX_FRAMES);
   }
-  p.silencePrefill = SILENCE_PREFILL.on ? SILENCE_PREFILL.frames : 0;
+  // start_immediately, or a typed start marker: the prompt text opens with the start marker (plan.Rules.start)
+  const startFlag = bool(body, 'start_immediately') === true;
+  const start = startFlag || text.startsWith(START_MARKER);
+  // zonos3.tts.plan silence_prefill_frames (R6): unset = the server default (0 with the start marker, start_silence)
+  p.silencePrefill = start ? 0 : SILENCE_PREFILL.on ? SILENCE_PREFILL.frames : 0;
   if (isSet(body, 'silence_prefill_frames')) {
     const frames = Number(body.silence_prefill_frames);
     if (!Number.isInteger(frames) || frames < 0 || frames > SILENCE_PREFILL_MAX_FRAMES)
@@ -300,13 +285,11 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     p.twinSteered = false;
     p.cfgKind = 'controls';
   }
-  // zonos3.tts.plan validate_text_markers (R13): this checkpoint has no phoneme, start or pause tokens
-  if (text.includes('\uE000') || text.includes('\uE001'))
-    fail(400, 'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups');
-  if (text.includes('\uE002')) fail(400, 'This checkpoint has no start token: remove the U+E002 start marker');
-  if (/[\uE003-\uE00A]/.test(text))
-    fail(400, 'This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers');
-  if (bool(body, 'start_immediately')) fail(400, 'start_immediately needs a checkpoint with a start token');
+  // zonos3.tts.plan validate_text_markers (R13): pronunciation groups, the start marker and pause markers
+  const markerError = checkTextMarkers(e.hp.textMarkers, text);
+  if (markerError) fail(400, markerError);
+  if (startFlag && !e.hp.textMarkers.start) fail(400, START_NEEDS_TOKEN);
+  if (start && !text.startsWith(START_MARKER)) p.text = START_MARKER + text;   // plan.with_start_marker
   checkLaci(e, body, p.language);
   if (bool(body, 'laci')) p.laci = e.laci.get(p.language)!;
   // sampling (TTSSamplingParams; registry defaults)
@@ -331,7 +314,8 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     const k = Math.max(0, Math.min(frames, refFrames));
     p.decodeContext = p.referenceCodes.slice(p.referenceCodes.length - k * NCB);
   }
-  // text normalization is not available in the browser: the text is tokenized as sent
+  // text normalization is not available in the browser: the text is tokenized as sent (with the start marker in front
+  // under start_immediately)
   resolveFollowTokens(e, p);
 
   // plan_generate: prompt and CFG twin

@@ -1,6 +1,6 @@
 // Port of zonos3-prompt.cpp: [speaker row | delayed reference prefix] [condition rows] BOS text EOS [silence rows].
 import { REFERENCE_MAX_FRAMES, SILENCE_PREFILL_MAX_FRAMES } from './generation';
-import type { Tokenizer } from './tokenizer';
+import { parseTextMarkers, type TextMarkers, type Tokenizer } from './tokenizer';
 
 export const NCB = 10;
 export const W = NCB + 1;
@@ -13,11 +13,13 @@ export interface ModelHp {
   nCodebooks: number; audioPad: number; textVocab: number; nCond: number;
   audioVocab: number;           // audio ids per codebook: 4098 (codes, EOA, pad), 4099 with span-end (edit vocabulary)
   spanEndId: number | null;     // span-end audio id after the pad (edit vocabulary), null without
-  textExtraTokens: number;      // text rows after the text pad (edit infill markers at textVocab + 1 + j)
+  textExtraTokens: number;      // text rows after the text pad: edit infill markers at textVocab + 1 + j, then the
+                                // phoneme / start / pause rows (textMarkers)
   condBucketCounts: number[];   // per condition row: ids 0..n-1, n = unknown
   condNames: string[]; condEdges: number[][]; silenceFrame: number[]; speakerDim: number; contextLength: number;
   condUnits: string[];          // condition.units (capabilities)
   textTokenizerSpec: string;    // text_tokenizer_spec JSON (capabilities)
+  textMarkers: TextMarkers;     // its phoneme / start / pause tokens (tokenizer.ts parseTextMarkers)
   nEmbd: number; nLayer: number;
 }
 
@@ -48,8 +50,8 @@ export function conditionBucketCounts(meta: Record<string, unknown>): number[] {
 }
 
 /** The model's hyperparameters from its manifest meta. The vocabulary: audio ids 0..codebook-1 are codes, then EOA,
- *  the audio pad and (edit vocabulary, span_end_id = pad + 1) span-end; text_extra_tokens is absent from the release
- *  backbone/ manifest (0 extra rows). */
+ *  the audio pad and (edit vocabulary, span_end_id = pad + 1) span-end; text rows: the vocabulary, the pad, then
+ *  text_extra_tokens rows (absent = 0): edit infill markers, then the phoneme / start / pause rows the spec names. */
 export function modelHp(meta: Record<string, unknown>): ModelHp {
   const names = meta['condition.names'];
   if (!Array.isArray(names) || names.some(x => typeof x !== 'string')) throw new Error('backbone: missing meta condition.names');
@@ -62,10 +64,12 @@ export function modelHp(meta: Record<string, unknown>): ModelHp {
       !Number.isInteger(textExtraTokens) || textExtraTokens < 0)
     throw new Error(`backbone: unsupported vocabulary (audio_vocab ${audioVocab}, audio_pad_id ${audioPad}, ` +
       `span_end_id ${spanEndId}, text_extra_tokens ${textExtraTokens})`);
+  const textVocab = num(meta, 'text_vocab');
+  const textTokenizerSpec = typeof meta.text_tokenizer_spec === 'string' ? meta.text_tokenizer_spec : '{}';
   return {
     nCodebooks: num(meta, 'n_codebooks'),
     audioPad,
-    textVocab: num(meta, 'text_vocab'),
+    textVocab,
     audioVocab,
     spanEndId,
     textExtraTokens,
@@ -77,7 +81,8 @@ export function modelHp(meta: Record<string, unknown>): ModelHp {
     speakerDim: num(meta, 'speaker.embedding_length'),
     contextLength: num(meta, 'context_length'),
     condUnits: Array.isArray(meta['condition.units']) ? meta['condition.units'].map(String) : [],
-    textTokenizerSpec: typeof meta.text_tokenizer_spec === 'string' ? meta.text_tokenizer_spec : '{}',
+    textTokenizerSpec,
+    textMarkers: parseTextMarkers(textTokenizerSpec, textVocab, textExtraTokens),
     nEmbd: num(meta, 'embedding_length'),
     nLayer: num(meta, 'block_count'),
   };
@@ -108,7 +113,7 @@ export function buildPrompt(
     if (buckets[i] < 0 || buckets[i] > n)
       throw new Error(`condition bucket ${buckets[i]} for ${model.condNames[i]} outside 0..${n - 1} (${n} = unknown)`);
   }
-  const ids = tok.encode(text);
+  const ids = tok.encode(text, model.textMarkers);
   const referenceRows = refFrames ? refFrames + ncb - 1 : 0;
   const speakerRows = spk ? 1 : referenceRows;
   const rows = speakerRows + model.nCond + ids.length + prefill;

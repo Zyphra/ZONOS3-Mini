@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { planGenerate } from '../../src/api/generate';
 import { Speakers } from '../../src/api/speakers';
 import { CONTEXT_CAPACITY, DECODE_CONTEXT_FRAMES, MAX_FRAMES, REFERENCE_MAX_FRAMES } from '../../src/generation';
-import { bareApi, call } from './stub';
+import { NCB, W } from '../../src/prompt';
+import { bareApi, call, haveModels, stubApi } from './stub';
 
 interface RequestError { name: string; requires: string[]; request: Record<string, unknown>; error: string }
 

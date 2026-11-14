@@ -1,13 +1,14 @@
 // GET /v2/capabilities of the in-browser server (servers/ggml/src/server/capabilities.cpp, edit.cpp edit_capabilities,
-// phonemize.cpp phoneme_capabilities) with this server's feature set: no text normalization, speech recognition,
-// phonemizer, server projects or plugins; speech editing with the clip's transcript when the export has the speech-edit
-// backbone and FuseAlign.
+// phonemize.cpp phoneme_capabilities, zonos3.server.capabilities text_marker_capabilities) with this server's feature
+// set: no text normalization, speech recognition, phonemizer, server projects or plugins; speech editing with the
+// clip's transcript when the export has the speech-edit backbone and FuseAlign.
 import { ALIGN_MAX_SECONDS } from '../aligner/host';
 import languages from '../../../../model/src/zonos3/registries/languages.json';
 import {
   DECODE_CONTEXT_FRAMES, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SILENCE_PREFILL_DEFAULT_FRAMES,
 } from '../generation';
 import { releaseDocument } from '../request/steer';
+import { markerRows } from '../tokenizer';
 import type { Decoder, Engine } from './engine';
 
 const AUDIO_CODEC = 'opus_dual_3n_600k_sched600k_r4096_step600000';
@@ -45,25 +46,12 @@ export function laciLanguages(e: Engine): string[] {
 export const ACCENT_ADAPTERS: string[] = [];
 
 /** Edit regions per request: the speech-edit backbone's marker rows (zonos3.tts.edit edit_marker_rows, ggml
- *  zonos3_edit_marker_rows): the extra text rows before the tokenizer's phoneme / start / pause rows, all of them
- *  without any; 0 when those rows do not end the extra rows. */
+ *  zonos3_edit_marker_rows): the extra text rows before the tokenizer's phoneme / start / pause rows (modelHp checked
+ *  that those rows end the extra rows), all of them without any. */
 export function editMaxSpans(e: Engine): number {
   if (!e.edit) return 0;
   const hp = e.edit.hp;
-  const spec: unknown = JSON.parse(hp.textTokenizerSpec);
-  const block = (spec && typeof spec === 'object' ? spec : {}) as Record<string, unknown>;
-  const obj = (v: unknown) => (v && typeof v === 'object' ? v as Record<string, unknown> : undefined);
-  const phonemes = obj(block.phonemes), start = obj(block.start), pauses = obj(block.pauses);
-  if (!block.phonemes && !block.start && !block.pauses) return hp.textExtraTokens;
-  if ((block.phonemes && !phonemes) || (block.start && !start) || (block.pauses && !pauses)) return 0;
-  const symbols = phonemes?.symbols, pauseIds = pauses?.ids;
-  if (phonemes && !Array.isArray(symbols)) return 0;
-  if (pauses && !Array.isArray(pauseIds)) return 0;
-  const first = phonemes ? phonemes.open_id : start ? start.id : (pauseIds as unknown[])[0];
-  if (typeof first !== 'number') return 0;
-  const rows = (phonemes ? 2 + (symbols as unknown[]).length : 0) + (start ? 1 : 0) + (pauses ? (pauseIds as unknown[]).length : 0);
-  const markers = first - hp.textVocab - 1;
-  return markers + rows === hp.textExtraTokens ? Math.max(markers, 0) : 0;
+  return hp.textExtraTokens - markerRows(hp.textMarkers);
 }
 
 function conditionTokens(e: Engine): unknown {
@@ -84,7 +72,7 @@ function conditionTokens(e: Engine): unknown {
 }
 
 export function capabilities(e: Engine, speakerModes: string[]): Record<string, unknown> {
-  const hp = e.hp;
+  const hp = e.hp, m = hp.textMarkers;
   const embedding = hp.speakerDim > 0;
   const cfg = speakerModes.length > 0;   // one request at a time: the CFG twin always has the backbone's second slot
   const frames = SILENCE_PREFILL.frames;
@@ -143,9 +131,9 @@ export function capabilities(e: Engine, speakerModes: string[]): Record<string, 
     edit_frame_rate: e.edit ? SAMPLE_RATE / HOP : null,
     edit_max_seconds: EDIT_MAX_SECONDS,
     edit_align_max_seconds: ALIGN_MAX_SECONDS,
-    phoneme_tokens: null,
-    start_token: null,
-    pause_tokens: null,
+    phoneme_tokens: m.phonemes ? { open_marker: m.phonemes.open, close_marker: m.phonemes.close, symbols: m.phonemes.symbols } : null,
+    start_token: m.start ? { marker: m.start.marker } : null,
+    pause_tokens: m.pauses ? { markers: m.pauses.markers, seconds: m.pauses.seconds } : null,
     phonemize_enabled: false,
     phonemize_languages: [],
     phonemize_guess_languages: [],

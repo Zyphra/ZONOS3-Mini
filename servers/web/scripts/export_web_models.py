@@ -8,9 +8,10 @@ block scales.
 
 Besides the models the export writes voices/ (default voices with their shipped reference codes), companions/ (the
 steering bundle steer.gguf, parsed directly by the worker) and laci/ (alignment heads and their language index).
-The speech-edit adapter edit/ (the edit vocabulary's grown rows and the edit/accents.gguf factors that the web backbone
-applies at runtime on top of backbone/, see "speech-edit adapter" below) is checked against the MLX server's runtime
-adapter by scripts/check_edit_export.py.
+backbone/ carries the release text rows (phoneme, start and pause tokens) after the text padding row, as the Python
+servers append them at load (--text-rows). The speech-edit adapter edit/ (the edit vocabulary's grown rows and the
+edit/accents.gguf factors that the web backbone applies at runtime on top of backbone/, see "speech-edit adapter"
+below) is checked against the MLX server's runtime adapter by scripts/check_edit_export.py.
 """
 
 import argparse
@@ -20,10 +21,13 @@ import os
 import shutil
 
 import numpy as np
+import torch
 from gguf import GGMLQuantizationType, GGUFReader
 from gguf.quants import quantize
+from zonos3.models.text_extra import TextExtraRows
 from zonos3.tts.laci import discover_laci_heads
 from zonos3.utils.hashing import sha256_bytes, sha256_file
+from zonos3.utils.release import RELEASE_TEXT_ROWS
 
 SHARD_CAP = 64 << 20
 ALIGN = 256
@@ -224,7 +228,9 @@ def copy_plain(w, g, name):
 
 # --------------------------------------------------------------------------- backbone
 #
-# backbone/ is the release LM (backbone-ptq.gguf).
+# backbone/ is the release LM (backbone-ptq.gguf) with the release text rows (zonos-text-extra/1: phoneme, start and
+# pause tokens) after its text padding row: the text table grows and the spec gains their tokens
+# (zonos3.models.text_extra); text without groups or markers never reads them.
 
 
 def check_tokenizer(meta, path):
@@ -243,18 +249,32 @@ def open_backbone(path):
     return g
 
 
-def export_backbone(path, out):
+def export_backbone(path, out, text_rows):
+    """backbone/ from the backbone GGUF `path`; `text_rows` (a zonos-text-extra/1 export, a path or hf://; empty: none)
+    follow its text table's rows, the extra rows it already has included."""
     g = open_backbone(path)
     meta = g.meta()
     check_tokenizer(meta, path)
     ncb = g.kv["zonos3.n_codebooks"]
     nl = g.kv["zonos3.block_count"]
+    text = g.arr("text_embd.weight").astype(np.float16)
+    if text_rows:
+        rows = TextExtraRows.load(text_rows)
+        text_vocab = g.kv["zonos3.text_vocab"]
+        existing = text.shape[0] - text_vocab - 1
+        try:
+            spec = rows.spec(json.loads(meta["text_tokenizer_spec"]), text_vocab=text_vocab, existing=existing)
+        except ValueError as e:
+            raise SystemExit(f"{path}: {e}; export with --text-rows ''") from e
+        text = rows.append(torch.from_numpy(text)).numpy()
+        meta["text_tokenizer_spec"] = json.dumps(spec)
+        meta["text_extra_tokens"] = existing + rows.count
     w = Writer(os.path.join(out, "backbone"), "backbone", meta)
     parts = [g.arr(f"audio_embd.{k}.weight").astype(np.float16) for k in range(ncb)]
-    parts.append(g.arr("text_embd.weight").astype(np.float16))
+    parts.append(text)
     embd = np.concatenate(parts, axis=0)
     w.add("embd_all", embd, "f16", [embd.shape[1], embd.shape[0]])
-    del embd, parts
+    del embd, parts, text
     skip = {f"audio_embd.{k}.weight" for k in range(ncb)} | {"text_embd.weight"}
     # global-attention layers: fuse q | k | v | gate into one projection (GDN layers keep gdn_in;
     # gdn_conv.weight stays f32 C-order [1536][4] via copy_plain)
@@ -760,6 +780,12 @@ def main():
         "--voices", required=True, help="default voice directory (clips + <stem>.codes.npy + <stem>.embedding.npy)"
     )
     ap.add_argument("--laci", required=True, help="LACI alignment head directory")
+    ap.add_argument(
+        "--text-rows",
+        default=RELEASE_TEXT_ROWS,
+        help="zonos-text-extra/1 rows (phoneme, start and pause tokens) appended to backbone/'s text table, a path or "
+        "hf:// (default: the release text rows; '' for none)",
+    )
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     for fn in MODEL_FILES:
@@ -770,7 +796,7 @@ def main():
             )
     m = a.models
     os.makedirs(a.out, exist_ok=True)
-    export_backbone(os.path.join(m, "backbone-ptq.gguf"), a.out)
+    export_backbone(os.path.join(m, "backbone-ptq.gguf"), a.out, a.text_rows)
     export_edit(
         os.path.join(m, "backbone-ptq.gguf"), os.path.join(m, EDIT_FILES[0]), os.path.join(m, EDIT_FILES[1]), a.out
     )

@@ -71,8 +71,10 @@ describe.skipIf(!haveEditModels)('speech editing without speech recognition', ()
         'target text equals the original transcript'],
       ['/v2/edit', { target_text: 'a', spans: [[0, 0.5]], region_controls: [{}, {}] }, clip(2), undefined, 400,
         'region_controls has 2 entries for 1 spans; send one per span (null for none).'],
-      ['/v2/edit', { target_text: 'Say \ue000hi\ue001', spans: [[0, 0.5]] }, clip(2), undefined, 400,
-        'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups'],
+      ['/v2/edit', { target_text: 'Say \ue000\u00ff\ue001', spans: [[0, 0.5]] }, clip(2), undefined, 400,
+        "Pronunciation groups: Phones outside the inventory: ['\u00ff']"],
+      ['/v2/edit', { target_text: 'Say,\ue004 hi', spans: [[0, 0.5]] }, clip(2), undefined, 400,
+        'Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text'],
     ];
     for (const [path, fields, pcm, seconds, status, detail] of cases) {
       const r = await call(api, 'POST', path, { audio_base64: b64('wav'), ...fields }, {}, pcm, seconds);

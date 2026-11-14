@@ -5,7 +5,7 @@ import {
   AUDIO_PAD, buildCfgTwin, buildPrompt, conditionBucket, conditionBucketCounts, modelHp, NCB, prefillCodes, TEXT_PAD, W,
   type ModelHp,
 } from '../src/prompt';
-import { createTokenizer } from '../src/tokenizer';
+import { createTokenizer, NO_TEXT_MARKERS } from '../src/tokenizer';
 
 const tok = createTokenizer();
 const silence = [1918, 746, 3544, 2300, 11, 12, 13, 14, 15, 16];
@@ -18,7 +18,8 @@ const hp: ModelHp = {
   condBucketCounts: [10, 10, 30],
   condNames: ['loudness', 'fmax', 'speaking_rate'],
   condEdges: [[1, 2, 3], [1, 2, 3], RATE_EDGES], silenceFrame: silence, speakerDim: 192, contextLength: 32768,
-  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', nEmbd: 1024, nLayer: 11,
+  condUnits: ['LUFS', 'Hz', 'utf-8 bytes per second'], textTokenizerSpec: '{}', textMarkers: NO_TEXT_MARKERS,
+  nEmbd: 1024, nLayer: 11,
 };
 const row = (ids: Int32Array, r: number) => Array.from(ids.subarray(r * W, r * W + W));
 const padRow = [...new Array<number>(NCB).fill(AUDIO_PAD), TEXT_PAD];

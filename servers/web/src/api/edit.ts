@@ -20,6 +20,7 @@ import { CONTEXT_CAPACITY, EDIT_MAX_SECONDS, HOP, MAX_FRAMES, SAMPLE_RATE, SAMPL
 import { NCB, type Prompt } from '../prompt';
 import { NO_STEERING, resolveControls, STEER_FRAMES_PER_CHAR, textChars, type ReleaseFrames } from '../request/steer';
 import { defaultSampling, type Sampling } from '../sampler';
+import { checkTextMarkers } from '../tokenizer';
 import { wavBytes } from '../../../../studio/src/lib/wav';
 import { editMaxSpans } from './capabilities';
 import type { EditModels, Engine } from './engine';
@@ -102,16 +103,15 @@ export async function alignRoute(e: Engine, req: EngineRequest, sink: Sink): Pro
   sendJson(sink, { text, duration, words: publicWords(words) });
 }
 
-/** EditEngine.check: the request's steer-then-hold fields, the target's pronunciation groups (this checkpoint has no
- *  phoneme tokens), every region's doses against the steering bundle and the condition buckets / values. Returns the
- *  release schedule, the buckets and the dosed ids that move the speaker embedding. */
-function checkEdit(e: Engine, body: Body, targetText: string, doses: Doses[] | null):
+/** EditEngine.check: the request's steer-then-hold fields, the target's text markers (pronunciation groups the
+ *  speech-edit LM's phoneme tokens encode; no start or pause markers), every region's doses against the steering
+ *  bundle and the condition buckets / values. Returns the release schedule, the buckets and the dosed ids that move the
+ *  speaker embedding. */
+function checkEdit(e: Engine, edit: EditModels, body: Body, targetText: string, doses: Doses[] | null):
     { release: ReleaseFrames | null; buckets: number[]; raw: string[] } {
   const release = resolveRelease(e, body);
-  if (/[\uE002-\uE00A]/.test(targetText))
-    fail(400, 'Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text');
-  if (targetText.includes('\uE000') || targetText.includes('\uE001'))
-    fail(400, 'This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups');
+  const markerError = checkTextMarkers(edit.hp.textMarkers, targetText, true);
+  if (markerError) fail(400, markerError);
   const raw = new Set<string>();
   if (doses) {
     const steer = e.steer;
@@ -167,7 +167,7 @@ export async function editRoute(e: Engine, req: EngineRequest, sink: Sink, abort
   const speakerRow = e.hp.speakerDim > 0;
   const useRow = isSet(body, 'speaker_embedding') ? bool(body, 'speaker_embedding')! : speakerRow;
   if (useRow && !speakerRow) fail(400, 'speaker_embedding needs a checkpoint with a speaker-embedding row.');
-  const { release, buckets, raw } = checkEdit(e, body, targetText, doses);
+  const { release, buckets, raw } = checkEdit(e, edit, body, targetText, doses);
   if (raw.length && !useRow)
     fail(400, `Controls ${raw.join(', ')} move the speaker embedding and need the speaker row (speaker_embedding true ` +
       'or unset, on a speaker-embedding checkpoint).');

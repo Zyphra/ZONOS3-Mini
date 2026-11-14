@@ -3,7 +3,8 @@
 //
 // Strings are handled as code-point arrays so offsets equal Python str indices. Types: FollowConfig {lead, lag,
 // smooth, ramp}, Range = [start, end), Opcode {tag, i1, i2, j1, j2}, BpeOffsets (code-point offsets of the SuperBPE
-// tokens of a string), PhonemeMarkers {open, close}.
+// tokens of a string), MarkerSpec (the checkpoint's text markers: phoneme group open / close, whether it has start and
+// pause tokens).
 import { pyIsSpace } from '../edit/py';
 import { STEER_RAMP_FRAMES } from './steer';
 
@@ -12,7 +13,7 @@ export const defaultFollowConfig = (): FollowConfig => ({ lead: 1.0, lag: 0.0, s
 export type Range = [number, number];
 export interface Opcode { tag: 'replace' | 'delete' | 'insert' | 'equal'; i1: number; i2: number; j1: number; j2: number }
 export type BpeOffsets = (s: string) => Range[];
-export interface PhonemeMarkers { open: string; close: string }
+export interface MarkerSpec { phonemes: { open: string; close: string } | null; start: boolean; pauses: boolean }
 
 // statistics.median
 function median(v: number[]): number {
@@ -107,36 +108,60 @@ export function mapOffsets(original: string, final: string, offsets: number[], e
 
 const utf8Len = (c: number) => (c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4);
 
-// Character range of `text` behind each id of its text span (BOS/EOS empty at 0 and len(text)).
-export function tokenCharRanges(text: string, bpe: BpeOffsets | null, phonemes: PhonemeMarkers | null): Range[] {
+// Character range of `text` behind each id of its text span (BOS/EOS empty at 0 and len(text)): SuperBPE tokens their
+// offsets, a phoneme group's open id its open marker, each phone id its code point, the close id the close marker, the
+// start and pause ids their marker (superbpe.payload_ids validated the text). Without `bpe`: byte ids.
+export function tokenCharRanges(text: string, bpe: BpeOffsets | null, markers: MarkerSpec | null): Range[] {
   const cps = Array.from(text);
   const n = cps.length;
   const ranges: Range[] = [[0, 0]];
   if (!bpe) {
     for (let i = 0; i < n; i++) for (let b = 0; b < utf8Len(cps[i].codePointAt(0)!); b++) ranges.push([i, i + 1]);
   } else {
-    const stretch = (s: string, base: number) => {
-      if (!s) return;
-      for (const [a, b] of bpe(s)) ranges.push([base + a, base + b]);
+    const stretch = (s: string[], base: number) => {
+      if (!s.length) return;
+      for (const [a, b] of bpe(s.join(''))) ranges.push([base + a, base + b]);
     };
-    const find = (needle: string, from: number): number => {
+    const find = (s: string[], needle: string, from: number): number => {
       const m = Array.from(needle);
-      for (let i = from; i + m.length <= n; i++) if (m.every((c, k) => cps[i + k] === c)) return i;
+      for (let i = from; i + m.length <= s.length; i++) if (m.every((c, k) => s[i + k] === c)) return i;
       return -1;
     };
-    if (!phonemes || (find(phonemes.open, 0) < 0 && find(phonemes.close, 0) < 0)) {
-      stretch(text, 0);
-    } else {
+    const isPause = (c: string) => c >= '\uE003' && c <= '\uE00A';
+    // s: code points of a stretch of `text` starting at `base` (superbpe.payload_ids' recursion)
+    const payload = (s: string[], base: number): void => {
+      if (markers?.start && s.includes('\uE002')) {
+        ranges.push([base, base + 1]);
+        payload(s.slice(1), base + 1);
+        return;
+      }
+      if (markers?.pauses && s.some(isPause)) {
+        let pos = 0;
+        s.forEach((c, i) => {
+          if (!isPause(c)) return;
+          if (i > pos) payload(s.slice(pos, i), base + pos);
+          ranges.push([base + i, base + i + 1]);
+          pos = i + 1;
+        });
+        if (pos < s.length) payload(s.slice(pos), base + pos);
+        return;
+      }
+      const ph = markers?.phonemes;
+      if (!ph || (find(s, ph.open, 0) < 0 && find(s, ph.close, 0) < 0)) {
+        stretch(s, base);
+        return;
+      }
       let pos = 0;
-      while (pos < n) {
-        const start = find(phonemes.open, pos);
-        stretch(cps.slice(pos, start < 0 ? n : start).join(''), pos);
+      while (pos < s.length) {
+        const start = find(s, ph.open, pos);
+        stretch(s.slice(pos, start < 0 ? s.length : start), base + pos);
         if (start < 0) break;
-        const end = find(phonemes.close, start + 1);
-        for (let i = start; i <= end; i++) ranges.push([i, i + 1]);
+        const end = find(s, ph.close, start + 1);
+        for (let i = start; i <= end; i++) ranges.push([base + i, base + i + 1]);
         pos = end + 1;
       }
-    }
+    };
+    payload(cps, 0);
   }
   ranges.push([n, n]);
   return ranges;
