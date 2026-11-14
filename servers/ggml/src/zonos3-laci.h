@@ -17,7 +17,14 @@
 //   finish_attempt()                when the request finishes: a Continuation to regenerate, or nullopt when final
 //                                   (then drain(true), eos_frame(), record()).
 // Rows are stream indices: the prefill rows are 0..P-1, generated rows follow.
+//
+// A short text (zonos3-short-text.h; SessionParams::short_text, the filler's first text token) holds the take, ends it
+// at the cut once the reading reaches the filler (end "short_text"), regenerates a take that ran into the filler as a
+// fresh one (failure "short_run_on") and, once those retries are spent, cuts where the reading reached the filler
+// ("short_text_forced").
 #pragma once
+
+#include "zonos3-short-text.h"
 
 #include <cstdint>
 #include <limits>
@@ -49,8 +56,8 @@ struct Config {
     int stop_boost_delay = 6;
 };
 
-// A content failure ("skip" | "hallucination" | "truncation") or, with `pace`, a duration miss ("pace_slow" |
-// "pace_fast", Python's PaceFailure) carrying `ratio` (estimated take duration / target duration).
+// A content failure ("skip" | "hallucination" | "truncation" | "short_run_on") or, with `pace`, a duration miss
+// ("pace_slow" | "pace_fast", Python's PaceFailure) carrying `ratio` (estimated take duration / target duration).
 struct Failure {
     std::string kind;
     int detect_row = 0;
@@ -224,7 +231,7 @@ struct FailureRecord {
 struct Record {
     int attempts = 0;
     bool capped = false;
-    std::string end;  // "text_done" | "eos" | "max_tokens"
+    std::string end;  // "text_done" | "eos" | "max_tokens" | "short_text" | "short_text_forced"
     int text_len = 0;
     int n_bins = 0;
     int final_rows = 0;
@@ -256,6 +263,7 @@ struct SessionParams {
     // vector is Python's None
     std::optional<std::vector<std::vector<float>>> rate_deltas;
     zonos3_follow::SpanFollower * follower = nullptr;  // not owned: sees every readout, rolled back with the stream
+    std::optional<int> short_text;  // a short text: the filler's first text-span token (nullopt: an ordinary request)
 };
 
 struct RowRange { int begin = 0, end = 0; };  // stream rows [begin, end)
@@ -300,6 +308,8 @@ private:
     std::optional<int> pace_retry_bucket(const Failure & f) const;
     bool pace_open() const;
     void ignore(const Failure & f);
+    std::optional<Failure> short_run_on();
+    std::pair<std::string, std::optional<int>> short_end() const;
 
     SessionParams p_;
     int n_prefill_ = 0;
@@ -321,6 +331,8 @@ private:
     std::optional<int> bucket_;
     std::optional<PaceMonitor> pace_;
     int pace_retries_ = 0;
+    std::optional<zonos3_short::ShortCut> short_;
+    int short_retries_ = 0;
 };
 
 }  // namespace zonos3_laci

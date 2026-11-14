@@ -1224,6 +1224,7 @@ async def _tts_generate_msg(
         steer_follow_chars=rules.follow_chars,
         steer_follow_gate=rules.follow_gate,
         laci=req.laci,
+        short_text=rules.short_text,
         laci_target_frames=laci_target_frames,
         laci_adjust_rate=laci_adjust_rate,
     )

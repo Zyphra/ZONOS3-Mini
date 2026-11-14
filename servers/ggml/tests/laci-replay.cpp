@@ -7,11 +7,12 @@
 //    fields}, n_prefill?: 0, n_codebooks?: 10, max_tokens?: 4000, seed?: 0 | null, hold?: false,
 //    duration_target?: {frames, adjust_rate?} | null, rates?: {index, edges, n_buckets, first?} | null,
 //    condition_values?: [int] | null, bucket?: int | null, rate_deltas?: [[float] | null] | null,
-//    follower?: {ranges, deltas, cfg?, origin?} | null,
-//    attempts: [{steps: [[pos, m], ...], eos_at?: step | null, eos_lag?: 0}]   (the last one repeats as needed)
-//    -- or the single-attempt shorthand steps / eos_at / eos_lag at the top level}
+//    follower?: {ranges, deltas, cfg?, origin?} | null, short_text?: filler token | null,
+//    attempts: [{steps: [[pos, m], ...], eos_at?: step | null, eos_lag?: 0, codes?: [[int] per row]}]
+//    (the last one repeats as needed) -- or the single-attempt shorthand steps / eos_at / eos_lag at the top level}
 //   Rows are width 1 holding a tag: prefill -1, attempt k's prefill-sampled row k + 1, its step s row
-//   (k + 1) * 100000 + s.
+//   (k + 1) * 100000 + s. An attempt with `codes` emits those rows instead (the prefill-sampled one first; a short
+//   text's cut reads their codebooks), and the prefill rows are -1 at their width.
 // mode "span_follow": {ranges, deltas, cfg?, origin?, ops: [["observe", frame, pos] | ["on_step", step, pos] |
 //   ["weights", frame] | ["delta", frame] | ["truncate", frame] | ["position"]]}
 // mode "span_ranges": {text, final, spans, markers, offsets, bpe?: "words" | null, phonemes?: {open_marker,
@@ -110,7 +111,11 @@ static json run_laci(const json & t) {
         p.cfg.stop_boost_delay = c.value("stop_boost_delay", p.cfg.stop_boost_delay);
     }
     const int n_prefill = t.value("n_prefill", 0);
-    p.prefill_rows.assign(n_prefill, std::vector<int32_t>{-1});
+    json attempts = t.contains("attempts") ? t["attempts"]
+                                           : json::array({{{"steps", t.at("steps")}, {"eos_at", t.value("eos_at", json())},
+                                                           {"eos_lag", t.value("eos_lag", 0)}}});
+    const size_t width = attempts[0].contains("codes") ? attempts[0]["codes"][0].size() : 1;
+    p.prefill_rows.assign(n_prefill, std::vector<int32_t>(width, -1));
     p.seed = t.contains("seed") ? opt<int64_t>(t, "seed") : std::optional<int64_t>(0);
     p.max_tokens = t.value("max_tokens", 4000);
     p.n_codebooks = t.value("n_codebooks", 10);
@@ -137,9 +142,7 @@ static json run_laci(const json & t) {
         follower.emplace(make_follower(t["follower"]));
         p.follower = &*follower;
     }
-    json attempts = t.contains("attempts") ? t["attempts"]
-                                           : json::array({{{"steps", t.at("steps")}, {"eos_at", t.value("eos_at", json())},
-                                                           {"eos_lag", t.value("eos_lag", 0)}}});
+    p.short_text = opt<int>(t, "short_text");
     const int max_attempts = t.value("max_attempts", 64);
     const int C = p.n_codebooks;
 
@@ -151,12 +154,16 @@ static json run_laci(const json & t) {
         const int tag = k + 1;
         const std::optional<int> eos_at = opt<int>(a, "eos_at");
         const int eos_lag = a.value("eos_lag", 0);
+        const json * codes = a.contains("codes") ? &a["codes"] : nullptr;
+        auto row_of = [&](int step, int32_t tag_value) {
+            return codes ? (*codes)[step].get<std::vector<int32_t>>() : std::vector<int32_t>{tag_value};
+        };
         L::ProbeControl probe;
         probe.text_len = text_len;
         probe.mask = s.probe_mask();
         json rec = {{"mask", mask_json(probe.mask)}};
         json changes = json::array(), drained = json::array(), fweights = json::array();
-        s.append({tag}, std::nullopt);
+        s.append(row_of(0, tag), std::nullopt);
         for (const auto & v : tags(s, s.drain())) drained.push_back(v);
         std::optional<int> countdown;
         int steps_run = 0;
@@ -176,7 +183,7 @@ static json run_laci(const json & t) {
                 eos = *eos_at - eos_lag;
                 if (!countdown) countdown = C + 1;
             }
-            s.append({tag * 100000 + step}, eos);
+            s.append(row_of(step, tag * 100000 + step), eos);
             if (!boost_step && s.stop_boost() > 0) boost_step = step;  // the first step whose next row is boosted
             if (countdown) *countdown -= 1;
             if (probe.stop || (countdown && *countdown == 0)) {

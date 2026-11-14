@@ -1485,6 +1485,15 @@
             "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
             "default": false
+          },
+          "short_text": {
+            "description": "A text of one or two words (few tokens next to its language's filler sentence) is generated with a 0.5 s pause marker and a filler sentence after it under LACI, on servers with the language's LACI heads and pause tokens, and cut at the first silent frame once the reading reaches the filler; nothing past the cut is sent. A take that runs into the filler is retaken (twice), then cut where the reading reached it. `auto` applies it to a text that qualifies (no start, pause or phoneme markers, no CFG, control spans or speech edit), `off` generates the text alone.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "off"
+            ],
+            "default": "auto"
           }
         }
       },
@@ -1822,6 +1831,15 @@
             "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
             "default": false
+          },
+          "short_text": {
+            "description": "A text of one or two words (few tokens next to its language's filler sentence) is generated with a 0.5 s pause marker and a filler sentence after it under LACI, on servers with the language's LACI heads and pause tokens, and cut at the first silent frame once the reading reaches the filler; nothing past the cut is sent. A take that runs into the filler is retaken (twice), then cut where the reading reached it. `auto` applies it to a text that qualifies (no start, pause or phoneme markers, no CFG, control spans or speech edit), `off` generates the text alone.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "off"
+            ],
+            "default": "auto"
           },
           "text": {
             "type": "string"
@@ -2176,6 +2194,15 @@
             "description": "Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.",
             "type": "boolean",
             "default": false
+          },
+          "short_text": {
+            "description": "A text of one or two words (few tokens next to its language's filler sentence) is generated with a 0.5 s pause marker and a filler sentence after it under LACI, on servers with the language's LACI heads and pause tokens, and cut at the first silent frame once the reading reaches the filler; nothing past the cut is sent. A take that runs into the filler is retaken (twice), then cut where the reading reached it. `auto` applies it to a text that qualifies (no start, pause or phoneme markers, no CFG, control spans or speech edit), `off` generates the text alone.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "off"
+            ],
+            "default": "auto"
           },
           "model": {
             "type": "string",

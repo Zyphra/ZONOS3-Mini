@@ -108,6 +108,9 @@ class GenerationOptions(_Strict):
     steer_ramp_seconds: Annotated[float, Field(ge=0.0, le=600.0, allow_inf_nan=False)] | None = None
     # LACI: guard against skips, hallucinations and truncation (servers with --laci-heads).
     laci: bool = False
+    # A text of one or two words is generated with a pause and a filler sentence after it under LACI, and cut where
+    # the filler starts (zonos3.tts.short_text); "off" generates it alone.
+    short_text: Literal["auto", "off"] = "auto"
 
 
 class GenerateRequest(GenerationOptions):

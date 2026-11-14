@@ -72,6 +72,9 @@ struct GenReq {
     std::optional<zonos3_laci::RateBuckets> laci_rates;
     std::optional<int> laci_bucket;
     std::optional<std::vector<std::vector<float>>> laci_rate_deltas;
+    // A short text (zonos3-short-text.h; R17): the filler's first text-span token, which runs under `laci` with the
+    // text's pause marker and filler (nullopt: an ordinary request).
+    std::optional<int> short_text;
     // control_span_follow "reading" (zonos3-span-follow.h): the language's heads (null = the character-rate schedule
     // of steering.spans), each steering span's text-span token range [a, b) and the follow gate.
     const zonos3_laci::LaciHeads * follow = nullptr;

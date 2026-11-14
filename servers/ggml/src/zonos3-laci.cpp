@@ -378,6 +378,7 @@ LaciSession::LaciSession(SessionParams params) : p_(std::move(params)) {
             throw std::invalid_argument("rate_deltas: " + std::to_string(p_.rate_deltas->size()) + " for " +
                                         std::to_string(want) + " buckets");
     }
+    if (p_.short_text) short_.emplace(*p_.short_text, p_.n_codebooks);
 }
 
 std::optional<int> LaciSession::rate_bucket() const {
@@ -427,6 +428,14 @@ void LaciSession::on_step(ProbeControl & probe, int step, int pos, double m) {
             return;
         }
         ignore(*f);
+    }
+    if (short_) {
+        // the cut, decided over the rows so far and this reading (one row late when a row decided it)
+        short_->observe_reading(row - n_prefill_, pos);
+        if (short_->decided()) {
+            probe.stop = true;
+            return;
+        }
     }
     const auto stop_row = det.stop_row();
     // keep the rows the delayed codebooks of the last kept frame need (stop_row + n_codebooks - 1), with a margin
@@ -478,12 +487,13 @@ void LaciSession::append(std::vector<int32_t> row, std::optional<int> eos_frame)
     stream_.push_back(std::move(row));
     generated_total_ += 1;
     if (eos_frame) eos_row_ = attempt_start_ + *eos_frame;
+    if (short_) short_->observe_row(stream_.back());
 }
 
 int LaciSession::commit_row() const {
     const int n = (int)stream_.size();
     if (end_) return n;
-    if (p_.hold) return n_prefill_;
+    if (p_.hold || short_) return n_prefill_;  // a short text is held until it is cut
     int row;
     if (attempts_ >= p_.cfg.max_retries) {
         row = n;
@@ -509,13 +519,15 @@ RowRange LaciSession::drain(bool final) {
 
 std::optional<Continuation> LaciSession::finish_attempt() {
     std::optional<Failure> f = pending_failure_;
-    if (!f && eos_row_ && detector_) {
+    // a short text's filler is there to be cut: one that ends before it keeps that end (no truncation to retry)
+    if (!f && eos_row_ && detector_ && !short_) {
         f = detector_->on_eos(*eos_row_);
         if (f && attempts_ >= p_.cfg.max_retries) {
             ignore(*f);
             f.reset();
         }
     }
+    if (!f && short_) f = short_run_on();
     // Rows already handed downstream are final: a rollback below them restarts at the first unsent row.
     int resume = 0;
     if (f) resume = std::max(f->rollback_row, n_prefill_ + emitted_);
@@ -524,7 +536,8 @@ std::optional<Continuation> LaciSession::finish_attempt() {
         f.reset();
     }
     if (!f) {
-        if (text_done_) end_.emplace("text_done", detector_->stop_row());
+        if (short_ && short_->enter()) end_.emplace(short_end());
+        else if (text_done_) end_.emplace("text_done", detector_->stop_row());
         else if (eos_row_) end_.emplace("eos", eos_row_);
         else end_.emplace("max_tokens", std::nullopt);
         return std::nullopt;
@@ -541,15 +554,18 @@ std::optional<Continuation> LaciSession::finish_attempt() {
     stream_.resize(resume);
     detector_->truncate(resume);
     if (p_.follower) p_.follower->truncate(resume - n_prefill_);
+    if (short_) short_->truncate(resume - n_prefill_);
     if (pace_) pace_->truncate(resume);
     if (bucket) {
         // a steered bucket's row is unknown: its pace comes from its steering delta (rate_deltas)
         bucket_ = bucket;
         (*condition_values_)[p_.rates->index] = p_.rates->row(*bucket);
     }
-    if (f->pace) {
-        // a fresh take (rollback_row is the first row) in the bucket the measured duration asks for
-        pace_retries_ += 1;
+    if (f->pace || f->kind == "short_run_on") {
+        // a fresh take (rollback_row is the first row): in the bucket the measured duration asks for, or the retake
+        // of a short text that ran into its filler
+        if (f->pace) pace_retries_ += 1;
+        else short_retries_ += 1;
         probation_.reset();
     } else {
         probation_.emplace(*f, AciCenter(detector_->last_pos_before(resume), text_len_));
@@ -571,6 +587,28 @@ std::optional<Continuation> LaciSession::finish_attempt() {
         if (!d.empty()) c.steering_delta = d;
     }
     return c;
+}
+
+std::optional<Failure> LaciSession::short_run_on() {
+    const auto & decided = short_->decided();
+    if (!decided || decided->first != "run_on") return std::nullopt;
+    Failure f;
+    f.kind = "short_run_on";
+    f.detect_row = (int) stream_.size() - 1;
+    f.onset_row = n_prefill_ + decided->second;
+    f.rollback_row = n_prefill_;
+    f.bin = f.frontier = detector_->frontier();
+    if (short_retries_ < short_->max_retries() && attempts_ < p_.cfg.max_retries) return f;
+    ignore(f);
+    return std::nullopt;
+}
+
+std::pair<std::string, std::optional<int>> LaciSession::short_end() const {
+    const auto & decided = short_->decided();
+    if (decided && decided->first == "cut") return {"short_text", n_prefill_ + decided->second};
+    int frames = std::min(*short_->enter(), (int) stream_.size() - n_prefill_ - (p_.n_codebooks - 1));
+    if (eos_row_) frames = std::min(frames, *eos_row_ - n_prefill_);
+    return {"short_text_forced", n_prefill_ + std::max(frames, 0)};
 }
 
 std::optional<int> LaciSession::eos_frame() const {

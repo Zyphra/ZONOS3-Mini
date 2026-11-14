@@ -303,6 +303,7 @@ class Scheduler:
             bucket=bucket,
             rate_deltas=rate_deltas,
             follower=follower,
+            short_text=plan.short_text,
         )
 
     def _sample(self, a: _Active) -> mx.array:

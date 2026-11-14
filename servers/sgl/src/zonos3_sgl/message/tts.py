@@ -147,6 +147,9 @@ class TTSTokenizeMsg(BaseTTSTokenizerMsg):
     laci_rate_first: int = 0
     laci_rate_bucket: int | None = None
     laci_rate_deltas: List[torch.Tensor | None] | None = None
+    # A short text (zonos3.tts.plan.Rules.short_text): the tokenizer worker generates a normalized text that qualifies
+    # with its pause marker and filler under LACI (zonos3.tts.short_text.prompt).
+    short_text: bool = False
 
 
 @dataclass
@@ -267,6 +270,8 @@ class TTSUserMsg(BaseTTSBackendMsg):
     laci_rate_first: int = 0
     laci_rate_bucket: int | None = None
     laci_rate_deltas: List[torch.Tensor | None] | None = None
+    # A short text (zonos3.tts.short_text): its filler's first text-span token (needs laci); None = an ordinary request.
+    laci_short_text: int | None = None
 
 
 @dataclass

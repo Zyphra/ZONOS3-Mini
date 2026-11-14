@@ -129,9 +129,12 @@ target_sources(zonos3 PRIVATE src/zonos3-phonemes.cpp)
 target_link_libraries(zonos3 PUBLIC zonos3-lmdb ${CMAKE_DL_LIBS})
 # --- end pronunciation lexicon ---
 
-# --- LACI and span-follow (plan 7.8): ports of model/src/zonos3/tts/{laci,span_follow}.py ---
-target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp)
-# --- end LACI and span-follow ---
+# --- LACI, span-follow and short texts (plan 7.8): ports of model/src/zonos3/tts/{laci,span_follow,short_text}.py ---
+target_sources(zonos3 PRIVATE src/zonos3-laci.cpp src/zonos3-span-follow.cpp src/zonos3-short-text.cpp)
+# The short-text registry (filler sentences, cut rule, silence classifier), parsed by src/zonos3-short-text.cpp.
+zonos3_embed_json(${CMAKE_CURRENT_SOURCE_DIR}/../../model/src/zonos3/registries/short_text.json
+    zonos3_short_text_json zonos3-short-text-json.h)
+# --- end LACI, span-follow and short texts ---
 
 # --- Graph features (plan 7.5/7.6/7.8): accent adapters; the alignment probe lives in the graph ---
 target_sources(zonos3 PRIVATE src/zonos3-accent.cpp)

@@ -12,6 +12,7 @@ import {
 import { outputPcm } from '../output';
 import { buildCfgTwin, buildPrompt, conditionBucket, NCB, prefillCodes, type Conditioning, type Prompt } from '../prompt';
 import { LaciSession, defaultLaciConfig, RateBuckets, type LaciHeads, type ProbeControl, type Windows } from '../request/laci';
+import { shortTextPrompt } from '../request/shortText';
 import { defaultFollowConfig, SpanFollower, spanTokenRanges, tokenCharRanges, type Range } from '../request/spanFollow';
 import {
   NO_STEERING, requestRelease, resolveControls, Steering, textChars, type ControlSpan, type ReleaseFrames,
@@ -61,6 +62,7 @@ interface Plan {
   steering: Steering;
   spanFollow: '' | 'rate' | 'reading';
   laci: LaciHeads | null;
+  shortText: number | null;           // a short text (R17): the filler's first text-span token; runs under `laci`
   follow: LaciHeads | null;
   followTokens: Range[];
   followLead: number;
@@ -228,7 +230,7 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
     cfgScale: 1, cfgKind: '', twinSteered: true, decoder, headroomDb: -1, fadeOutMs: 0, stream: true, wav: false,
     prefix: false,
     streamCodebooks: STREAM_CODEBOOKS, streamFirstOnly: STREAM_CODEBOOKS_SCOPE === 'first',
-    steering: new Steering(), spanFollow: '', laci: null, follow: null, followTokens: [],
+    steering: new Steering(), spanFollow: '', laci: null, shortText: null, follow: null, followTokens: [],
     followLead: 1, followLag: 0, prompt: null!, twin: null,
   };
   p.language = resolveLanguage(body);
@@ -292,6 +294,11 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   if (start && !text.startsWith(START_MARKER)) p.text = START_MARKER + text;   // plan.with_start_marker
   checkLaci(e, body, p.language);
   if (bool(body, 'laci')) p.laci = e.laci.get(p.language)!;
+  // R17 (zonos3.tts.plan request_rules' short_text): short_text auto, LACI heads, no CFG twin or control spans
+  const shortMode = str(body, 'short_text') ?? 'auto';
+  if (shortMode !== 'auto' && shortMode !== 'off') fail(400, "short_text must be 'auto' or 'off'");
+  const shortAllowed = shortMode === 'auto' && e.laci.has(p.language) && !truthy(body, 'control_spans') &&
+    speakerCfg === 1 && controlsCfg === 1;
   // sampling (TTSSamplingParams; registry defaults)
   const sp = p.sp;
   sp.temperature = num(body, 'temperature', SAMPLING.temperature);
@@ -316,6 +323,15 @@ export async function planGenerate(e: Engine, spk: Speakers, body: Body, session
   }
   // text normalization is not available in the browser: the text is tokenized as sent (with the start marker in front
   // under start_immediately)
+  if (shortAllowed) {
+    const m = e.hp.textMarkers;
+    const short = as400(() => shortTextPrompt(p.text, p.language, m, s => e.tokenizer.charOffsets(s),
+      s => e.tokenizer.encode(s, m).length - 2));
+    if (short) {
+      [p.text, p.shortText] = short;
+      p.laci = e.laci.get(p.language)!;
+    }
+  }
   resolveFollowTokens(e, p);
 
   // plan_generate: prompt and CFG twin
@@ -378,6 +394,7 @@ function attachProbe(e: Engine, p: Plan): { probe: Probe | null; follower: SpanF
     heads: p.laci!, cfg: defaultLaciConfig(), prefillRows, seed: p.sp.seed, maxTokens: p.maxFrames, nCodebooks: NCB,
     hold: !p.prefix,
     rates, conditionValues: hp.nCond > 0 ? p.prompt.cond.buckets.slice() : null, bucket: null, rateDeltas: null, follower,
+    shortText: p.shortText,
   }));
   return { probe, follower, laci };
 }

@@ -515,6 +515,7 @@ class TTSScheduler(SchedulerIOMixin):
                 bucket=bucket,
                 rate_deltas=None if msg.laci_rate_edges is None else list(msg.laci_rate_deltas),
                 follower=self._span_follower(msg),
+                short_text=msg.laci_short_text,
             )
             laci = self.laci_requests[msg.uid] = _LaciRequest(session, msg)
         from zonos3_sgl.tts.align_probe import laci_probe

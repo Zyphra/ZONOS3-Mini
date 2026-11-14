@@ -280,6 +280,7 @@ void attach_probe(const ServerState & s, ReqJob & job) {
     p.rate_deltas = gr.laci_rate_deltas;
     p.follower = job.follower.get();
     p.hold = !gr.prefix;
+    p.short_text = gr.short_text;
     job.laci = std::make_unique<zonos3_laci::LaciSession>(std::move(p));
 }
 

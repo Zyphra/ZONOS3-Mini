@@ -17,6 +17,11 @@ streamed response see one uninterrupted stream; a request decoded whole at the e
 whole) holds every row until it is final (``hold``). Constraints: no CFG twin (speaker and controls CFG scale 1), the FA
 attention backend, tensor parallel size 1.
 
+A short text (zonos3.tts.short_text) runs under LACI as the text, a pause marker and a filler sentence: the session
+(``short_text``: the filler's first text token) holds the take, ends it at the cut once the reading reaches the
+filler (``end`` "short_text"), regenerates a take that ran into the filler as a fresh one (failure "short_run_on")
+and, once those retries are spent, cuts where the reading reached the filler ("short_text_forced").
+
 Vocabulary
   row       stream index: the request's prefill rows (codec silence) are 0..P-1, generated rows follow.
   pos       text-span index 0..text_len-1; 0 is BOS, text_len-1 is EOS.
@@ -577,6 +582,10 @@ class LaciSession:
     # span steering by reading position (zonos3.tts.span_follow.SpanFollower): sees every readout, rolled back with
     # the stream
     follower: object | None = None
+    # a short text (zonos3.tts.short_text): the filler's first text-span token; None = an ordinary request
+    short_text: int | None = None
+    short: object | None = None  # its ShortCut
+    short_retries: int = 0
 
     def __post_init__(self):
         self.stream = list(self.prefill_rows.to(torch.int32))
@@ -591,6 +600,10 @@ class LaciSession:
             raise ValueError(
                 f"rate_deltas: {len(self.rate_deltas)} for {self.rates.last - self.rates.first + 1} buckets"
             )
+        if self.short_text is not None:
+            from .short_text import ShortCut
+
+            self.short = ShortCut(int(self.short_text), self.n_codebooks)
 
     @property
     def rate_bucket(self) -> int | None:
@@ -639,6 +652,12 @@ class LaciSession:
                 self.pending_failure, probe.stop = f, True
                 return
             self._ignore(f)
+        if self.short is not None:
+            # the cut, decided over the rows so far and this reading (one row late when a row decided it)
+            self.short.observe_reading(row - self.n_prefill, pos)
+            if self.short.decided is not None:
+                probe.stop = True
+                return
         stop_row = det.stop_row()
         # keep the rows the delayed codebooks of the last kept frame need (stop_row + n_codebooks - 1), with a margin
         if stop_row is not None and row >= stop_row + self.n_codebooks + 2:
@@ -696,6 +715,8 @@ class LaciSession:
         self.generated_total += 1
         if eos_frame is not None:
             self.eos_row = self.attempt_start + int(eos_frame)
+        if self.short is not None:
+            self.short.observe_row(row)
 
     def commit_row(self) -> int:
         """Stream rows below this go downstream: they are outside every rollback the current detector state can still
@@ -704,7 +725,7 @@ class LaciSession:
         n = len(self.stream)
         if self.end is not None:
             return n
-        if self.hold:
+        if self.hold or self.short is not None:  # a short text is held until it is cut
             return self.n_prefill
         if self.attempts >= self.cfg.max_retries:
             row = n
@@ -731,11 +752,14 @@ class LaciSession:
     def finish_attempt(self) -> Continuation | None:
         """The current attempt's request finished: roll back (a ``Continuation``) or make the result final (None)."""
         f = self.pending_failure
-        if f is None and self.eos_row is not None and self.detector is not None:
+        # a short text's filler is there to be cut: one that ends before it keeps that end (no truncation to retry)
+        if f is None and self.eos_row is not None and self.detector is not None and self.short is None:
             f = self.detector.on_eos(self.eos_row)
             if f is not None and self.attempts >= self.cfg.max_retries:
                 self._ignore(f)
                 f = None
+        if f is None and self.short is not None:
+            f = self._short_run_on()
         # Rows already handed downstream are final: a rollback whose row lies below them restarts at the first unsent
         # row. commit_row() makes this rare: it holds back what the current detector state can still roll back, but
         # a regeneration's own rollbacks (the margin again, or a bin the replayed state now counts as skipped) can
@@ -745,7 +769,9 @@ class LaciSession:
             self._ignore(f)  # no budget left to regenerate from the rollback row: keep what was generated
             f = None
         if f is None:
-            if self.text_done:
+            if self.short is not None and self.short.enter is not None:
+                self.end = self._short_end()
+            elif self.text_done:
                 self.end = ("text_done", self.detector.stop_row())
             elif self.eos_row is not None:
                 self.end = ("eos", self.eos_row)
@@ -766,6 +792,8 @@ class LaciSession:
         self.detector.truncate(resume)
         if self.follower is not None:
             self.follower.truncate(resume - self.n_prefill)
+        if self.short is not None:
+            self.short.truncate(resume - self.n_prefill)
         if self.pace is not None:
             self.pace.truncate(resume)
         if bucket is not None:
@@ -773,9 +801,13 @@ class LaciSession:
             self.bucket = bucket
             self.condition_values = list(self.condition_values)
             self.condition_values[self.rates.index] = self.rates.row(bucket)
-        if isinstance(f, PaceFailure):
-            # a fresh take (rollback_row is the first row) in the bucket the measured duration asks for
-            self.pace_retries += 1
+        if isinstance(f, PaceFailure) or f.kind == "short_run_on":
+            # a fresh take (rollback_row is the first row): in the bucket the measured duration asks for, or the
+            # retake of a short text that ran into its filler
+            if f.kind == "short_run_on":
+                self.short_retries += 1
+            else:
+                self.pace_retries += 1
             self.probation = None
         else:
             self.probation = (f, AciCenter(self.detector.last_pos_before(resume), self.text_len))
@@ -790,6 +822,36 @@ class LaciSession:
             steering_delta=(None if self.rate_deltas is None else self.rate_deltas[self.bucket - self.rates.first]),
             swap_delta=self.rate_deltas is not None,
         )
+
+    def _short_run_on(self) -> Failure | None:
+        """A run-on to regenerate as a fresh take (retries left), else None (an exhausted one is recorded, ignored)."""
+        decided = self.short.decided
+        if decided is None or decided[0] != "run_on":
+            return None
+        det = self.detector
+        f = Failure(
+            "short_run_on",
+            detect_row=len(self.stream) - 1,
+            onset_row=self.n_prefill + decided[1],
+            rollback_row=self.n_prefill,
+            bin=det.frontier,
+            frontier=det.frontier,
+        )
+        if self.short_retries < self.short.cfg.max_retries and self.attempts < self.cfg.max_retries:
+            return f
+        self._ignore(f)
+        return None
+
+    def _short_end(self) -> tuple[str, int]:
+        """The end of a short-text take whose reading reached the filler: the cut, else (a run-on, or a take that ended
+        first) the frame where the reading reached the filler, within the complete frames and before any EOS."""
+        decided = self.short.decided
+        if decided is not None and decided[0] == "cut":
+            return ("short_text", self.n_prefill + decided[1])
+        frames = min(self.short.enter, len(self.stream) - self.n_prefill - (self.n_codebooks - 1))
+        if self.eos_row is not None:
+            frames = min(frames, self.eos_row - self.n_prefill)
+        return ("short_text_forced", self.n_prefill + max(frames, 0))
 
     # -- final -----------------------------------------------------------------------------------------------------
 

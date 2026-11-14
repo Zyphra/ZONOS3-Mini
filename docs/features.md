@@ -42,6 +42,12 @@ Offline, a LACI prompt can also carry a duration target, `generate(..., laci=Tru
 
 Constraints: speaker and controls CFG scale 1 (no CFG twin), the `fa` attention backend (chosen automatically with `--laci-heads` when `--attn` is `auto`), tensor parallel size 1. `--align-probe-max-text` (default 2048 with `--laci-heads`) bounds the text the decode graphs read; longer texts decode their probed steps eagerly.
 
+## Short texts
+
+Alone, a text of one or two words often comes out wrong or runs on into words it does not have: the model was trained on sentences. With `short_text: "auto"` (the default) such a text runs as the text, a 0.5 s pause marker (U+E004) and a filler sentence in its language ("Seven birds flew over the quiet river." in English) under LACI, and is cut once the reading position reaches the filler: at the first frame a codes-only silence classifier calls silent, searched from 2 frames before the reading reached the filler, after at least 3 voiced frames. A take that reaches no silent frame within 15 frames (1 s) ran into the filler: it is retaken from its first row with a new seed, at most twice, then cut where the reading reached the filler. The take is held until it is cut, so nothing past the text is decoded or sent; the LACI record ends `short_text` (or `short_text_forced`) and lists retakes as `short_run_on` failures.
+
+A text qualifies when it has at most 2 words and its tokens are at most 2/5 of its filler's, with a checkpoint that has the pause tokens (the release text rows), LACI heads for its language, and no start, pause or phoneme markers, CFG, control spans, speech edit or LACI duration target; `short_text: "off"` generates it alone. The filler sentences, the cut rule and the int8 silence weights live in `model/src/zonos3/registries/short_text.json` (`zonos3.tts.short_text`; ported by the ggml and in-browser servers, pinned by `servers/ggml/tests/fixtures/laci-replay/short_text_*`). Measured on embedding voices with Qwen3-ASR, the cut clip is exactly the word in 97 % of English takes (48 % alone, 56 % alone with LACI) and 88 % across the other first 8 LACI languages (39 % alone); the clips are 0.5–1 s instead of 3–5 s.
+
 ## Distributed Serving
 
 Tensor parallelism is available with `--tp-size n`. Rank 0 handles API-facing scheduler messages and broadcasts work to the remaining ranks.

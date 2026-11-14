@@ -5,6 +5,7 @@
 // Types: LaciConfig, Failure, Head {layer, head}, HeadWindow {head, lo, hi}, Windows, ProbeControl {textLen, mask,
 // stop}, Continuation, FailureRecord, LaciRecord (toJson = LaciSession.record() dict), RateBuckets, SessionParams,
 // RowRange {begin, end}. Rows are stream indices: prefill rows 0..P-1, generated rows follow.
+import { ShortCut } from './shortText';
 import type { SpanFollower } from './spanFollow';
 
 export interface LaciConfig {
@@ -302,6 +303,7 @@ export interface SessionParams {
   bucket?: number | null;             // default: conditionValues[rates.index]
   rateDeltas?: (Float32Array | null)[] | null;  // per bucket rates.first..rates.last
   follower?: SpanFollower | null;     // not owned; rolled back with the stream
+  shortText?: number | null;          // a short text (shortText.ts): the filler's first text-span token
 }
 
 export interface RowRange { begin: number; end: number }
@@ -315,7 +317,9 @@ function failureRecord(f: Failure, retrySeed: number | null, ignored: boolean, r
   };
 }
 
-// One request under LACI: its stream, detector, retries and ACI probation.
+// One request under LACI: its stream, detector, retries and ACI probation. A short text (params.shortText) holds the
+// take, ends it at the cut once the reading reaches the filler (end 'short_text'), retakes a run into the filler fresh
+// (failure 'short_run_on') and, once those retries are spent, cuts where the reading reached it ('short_text_forced').
 export class LaciSession {
   readonly nPrefill: number;
   stream: Int32Array[];
@@ -334,6 +338,8 @@ export class LaciSession {
   private ignored = new Set<string>();
   private conditionValues: number[] | null;
   private bucket: number | null;
+  private short: ShortCut | null;
+  private shortRetries = 0;
 
   constructor(private p: SessionParams) {
     this.nPrefill = p.prefillRows.length;
@@ -346,6 +352,7 @@ export class LaciSession {
       const want = p.rates ? p.rates.last() - p.rates.first + 1 : 0;
       if (p.rateDeltas.length !== want) throw new Error(`rate_deltas: ${p.rateDeltas.length} for ${want} buckets`);
     }
+    this.short = p.shortText != null ? new ShortCut(p.shortText, p.nCodebooks) : null;
   }
 
   rateBucket(): number | null { return !this.p.rates || !this.conditionValues ? null : this.bucket; }
@@ -389,6 +396,14 @@ export class LaciSession {
       }
       this.ignore(f);
     }
+    if (this.short) {
+      // the cut, decided over the rows so far and this reading (one row late when a row decided it)
+      this.short.observeReading(row - this.nPrefill, pos);
+      if (this.short.decided) {
+        probe.stop = true;
+        return;
+      }
+    }
     const stopRow = det.stopRow();
     if (stopRow !== null && row >= stopRow + this.p.nCodebooks + 2) {
       this.textDone = true;
@@ -408,12 +423,13 @@ export class LaciSession {
     this.stream.push(row);
     this.generatedTotal += 1;
     if (eosFrame !== null) this.eosRow = this.attemptStart + eosFrame;
+    this.short?.observeRow(row);
   }
 
   commitRow(): number {
     const n = this.stream.length;
     if (this.end) return n;
-    if (this.p.hold) return this.nPrefill;
+    if (this.p.hold || this.short) return this.nPrefill;   // a short text is held until it is cut
     let row: number;
     if (this.attempts >= this.p.cfg.maxRetries) {
       row = n;
@@ -436,13 +452,15 @@ export class LaciSession {
 
   finishAttempt(): Continuation | null {
     let f = this.pendingFailure;
-    if (!f && this.eosRow !== null && this.detector) {
+    // a short text's filler is there to be cut: one that ends before it keeps that end (no truncation to retry)
+    if (!f && this.eosRow !== null && this.detector && !this.short) {
       f = this.detector.onEos(this.eosRow);
       if (f && this.attempts >= this.p.cfg.maxRetries) {
         this.ignore(f);
         f = null;
       }
     }
+    if (!f && this.short) f = this.shortRunOn();
     let resume = 0;
     if (f) resume = Math.max(f.rollbackRow, this.nPrefill + this.emitted);
     if (f && this.p.maxTokens - (resume - this.nPrefill) <= 0) {
@@ -450,7 +468,8 @@ export class LaciSession {
       f = null;
     }
     if (!f) {
-      if (this.textDone) this.end = ['text_done', this.detector!.stopRow()];
+      if (this.short && this.short.enter !== null) this.end = this.shortEnd();
+      else if (this.textDone) this.end = ['text_done', this.detector!.stopRow()];
       else if (this.eosRow !== null) this.end = ['eos', this.eosRow];
       else this.end = ['max_tokens', null];
       return null;
@@ -461,7 +480,14 @@ export class LaciSession {
     this.stream.length = resume;
     this.detector!.truncate(resume);
     this.p.follower?.truncate(resume - this.nPrefill);
-    this.probation = [f, new AciCenter(this.detector!.lastPosBefore(resume), this.textLen)];
+    this.short?.truncate(resume - this.nPrefill);
+    if (f.kind === 'short_run_on') {
+      // a fresh take (rollback_row is the first row): the retake of a short text that ran into its filler
+      this.shortRetries += 1;
+      this.probation = null;
+    } else {
+      this.probation = [f, new AciCenter(this.detector!.lastPosBefore(resume), this.textLen)];
+    }
     this.pendingFailure = null;
     this.textDone = false;
     this.eosRow = null;
@@ -477,6 +503,27 @@ export class LaciSession {
       conditionValues: this.conditionValues ? this.conditionValues.slice() : null,
       swapDelta: !!this.p.rateDeltas, steeringDelta,
     };
+  }
+
+  private shortRunOn(): Failure | null {
+    const decided = this.short!.decided;
+    if (!decided || decided[0] !== 'run_on') return null;
+    const frontier = this.detector!.frontier();
+    const f: Failure = {
+      kind: 'short_run_on', detectRow: this.stream.length - 1, onsetRow: this.nPrefill + decided[1],
+      rollbackRow: this.nPrefill, bin: frontier, frontier,
+    };
+    if (this.shortRetries < this.short!.reg.maxRetries && this.attempts < this.p.cfg.maxRetries) return f;
+    this.ignore(f);
+    return null;
+  }
+
+  private shortEnd(): [string, number] {
+    const s = this.short!;
+    if (s.decided && s.decided[0] === 'cut') return ['short_text', this.nPrefill + s.decided[1]];
+    let frames = Math.min(s.enter!, this.stream.length - this.nPrefill - (this.p.nCodebooks - 1));
+    if (this.eosRow !== null) frames = Math.min(frames, this.eosRow - this.nPrefill);
+    return ['short_text_forced', this.nPrefill + Math.max(frames, 0)];
   }
 
   // The final result's EOS as an aligned frame in generated rows.

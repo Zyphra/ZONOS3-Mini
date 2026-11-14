@@ -86,6 +86,7 @@ CORS allows every origin and exposes the response headers above.
 | `controls_cfg_scale` | `1.0` | Guidance on the controls' hidden-space delta, embedding mode (1 = off; [guide](guide.md#steering-controls)) |
 | `steer_hold`, `steer_onset_seconds`, `steer_ramp_seconds` | `null` | Steer then hold of the request-level hidden `controls`: full dose for the onset, a ramp to `steer_hold` × dose, then held (null = the bundle's `steer_release`, reported by `/v2/capabilities`; 1 = constant; below 1 without `steer_release`: 400; also on `/v2/edit`; [guide](guide.md#steer-then-hold)) |
 | `laci` | `false` | Alignment-guarded decoding ([features](features.md#laci-alignment-guarded-decoding)) |
+| `short_text` | `auto` | A text of one or two words runs with a pause and a filler sentence under LACI and is cut where the filler starts; `off` generates it alone ([features](features.md#short-texts)) |
 | `decoder` | `null` | The audio decoder by id (`/v2/capabilities` `decoders`: `keep2_plain`, the default, or the full-size `full_mr` where served); an id the server does not serve is a 400; also on `/v2/edit` |
 | `headroom_db`, `fade_out_ms`, `decode_context` | registry, `0`, `false` | Output gain (followed by every server's soft limiter above −1 dBFS, `output_limit_dbfs` in `generation.json`), tail fade, decoding behind the reference context |
 

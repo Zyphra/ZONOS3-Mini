@@ -12,6 +12,7 @@ import unittest
 from types import SimpleNamespace
 
 import torch
+from zonos3.tts import short_text
 from zonos3.tts.laci import (
     DURATION_MIN_STALL_FRAMES,
     PACE_MAX_RETRIES,
@@ -338,7 +339,7 @@ P = 3  # prefill rows
 HEADS = LaciHeads(heads=((7, 4),), radius={(7, 4): 3}, frames_per_token=float(FPT))
 
 
-def session(cfg=CFG, max_tokens=4000, seed=0, hold=False):
+def session(cfg=CFG, max_tokens=4000, seed=0, hold=False, short_text=None):
     return LaciSession(
         heads=HEADS,
         cfg=cfg,
@@ -347,6 +348,7 @@ def session(cfg=CFG, max_tokens=4000, seed=0, hold=False):
         max_tokens=max_tokens,
         n_codebooks=C,
         hold=hold,
+        short_text=short_text,
     )
 
 
@@ -354,12 +356,14 @@ def frame(tag):
     return torch.full((C + 1,), tag, dtype=torch.int32)
 
 
-def run_attempt(s, positions, eos_at=None, eos_lag=0, tag=0):
+def run_attempt(s, positions, eos_at=None, eos_lag=0, tag=0, row_of=None):
     """Drive one attempt like the scheduler: the prefill-sampled row (unobserved), then per decode step the observer,
-    the row, EOS bookkeeping (finish n_codebooks + 1 rows after the EOA row), a stop. Returns the rows drained."""
+    the row, EOS bookkeeping (finish n_codebooks + 1 rows after the EOA row), a stop. ``row_of(step)``: the row of a
+    step (default: tagged rows). Returns the rows drained."""
+    row_of = row_of or (lambda step: frame(tag if step == 0 else tag * 100000 + step))
     probe = SimpleNamespace(text_len=TEXT_LEN, mask=s.probe_mask(), stop=False)
     drained = []
-    s.append(frame(tag), None)
+    s.append(row_of(0), None)
     drained += s.drain()
     countdown = None
     for step, pos in enumerate(positions, start=1):
@@ -368,7 +372,7 @@ def run_attempt(s, positions, eos_at=None, eos_lag=0, tag=0):
         if eos_at is not None and step >= eos_at:
             eos = eos_at - eos_lag
             countdown = C + 1 if countdown is None else countdown
-        s.append(frame(tag * 100000 + step), eos)
+        s.append(row_of(step), eos)
         if countdown is not None:
             countdown -= 1
         if probe.stop or countdown == 0:
@@ -776,3 +780,62 @@ class DurationSessionTest(unittest.TestCase):
         self.assertGreater(len(out), 0)
         self.assertTrue(all(torch.equal(a, b) for a, b in zip(out, s.stream[P:])))  # the last take is the result
         self.assertEqual(len(out), len(s.stream) - P)
+
+
+class ShortTextSessionTest(unittest.TestCase):
+    """A short text (zonos3.tts.short_text): the reading reaches the filler's first token at step 21 (frame 21)."""
+
+    FILLER = 5
+    READING = [p for _, p in reading(start_row=0)]
+
+    def setUp(self):
+        w = short_text.registry().weights
+        self.assertEqual(w.shape[0], C)
+        self.silent, self.voiced = w.argmax(axis=1), w.argmin(axis=1)
+
+    def rows(self, lo, hi):
+        """Rows whose frames (frame f = codebook k of row f + k) are voiced in [lo, hi), silent elsewhere."""
+
+        def row_of(step):
+            codes = [int((self.voiced if lo <= step - k < hi else self.silent)[k]) for k in range(C)]
+            return torch.tensor([*codes, -1], dtype=torch.int32)
+
+        return row_of
+
+    def test_cut_at_the_first_silent_frame_once_the_reading_reaches_the_filler(self):
+        s = session(short_text=self.FILLER)
+        self.assertEqual(run_attempt(s, self.READING, row_of=self.rows(0, 24)), [])  # held until it is cut
+        self.assertIsNone(s.finish_attempt())
+        self.assertEqual((s.end, s.eos_frame()), (("short_text", P + 25), 25))
+        self.assertEqual(s.record()["failures"], [])
+
+    def test_silence_before_the_search_start_is_not_the_cut(self):
+        s = session(short_text=self.FILLER)
+        run_attempt(s, self.READING, row_of=self.rows(10, 30))  # leading silence, speech up to frame 29
+        self.assertIsNone(s.finish_attempt())
+        self.assertEqual(s.end, ("short_text", P + 31))
+
+    def test_a_run_on_is_retaken_fresh_then_cut_where_the_reading_reached_the_filler(self):
+        s = session(short_text=self.FILLER, seed=7)
+        for attempt in range(1, short_text.registry().max_retries + 1):
+            run_attempt(s, self.READING, row_of=self.rows(0, 10**6))
+            cont = s.finish_attempt()
+            self.assertIsNotNone(cont)
+            self.assertEqual((cont.history_rows, cont.seed, len(cont.rows)), (0, 7 + 1000 * attempt, P))
+            self.assertIsNone(s.probe_mask())  # a fresh take, not a regeneration under the ACI mask
+        out = run_attempt(s, self.READING, row_of=self.rows(0, 10**6))
+        self.assertIsNone(s.finish_attempt())
+        self.assertEqual(s.end, ("short_text_forced", P + 21))
+        failures = [(f["kind"], f["ignored"]) for f in s.record()["failures"]]
+        self.assertEqual(failures, [("short_run_on", False)] * 2 + [("short_run_on", True)])
+        out += s.drain(final=True)
+        self.assertEqual(len(out), len(s.stream) - P)
+
+    def test_a_take_that_ends_before_the_filler_keeps_its_end(self):
+        s = session(short_text=self.FILLER)
+        run_attempt(s, self.READING, eos_at=8, row_of=self.rows(0, 24))  # finishes at step 18, before the filler
+        self.assertIsNone(s.finish_attempt())
+        self.assertEqual((s.end, s.record()["failures"]), (("eos", P + 8), []))
+
+    def test_rows_handed_downstream_are_final_under_rollbacks(self):
+        self.assertGreater(random_sessions(self, lambda rng, cfg: session(cfg, short_text=rng.randint(3, 60))), 20)

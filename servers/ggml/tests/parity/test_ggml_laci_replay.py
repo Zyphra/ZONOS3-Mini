@@ -44,6 +44,12 @@ def _tags(rows) -> list[int]:
     return [int(r[0]) for r in rows]
 
 
+def _row(tag: int, codes: list[int] | None) -> torch.Tensor:
+    """A stream row: its tag (column 0, what the results list), then the codebooks of ``codes`` (a short text's cut
+    reads them; column 0 is codebook 0, so a short-text trace's tags are its codebook-0 codes)."""
+    return torch.tensor([tag] if codes is None else codes, dtype=torch.int32)
+
+
 def run_laci(t: dict) -> dict:
     """Mirror of laci-replay's run_laci: one LaciSession driven like test_laci.run_attempt across attempts."""
     hj = t["heads_json"]
@@ -74,10 +80,12 @@ def run_laci(t: dict) -> dict:
     rate_deltas = None if rd is None else [None if e is None else torch.tensor(e, dtype=torch.float32) for e in rd]
     fj = t.get("follower")
     follower = None if fj is None else _follower(fj)
+    attempts = t.get("attempts") or [{"steps": t["steps"], "eos_at": t.get("eos_at"), "eos_lag": t.get("eos_lag", 0)}]
+    width = len(attempts[0]["codes"][0]) if "codes" in attempts[0] else 1
     s = LaciSession(
         heads=heads,
         cfg=cfg,
-        prefill_rows=torch.full((n_prefill, 1), -1, dtype=torch.int32),
+        prefill_rows=torch.full((n_prefill, width), -1, dtype=torch.int32),
         seed=t["seed"] if "seed" in t else 0,
         max_tokens=t.get("max_tokens", 4000),
         n_codebooks=t.get("n_codebooks", 10),
@@ -88,8 +96,8 @@ def run_laci(t: dict) -> dict:
         bucket=t.get("bucket"),
         rate_deltas=rate_deltas,
         follower=follower,
+        short_text=t.get("short_text"),
     )
-    attempts = t.get("attempts") or [{"steps": t["steps"], "eos_at": t.get("eos_at"), "eos_lag": t.get("eos_lag", 0)}]
     C = s.n_codebooks
     out_attempts = []
     for k in range(t.get("max_attempts", 64) + 1):
@@ -100,7 +108,8 @@ def run_laci(t: dict) -> dict:
         probe = SimpleNamespace(text_len=t["text_len"], mask=s.probe_mask(), stop=False)
         rec = {"mask": _mask(probe.mask)}
         changes, drained, fweights = [], [], []
-        s.append(torch.tensor([tag], dtype=torch.int32), None)
+        codes = a.get("codes")  # per row of the attempt (the prefill-sampled one first): its codebooks
+        s.append(_row(tag, None if codes is None else codes[0]), None)
         drained += _tags(s.drain())
         countdown, steps_run, stop_step, boost_step = None, 0, None, None
         for step, (pos, m) in enumerate(a["steps"], start=1):
@@ -116,7 +125,7 @@ def run_laci(t: dict) -> dict:
             if eos_at is not None and step >= eos_at:
                 eos = eos_at - eos_lag
                 countdown = C + 1 if countdown is None else countdown
-            s.append(torch.tensor([tag * 100000 + step], dtype=torch.int32), eos)
+            s.append(_row(tag * 100000 + step, None if codes is None else codes[step]), eos)
             if boost_step is None and s.stop_boost() > 0:
                 boost_step = step  # the first step whose next row the sampler boosts
             if countdown is not None:
@@ -350,10 +359,52 @@ def laci_traces() -> dict[str, dict]:
         ),
     }
     traces["stall_held"] = {**traces["stall"], "hold": True}
+    traces.update(short_text_traces())
     rng = random.Random(1234)
     for k in range(4):
         traces[f"random_{k}"] = _random_trace(rng)
     return traces
+
+
+def short_text_traces() -> dict[str, dict]:
+    """A short text whose filler starts at text token 5 (the reading reaches it at step 21): rows whose frames (frame
+    f = codebook k of row f + k) are voiced in [lo, hi), silent elsewhere, by the registry's silence weights."""
+    from zonos3.tts.short_text import registry
+
+    w = registry().weights
+    silent, voiced = [int(c) for c in w.argmax(axis=1)], [int(c) for c in w.argmin(axis=1)]
+    C = w.shape[0]
+
+    def codes(lo, hi, n):
+        return [[(voiced if lo <= r - k < hi else silent)[k] for k in range(C)] for r in range(n + 1)]
+
+    steps = reading()
+    n = len(steps)
+    return {
+        # leading silence, speech up to frame 29: cut after the first silent frame past the search start
+        "short_text_cut": base(short_text=5, attempts=[{"steps": steps, "codes": codes(10, 30, n)}]),
+        # two takes that run into the filler, a third that ends where the reading reached it; then one more retake
+        # would be over the budget
+        "short_text_run_on": base(
+            short_text=5,
+            seed=9,
+            attempts=[
+                {"steps": steps, "codes": codes(0, 10**6, n)},
+                {"steps": steps, "codes": codes(0, 10**6, n)},
+                {"steps": steps, "codes": codes(0, 10**6, n)},
+            ],
+        ),
+        # a skip before the filler regenerates under ACI, then the cut; an early EOS keeps its end
+        "short_text_skip": base(
+            short_text=40,
+            seed=3,
+            attempts=[
+                {"steps": reading(0, 12) + reading(30, 100), "codes": codes(0, 10**6, n)},
+                {"steps": reading(8, 100), "codes": codes(0, 140, n)},
+            ],
+        ),
+        "short_text_eos": base(short_text=5, attempts=[{"steps": steps, "codes": codes(0, 24, n), "eos_at": 8}]),
+    }
 
 
 def _random_trace(rng: random.Random) -> dict:
@@ -508,9 +559,9 @@ def test_laci_session_matches_python(tool, name):
 
 def test_laci_traces_cover_every_failure_kind():
     kinds = {f["kind"] for t in LACI.values() for f in run_laci(t)["record"]["failures"]}
-    assert {"skip", "hallucination", "truncation", "pace_fast", "pace_slow"} <= kinds
+    assert {"skip", "hallucination", "truncation", "pace_fast", "pace_slow", "short_run_on"} <= kinds
     ends = {run_laci(t)["record"]["end"] for t in LACI.values()}
-    assert {"text_done", "eos"} <= ends
+    assert {"text_done", "eos", "short_text", "short_text_forced"} <= ends
 
 
 @pytest.mark.parametrize("name", list(span_follow_traces()))
@@ -536,6 +587,9 @@ CTEST_CASES = (
     "slow_two_bins",
     "early_eos",
     "pace_miss",
+    "short_text_cut",
+    "short_text_run_on",
+    "short_text_skip",
     "span_follow_scheduler",
 )
 

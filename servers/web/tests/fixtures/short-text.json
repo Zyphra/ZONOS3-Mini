@@ -1,0 +1,77 @@
+{
+ "source": "zonos3.tts.short_text.prompt on the release text rows (gguf/backbone-ptq-edit.gguf spec)",
+ "cases": [
+  {
+   "language": "en_us",
+   "text": "Hello.",
+   "prompt": "Hello. Seven birds flew over the quiet river.",
+   "filler_token": 5
+  },
+  {
+   "language": "en_us",
+   "text": "Thank you.",
+   "prompt": "Thank you. Seven birds flew over the quiet river.",
+   "filler_token": 4
+  },
+  {
+   "language": "en_us",
+   "text": "Good morning, everyone.",
+   "prompt": null,
+   "filler_token": null
+  },
+  {
+   "language": "ja",
+   "text": "はい。",
+   "prompt": "はい。小さな鳥が静かな川の上を飛んでいった。",
+   "filler_token": 4
+  },
+  {
+   "language": "cmn",
+   "text": "谢谢!",
+   "prompt": "谢谢!小鸟飞过了安静的小河。",
+   "filler_token": 5
+  },
+  {
+   "language": "th",
+   "text": "ใช่",
+   "prompt": "ใช่ นกตัวเล็กบินข้ามแม่น้ำที่เงียบสงบ",
+   "filler_token": 5
+  },
+  {
+   "language": "ko",
+   "text": "네.",
+   "prompt": "네. 작은 새들이 조용한 강 위를 날아갔다.",
+   "filler_token": 4
+  },
+  {
+   "language": "de",
+   "text": "Herzlichen Glückwunsch!",
+   "prompt": null,
+   "filler_token": null
+  },
+  {
+   "language": "fr_fr",
+   "text": "Merci !",
+   "prompt": "Merci ! Plusieurs oiseaux volaient au-dessus de la rivière tranquille.",
+   "filler_token": 7
+  },
+  {
+   "language": "en_us",
+   "text": "Hi there",
+   "prompt": null,
+   "filler_token": null
+  },
+  {
+   "language": "hi",
+   "text": "नमस्ते।",
+   "prompt": "नमस्ते। छोटी चिड़ियाँ शांत नदी के ऊपर से उड़ गईं।",
+   "filler_token": 8
+  },
+  {
+   "language": "ar",
+   "text": "نعم.",
+   "prompt": "نعم. طارت طيور صغيرة فوق النهر الهادئ.",
+   "filler_token": 5
+  }
+ ]
+}

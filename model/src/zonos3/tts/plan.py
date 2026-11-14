@@ -1,16 +1,17 @@
 """The v2 GenerateRequest rules and prompt plan of every Python server (the reference, the MLX and the sgl server).
 
 One request goes through three steps, in the order the sgl frontend has always checked them (servers/api/openapi.yaml; the
-rules R1-R16 the ggml and in-browser servers port natively and ``model/tests/fixtures/request_errors.json`` pins):
+rules R1-R17 the ggml and in-browser servers port natively and ``model/tests/fixtures/request_errors.json`` pins):
 
 1. ``request_head``: the speaker mode (R2) and the condition rows (R3) -- everything the server needs
    before it resolves the request's speaker inputs (uploads, voices, inline codes) into a ``Speaker``.
 2. ``request_rules``: language (R4), the max_tokens budget (R5), the silence prefill (R6), the accent (R9), steering
    controls (R10), the span-follow gate (R11), CFG (R12), text markers: pronunciation groups, the start marker, pause
-   markers (R13), LACI (R14) and the seed (R16).
+   markers (R13), LACI (R14), the seed (R16) and short texts (R17).
    The sgl frontend stops here (its tokenizer worker builds the rows in another process).
 3. ``build_prompt``: the prompt rows -- condition rows, the reference prefix (R7) or speaker row, the text and silence
-   rows, the decode context (R8) and the CFG twin -- and the budget shrunk to the context left (R5).
+   rows, the decode context (R8) and the CFG twin -- and the budget shrunk to the context left (R5). A short text
+   (R17, zonos3.tts.short_text) gets its pause marker and filler sentence here, after normalization.
 
 ``plan_prompt`` runs the three for a server whose speaker resolution is synchronous. A server supplies what the rules
 read through ``RulesContext`` and, for the rows, ``PromptContext``; every refusal is a ValueError whose message is the
@@ -99,6 +100,7 @@ GENERATE_DEFAULTS: dict = {
     "steer_onset_seconds": None,
     "steer_ramp_seconds": None,
     "laci": False,
+    "short_text": "auto",
 }
 NO_CONDITION_ROWS = "This checkpoint has no condition rows (loudness / fmax / speaking rate)"
 
@@ -368,6 +370,7 @@ def resolve_accent(names: Sequence[str], accent, strength) -> tuple[str, float] 
     return accent, strength
 
 
+SHORT_TEXT_MODES = ("auto", "off")
 START_NEEDS_TOKEN = "start_immediately needs a checkpoint with a start token"
 EDIT_NO_MARKERS = "Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text"
 
@@ -469,6 +472,8 @@ class Rules:
     cfg_kind: str | None  # "speaker" | "controls"
     cfg_scale: float
     seed: int
+    # R17: the request may run as a short text (zonos3.tts.short_text; the normalized text decides, build_prompt)
+    short_text: bool = False
 
 
 def request_rules(
@@ -482,7 +487,7 @@ def request_rules(
     edit: bool = False,
     duration_target: bool = False,
 ) -> Rules:
-    """R4-R16 for the speaker inputs the server resolved for ``head.mode``. ``hidden_delta``: a server-side steering
+    """R4-R17 for the speaker inputs the server resolved for ``head.mode``. ``hidden_delta``: a server-side steering
     delta added to the request's (a speech-edit region's); ``release_delta``: a server-side released delta (a
     speech-edit region's controls not exempt from the request's steer_release) added to the request's; ``edit``: a
     speech-edit region (no silence prefill, no span follow); ``duration_target``: the request carries a LACI duration
@@ -562,6 +567,16 @@ def request_rules(
         raise ValueError(START_NEEDS_TOKEN)
     check_laci(ctx, req, language, duration_target=duration_target)
     seed = int(req.seed) if req.seed is not None else secrets.randbelow(2**31)
+    # R17: a short text runs under LACI on the language's heads, alone (no CFG twin) and unsteered by spans
+    if req.short_text not in SHORT_TEXT_MODES:
+        raise ValueError("short_text must be 'auto' or 'off'")
+    short = (
+        req.short_text == "auto"
+        and language in ctx.laci_languages
+        and not (edit or duration_target or req.control_spans)
+        and float(req.speaker_cfg_scale) == 1.0
+        and float(req.controls_cfg_scale) == 1.0
+    )
     return Rules(
         request=req,
         speaker=speaker,
@@ -582,6 +597,7 @@ def request_rules(
         cfg_kind=cfg_kind,
         cfg_scale=cfg_scale,
         seed=seed,
+        short_text=short,
     )
 
 
@@ -623,7 +639,7 @@ class TwinMsg:
 @dataclass
 class PromptPlan:
     request: Request
-    text: str  # normalized text
+    text: str  # normalized text (a short text: with its pause marker and filler)
     language: str
     cond: Branch
     twin: Branch | None
@@ -643,6 +659,7 @@ class PromptPlan:
     max_tokens: int
     seed: int
     laci: str | None  # LACI head key (the language)
+    short_text: int | None = None  # a short text: its filler's first text-span token (zonos3.tts.short_text)
 
     @property
     def speaker_rows(self) -> int:
@@ -726,6 +743,13 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
     text = ctx.normalize_text(req.text, rules.language, bool(req.text_normalization))
     if rules.start:
         text = with_start_marker(text)
+    short = None
+    if rules.short_text:
+        from zonos3.tts import short_text
+
+        short = short_text.prompt(text, rules.language, builder.config.text_tokenizer_spec)
+        if short is not None:
+            text = short[0]
     silence = None
     if rules.silence_frames > 0:
         silence = silence_rows_from_codes(ctx.silence_frame(), rules.silence_frames, builder.config).to(torch.int32)
@@ -790,7 +814,8 @@ def build_prompt(ctx: PromptContext, rules: Rules, *, edit=None) -> PromptPlan:
         accent=rules.accent,
         max_tokens=fit_max_tokens(rules.max_tokens, prompt_len, ctx.max_seqlen),
         seed=rules.seed,
-        laci=rules.language if req.laci else None,
+        laci=rules.language if req.laci or short is not None else None,
+        short_text=None if short is None else short[1],
     )
 
 

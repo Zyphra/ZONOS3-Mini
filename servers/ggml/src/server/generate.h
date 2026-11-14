@@ -28,7 +28,9 @@ struct GeneratePlan {
 
 // Throws HttpError (fail) with sgl's status and detail for an invalid request. The plan's frame budget is the
 // request's max_tokens (at most --max) shrunk to the slot rows its prompt leaves (fit_frame_budget).
-GeneratePlan plan_generate(ServerState & s, const nlohmann::json & body, const std::optional<std::string> & session);
+// `duration_target`: a LACI duration-target take (plan_laci_take), which never runs as a short text.
+GeneratePlan plan_generate(ServerState & s, const nlohmann::json & body, const std::optional<std::string> & session,
+                           bool duration_target = false);
 
 // The job of a planned request: the decoder settings and, for LACI / span follow, the alignment probe
 // (attach_probe). fail() 400 when it cannot run; submit it with submit_job.

@@ -168,6 +168,14 @@ def tokenize_worker(
                 for msg, text in zip(tts_tokenize_msg, normalized_texts, strict=True):
                     if msg.start_immediately:
                         text = plan.with_start_marker(text)
+                    # A short text: the text, its pause marker and filler, under LACI (zonos3.tts.short_text).
+                    short = None
+                    if msg.short_text:
+                        from zonos3.tts import short_text
+
+                        short = short_text.prompt(text, msg.language, tts_prompt_builder.config.text_tokenizer_spec)
+                        if short is not None:
+                            text = short[0]
                     # The byte / SuperBPE text rows and what follows them (zonos3.tts.plan.text_rows): the edit layout
                     # of a speech-edit fill, else the silence prefill rows. ``quality_buckets``: the quality tokens of a
                     # legacy quality-conditioned checkpoint (zonos3.tts.conditioning.default_quality_buckets).
@@ -285,7 +293,8 @@ def tokenize_worker(
                             prefill_rows=None if silence_rows is None else silence_rows.to(torch.int32).contiguous(),
                             accent=msg.accent,
                             accent_strength=msg.accent_strength,
-                            laci=msg.language if getattr(msg, "laci", False) else None,
+                            laci=msg.language if getattr(msg, "laci", False) or short is not None else None,
+                            laci_short_text=None if short is None else short[1],
                             laci_target_frames=msg.laci_target_frames,
                             laci_adjust_rate=msg.laci_adjust_rate,
                             laci_rate_edges=msg.laci_rate_edges,

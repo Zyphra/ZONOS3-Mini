@@ -28,26 +28,29 @@ function runLaci(t: J): J {
   const C: number = t.n_codebooks ?? 10;
   const follower = t.follower ? makeFollower(t.follower) : null;
   const r = t.rates;
+  const attempts: J[] = t.attempts ?? [{ steps: t.steps, eos_at: t.eos_at ?? null, eos_lag: t.eos_lag ?? 0 }];
+  const width: number = attempts[0].codes ? attempts[0].codes[0].length : 1;
   const s = new LaciSession({
-    heads, cfg, prefillRows: Array.from({ length: nPrefill }, () => Int32Array.of(-1)),
+    heads, cfg, prefillRows: Array.from({ length: nPrefill }, () => new Int32Array(width).fill(-1)),
     seed: 'seed' in t ? t.seed : 0, maxTokens: t.max_tokens ?? 4000, nCodebooks: C, hold: t.hold ?? false,
     rates: r ? new RateBuckets(r.index, r.edges, r.n_buckets, r.first ?? 0) : null,
     conditionValues: t.condition_values ?? null, bucket: t.bucket ?? null,
     rateDeltas: t.rate_deltas ? (t.rate_deltas as (number[] | null)[]).map((d) => (d ? Float32Array.from(d) : null)) : null,
-    follower,
+    follower, shortText: t.short_text ?? null,
   });
   const tags = (b: number, e: number) => s.stream.slice(b, e).map((row) => row[0]);
-  const attempts: J[] = t.attempts ?? [{ steps: t.steps, eos_at: t.eos_at ?? null, eos_lag: t.eos_lag ?? 0 }];
   const out: J[] = [];
   for (let k = 0; ; k++) {
     if (k >= (t.max_attempts ?? 64)) throw new Error('more than max_attempts attempts');
     const a = attempts[Math.min(k, attempts.length - 1)];
     const tag = k + 1;
     const eosAt: number | null = a.eos_at ?? null, eosLag: number = a.eos_lag ?? 0;
+    // an attempt with `codes` emits those rows (a short text's cut reads their codebooks), else tagged rows
+    const rowOf = (step: number, tagValue: number) => (a.codes ? Int32Array.from(a.codes[step]) : Int32Array.of(tagValue));
     const probe: ProbeControl = { textLen, mask: s.probeMask(), stop: false };
     const rec: J = { mask: maskJson(probe.mask) };
     const changes: unknown[] = [], drained: number[] = [], fweights: number[][] = [];
-    s.append(Int32Array.of(tag), null);
+    s.append(rowOf(0, tag), null);
     let d = s.drain();
     drained.push(...tags(d.begin, d.end));
     let countdown: number | null = null, stepsRun = 0, stopStep: number | null = null, boostStep: number | null = null;
@@ -64,7 +67,7 @@ function runLaci(t: J): J {
         eos = eosAt - eosLag;
         countdown ??= C + 1;
       }
-      s.append(Int32Array.of(tag * 100000 + step), eos);
+      s.append(rowOf(step, tag * 100000 + step), eos);
       if (boostStep === null && s.stopBoost() > 0) boostStep = step;   // the first step whose next row is boosted
       if (countdown !== null) countdown -= 1;
       if (probe.stop || countdown === 0) {

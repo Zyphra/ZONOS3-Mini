@@ -164,3 +164,62 @@ def test_long_reference_keeps_its_first_frames_and_decodes_the_default_context()
     )
     assert torch.equal(p.context_codes, codes[REFERENCE_MAX_FRAMES - DECODE_CONTEXT_FRAMES : REFERENCE_MAX_FRAMES])
     assert p.reference_prefix_length == REFERENCE_MAX_FRAMES + N_CB - 1
+
+
+def _pause_context(tmp_path):
+    """Context with a word-level SuperBPE spec carrying four pause tokens and LACI heads for en_us."""
+    pytest.importorskip("tokenizers")
+    from tiny_lm import wordlevel_spec
+    from zonos3.utils.hashing import sha256_file
+
+    words = "hello thank you seven birds flew over the quiet river good morning everyone".split()
+    tokenizer, size = wordlevel_spec(
+        [*words, *(f"w{i}" for i in range(BYTE_TEXT_VOCAB_SIZE)), "[UNK]"], whitespace=True
+    )
+    path = tmp_path / "superbpe.json"
+    path.write_text(tokenizer)
+    vocab = size + 4
+    spec = {
+        "kind": "superbpe",
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "vocab_size": size,
+        "offset": 4,
+        "bos": 2,
+        "eos": 3,
+        "pauses": {
+            "ids": [vocab + 1 + j for j in range(4)],
+            "markers": [chr(0xE003 + j) for j in range(4)],
+            "seconds": [0.25, 0.5, 1.0, 2.0],
+        },
+    }
+    ctx = Context()
+    ctx.text_tokenizer_spec, ctx.text_vocab, ctx.laci_languages = spec, vocab, ("en_us",)
+    ctx._builder = TTSPromptBuilder(
+        TTSPromptConfig(
+            n_codebooks=N_CB,
+            codebook_sizes=(CODEBOOK,) * N_CB,
+            audio_pad_id=ctx.audio_pad_id,
+            text_vocab=vocab,
+            text_tokenizer_spec=spec,
+        )
+    )
+    return ctx
+
+
+def test_short_text_runs_under_laci_with_its_filler(tmp_path):
+    ctx = _pause_context(tmp_path)
+    p = run({"text": "Hello."}, ctx)
+    assert p.text == "Hello.\ue004 Seven birds flew over the quiet river."
+    assert (p.laci, p.short_text) == ("en_us", 4)  # BOS, "Hello", ".", the pause token, then "Seven"
+    for request in (
+        {"text": "Hello.", "short_text": "off"},
+        {"text": "Good morning, everyone."},  # three words
+        {"text": "Hello.", "language": "de"},  # no LACI heads
+        {"text": "Hello.", "speaker_cfg_scale": 2.0, "speaker_mode": "embedding"},  # a CFG twin
+        {"text": "Hello\ue003 you."},  # its own pause marker
+    ):
+        p = run(request, ctx, embedding=torch.zeros(4))
+        assert (p.short_text, p.text) == (None, request["text"]), request
+    with pytest.raises(ValueError, match="short_text must be"):
+        run({"text": "Hello.", "short_text": "on"}, ctx)

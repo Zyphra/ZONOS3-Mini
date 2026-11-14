@@ -1,3056 +1,4 @@
-const e=`ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/`,t=(/* @__PURE__ */ new Int8Array(256)).fill(-1);for(let n=0;n<64;n++)t[e.charCodeAt(n)]=n;function n(e){let n=e.trim();if(n.startsWith(`data:`)){let e=n.indexOf(`,`);if(e<0)return null;n=n.slice(e+1)}let r=n.length;for(;r>0&&n.charCodeAt(r-1)===61;)r--;if(n.length-r>2||n.length%4!=0)return null;let i=new Uint8Array(Math.floor(r*3/4)),a=0,o=0,s=0;for(let e=0;e<r;e++){let r=n.charCodeAt(e),c=r<256?t[r]:-1;if(c<0)return null;o=(o<<6|c)&16777215,s+=6,s>=8&&(s-=8,i[a++]=o>>s&255)}return i.subarray(0,a)}function r(t){let n=``;for(let r=0;r<t.length;r+=3){let i=t[r],a=r+1<t.length?t[r+1]:0,o=r+2<t.length?t[r+2]:0;n+=e[i>>2]+e[(i&3)<<4|a>>4],n+=r+1<t.length?e[(a&15)<<2|o>>6]:`=`,n+=r+2<t.length?e[o&63]:`=`}return n}var i={description:"Request defaults and limits of every server and the studio (zonos3.generation). sample_rate: the API's audio rate (Hz). sampling: the v2 sampling defaults (servers/api/openapi.yaml repeats them; model/tests/test_generation.py keeps the two equal). silence_prefill_frames: the server default length (ZONOS3_SILENCE_PREFILL_FRAMES overrides it) and the longest a request may ask for. decode_context_frames: the reference tail decoded ahead of the stream when a request leaves decode_context_frames unset or 0. reference_max_frames: the reference prefix of the GGUF servers (60 s at the dual codec's 2940-sample hop; longer reference codes keep their first frames). max_frames: the GGUF servers' default frame budget (--max). audio_max_seconds: the longest reference clip, upload and speech-edit clip. stream_codebooks: the prefix stream's early partial-frame decode defaults (request fields stream_codebooks / stream_codebooks_scope): a frame is decoded once its first `default` codebooks arrived, for the `scope` chunks (first: the first chunk only; all: every chunk); default = n_codebooks decodes complete frames only. output_limit_dbfs: the knee k of the soft limiter every server applies after the decoder's output gain: samples at or below it pass unchanged, louder ones bend smoothly into full scale, sign(x) (k + (1 - k) tanh((|x| - k) / (1 - k))).",sample_rate:44100,sampling:{temperature:.75,topk:80,top_p:.69,min_p:0,repetition_penalty:2.4,repetition_window:96,repetition_codebooks:6},silence_prefill_frames:{default:3,max:30},decode_context_frames:30,reference_max_frames:900,max_frames:2e3,audio_max_seconds:{reference:60,upload:600,edit:150},stream_codebooks:{default:1,scope:`first`},output_limit_dbfs:-1};const a=i.sample_rate,o=Object.freeze({...i.sampling}),s=i.silence_prefill_frames.default,c=i.silence_prefill_frames.max,l=i.decode_context_frames,u=i.reference_max_frames,d=i.max_frames,f=i.stream_codebooks.default,p=i.stream_codebooks.scope,m=2940,h=d+4096,g=2048,_=i.audio_max_seconds.reference,v=i.audio_max_seconds.edit,y=i.output_limit_dbfs,b=8196;function x(e,t){let n=e[t];if(typeof n!=`number`)throw Error(`backbone: missing meta ${t}`);return n}function S(e,t){let n=e[t];if(!Array.isArray(n)||n.some(e=>typeof e!=`number`))throw Error(`backbone: missing meta ${t}`);return n.map(Number)}function C(e){return Array.isArray(e[`condition.bucket_counts`])?S(e,`condition.bucket_counts`):Array(x(e,`condition.count`)).fill(x(e,`condition.bucket_count`))}function w(e){let t=e[`condition.names`];if(!Array.isArray(t)||t.some(e=>typeof e!=`string`))throw Error(`backbone: missing meta condition.names`);let n=t.map(String),r=x(e,`audio_pad_id`),i=x(e,`audio_vocab`),a=e.span_end_id===void 0?null:x(e,`span_end_id`),o=e.text_extra_tokens===void 0?0:x(e,`text_extra_tokens`);if(i!==r+(a===null?1:2)||a!==null&&a!==r+1||!Number.isInteger(o)||o<0)throw Error(`backbone: unsupported vocabulary (audio_vocab ${i}, audio_pad_id ${r}, span_end_id ${a}, text_extra_tokens ${o})`);return{nCodebooks:x(e,`n_codebooks`),audioPad:r,textVocab:x(e,`text_vocab`),audioVocab:i,spanEndId:a,textExtraTokens:o,nCond:x(e,`condition.count`),condBucketCounts:C(e),condNames:n,condEdges:n.map(t=>S(e,`condition.edges.${t}`)),silenceFrame:S(e,`silence_frame`),speakerDim:x(e,`speaker.embedding_length`),contextLength:x(e,`context_length`),condUnits:Array.isArray(e[`condition.units`])?e[`condition.units`].map(String):[],textTokenizerSpec:typeof e.text_tokenizer_spec==`string`?e.text_tokenizer_spec:`{}`,nEmbd:x(e,`embedding_length`),nLayer:x(e,`block_count`)}}function T(e,t,n,r){let i=r.nCodebooks,a=i+1,o=n.referenceCodes,s=o?Math.floor(o.length/i):0,l=n.speakerEmbedding;if(l&&o)throw Error(`a speaker embedding and a reference prefix are mutually exclusive`);if(s>u||o!==void 0&&s===0)throw Error(`invalid reference-code prefix`);let d=n.silencePrefill;if(!Number.isInteger(d)||d<0||d>c)throw Error(`silence prefill must be 0..${c} frames`);if(l){for(let e=0;e<r.speakerDim;e++)if(!Number.isFinite(l[e]))throw Error(`speaker embedding contains a non-finite value`)}let f=n.buckets.length?n.buckets.slice():r.condBucketCounts.slice();if(f.length!==r.nCond)throw Error(`expected ${r.nCond} condition buckets`);for(let e=0;e<r.nCond;e++){let t=r.condBucketCounts[e];if(f[e]<0||f[e]>t)throw Error(`condition bucket ${f[e]} for ${r.condNames[e]} outside 0..${t-1} (${t} = unknown)`)}let p=e.encode(t),m=s?s+i-1:0,h=l?1:m,g=h+r.nCond+p.length+d;if(g===0||g>r.contextLength)throw Error(`prompt exceeds the ${r.contextLength}-position context`);for(let e=0;e<s*i;e++)if(o[e]<0||o[e]>=4096)throw Error(`reference contains a nonordinary audio code`);let _=new Int32Array(g*a).fill(r.audioPad);for(let e=0;e<g;e++)_[e*a+i]=r.textVocab;for(let e=0;e<m;e++)for(let t=0;t<i;t++){let n=e-t;n>=0&&n<s&&(_[e*a+t]=o[n*i+t])}let v=h+r.nCond;for(let e=0;e<p.length;e++)_[(v+e)*a+i]=p[e];let y=v+p.length;for(let e=0;e<d;e++)for(let t=0;t<i;t++)e-t>=0&&(_[(y+e)*a+t]=r.silenceFrame[t]);return{ids:_,nRows:g,speakerRows:h,prefillFrames:d,cond:{speakerRow:l?0:-1,speaker:l?Float32Array.from(l.subarray(0,r.speakerDim)):null,conditionRow:h,buckets:f}}}function E(e,t){if(e.speakerRows<=0)throw Error(`speaker CFG needs a speaker prompt (speaker embedding or reference)`);if(e.speakerRows>=e.nRows||e.ids.length!==e.nRows*11)throw Error(`inconsistent prompt for speaker CFG`);return{ids:e.ids.slice(e.speakerRows*11),nRows:e.nRows-e.speakerRows,speakerRows:0,prefillFrames:e.prefillFrames,cond:{speakerRow:-1,speaker:null,conditionRow:e.cond.conditionRow-e.speakerRows,buckets:t.slice()}}}function D(e,t){if(!Number.isFinite(t))return-1;let n=0;for(;n<e.length&&e[n]<=t;)n++;return n}function O(e){let t=new Int32Array(e.prefillFrames*10);for(let n=0;n<e.prefillFrames;n++){let r=(e.nRows-e.prefillFrames+n)*11;t.set(e.ids.subarray(r,r+10),n*10)}return t}const k={UINT8:0,INT8:1,UINT16:2,INT16:3,UINT32:4,INT32:5,FLOAT32:6,BOOL:7,STRING:8,ARRAY:9,UINT64:10,INT64:11,FLOAT64:12};var A=class{off=0;dv;bytes;utf8=new TextDecoder(`utf-8`);constructor(e){this.dv=new DataView(e),this.bytes=new Uint8Array(e)}need(e){if(this.off+e>this.bytes.length)throw Error(`gguf: truncated file`)}u8(){return this.need(1),this.dv.getUint8(this.off++)}i8(){return this.need(1),this.dv.getInt8(this.off++)}u16(){this.need(2);let e=this.dv.getUint16(this.off,!0);return this.off+=2,e}i16(){this.need(2);let e=this.dv.getInt16(this.off,!0);return this.off+=2,e}u32(){this.need(4);let e=this.dv.getUint32(this.off,!0);return this.off+=4,e}i32(){this.need(4);let e=this.dv.getInt32(this.off,!0);return this.off+=4,e}f32(){this.need(4);let e=this.dv.getFloat32(this.off,!0);return this.off+=4,e}f64(){this.need(8);let e=this.dv.getFloat64(this.off,!0);return this.off+=8,e}u64(){this.need(8);let e=this.dv.getBigUint64(this.off,!0);return this.off+=8,Number(e)}i64(){this.need(8);let e=this.dv.getBigInt64(this.off,!0);return this.off+=8,Number(e)}str(){let e=this.u64();this.need(e);let t=this.utf8.decode(this.bytes.subarray(this.off,this.off+e));return this.off+=e,t}};function ee(e,t){switch(t){case k.UINT8:return e.u8();case k.INT8:return e.i8();case k.UINT16:return e.u16();case k.INT16:return e.i16();case k.UINT32:return e.u32();case k.INT32:return e.i32();case k.FLOAT32:return e.f32();case k.BOOL:return e.u8()!==0;case k.STRING:return e.str();case k.UINT64:return e.u64();case k.INT64:return e.i64();case k.FLOAT64:return e.f64();case k.ARRAY:{let t=e.u32(),n=e.u64(),r=Array(n);for(let i=0;i<n;i++)r[i]=ee(e,t);return r}default:throw Error(`gguf: unknown kv type ${t}`)}}function j(e){let t=new A(e);if(t.u32()!==1179993927)throw Error(`gguf: bad magic`);let n=t.u32();if(n!==3)throw Error(`gguf: unsupported version ${n}`);let r=t.u64(),i=t.u64(),a=/* @__PURE__ */ new Map,o=/* @__PURE__ */ new Map;for(let e=0;e<i;e++){let e=t.str(),n=t.u32(),r=null;if(n===k.ARRAY){let e=t.off;r=t.u32(),t.off=e}a.set(e,ee(t,n)),o.set(e,{type:n,arrType:r})}let s=[];for(let e=0;e<r;e++){let e=t.str(),n=t.u32(),r=[];for(let e=0;e<n;e++)r.push(t.u64());let i=t.u32(),a=t.u64();s.push({name:e,ne:r,type:i,offset:a})}let c=a.get(`general.alignment`),l=typeof c==`number`&&c>0?c:32,u=Math.ceil(t.off/l)*l,d=/* @__PURE__ */ new Map,f=/* @__PURE__ */ new Map;for(let t of s){if(t.type!==0)throw Error(`gguf: only F32 companion tensors are supported`);let n=t.ne.reduce((e,t)=>e*t,1),r=u+t.offset;if(r+4*n>e.byteLength)throw Error(`gguf: truncated file`);d.set(t.name,new Float32Array(e.slice(r,r+4*n))),f.set(t.name,t.ne)}return{kv:a,types:o,tensors:d,shapes:f}}const M=`This server has no steering bundle (place steer.gguf next to the backbone or pass --steer)`;var te=class e{bySpeaker=/* @__PURE__ */ new Map;defaults=/* @__PURE__ */ new Map;globalDefault=1;lookup(e,t){if(e){let n=this.bySpeaker.get(e)?.get(t);if(n!==void 0)return n}return this.defaults.get(t)}strength(e,t){return this.lookup(e,t)??this.globalDefault}disabled(e,t){let n=[];for(let r of t)this.strength(e,r)===0?n.push(r):this.lookup(e,r+`-`)===0&&n.push(r+`-`);return n}document(){let e={};for(let[t,n]of this.bySpeaker)e[t]=Object.fromEntries(n);return{default:Object.fromEntries(this.defaults),by_speaker:e,global_default:this.globalDefault}}static parse(t){let n=new e,r=e=>I(e)&&Object.values(e).every(e=>typeof e==`number`),i=JSON.parse(t);if(!I(i))throw Error(`calibration is not an object`);if(i.by_speaker!==void 0){if(!I(i.by_speaker))throw Error(`by_speaker is not an object`);for(let[e,t]of Object.entries(i.by_speaker)){if(!r(t))throw Error(`by_speaker.${e} is not a {name: dose} object`);n.bySpeaker.set(e,new Map(Object.entries(t)))}}if(i.default!==void 0){if(!r(i.default))throw Error(`default is not a {name: dose} object`);n.defaults=new Map(Object.entries(i.default))}if(i.global_default!==void 0){if(typeof i.global_default!=`number`)throw Error(`global_default is not a number`);n.globalDefault=i.global_default}return n}};const N=Math.fround,P=e=>(e instanceof Map?[...e.keys()]:Object.keys(e)).sort((e,t)=>e<t?-1:+(e>t));var ne=class{sources=[];hiddenSize=0;hidden=null;release=null;releaseFrames={onset:0,ramp:0,hold:1};spans=[];hiddenActive(){return this.hidden!==null||this.release!==null||this.spans.length>0}releaseWeight(e){let{onset:t,ramp:n,hold:r}=this.releaseFrames;return e<t?1:e>=t+n?r:1+(r-1)*(e-t)/n}baseAt(e){let t=this.release;if(!t)return this.hidden;let n=this.hidden?Float32Array.from(this.hidden):new Float32Array(t.length),r=this.releaseWeight(e);if(r===1)for(let e=0;e<n.length;e++)n[e]+=t[e];else{let e=N(r);for(let r=0;r<n.length;r++)n[r]+=N(e*t[r])}return n}deltaAt(e,t){if(!this.hiddenActive()){t.v=null;return}let n=this.sources.length*this.hiddenSize,r=this.release?this.baseAt(e):this.hidden?Float32Array.from(this.hidden):new Float32Array(n),i=this.hidden!==null||this.release!==null,a=N(e);for(let e of this.spans){let t=N(Math.max(e.ramp,1)),o=N(N(a-N(e.start-t))/t),s=N(N(N(e.end+t)-a)/t),c=Math.min(Math.max(Math.min(o,s),0),1);if(c>0){i=!0;for(let t=0;t<n;t++)r[t]+=N(c*e.delta[t])}}t.v=i?r:null}at(e){if(!this.release&&!this.spans.length)return this.hidden;let t={v:null};return this.deltaAt(e,t),t.v}};function F(e){e.index=/* @__PURE__ */ new Map,e.dirs.forEach((t,n)=>e.index.set(t.id,n));let t=/* @__PURE__ */ new Set;for(let n of e.dirs)n.hidden&&t.add(n.source);e.sources=[...t].sort((e,t)=>e-t)}function re(e,t){if(e.length===0)return 1;if(t<=e[0][0])return e[0][1];if(t>=e[e.length-1][0])return e[e.length-1][1];let n=1;for(;e[n][0]<t;)n++;let r=e[n-1],i=e[n];return i[0]===r[0]?i[1]:r[1]+(i[1]-r[1])*((t-r[0])/(i[0]-r[0]))}const I=e=>typeof e==`object`&&!!e&&!Array.isArray(e);function ie(e,t){if(!Array.isArray(e)||!e.every(e=>typeof e==`number`))throw Error(`${t} is not a number array`);return e}function ae(e,t,n=`steer.gguf`){let r=e=>/* @__PURE__ */ Error(`'${n}' is not a valid zonos3 steering GGUF (${e}); reconvert with tools/convert_gguf.py steer`),i=t=>e.types.get(t),a=t=>i(t)?.type===k.STRING?e.kv.get(t):null,o=t=>i(t)?.type===k.UINT32?e.kv.get(t):null,s=t=>{let n=i(t);return n?.type===k.ARRAY&&n.arrType===k.STRING?e.kv.get(t):null};if(a(`general.architecture`)!==`zonos3_steer`)throw r(`general.architecture is not zonos3_steer`);let c=i(`zonos3_steer.set.sources`);if(c?.type!==k.ARRAY||c.arrType!==k.INT32)throw r(`missing zonos3_steer.set.sources`);let l=e.kv.get(`zonos3_steer.set.sources`),u=a(`zonos3_steer.name`),d=o(`zonos3_steer.speaker_dim`),f=o(`zonos3_steer.hidden_size`),p=s(`zonos3_steer.set.names`),m=s(`zonos3_steer.set.spaces`),h=s(`zonos3_steer.set.calibrations`),g=s(`zonos3_steer.direction.ids`),_=s(`zonos3_steer.direction.kinds`),v=a(`zonos3_steer.timing`),y=a(`zonos3_steer.ui`);if(u===null||d===null||f===null||!p||!m||!h||!g||!_||v===null||y===null)throw r(`missing or mistyped zonos3_steer.* metadata`);if(p.length===0||p.length!==m.length||p.length!==l.length||p.length!==h.length||g.length===0||g.length!==_.length||e.tensors.size!==g.length)throw r(`inconsistent metadata array sizes`);let b={name:u,speakerDim:d,hiddenSize:f,sets:[],dirs:[],timing:/* @__PURE__ */ new Map,timingJson:v,uiJson:y,index:/* @__PURE__ */ new Map,sources:[],rateExtension:null,steerRelease:null},x=/* @__PURE__ */ new Map,S=!1,C=!1;for(let e=0;e<p.length;e++){let t={name:p[e],hidden:!1,source:-1,calibration:null};if(t.name===``||t.name.includes(`.`)||x.has(t.name))throw r(`bad set name '${t.name}'`);if(m[e]===`attnres_source`){if(t.hidden=!0,t.source=l[e],t.source<0)throw r(`set '${t.name}' has a negative source`);C=!0}else if(m[e]===`raw`)S=!0;else throw r(`set '${t.name}' has unknown space '${m[e]}'`);if(h[e])try{t.calibration=te.parse(h[e])}catch(e){throw r(`set '${t.name}' has a bad calibration: ${e instanceof Error?e.message:String(e)}`)}x.set(t.name,b.sets.length),b.sets.push(t)}if(S&&d===0||C&&f===0)throw r(`a set space has no dimension`);for(let t=0;t<g.length;t++){let n=g[t],i=n.indexOf(`.`);if(i<0||i+1>=n.length)throw r(`bad direction id '${n}'`);let a=n.slice(0,i),o=n.slice(i+1),s=x.get(a);if(s===void 0)throw r(`direction '${n}' names an unknown set`);if(_[t]!==`named`&&_[t]!==`axis`)throw r(`direction '${n}' has unknown kind`);let c=b.sets[s].hidden,l=`steer.dir.${t}`,u=e.tensors.get(l),p=e.shapes.get(l),m=c?f:d;if(!u||!p||p.length!==1||p[0]!==m)throw r(`tensor ${l} is missing or is not F32 [${m}]`);for(let e of u)if(!Number.isFinite(e))throw r(`tensor ${l} has non-finite values`);b.dirs.push({id:n,set:a,name:o,axis:_[t]===`axis`,hidden:c,source:b.sets[s].source,vec:u})}if(F(b),b.index.size!==b.dirs.length)throw r(`duplicate direction ids`);try{let e=JSON.parse(v);if(!I(e))throw Error(`timing is not an object`);let t=/* @__PURE__ */ new Map;for(let[n,i]of Object.entries(e)){if(!b.index.has(n))throw r(`timing for unknown direction '${n}'`);if(!Array.isArray(i)||i.length===0)throw Error(`empty timing table`);let e=[];for(let t of i){if(!Array.isArray(t)||t.length!==2||typeof t[0]!=`number`||typeof t[1]!=`number`)throw Error(`bad timing pair`);e.push([t[0],t[1]])}e.sort((e,t)=>e[0]-t[0]),t.set(n,e)}for(let e of P(t))b.timing.set(e,t.get(e));if(!I(JSON.parse(y)))throw Error(`ui is not an object`)}catch(e){throw e instanceof Error&&e.message.startsWith(`'${n}' is not a valid`)?e:r(`bad timing/ui JSON: ${e instanceof Error?e.message:String(e)}`)}let w=a(`zonos3_steer.rate_extension`);if(w){let e=null;try{let t=JSON.parse(w);if(I(t)&&Object.keys(t).length>0){if(typeof t.direction!=`string`)throw Error(`direction is not a string`);let n=t.direction,i=b.index.get(n);if(i===void 0||!b.dirs[i].hidden)throw r(`rate_extension direction '${n}' is not a hidden direction of the bundle`);let a=/* @__PURE__ */ new Map;if(!I(t.languages))throw Error(`languages is not an object`);for(let[e,n]of Object.entries(t.languages)){if(!I(n))throw Error(`bad language doses`);let t=/* @__PURE__ */ new Map;for(let[e,r]of Object.entries(n)){if(typeof r!=`number`)throw Error(`bad dose`);t.set(parseInt(e,10),r)}a.set(e,t)}let o=t.reference_sides;e={direction:n,rowEdges:ie(t.row_edges,`row_edges`),below:ie(t.below,`below`),above:ie(t.above,`above`),doses:a,referenceSides:Array.isArray(o)?o.map(String):[`slower`,`faster`]}}}catch(e){throw e instanceof Error&&e.message.startsWith(`'${n}' is not a valid`)?e:r(`bad rate_extension JSON: ${e instanceof Error?e.message:String(e)}`)}b.rateExtension=e}let T=a(`zonos3_steer.steer_release`);if(T)try{let e=JSON.parse(T),t=I(e)?Object.keys(e):[];if(!I(e)||![`onset_seconds`,`ramp_seconds`,`hold`].every(e=>t.includes(e))||t.some(e=>!se.includes(e)))throw Error(`expected {onset_seconds, ramp_seconds, hold, exempt?}`);let{onset_seconds:n,ramp_seconds:i,hold:a}=e;if(typeof n!=`number`||typeof i!=`number`||typeof a!=`number`)throw Error(`onset_seconds, ramp_seconds and hold must be numbers`);let o=e.exempt??[];if(!Array.isArray(o)||!o.every(e=>typeof e==`string`))throw Error(`exempt is not a string array`);le(n,i,a);for(let e of o){let t=b.index.get(e);if(t===void 0||!b.dirs[t].hidden)throw r(`steer_release exempts '${e}', which is not a hidden direction of the bundle`)}b.steerRelease={onsetSeconds:n,rampSeconds:i,hold:a,exempt:o}}catch(e){throw e instanceof Error&&e.message.startsWith(`'${n}' is not a valid`)?e:r(`bad steer_release JSON: ${e instanceof Error?e.message:String(e)}`)}if(b.hiddenSize&&b.hiddenSize!==t.nEmbd)throw Error(`steering hidden directions have ${b.hiddenSize} values; the backbone hidden size is ${t.nEmbd}`);if(b.speakerDim&&b.speakerDim!==t.speakerDim)throw Error(`steering speaker directions have ${b.speakerDim} values; the backbone speaker embedding has ${t.speakerDim}`);for(let e of b.sources)if(e>2*t.nLayer)throw Error(`steering source ${e} is outside the backbone's Full AttnRes bank (0..${2*t.nLayer})`);return b}function oe(e,t){let n={};for(let t of e.sets){let e={space:t.hidden?`attnres_source`:`raw`,modes:t.hidden?[`embedding`,`reference`]:[`embedding`]};t.hidden&&(e.source_index=t.source),t.calibration&&(e.calibration=t.calibration.document()),n[t.name]=e}let r={};for(let t of e.dirs){let e=0;for(let n of t.vec)e+=n*n;let n={set:t.set,space:t.hidden?`attnres_source`:`raw`,kind:t.axis?`axis`:`named`,norm:Math.sqrt(e)};t.hidden||(n.vector=Array.from(t.vec)),r[t.id]=n}return{bundle:e.name,embedding_dim:t,sets:n,directions:r,timing:JSON.parse(e.timingJson),ui:JSON.parse(e.uiJson),steer_release:ue(e)}}const se=[`onset_seconds`,`ramp_seconds`,`hold`,`exempt`];function ce(e){return Number.isNaN(e)?`nan`:Number.isFinite(e)?Number.isInteger(e)?e.toFixed(1):String(e):e>0?`inf`:`-inf`}function le(e,t,n){if(!(Number.isFinite(n)&&n>=0&&n<=1))throw Error(`steer_hold must be in [0, 1], got ${ce(n)}.`);for(let[n,r]of[[`steer_onset_seconds`,e],[`steer_ramp_seconds`,t]])if(!(Number.isFinite(r)&&r>=0))throw Error(`${n} must be finite and >= 0, got ${ce(r)}.`)}function ue(e){let t=e?.steerRelease;return t?{onset_seconds:t.onsetSeconds,ramp_seconds:t.rampSeconds,hold:t.hold,exempt:t.exempt.slice()}:null}function de(e,t,n,r,i){let a=e?.steerRelease;if(!a){if(t===null||t===1)return null;throw Error(e?`steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none.`:`${M}; steer_hold below 1 needs its steer_release.`)}let o=t??a.hold,s=n??a.onsetSeconds,c=r??a.rampSeconds;return le(s,c,o),o===1?null:{onset:he(s*i),ramp:he(c*i),hold:o}}function fe(e,t){if(!e)return[];let n=[];for(let r of e.sets){if(!r.calibration)continue;let i=e.dirs.filter(e=>e.set===r.name).map(e=>e.name);for(let e of r.calibration.disabled(t,i))n.push(`${r.name}.${e}`)}return n}function pe(e,t){let n=1;for(let[r,i]of e.timing){let e=t.get(r);e!==void 0&&e!==0&&(n*=re(i,e))}return n}function me(e){let t=0;for(let n of e)t++;return t}function he(e){let t=Math.round(e);return Math.abs(e%1)===.5&&t%2!=0?t-1:t}function ge(e,t,n,r,i,a,o=null){let s=new ne;s.sources=e.sources.slice(),s.hiddenSize=e.hiddenSize;let c=/* @__PURE__ */ new Map;for(let e of P(t))t[e]!==0&&c.set(e,t[e]);let l=e=>/* @__PURE__ */ Error(`Unknown control '${e}'; see /v2/controls.`);for(let t of c.keys())if(!e.index.has(t))throw l(t);for(let t of n)for(let n of P(t.controls))if(!e.index.has(n))throw l(n);for(let[e,t]of c)if(!Number.isFinite(t))throw Error(`Control '${e}' must be finite.`);let u=e.sources.length,d=e.hiddenSize,f=t=>{let n=0;for(;n<u&&e.sources[n]<t;)n++;return n},p=t=>{let n=null;for(let[r,i]of t){if(i===0)continue;let t=e.dirs[e.index.get(r)];if(!t.hidden)continue;n??=new Float32Array(u*d);let a=f(t.source)*d,o=N(i);for(let e=0;e<d;e++)n[a+e]+=N(o*t.vec[e])}return n},m=[];for(let t of c.keys())e.dirs[e.index.get(t)].hidden||m.push(t);if(m.length){if(!a)throw Error(`Controls ${m.join(`, `)} move the speaker embedding and need speaker_mode=embedding.`);let t=a,n=new Float32Array(t.length);for(let r of m){let i=e.dirs[e.index.get(r)];if(i.vec.length!==t.length)throw Error(`Control '${r}' has dim ${i.vec.length}, the speaker embedding has ${t.length}.`);let a=N(c.get(r));for(let e=0;e<t.length;e++)n[e]+=N(a*i.vec[e])}let r=0,i=0;for(let e=0;e<t.length;e++)n[e]+=t[e],r+=t[e]*t[e],i+=n[e]*n[e];let o=N(Math.sqrt(r)/Math.max(Math.sqrt(i),1e-8));for(let e=0;e<t.length;e++)t[e]=n[e]*o}if(!o)s.hidden=p(c);else{let t=e.steerRelease?.exempt??[],n=/* @__PURE__ */ new Map,r=/* @__PURE__ */ new Map;for(let[e,i]of c)(t.includes(e)?n:r).set(e,i);s.hidden=p(n),s.release=p(r),s.release&&(s.releaseFrames={...o})}if(n.length===0)return s;let h=(i>0?i:1)*pe(e,c);if(!(h>0))throw Error(`control_span_rate must be positive.`);let g=[];for(let t of n){let n={start:t.start,end:t.end,doses:/* @__PURE__ */ new Map};for(let e of P(t.controls))t.controls[e]!==0&&n.doses.set(e,t.controls[e]);if(!(0<=t.start&&t.start<t.end&&t.end<=r))throw Error(`control span [${t.start}, ${t.end}) is outside the text (0..${r}).`);for(let[t,r]of n.doses){if(!Number.isFinite(r))throw Error(`Control '${t}' must be finite.`);if(!e.dirs[e.index.get(t)].hidden)throw Error(`Control '${t}' moves the speaker embedding and cannot vary inside a request; only hidden-space controls take spans.`)}g.push(n)}g.sort((e,t)=>e.start===t.start?e.end-t.end:e.start-t.start);for(let e=1;e<g.length;e++)if(g[e].start<g[e-1].end)throw Error(`control spans [${g[e-1].start}, ${g[e-1].end}) and [${g[e].start}, ...) overlap.`);let _=new Float64Array(r+1),v=new Float64Array(r).fill(h);for(let t of g){let n=h*pe(e,t.doses);for(let e=t.start;e<t.end;e++)v[e]=n}for(let e=0;e<r;e++)_[e+1]=_[e]+v[e];for(let e of g){let t=p(e.doses);t&&s.spans.push({start:he(_[e.start]),end:he(_[e.end]),ramp:3,delta:t,charStart:e.start,charEnd:e.end})}return s}function _e(e,t){let n=e.length,r=new Uint8Array(44+n*2),i=new DataView(r.buffer),a=(e,t)=>{for(let n=0;n<t.length;n++)r[e+n]=t.charCodeAt(n)};a(0,`RIFF`),i.setUint32(4,36+n*2,!0),a(8,`WAVE`),a(12,`fmt `),i.setUint32(16,16,!0),i.setUint16(20,1,!0),i.setUint16(22,1,!0),i.setUint32(24,t,!0),i.setUint32(28,t*2,!0),i.setUint16(32,2,!0),i.setUint16(34,16,!0),a(36,`data`),i.setUint32(40,n*2,!0);for(let t=0;t<n;t++){let n=e[t];if(Number.isNaN(n))continue;let r=Math.fround(Math.min(1,Math.max(-1,n))*32767),a=Math.round(r);Math.abs(r%1)===.5&&a%2!=0&&--a,i.setInt16(44+t*2,a,!0)}return r}const ve={openapi:`3.1.0`,info:{title:`ZONOS3 HTTP API`,version:`2.0.0`,description:'The HTTP API of both ZONOS3 servers: the CUDA server (`servers/sgl`, `python -m zonos3_sgl`) and the ggml server\n(`servers/ggml`, `zonos3-server`). The native API lives under `/v2/`; the OpenAI-compatible routes stay under\n`/v1/`. Every other path belongs to Zonos Voice Studio.\n\n**Studio serving rule.** It applies to requests whose path matches no API route (the servers register it after\nevery API route).\n- `GET|HEAD /` returns the studio\'s `index.html` (the page that offers the Voice Studio and the lite page) with\n  `Cache-Control: no-store, max-age=0`. A missing `index.html` is a 404\n  `{"detail": "The studio is not built (pnpm --dir studio build)."}`.\n- `GET|HEAD /<path>` returns the file `<studio dir>/<path>` when it resolves inside the studio dir and is a\n  file; else the page `<studio dir>/<path>.html` when that is a file (`/studio` is `studio.html`, the Voice\n  Studio; `/lite` is `lite.html`); otherwise a 404 `{"detail": "Not Found"}`. The file\'s path inside the studio dir\n  picks its cache header: under `assets/` (content-hashed) `Cache-Control: public, max-age=31536000, immutable`;\n  a page (`*.html`), `sw.js` or `manifest.webmanifest` `Cache-Control: no-store, max-age=0`; any other file\n  (icons, the in-browser engine, `theme-boot.js`) `Cache-Control: no-cache`.\n- Paths under `/v1/` and `/v2/` are never served from the studio dir. There is no SPA fallback (the studio routes\n  with the URL hash). Any other method on such a path is a 404 `{"detail": "Not Found"}`.\n\n**Status codes.** Anything expressible in a request schema (types, enums, ranges, required and unknown fields) is\na 422 `ValidationError`. State- or semantics-dependent errors (unknown voice, a feature this server or checkpoint\nlacks, a CFG combination, LACI without heads, `stream: true` with `format: "wav"`, ...) are a 400 `Error`.\nUnknown resources on resource paths are a 404. Project errors may add `missing`, `revision` or `sha256` to the\n`Error` body.\n\n**Sessions.** `X-TTS-Session-ID` scopes the speaker cache: `POST /v2/speakers` writes into the session, and\n`GET /v2/speakers` and every `speaker_*_id` field read the session\'s voices (default voices are always visible).\n\n**Keepalive.** `X-Keepalive: 1` on `POST /v2/edit`, `/v2/edit/transcribe`, `/v2/edit/align` and the POST paths a\nplugin lists answers 200 at once with `x-keepalive: 1`, sends a space byte every 10 s while the request runs, then\nthe JSON body (leading whitespace is valid JSON). An error arrives in that body as\n`{"detail": ..., "status_code": <status>}`.\n\n**Access.** When the server runs with `ZONOS3_ACCESS_TOKEN`, every request needs the token: `Authorization:\nBearer <token>`, the HttpOnly cookie `zonos3_access`, or once `GET /?access_token=<token>`, which answers 303 to\n`/` and sets that cookie. A failure is a 403 `text/plain` `Access denied`. Then `/v2/media/*` successes carry\n`Cache-Control: private, max-age=31536000, immutable`, every other response `Cache-Control: no-store`, and all\nresponses `Referrer-Policy: no-referrer`.\n\n**CORS.** Every origin is allowed (`*`); the exposed response headers are `X-Audio-Sample-Rate`,\n`X-Audio-Channels`, `X-Audio-Format`, `X-Control-Span-Follow`, `X-Seed` and `X-Decoder`.\n\n**Plugins.** A server started with `--plugins N...` mounts each plugin\'s routes (listed in\n`Capabilities.plugins`). Plugin `N` serves only `/v2/N/*` and `/N`, `/N/*` (ahead of the studio serving rule);\nthose paths are documented in the plugin\'s own repository, e.g. https://github.com/Zyphra/ZONOS3-dub.\n'},paths:/* @__PURE__ */ JSON.parse('{"/v2/health":{"get":{"operationId":"health","summary":"Liveness","responses":{"200":{"description":"The server is up.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Health"}}}}}}},"/v1/models":{"get":{"operationId":"listModels","summary":"OpenAI-compatible model list","responses":{"200":{"description":"The one served model.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ModelList"}}}}}}},"/v1/audio/speech":{"post":{"operationId":"createSpeech","summary":"OpenAI-compatible speech","description":"`pcm` streams raw float32 PCM; `wav` is buffered. A non-null `voice` must be a speaker id of\\n`GET /v2/speakers` and is used as `speaker_embedding_id` (unknown: 400 `unknown voice \'<v>\'`); it cannot be\\ncombined with any `speaker_*` input field (400).\\n","parameters":[{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeechRequest"}}}},"responses":{"200":{"$ref":"#/components/responses/Audio"},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/generate":{"post":{"operationId":"generate","summary":"Synthesize speech","description":"`format: \\"pcm\\"` returns float32 little-endian mono PCM at 44100 Hz, chunked when `stream` is true.\\n`format: \\"wav\\"` returns a buffered 16-bit PCM mono WAV (samples clipped to [-1, 1]) and needs\\n`stream: false` (else 400). `X-Seed` echoes the seed used (drawn uniformly in 0..2^31-1 when `seed` is null).\\n`X-Control-Span-Follow` says which schedule placed `control_spans` (`rate` or `reading`) and is sent when\\n`control_spans` is set.\\n","parameters":[{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/GenerateRequest"}}}},"responses":{"200":{"$ref":"#/components/responses/Audio"},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/capabilities":{"get":{"operationId":"capabilities","summary":"Feature flags of the loaded checkpoint and server","responses":{"200":{"description":"Capabilities.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Capabilities"}}}}}}},"/v2/controls":{"get":{"operationId":"controls","summary":"The steering bundle\'s controls document","responses":{"200":{"description":"Controls document.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ControlsDocument"}}}},"404":{"$ref":"#/components/responses/NotFound"}}}},"/v2/speakers":{"get":{"operationId":"listSpeakers","summary":"Default voices and the session\'s cached voices","parameters":[{"$ref":"#/components/parameters/SessionId"}],"responses":{"200":{"description":"Speakers.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeakerList"}}}}}},"post":{"operationId":"createSpeaker","summary":"Cache a voice in the session","description":"Exactly one of `speaker_audio_base64` (a clip) or `speaker_embedding_base64` (a `.npy`/`.npz` embedding) is\\nrequired (else 400). `X-TTS-Session-ID` is required (400 without it).\\n","parameters":[{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeakerCreateRequest"}}}},"responses":{"200":{"description":"The cached voice.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Speaker"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/speakers/{speaker_id}/preview":{"get":{"operationId":"speakerPreview","summary":"A voice\'s preview audio","parameters":[{"$ref":"#/components/parameters/SpeakerId"},{"$ref":"#/components/parameters/SessionId"}],"responses":{"200":{"description":"The voice\'s audio.","content":{"audio/*":{"schema":{"type":"string","format":"binary"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/speakers/{speaker_id}/embedding":{"get":{"operationId":"speakerEmbedding","summary":"A voice\'s speaker embedding","parameters":[{"$ref":"#/components/parameters/SpeakerId"},{"$ref":"#/components/parameters/SessionId"}],"responses":{"200":{"description":"The embedding (values rounded to 6 decimals).","content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeakerEmbedding"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/phonemize":{"post":{"operationId":"phonemize","summary":"Gold-lexicon IPA for the words of a text","description":"With `guess`, espeak-ng fills ambiguous and unknown words of the `phonemize_guess_languages`. On a\\nphoneme-token checkpoint, a pronunciation with a symbol outside its inventory is returned as `unsupported`\\nwith no `ipa`. 404 when the server has no lexicon.\\n","requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/PhonemizeRequest"}}}},"responses":{"200":{"description":"Segments whose texts concatenate to the input.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/PhonemizeResponse"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"422":{"$ref":"#/components/responses/Unprocessable"}}}},"/v2/edit/transcribe":{"post":{"operationId":"editTranscribe","summary":"Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings","description":"Needs speech recognition (capabilities `edit_transcribe`). Without it the server answers 503 with the detail\\n\\"Speech recognition is not available on this server: send the transcript to /v2/edit/align instead\\".\\n","parameters":[{"$ref":"#/components/parameters/Keepalive"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditTranscribeRequest"}}}},"responses":{"200":{"description":"Transcript.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditTranscript"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"503":{"$ref":"#/components/responses/Unavailable"}}}},"/v2/edit/align":{"post":{"operationId":"editAlign","summary":"FuseAlign forced alignment of the audio to a text","parameters":[{"$ref":"#/components/parameters/Keepalive"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditAlignRequest"}}}},"responses":{"200":{"description":"Word timings.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditTranscript"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"503":{"$ref":"#/components/responses/Unavailable"}}}},"/v2/edit":{"post":{"operationId":"edit","summary":"Edit recorded speech so it says target_text","description":"Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\\n`original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\\nspan-end-terminated generation; unedited codec frames are kept exactly. A server without speech recognition\\n(capabilities `edit_transcribe` false) needs `original_text` whenever the clip\'s words are read (no `spans`, or a\\nclip longer than `max_context_seconds`) and refuses `verify`: 503 \\"Speech recognition is not available on this\\nserver: ...\\" (the detail names the fix), before any generation.\\n","parameters":[{"$ref":"#/components/parameters/Keepalive"},{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditRequest"}}}},"responses":{"200":{"description":"The edit and its takes.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditResponse"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"},"503":{"$ref":"#/components/responses/Unavailable"}}}},"/v2/projects":{"get":{"operationId":"listProjects","summary":"Studio projects stored on the server","description":"Sorted by `updated_at` descending, then `id`. 404 when server-side projects are disabled.","responses":{"200":{"description":"Project summaries.","content":{"application/json":{"schema":{"type":"array","items":{"$ref":"#/components/schemas/ProjectSummary"}}}}},"404":{"$ref":"#/components/responses/NotFound"}}}},"/v2/projects/gc":{"post":{"operationId":"gcProjects","summary":"Delete media no project references","parameters":[{"name":"min_age_seconds","in":"query","required":false,"description":"Only blobs whose last write is older than this are removed.","schema":{"type":"number","minimum":0,"default":3600}}],"responses":{"200":{"description":"GC result.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectGcResult"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/projects/{project_id}":{"parameters":[{"$ref":"#/components/parameters/ProjectId"}],"get":{"operationId":"getProject","summary":"A stored project","responses":{"200":{"description":"The project.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Project"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"}}},"put":{"operationId":"putProject","summary":"Save a project","description":"`base_revision` must equal the stored revision (null for a new project), else 409 with the stored\\n`revision`. Every `data.media` key must be uploaded first (else 400 with `missing`).\\n","requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectPutRequest"}}}},"responses":{"200":{"description":"Saved.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectSaved"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"409":{"$ref":"#/components/responses/Conflict"},"413":{"$ref":"#/components/responses/TooLarge"},"422":{"$ref":"#/components/responses/Unprocessable"}}},"delete":{"operationId":"deleteProject","summary":"Delete a project","responses":{"200":{"description":"Deleted.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectDeleted"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"}}}},"/v2/media/{sha256}":{"parameters":[{"$ref":"#/components/parameters/Sha256"}],"get":{"operationId":"getMedia","summary":"A content-addressed media blob","description":"`ETag: \\"<sha256>\\"`; an `If-None-Match` naming the hash answers 304. `Cache-Control: public,\\nmax-age=31536000, immutable` (`private, ...` with an access token).\\n","responses":{"200":{"description":"The blob, with its stored media type.","content":{"*/*":{"schema":{"type":"string","format":"binary"}}}},"304":{"description":"Not modified."},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"}}},"head":{"operationId":"headMedia","summary":"Whether a media blob is stored","responses":{"200":{"description":"Stored."},"304":{"description":"Not modified."},"400":{"description":"Invalid hash."},"404":{"description":"Not stored."}}},"put":{"operationId":"putMedia","summary":"Upload a media blob addressed by its SHA-256","parameters":[{"name":"type","in":"query","required":false,"description":"Media type to store (default the request\'s Content-Type).","schema":{"type":"string","maxLength":200}}],"requestBody":{"required":true,"content":{"*/*":{"schema":{"type":"string","format":"binary"}}}},"responses":{"200":{"description":"Already stored (the body is not read).","content":{"application/json":{"schema":{"$ref":"#/components/schemas/MediaStored"}}}},"201":{"description":"Stored.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/MediaStored"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"413":{"$ref":"#/components/responses/TooLarge"}}}}}'),components:/* @__PURE__ */ JSON.parse('{"parameters":{"SessionId":{"name":"X-TTS-Session-ID","in":"header","required":false,"description":"Scopes speaker-cache writes and reads.","schema":{"type":"string"}},"Keepalive":{"name":"X-Keepalive","in":"header","required":false,"description":"`1`: answer 200 at once and send a space every 10 s until the JSON body (errors as `{detail, status_code}`).","schema":{"type":"string","enum":["1"]}},"SpeakerId":{"name":"speaker_id","in":"path","required":true,"schema":{"type":"string"}},"ProjectId":{"name":"project_id","in":"path","required":true,"schema":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}},"Sha256":{"name":"sha256","in":"path","required":true,"schema":{"type":"string","pattern":"^[0-9a-f]{64}$"}}},"headers":{"SampleRate":{"description":"44100","schema":{"type":"integer"}},"Channels":{"description":"1 (mono)","schema":{"type":"integer"}},"AudioFormat":{"description":"`float32` (pcm) or `pcm16` (wav).","schema":{"type":"string"}},"Seed":{"description":"The seed used.","schema":{"type":"integer"}},"Decoder":{"description":"The id of the decoder that made the audio (`Capabilities.decoders`).","schema":{"type":"string"}},"SpanFollow":{"description":"Which schedule placed `control_spans`.","schema":{"type":"string","enum":["rate","reading"]}}},"responses":{"Audio":{"description":"Audio.","headers":{"X-Audio-Sample-Rate":{"$ref":"#/components/headers/SampleRate"},"X-Audio-Channels":{"$ref":"#/components/headers/Channels"},"X-Audio-Format":{"$ref":"#/components/headers/AudioFormat"},"X-Seed":{"$ref":"#/components/headers/Seed"},"X-Decoder":{"$ref":"#/components/headers/Decoder"},"X-Control-Span-Follow":{"$ref":"#/components/headers/SpanFollow"}},"content":{"audio/pcm":{"schema":{"type":"string","format":"binary","description":"float32 little-endian mono at 44100 Hz"}},"audio/wav":{"schema":{"type":"string","format":"binary","description":"16-bit PCM mono WAV at 44100 Hz"}}}},"BadRequest":{"description":"A state- or semantics-dependent error.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"NotFound":{"description":"Unknown resource, or a feature this server does not serve.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"Conflict":{"description":"The stored revision differs from `base_revision`.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"TooLarge":{"description":"The upload exceeds the server\'s limit.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"Unprocessable":{"description":"The request does not match its schema.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ValidationError"}}}},"ServerError":{"description":"The request failed inside the server.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"Unavailable":{"description":"A helper worker (Qwen3-ASR, FuseAlign, a plugin\'s worker, the ggml server\'s Python host) is unavailable, or the\\nrequest needs speech recognition on a server without it (detail \\"Speech recognition is not available on this\\nserver: \\" followed by the fix, e.g. \\"send the clip\'s transcript as original_text\\").\\n","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}},"schemas":{"Error":{"type":"object","required":["detail"],"properties":{"detail":{"type":"string"},"missing":{"description":"PUT /v2/projects: media hashes not uploaded yet.","type":"array","items":{"type":"string"}},"revision":{"description":"409: the stored revision (null when the project does not exist).","type":["integer","null"]},"sha256":{"description":"PUT /v2/media: the hash of the content actually sent.","type":"string"}}},"ValidationError":{"type":"object","required":["detail"],"properties":{"detail":{"type":"array","items":{"type":"object","required":["loc","msg","type"],"properties":{"loc":{"type":"array","items":{"type":["string","integer"]}},"msg":{"type":"string"},"type":{"type":"string"}}}}}},"Health":{"type":"object","required":["status"],"properties":{"status":{"type":"string","enum":["ok"]}}},"ModelList":{"type":"object","required":["object","data"],"properties":{"object":{"type":"string","enum":["list"]},"data":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["id","object","created","owned_by","root"],"properties":{"id":{"type":"string","enum":["zonos3"]},"object":{"type":"string","enum":["model"]},"created":{"type":"integer","enum":[0]},"owned_by":{"type":"string","enum":["zyphra"]},"root":{"type":"string","description":"The served checkpoint\'s base name (its directory or GGUF file name)."}}}}}},"ControlSpan":{"type":"object","additionalProperties":false,"required":["start","end","controls"],"description":"Hidden-space controls over the characters [start, end) of the request\'s text.","properties":{"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":0},"controls":{"type":"object","additionalProperties":{"type":"number"}}}},"ConditionBuckets":{"description":"Condition-row bucket ids per name (`loudness`, `fmax`, `speaking_rate`: 0..n-1 with n =\\ncondition_tokens.bucket_counts[name], null = unknown) as an object, or a list in the checkpoint\'s order.\\nRefused (400) on checkpoints without condition rows.\\n","oneOf":[{"type":"object","additionalProperties":{"type":["integer","null"]}},{"type":"array","items":{"type":["integer","null"]}},{"type":"null"}]},"ConditionValues":{"description":"Raw condition values (LUFS / Hz / UTF-8 bytes per second) mapped through the checkpoint\'s edges; bucket ids\\nin `condition_buckets` win per name.\\n","oneOf":[{"type":"object","additionalProperties":{"type":["number","null"]}},{"type":"array","items":{"type":["number","null"]}},{"type":"null"}]},"GenerationOptions":{"description":"The generation fields shared by GenerateRequest and SpeechRequest.","type":"object","additionalProperties":false,"properties":{"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"silence_prefill_frames":{"description":"Codec-matched silence frames prefilled into the audio stream (null = the server default; 0 = off).","type":["integer","null"],"default":null},"start_immediately":{"description":"Put the checkpoint\'s start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).","type":"boolean","default":false},"decode_context":{"description":"Decode the generated frames behind the last decode_context_frames of the reference prompt.","type":"boolean","default":false},"decode_context_frames":{"type":"integer","default":30},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"max_tokens":{"description":"Frame budget (null = the checkpoint\'s limit).","type":["integer","null"],"default":null},"fade_out_ms":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"description":"Sampling seed (null = drawn by the server; echoed in X-Seed).","type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"stream_decode":{"description":"Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default).","enum":["prefix","whole",null],"default":null},"stream_codebooks":{"description":"Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry\'s `stream_codebooks.default`.","type":"integer","minimum":1,"default":1},"stream_codebooks_scope":{"description":"Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry\'s `stream_codebooks.scope`.","enum":["first","all"],"default":"first"},"speaker_mode":{"description":"Speaker path on checkpoints that carry both (null = the checkpoint default).","enum":["embedding","reference",null],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"headroom_db":{"description":"Output gain -headroom_db (null = the decoder\'s registry value), followed by the soft limiter above the generation registry\'s output_limit_dbfs (-1 dBFS).","type":["number","null"],"minimum":0,"maximum":24,"default":null},"decoder":{"description":"The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.","type":["string","null"],"default":null},"speaker_audio_base64":{"description":"A reference clip (any container ffmpeg reads; data URLs accepted).","type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_reference_codes":{"description":"Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.","type":["array","null"],"minItems":1,"items":{"type":"array","items":{"type":"integer","minimum":0}},"default":null},"speaker_embedding_base64":{"description":"A saved `.npy`/`.npz` speaker embedding.","type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null},"speaker_embedding_id":{"description":"A speaker id of GET /v2/speakers.","type":["string","null"],"default":null},"speaker_blend_embedding_id_a":{"type":["string","null"],"default":null},"speaker_blend_embedding_id_b":{"type":["string","null"],"default":null},"speaker_blend_t":{"description":"Slerp position between blend voices a (0) and b (1).","type":["number","null"],"minimum":0,"maximum":1,"default":null},"controls_cfg_scale":{"description":"Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).","type":"number","default":1.0},"speaker_cfg_scale":{"description":"Reference CFG: uncond + scale * (cond - uncond) (1 = off).","type":"number","minimum":0,"default":1.0},"accent":{"type":["string","null"],"default":null},"accent_strength":{"type":"number","default":1.0},"controls":{"description":"Steering-bundle controls \\"<set>.<direction>\\" -> dose (see GET /v2/controls).","type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"control_spans":{"type":["array","null"],"items":{"$ref":"#/components/schemas/ControlSpan"},"default":null},"control_span_rate":{"description":"Frames per character of the rate schedule (null = 1.0).","type":["number","null"],"exclusiveMinimum":0,"default":null},"control_span_follow":{"description":"`reading` makes the spans follow the alignment heads\' reading position.","type":"string","enum":["rate","reading"],"default":"rate"},"control_span_lead":{"type":["number","null"],"minimum":0,"maximum":8,"default":null},"control_span_lag":{"type":["number","null"],"minimum":-4,"maximum":8,"default":null},"steer_hold":{"description":"Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle\'s exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"description":"Steer then hold: seconds of generated speech at full dose (null = the server default).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"description":"Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"laci":{"description":"Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.","type":"boolean","default":false}}},"GenerateRequest":{"type":"object","additionalProperties":false,"required":["text"],"properties":{"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"silence_prefill_frames":{"description":"Codec-matched silence frames prefilled into the audio stream (null = the server default; 0 = off).","type":["integer","null"],"default":null},"start_immediately":{"description":"Put the checkpoint\'s start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).","type":"boolean","default":false},"decode_context":{"description":"Decode the generated frames behind the last decode_context_frames of the reference prompt.","type":"boolean","default":false},"decode_context_frames":{"type":"integer","default":30},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"max_tokens":{"description":"Frame budget (null = the checkpoint\'s limit).","type":["integer","null"],"default":null},"fade_out_ms":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"description":"Sampling seed (null = drawn by the server; echoed in X-Seed).","type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"stream_decode":{"description":"Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default).","enum":["prefix","whole",null],"default":null},"stream_codebooks":{"description":"Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry\'s `stream_codebooks.default`.","type":"integer","minimum":1,"default":1},"stream_codebooks_scope":{"description":"Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry\'s `stream_codebooks.scope`.","enum":["first","all"],"default":"first"},"speaker_mode":{"description":"Speaker path on checkpoints that carry both (null = the checkpoint default).","enum":["embedding","reference",null],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"headroom_db":{"description":"Output gain -headroom_db (null = the decoder\'s registry value), followed by the soft limiter above the generation registry\'s output_limit_dbfs (-1 dBFS).","type":["number","null"],"minimum":0,"maximum":24,"default":null},"decoder":{"description":"The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.","type":["string","null"],"default":null},"speaker_audio_base64":{"description":"A reference clip (any container ffmpeg reads; data URLs accepted).","type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_reference_codes":{"description":"Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.","type":["array","null"],"minItems":1,"items":{"type":"array","items":{"type":"integer","minimum":0}},"default":null},"speaker_embedding_base64":{"description":"A saved `.npy`/`.npz` speaker embedding.","type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null},"speaker_embedding_id":{"description":"A speaker id of GET /v2/speakers.","type":["string","null"],"default":null},"speaker_blend_embedding_id_a":{"type":["string","null"],"default":null},"speaker_blend_embedding_id_b":{"type":["string","null"],"default":null},"speaker_blend_t":{"description":"Slerp position between blend voices a (0) and b (1).","type":["number","null"],"minimum":0,"maximum":1,"default":null},"controls_cfg_scale":{"description":"Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).","type":"number","default":1.0},"speaker_cfg_scale":{"description":"Reference CFG: uncond + scale * (cond - uncond) (1 = off).","type":"number","minimum":0,"default":1.0},"accent":{"type":["string","null"],"default":null},"accent_strength":{"type":"number","default":1.0},"controls":{"description":"Steering-bundle controls \\"<set>.<direction>\\" -> dose (see GET /v2/controls).","type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"control_spans":{"type":["array","null"],"items":{"$ref":"#/components/schemas/ControlSpan"},"default":null},"control_span_rate":{"description":"Frames per character of the rate schedule (null = 1.0).","type":["number","null"],"exclusiveMinimum":0,"default":null},"control_span_follow":{"description":"`reading` makes the spans follow the alignment heads\' reading position.","type":"string","enum":["rate","reading"],"default":"rate"},"control_span_lead":{"type":["number","null"],"minimum":0,"maximum":8,"default":null},"control_span_lag":{"type":["number","null"],"minimum":-4,"maximum":8,"default":null},"steer_hold":{"description":"Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle\'s exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"description":"Steer then hold: seconds of generated speech at full dose (null = the server default).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"description":"Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"laci":{"description":"Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.","type":"boolean","default":false},"text":{"type":"string"},"stream":{"type":"boolean","default":true},"format":{"description":"`pcm`: float32 PCM; `wav`: buffered 16-bit WAV (needs stream=false).","type":"string","enum":["pcm","wav"],"default":"pcm"}}},"SpeechRequest":{"type":"object","additionalProperties":false,"required":["model","input"],"properties":{"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"silence_prefill_frames":{"description":"Codec-matched silence frames prefilled into the audio stream (null = the server default; 0 = off).","type":["integer","null"],"default":null},"start_immediately":{"description":"Put the checkpoint\'s start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).","type":"boolean","default":false},"decode_context":{"description":"Decode the generated frames behind the last decode_context_frames of the reference prompt.","type":"boolean","default":false},"decode_context_frames":{"type":"integer","default":30},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"max_tokens":{"description":"Frame budget (null = the checkpoint\'s limit).","type":["integer","null"],"default":null},"fade_out_ms":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"description":"Sampling seed (null = drawn by the server; echoed in X-Seed).","type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"stream_decode":{"description":"Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default).","enum":["prefix","whole",null],"default":null},"stream_codebooks":{"description":"Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry\'s `stream_codebooks.default`.","type":"integer","minimum":1,"default":1},"stream_codebooks_scope":{"description":"Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry\'s `stream_codebooks.scope`.","enum":["first","all"],"default":"first"},"speaker_mode":{"description":"Speaker path on checkpoints that carry both (null = the checkpoint default).","enum":["embedding","reference",null],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"headroom_db":{"description":"Output gain -headroom_db (null = the decoder\'s registry value), followed by the soft limiter above the generation registry\'s output_limit_dbfs (-1 dBFS).","type":["number","null"],"minimum":0,"maximum":24,"default":null},"decoder":{"description":"The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.","type":["string","null"],"default":null},"speaker_audio_base64":{"description":"A reference clip (any container ffmpeg reads; data URLs accepted).","type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_reference_codes":{"description":"Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.","type":["array","null"],"minItems":1,"items":{"type":"array","items":{"type":"integer","minimum":0}},"default":null},"speaker_embedding_base64":{"description":"A saved `.npy`/`.npz` speaker embedding.","type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null},"speaker_embedding_id":{"description":"A speaker id of GET /v2/speakers.","type":["string","null"],"default":null},"speaker_blend_embedding_id_a":{"type":["string","null"],"default":null},"speaker_blend_embedding_id_b":{"type":["string","null"],"default":null},"speaker_blend_t":{"description":"Slerp position between blend voices a (0) and b (1).","type":["number","null"],"minimum":0,"maximum":1,"default":null},"controls_cfg_scale":{"description":"Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).","type":"number","default":1.0},"speaker_cfg_scale":{"description":"Reference CFG: uncond + scale * (cond - uncond) (1 = off).","type":"number","minimum":0,"default":1.0},"accent":{"type":["string","null"],"default":null},"accent_strength":{"type":"number","default":1.0},"controls":{"description":"Steering-bundle controls \\"<set>.<direction>\\" -> dose (see GET /v2/controls).","type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"control_spans":{"type":["array","null"],"items":{"$ref":"#/components/schemas/ControlSpan"},"default":null},"control_span_rate":{"description":"Frames per character of the rate schedule (null = 1.0).","type":["number","null"],"exclusiveMinimum":0,"default":null},"control_span_follow":{"description":"`reading` makes the spans follow the alignment heads\' reading position.","type":"string","enum":["rate","reading"],"default":"rate"},"control_span_lead":{"type":["number","null"],"minimum":0,"maximum":8,"default":null},"control_span_lag":{"type":["number","null"],"minimum":-4,"maximum":8,"default":null},"steer_hold":{"description":"Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle\'s exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"description":"Steer then hold: seconds of generated speech at full dose (null = the server default).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"description":"Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"laci":{"description":"Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.","type":"boolean","default":false},"model":{"type":"string","description":"Any value."},"input":{"type":"string"},"voice":{"description":"A speaker id of GET /v2/speakers (used as speaker_embedding_id).","type":["string","null"],"default":null},"response_format":{"type":"string","enum":["pcm","wav"],"default":"pcm"}}},"Speaker":{"type":"object","required":["id","label","source_type","scope","is_default","original_name","created_at","has_preview","speaker_modes","embedding_dim","transcript","disabled_controls"],"properties":{"id":{"type":"string"},"label":{"type":"string"},"source_type":{"type":"string","enum":["audio","embedding"]},"scope":{"type":"string","enum":["default","session"]},"is_default":{"type":"boolean"},"original_name":{"type":["string","null"]},"created_at":{"type":"number"},"has_preview":{"type":"boolean"},"speaker_modes":{"description":"The speaker modes this voice supports (an embedding voice supports `embedding` only).","type":"array","items":{"type":"string","enum":["embedding","reference"]}},"embedding_dim":{"type":["integer","null"]},"transcript":{"type":["string","null"]},"disabled_controls":{"description":"Control ids (`<set>.<direction>`, or `<set>.<direction>-` for the negative pole alone) whose set calibration gives this voice dose 0 (the UI greys them out).","type":"array","items":{"type":"string"}}}},"SpeakerList":{"type":"object","required":["speakers"],"properties":{"speakers":{"type":"array","items":{"$ref":"#/components/schemas/Speaker"}}}},"SpeakerCreateRequest":{"type":"object","additionalProperties":false,"properties":{"label":{"type":["string","null"],"default":null},"speaker_audio_base64":{"type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_embedding_base64":{"type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null}}},"SpeakerEmbedding":{"type":"object","required":["id","embedding"],"properties":{"id":{"type":"string"},"embedding":{"type":"array","items":{"type":"number"}}}},"TextTokenizerSpec":{"description":"The checkpoint\'s text tokenizer (SuperBPE), with its extra rows when it has any.","type":"object","required":["kind"],"properties":{"kind":{"type":"string"},"vocab_size":{"type":"integer"},"offset":{"type":"integer"},"bos":{"type":"integer"},"eos":{"type":"integer"},"sha256":{"type":"string"},"phonemes":{"type":["object","null"],"properties":{"open_marker":{"type":"string"},"close_marker":{"type":"string"},"symbols":{"type":"array","items":{"type":"string"}}}},"start":{"description":"The start token (U+E002 first in the text) when the checkpoint has one.","type":["object","null"],"properties":{"id":{"type":"integer"},"marker":{"type":"string"}}},"pauses":{"description":"The pause tokens (U+E003 + bucket after a word) when the checkpoint has them.","type":["object","null"],"properties":{"ids":{"type":"array","items":{"type":"integer"}},"markers":{"type":"array","items":{"type":"string"}},"seconds":{"type":"array","items":{"type":"number"}}}}}},"SilencePrefill":{"oneOf":[{"type":"object","required":["available","default_frames","default_on","default_seconds","frame_seconds","codec","note"],"properties":{"available":{"type":"boolean","enum":[true]},"default_frames":{"type":"integer","minimum":0},"default_on":{"type":"boolean"},"default_seconds":{"type":"number"},"frame_seconds":{"type":"number"},"codec":{"type":"string"},"note":{"type":"string"}}},{"type":"object","required":["available","default_frames","codec"],"properties":{"available":{"type":"boolean","enum":[false]},"default_frames":{"type":"null"},"codec":{"type":"string"}}}]},"DecodeContext":{"type":"object","required":["available","default_frames","max_frames","note"],"properties":{"available":{"type":"boolean"},"default_frames":{"type":"integer"},"max_frames":{"type":"integer"},"note":{"type":"string"}}},"DecoderInfo":{"description":"An audio decoder of the matched codec. `id` is the decoder head (`keep2_plain`: the default, two layers per transformer stage; `full_mr`: the full-size head).","type":"object","required":["id","kind","label","checkpoint","expect_step","headroom_db","causal","codec"],"properties":{"id":{"type":"string"},"kind":{"type":"string"},"label":{"type":"string"},"checkpoint":{"type":"string"},"expect_step":{"type":["integer","null"]},"headroom_db":{"type":"number"},"causal":{"type":"boolean"},"codec":{"type":"string"}}},"Decoder":{"description":"The default audio decoder behind the matched codec (null when the codec has none).","oneOf":[{"$ref":"#/components/schemas/DecoderInfo"},{"type":"object","required":["codec","error"],"properties":{"codec":{"type":"string"},"error":{"type":"string"}}},{"type":"null"}]},"ConditionTokens":{"description":"The checkpoint\'s condition rows (null when it has none).","type":["object","null"],"required":["enabled","names","flags","count","bucket_counts","unknown_ids","edges","units","layout"],"properties":{"enabled":{"type":"boolean"},"names":{"type":"array","items":{"type":"string"}},"flags":{"type":"object","additionalProperties":{"type":"object"}},"count":{"type":"integer"},"bucket_counts":{"type":"object","additionalProperties":{"type":"integer"},"description":"Buckets per condition name (ids 0..n-1; n = unknown)"},"unknown_ids":{"type":"object","additionalProperties":{"type":"integer"},"description":"The unknown id per condition name (= its bucket count)"},"edges":{"type":"object","additionalProperties":{"type":"array","items":{"type":"number"}}},"units":{"type":"object","additionalProperties":{"type":"string"}},"layout":{"type":"string"}}},"PhonemeTokens":{"type":["object","null"],"required":["open_marker","close_marker","symbols"],"properties":{"open_marker":{"type":"string"},"close_marker":{"type":"string"},"symbols":{"type":"array","items":{"type":"string"}}}},"StartToken":{"description":"The checkpoint\'s start token (null without one): the marker as the first character of the text, once, asks for speech from the first generated frame (GenerationOptions.start_immediately adds it).","type":["object","null"],"required":["marker"],"properties":{"marker":{"type":"string"}}},"PauseTokens":{"description":"The checkpoint\'s pause tokens (null without them): marker j after a word and its glued punctuation asks for a pause of about seconds[j].","type":["object","null"],"required":["markers","seconds"],"properties":{"markers":{"type":"array","items":{"type":"string"}},"seconds":{"type":"array","items":{"type":"number"}}}},"ProjectsCapability":{"oneOf":[{"type":"object","required":["enabled","max_media_bytes","max_project_bytes"],"properties":{"enabled":{"type":"boolean","enum":[true]},"max_media_bytes":{"type":"integer"},"max_project_bytes":{"type":"integer"}}},{"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean","enum":[false]}}}]},"Capabilities":{"type":"object","required":["text_tokenizer_spec","text_normalization_enabled","text_norm_languages","accents","speaker_enabled","speaker_conditioning_type","speaker_embedding_dim","speaker_embedding_codec","n_codebooks","codebook_sizes","audio_codec","max_tokens","stream_decode_modes","stream_decode_default","silence_prefill","decode_context","speaker_modes","speaker_mode_default","decoder","decoders","condition_tokens","speaker_audio_upload","speaker_cfg_supported","speaker_cfg_modes","speaker_cfg_unconditional","speaker_cfg_formula","laci_languages","plugins","speaker_embedding_upload","speaker_embedding_cache","speaker_embedding_blend","default_voices_enabled","speech_editing","edit_transcribe","edit_max_spans","edit_frame_rate","edit_max_seconds","edit_align_max_seconds","phoneme_tokens","start_token","pause_tokens","phonemize_enabled","phonemize_languages","phonemize_guess_languages","projects","steer_release"],"properties":{"text_tokenizer_spec":{"oneOf":[{"$ref":"#/components/schemas/TextTokenizerSpec"},{"type":"null"}]},"text_normalization_enabled":{"type":"boolean"},"text_norm_languages":{"type":"array","items":{"type":"string"}},"accents":{"description":"Accent adapters a request can pick with `accent`.","type":"array","items":{"type":"string"}},"speaker_enabled":{"type":"boolean"},"speaker_conditioning_type":{"type":"string","enum":["raw_reference_prefix","embedding","none"]},"speaker_embedding_dim":{"type":["integer","null"]},"speaker_embedding_codec":{"type":["string","null"]},"n_codebooks":{"type":"integer"},"codebook_sizes":{"type":"array","items":{"type":"integer"}},"audio_codec":{"type":"string"},"max_tokens":{"type":"integer"},"stream_decode_modes":{"type":"array","items":{"type":"string","enum":["prefix","whole"]}},"stream_decode_default":{"enum":["prefix","whole",null]},"silence_prefill":{"$ref":"#/components/schemas/SilencePrefill"},"decode_context":{"$ref":"#/components/schemas/DecodeContext"},"speaker_modes":{"type":"array","items":{"type":"string","enum":["embedding","reference"]}},"speaker_mode_default":{"enum":["embedding","reference",null]},"decoder":{"$ref":"#/components/schemas/Decoder"},"decoders":{"description":"Every decoder a request may pick with `decoder`, the default (`decoder`) first; empty when the codec has none.","type":"array","items":{"$ref":"#/components/schemas/DecoderInfo"}},"condition_tokens":{"$ref":"#/components/schemas/ConditionTokens"},"speaker_audio_upload":{"type":"boolean"},"speaker_cfg_supported":{"type":"boolean"},"speaker_cfg_modes":{"type":"array","items":{"type":"string","enum":["embedding","reference"]}},"speaker_cfg_unconditional":{"type":"string"},"speaker_cfg_formula":{"type":"string"},"laci_languages":{"type":"array","items":{"type":"string"}},"plugins":{"type":"array","items":{"type":"string"},"description":"Server plugins mounted with --plugins; plugin N serves /v2/N/* and /N (its own spec)."},"speaker_embedding_upload":{"type":"boolean"},"speaker_embedding_cache":{"type":"boolean"},"speaker_embedding_blend":{"type":"boolean"},"default_voices_enabled":{"type":"boolean"},"speech_editing":{"type":"boolean","description":"The checkpoint edits speech (span-end and marker rows) and the server has FuseAlign and the reference encoder: /v2/edit/align and /v2/edit with the clip\'s transcript. Speech recognition is not required (edit_transcribe)."},"edit_transcribe":{"type":"boolean","description":"The server also has speech recognition (Qwen3-ASR): /v2/edit/transcribe, /v2/edit without original_text and verify. Always false when speech_editing is false; without it those answer 503."},"edit_max_spans":{"type":"integer"},"edit_frame_rate":{"type":["number","null"]},"edit_max_seconds":{"type":"number"},"edit_align_max_seconds":{"type":"number","description":"The longest clip /v2/edit/align and the alignment inside /v2/edit accept (seconds)."},"phoneme_tokens":{"$ref":"#/components/schemas/PhonemeTokens"},"start_token":{"$ref":"#/components/schemas/StartToken"},"pause_tokens":{"$ref":"#/components/schemas/PauseTokens"},"phonemize_enabled":{"type":"boolean"},"phonemize_languages":{"type":"array","items":{"type":"string"}},"phonemize_guess_languages":{"type":"array","items":{"type":"string"}},"projects":{"$ref":"#/components/schemas/ProjectsCapability"},"steer_release":{"description":"The server defaults of the request fields steer_hold / steer_onset_seconds / steer_ramp_seconds (the steering bundle\'s `steer_release`); null: the request-level controls are constant and steer_hold below 1 is refused.","oneOf":[{"$ref":"#/components/schemas/SteerRelease"},{"type":"null"}]}}},"SteerRelease":{"description":"Steer then hold: the request-level hidden controls at full dose for `onset_seconds`, a linear ramp to `hold` x dose over `ramp_seconds`, `hold` after; `exempt` directions stay constant.","type":"object","required":["onset_seconds","ramp_seconds","hold","exempt"],"properties":{"onset_seconds":{"type":"number","minimum":0},"ramp_seconds":{"type":"number","minimum":0},"hold":{"type":"number","minimum":0,"maximum":1},"exempt":{"description":"Hidden-space control ids that never release.","type":"array","items":{"type":"string"}}}},"ControlSet":{"type":"object","required":["space","modes"],"properties":{"space":{"type":"string"},"modes":{"type":"array","items":{"type":"string","enum":["embedding","reference"]}},"source_index":{"type":"integer","description":"The Full AttnRes bank source a hidden-space set steers."},"calibration":{"$ref":"#/components/schemas/ControlCalibration"}}},"ControlCalibration":{"description":"The set\'s calibration.json: per-direction doses chosen offline, keyed by direction name (a `<name>-` key: the negative pole\'s own dose). Controls stay raw doses; a client scales its sliders by these. Absent when the set has no calibration.","type":"object","required":["default","by_speaker","global_default"],"properties":{"default":{"type":"object","additionalProperties":{"type":"number"}},"by_speaker":{"description":"Per speaker id overrides of `default`; dose 0 disables the direction for that voice.","type":"object","additionalProperties":{"type":"object","additionalProperties":{"type":"number"}}},"global_default":{"type":"number","description":"The dose of a direction neither `by_speaker` nor `default` names."}}},"ControlDirection":{"type":"object","required":["set","space","kind","norm"],"properties":{"set":{"type":"string"},"space":{"type":"string"},"kind":{"type":"string","enum":["axis","named"]},"norm":{"type":"number"},"vector":{"description":"Raw-space directions only.","type":"array","items":{"type":"number"}}}},"ControlsDocument":{"type":"object","required":["bundle","embedding_dim","sets","directions","timing","ui","steer_release"],"properties":{"bundle":{"type":"string"},"embedding_dim":{"type":["integer","null"]},"sets":{"type":"object","additionalProperties":{"$ref":"#/components/schemas/ControlSet"}},"directions":{"type":"object","additionalProperties":{"$ref":"#/components/schemas/ControlDirection"}},"timing":{"type":"object","additionalProperties":{"type":"array","items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}}},"ui":{"description":"The bundle\'s studio UI metadata, passed through.","type":"object"},"steer_release":{"description":"The bundle\'s steer-then-hold defaults (as Capabilities `steer_release`); null without them.","oneOf":[{"$ref":"#/components/schemas/SteerRelease"},{"type":"null"}]}}},"PhonemizeRequest":{"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string","maxLength":5000},"language":{"type":"string","default":"en_us"},"guess":{"type":"boolean","default":true}}},"PhonemeSegment":{"type":"object","required":["text","ipa","status"],"properties":{"text":{"type":"string"},"ipa":{"type":["string","null"]},"status":{"description":"null: non-word text.","enum":["ok","ambiguous","unknown","guessed","skipped","unsupported",null]}}},"PhonemizeResponse":{"type":"object","required":["language","segments"],"properties":{"language":{"type":"string"},"segments":{"type":"array","items":{"$ref":"#/components/schemas/PhonemeSegment"}}}},"EditWordIn":{"description":"One word of the original with its timing (seconds), as /v2/edit/align returns it.","type":"object","additionalProperties":false,"required":["word","start","end"],"properties":{"word":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"},"tokens":{"type":["array","null"],"items":{"type":"string"},"default":null},"confidence":{"type":["number","null"],"default":null}}},"EditWord":{"description":"One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign\\ninterval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous\\nword is split at its midpoint), `confidence` = FuseAlign\'s presence probability, and `tokens` = its edit\\ntokens (upper-cased; letters, digits and `\'` of any script kept, everything else a word break). Punctuation-only\\nwords are left out.\\n","type":"object","required":["word","start","end","confidence","tokens"],"properties":{"word":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"},"confidence":{"type":["number","null"]},"tokens":{"type":"array","items":{"type":"string"}}}},"EditTranscribeRequest":{"type":"object","additionalProperties":false,"required":["audio_base64"],"properties":{"audio_base64":{"type":"string"},"language":{"type":"string","default":"en_us","description":"The audio\'s language (server code): the Qwen3-ASR recognition language and FuseAlign\'s tokenization."}}},"EditAlignRequest":{"type":"object","additionalProperties":false,"required":["audio_base64","text"],"properties":{"audio_base64":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","default":"en_us"}}},"EditTranscript":{"type":"object","required":["text","duration","words"],"properties":{"text":{"type":"string"},"duration":{"type":"number"},"words":{"type":"array","items":{"$ref":"#/components/schemas/EditWord"}}}},"EditRequest":{"type":"object","additionalProperties":false,"required":["audio_base64","target_text"],"properties":{"audio_base64":{"type":"string"},"target_text":{"type":"string"},"original_text":{"description":"The clip\'s transcript. Omitted, it is recognized with Qwen3-ASR when the clip\'s words are needed; a server without speech recognition (edit_transcribe false) then answers 503.","type":["string","null"],"default":null},"original_words":{"description":"Checked word timings of original_text, used instead of the server\'s alignment.","type":["array","null"],"items":{"$ref":"#/components/schemas/EditWordIn"},"default":null},"spans":{"description":"Explicit regions [start, end] in seconds.","type":["array","null"],"items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}},"default":null},"margin_seconds":{"type":"number","minimum":0,"maximum":1,"default":0.08},"max_span_seconds":{"type":"number","exclusiveMinimum":0,"maximum":120,"default":30.0},"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"num_takes":{"type":"integer","minimum":1,"maximum":4,"default":1},"speaker_embedding":{"description":"Embed the original clip into the speaker row (null = on when the checkpoint has the row).","type":["boolean","null"],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"controls":{"type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"region_controls":{"description":"One entry per `spans` entry; region k uses controls + region_controls[k].","type":["array","null"],"items":{"type":["object","null"],"additionalProperties":{"type":"number"}},"default":null},"steer_hold":{"description":"Steer then hold of every region\'s hidden controls, as GenerateRequest; a fill\'s frames count from its first one.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"type":["number","null"],"minimum":0,"maximum":600,"default":null},"max_context_seconds":{"type":"number","exclusiveMinimum":0,"maximum":20,"default":16.0},"context_seconds":{"type":"number","minimum":0,"maximum":10,"default":4.0},"min_fill_ratio":{"type":"number","minimum":0,"maximum":1,"default":0.7},"verify":{"description":"Transcribe each take with Qwen3-ASR and report WER/CER against target_text and the take\'s words. Needs edit_transcribe (else 503).","type":"boolean","default":false},"decoder":{"description":"The audio decoder of the edited clip, by id (`Capabilities.decoders`; null = the server default). An id the server does not serve is a 400.","type":["string","null"],"default":null}}},"EditVerify":{"type":["object","null"],"required":["asr_text","wer","cer"],"properties":{"asr_text":{"type":"string"},"wer":{"type":"number"},"cer":{"type":"number"},"groups":{"type":"array","description":"Per pronunciation group of the target, its IPA and the word heard in its place (present when the target has groups).","items":{"type":"object","required":["ipa","heard"],"properties":{"ipa":{"type":"string"},"heard":{"type":["string","null"]}}}}}},"EditTake":{"type":"object","required":["seed","audio_base64","duration","edited_regions","fill_seconds","stopped","verify","words"],"properties":{"seed":{"type":"integer"},"audio_base64":{"type":"string","description":"16-bit PCM mono WAV at 44100 Hz."},"duration":{"type":"number"},"edited_regions":{"type":"array","items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"fill_seconds":{"type":"array","items":{"type":"number"}},"stopped":{"description":"Per region, whether its fill ended on the span-end token.","type":"array","items":{"type":["boolean","null"]}},"verify":{"$ref":"#/components/schemas/EditVerify"},"words":{"type":["array","null"],"items":{"$ref":"#/components/schemas/EditWord"}}}},"EditResponse":{"type":"object","required":["sample_rate","original_text","target_text","words","spans","contexts","expected_seconds","takes"],"properties":{"sample_rate":{"type":"integer"},"original_text":{"type":["string","null"]},"target_text":{"type":"string"},"words":{"type":["array","null"],"items":{"$ref":"#/components/schemas/EditWord"}},"spans":{"type":"array","items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"contexts":{"description":"The audio the model saw per window (null when the clip was edited whole).","type":["array","null"],"items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"expected_seconds":{"type":["array","null"],"items":{"type":["number","null"]}},"takes":{"type":"array","items":{"$ref":"#/components/schemas/EditTake"}}}},"ProjectSummary":{"type":"object","required":["id","name","updated_at","revision","bytes","media_bytes","summary"],"properties":{"id":{"type":"string"},"name":{"type":["string","null"]},"updated_at":{"type":["integer","null"],"description":"Epoch milliseconds."},"revision":{"type":["integer","null"]},"bytes":{"type":"integer","description":"Size of the stored document."},"media_bytes":{"type":"integer"},"summary":{"description":"The project\'s `data.summary`, passed through."}}},"Project":{"type":"object","required":["id","name","revision","updated_at","media_bytes","data"],"properties":{"id":{"type":"string"},"name":{"type":"string"},"revision":{"type":"integer","minimum":1},"updated_at":{"type":"integer","description":"Epoch milliseconds."},"media_bytes":{"type":"integer"},"data":{"type":"object"}}},"ProjectPutRequest":{"type":"object","additionalProperties":false,"required":["name","data"],"properties":{"name":{"type":"string","minLength":1,"maxLength":200},"data":{"description":"The studio document, stored verbatim. `data.media` maps each referenced media hash to {type, size}.","type":"object","properties":{"media":{"type":"object","propertyNames":{"pattern":"^[0-9a-f]{64}$"}}}},"base_revision":{"description":"The revision this save is based on (null for a new project).","type":["integer","null"],"default":null}}},"ProjectSaved":{"type":"object","required":["id","revision","updated_at"],"properties":{"id":{"type":"string"},"revision":{"type":"integer"},"updated_at":{"type":"integer"}}},"ProjectDeleted":{"type":"object","required":["deleted"],"properties":{"deleted":{"type":"string"}}},"ProjectGcResult":{"type":"object","required":["removed","freed_bytes","kept"],"properties":{"removed":{"type":"integer"},"freed_bytes":{"type":"integer"},"kept":{"type":"integer"}}},"MediaStored":{"type":"object","required":["sha256","size","created"],"properties":{"sha256":{"type":"string"},"size":{"type":"integer"},"created":{"type":"boolean"}}}}}')}.components.schemas,ye=/* @__PURE__ */ new Map;function be(e){for(;e.$ref;){if(!e.$ref.startsWith(`#/components/schemas/`))throw Error(`validate: unsupported $ref ${e.$ref}`);let t=ve[e.$ref.slice(21)];if(!t)throw Error(`validate: unknown schema ${e.$ref}`);e=t}return e}function xe(e){return e===null?`null`:Array.isArray(e)?`array`:typeof e==`number`?Number.isInteger(e)?`integer`:`number`:typeof e}function Se(e,t,n,r){let i=be(e),a=(e,t=n)=>r.push({loc:[`body`,...t],msg:e,type:`value_error`});if(i.type!==void 0){let e=Array.isArray(i.type)?i.type:[i.type],n=xe(t);if(!e.some(e=>e===n||e===`number`&&n===`integer`)){a(`unexpected instance type`);return}}if(i.enum&&!i.enum.some(e=>JSON.stringify(e)===JSON.stringify(t))&&a(`instance not found in required enum`),i.oneOf){let e=0;for(let r of i.oneOf){let i=[];Se(r,t,n,i),i.length||e++}e!==1&&a(e?`more than one subschema has succeeded, but exactly one of them is required to validate`:`no subschema has succeeded, but one of them is required to validate`)}if(typeof t==`number`&&(i.minimum!==void 0&&t<i.minimum&&a(`instance is below minimum of ${i.minimum}`),i.maximum!==void 0&&t>i.maximum&&a(`instance exceeds maximum of ${i.maximum}`),i.exclusiveMinimum!==void 0&&t<=i.exclusiveMinimum&&a(`instance is below or equals minimum of ${i.exclusiveMinimum}`)),typeof t==`string`){let e=Array.from(t).length;if(i.minLength!==void 0&&e<i.minLength&&a(`instance is too short as per minLength:${i.minLength}`),i.maxLength!==void 0&&e>i.maxLength&&a(`instance is too long as per maxLength:${i.maxLength}`),i.pattern!==void 0){let e=ye.get(i.pattern);e||(e=new RegExp(i.pattern,`u`),ye.set(i.pattern,e)),e.test(t)||a(`instance does not match regex pattern: ${i.pattern}`)}}if(Array.isArray(t)&&(i.minItems!==void 0&&t.length<i.minItems&&a(`array has too few items`),i.maxItems!==void 0&&t.length>i.maxItems&&a(`array has too many items`),i.items&&t.forEach((e,t)=>Se(i.items,e,[...n,t],r))),typeof t==`object`&&t&&!Array.isArray(t)){let e=t;for(let t of i.required??[])t in e||a(`required property '${t}' not found in object`);for(let[t,o]of Object.entries(e)){i.propertyNames&&Se(i.propertyNames,t,[...n,t],r);let e=i.properties?.[t];e?Se(e,o,[...n,t],r):i.additionalProperties===!1?a(`validation failed for additional property '${t}': instance invalid as per false-schema`,[...n,t]):i.additionalProperties&&typeof i.additionalProperties==`object`&&Se(i.additionalProperties,o,[...n,t],r)}}}function Ce(e,t){let n=ve[e];if(!n)throw Error(`servers/api/openapi.json has no schema ${e}`);let r=[];return Se(n,t,[],r),r}var we=class extends Error{status;body;constructor(e,t){super(typeof t.detail==`string`?t.detail:`HTTP ${e}`),this.status=e,this.body=t}};function L(e,t){throw new we(e,{detail:t})}const Te=new TextEncoder;function Ee(e,t,n=200){e.start(n,{"content-type":`application/json`}),e.chunk(Te.encode(JSON.stringify(t))),e.end()}function De(e,t,n,r={}){e.start(200,{...r,"content-type":n}),e.chunk(t),e.end()}function Oe(e){return e.headers[`x-tts-session-id`]?.trim()||null}function ke(e,t){let n=e.body?new TextDecoder().decode(e.body):``,r;try{r=JSON.parse(n)}catch(e){let t=e instanceof SyntaxError?/position (\d+)/.exec(e.message):null;throw new we(422,{detail:[{loc:[`body`,t?Number(t[1]):0],msg:`JSON decode error`,type:`json_invalid`}]})}let i=Ce(t,r);if(i.length)throw new we(422,{detail:i});return r}function R(e,t){return e[t]!==void 0&&e[t]!==null}function z(e,t,n){let r=e[t];return typeof r==`number`?r:n}function B(e,t){let n=e[t];return typeof n==`string`?n:null}function Ae(e,t){let n=e[t];return typeof n==`boolean`?n:null}function je(e,t){let n=e[t];return n==null?!1:Array.isArray(n)?n.length>0:typeof n==`object`?Object.keys(n).length>0:!!n}function Me(e){let t=e.includes(`'`)&&!e.includes(`"`)?`"`:`'`,n=t;for(let r of e)n+=r===`\\`?`\\\\`:r===t?`\\`+t:r===`
-`?`\\n`:r===`\r`?`\\r`:r===`	`?`\\t`:r;return n+t}function Ne(e){return`[`+e.map(Me).join(`, `)+`]`}const Pe=`Cached speaker operations require the X-TTS-Session-ID header.`;var Fe=class{e;sessions=/* @__PURE__ */ new Map;defaults;constructor(e,t=0){this.e=e,this.defaults=e.voices.map(e=>({id:e.id,label:e.label,sourceType:`audio`,isDefault:!0,originalName:e.file.split(`/`).pop()??e.file,created:t,pcm:e.pcm,codes:e.codes,embedding:e.embedding}))}checkpointModes(){return this.e.hp.speakerDim>0?[`reference`,`embedding`]:[`reference`]}voiceModes(e){let t=[];for(let n of this.checkpointModes())e.sourceType===`embedding`?n===`embedding`&&t.push(n):t.push(n);return t}json(e){return{id:e.id,label:e.label,source_type:e.sourceType,scope:e.isDefault?`default`:`session`,is_default:e.isDefault,original_name:e.originalName,created_at:e.created,has_preview:e.isDefault?e.sourceType===`audio`&&e.pcm!==null:e.pcm!==null,speaker_modes:this.voiceModes(e),embedding_dim:this.e.hp.speakerDim>0?this.e.hp.speakerDim:null,transcript:null,disabled_controls:fe(this.e.steer,e.id)}}lookup(e,t){let n=this.defaults.find(e=>e.id===t);if(n)return n;e||L(400,Pe);let r=this.sessions.get(e)?.get(t);return r||L(400,`Unknown cached speaker id '${t}'.`),r}known(e,t){return this.defaults.some(e=>e.id===t)?!0:!!e&&!!this.sessions.get(e)?.has(t)}pcmOf(e){if(e.pcm)return e.pcm;e.isDefault&&L(400,`Failed to read default voice '${e.label}'.`),L(400,`Cached speaker '${e.label}' has no reference audio.`)}async voiceEmbedding(e,t){let n=this.lookup(e,t),r=this.e.hp.speakerDim;return n.embedding||=await this.embed(this.pcmOf(n)),n.embedding.length!==r&&L(400,`Cached speaker '${n.label}' has ${n.embedding.length} dimensions, but the current model expects ${r}.`),n.embedding}async voiceCodes(e,t){let n=this.lookup(e,t);return n.sourceType!==`audio`&&(n.isDefault&&L(400,`Default voice '${n.label}' is an embedding file; this checkpoint needs reference audio.`),L(400,`Cached speaker '${n.label}' has no reference audio.`)),n.codes||=await this.encode(this.pcmOf(n)),n.codes}async embed(e){let t=`speaker embedding computation failed (maximum ${_} seconds)`;(!e.length||e.length>_*a)&&L(400,t);let n;try{n=await this.e.embedSpeaker(e)}catch(e){let n=e instanceof Error?e.message:``;L(400,n.startsWith(`speaker embedding computation failed`)?n:t)}return n.length!==this.e.hp.speakerDim&&L(400,t),n.every(Number.isFinite)||L(400,`speaker embedding computation failed`),n}async encode(e){let t=`reference audio encoding failed (maximum ${_} seconds)`;(!e.length||e.length>_*a)&&L(400,t);let n;try{n=await this.e.encodeReference(e)}catch{L(400,t)}return(!n.length||n.length%10||n.length>u*10)&&L(400,t),n}async resolveRequest(e,t,n,r){let i={mode:``,codes:null,embedding:null},a=t=>(B(e,t)??``)!==``,o=a(`speaker_audio_base64`),s=a(`speaker_embedding_base64`),c=a(`speaker_embedding_id`),l=a(`speaker_blend_embedding_id_a`),d=a(`speaker_blend_embedding_id_b`),f=R(e,`speaker_reference_codes`),p=()=>Be(e,r);if(n===`reference`){if((s||l||d)&&L(400,`This checkpoint conditions on raw reference audio and does not accept speaker embedding files or embedding blends.`),f){(o||c)&&L(400,`Provide either speaker_reference_codes or a reference clip (audio or a speaker id), not both.`);let t=e.speaker_reference_codes,r=this.e.hp.nCodebooks;(!t.length||t.some(e=>e.length!==r))&&L(400,`speaker_reference_codes must be a non-empty [frames, codebooks] list`);let a=t.flat().map(Number);return a.some(e=>e<0)&&L(400,`speaker_reference_codes must be non-negative`),a.some(e=>e>=4096)&&L(400,`speaker_reference_codes must be codec ids in [0, 4095]`),i.codes=Int32Array.from(a.slice(0,u*r)),i.mode=n,i}if(c)o&&L(400,`Provide either a reference audio file or a cached speaker id, not both.`),i.codes=await this.voiceCodes(t,B(e,`speaker_embedding_id`));else if(o)i.codes=await this.encode(p());else return i;return i.mode=n,i}if(n!==`embedding`)return i;f&&L(400,`speaker_reference_codes need speaker_mode=reference.`),o&&s&&L(400,`Provide either a reference audio file or a saved embedding file, not both.`);let m=Number(o||s)+Number(c)+Number(l||d);if(m===0)return i;m>1&&L(400,`Provide speaker conditioning via upload, one cached speaker id, or two cached ids for blending.`);let h=this.e.hp.speakerDim;return l||d?(l&&d||L(400,`Provide both cached speaker ids to blend between two speakers.`),i.embedding=Ve(await this.voiceEmbedding(t,B(e,`speaker_blend_embedding_id_a`)),await this.voiceEmbedding(t,B(e,`speaker_blend_embedding_id_b`)),typeof e.speaker_blend_t==`number`?e.speaker_blend_t:.5)):i.embedding=c?await this.voiceEmbedding(t,B(e,`speaker_embedding_id`)):s?Ge(ze(e,`speaker_embedding_base64`),h,B(e,`speaker_embedding_name`)):await this.embed(p()),i.mode=n,i}create(e,t,n){let r=ke(e,`SpeakerCreateRequest`),i=Oe(e);i||L(400,Pe);let a={id:`spk_`+Le(12),label:``,sourceType:`audio`,isDefault:!1,originalName:null,created:n,pcm:null,codes:null,embedding:null},o=(B(r,`speaker_audio_base64`)??``)!==``;(B(r,`speaker_embedding_base64`)??``)===``?(o||L(400,`Provide an audio file to cache as the speaker reference.`),a.originalName=B(r,`speaker_audio_name`),a.pcm=Be(r,e.pcm),a.label=Re(B(r,`label`),a.originalName,`Speaker audio`)):(o&&L(400,`Provide either a reference audio file or a saved embedding file, not both.`),a.originalName=B(r,`speaker_embedding_name`),a.embedding=Ge(ze(r,`speaker_embedding_base64`),this.e.hp.speakerDim,a.originalName),a.sourceType=`embedding`,a.label=Re(B(r,`label`),a.originalName,`Speaker embedding`));let s=this.sessions.get(i);s||(s=/* @__PURE__ */ new Map,this.sessions.set(i,s)),s.set(a.id,a),Ee(t,this.json(a))}list(e,t){let n=Oe(e),r=[...this.defaults].sort((e,t)=>Ie(e.label.toLowerCase(),t.label.toLowerCase())).map(e=>this.json(e)),i=n?[...this.sessions.get(n)?.values()??[]]:[];i.sort((e,t)=>t.created-e.created);for(let e of i)r.push(this.json(e));Ee(t,{speakers:r})}preview(e,t,n){let r=this.lookup(Oe(e),n);r.isDefault&&r.sourceType!==`audio`&&L(400,`Default embedding speakers do not include preview audio.`),r.isDefault&&!r.pcm&&L(400,`Failed to read default voice '${r.label}'.`),r.pcm||L(404,`Cached speaker preview audio is not available.`),De(t,_e(r.pcm,a),`audio/wav`)}async embedding(e,t,n){this.e.hp.speakerDim===0&&L(404,`No speaker embedding for ${Me(n)}.`);let r=await this.voiceEmbedding(Oe(e),n);Ee(t,{id:n,embedding:Array.from(r,e=>Math.round(e*1e6)/1e6)})}};function Ie(e,t){return e<t?-1:+(e>t)}function Le(e){let t=new Uint8Array(Math.ceil(e/2));return crypto.getRandomValues(t),Array.from(t,e=>e.toString(16).padStart(2,`0`)).join(``).slice(0,e)}function Re(e,t,n){if(e&&e.trim())return e.trim();if(t){let e=t.split(/[\\/]/).pop()??``,n=e.lastIndexOf(`.`),r=(n>0?e.slice(0,n):e).trim();if(r)return r}return n}function ze(e,t){let r=B(e,t)??``,i=r.trim();i.startsWith(`data:`)&&!i.includes(`,`)&&L(400,`Invalid data URL for ${t}.`);let a=n(r);return a||L(400,`${t} must be valid base64-encoded data.`),a}function Be(e,t){return ze(e,`speaker_audio_base64`),t&&t.length||L(400,`could not decode the reference audio (any container ffmpeg reads, at most ${_} seconds)`),t}function Ve(e,t,n){let r=Math.fround;e.length!==t.length&&L(400,`Cannot blend speaker embeddings with different shapes (${e.length},) and (${t.length},).`),(n<0||n>1)&&L(400,`speaker_blend_t must be between 0.0 and 1.0.`);let i=r(n),a=0,o=0;for(let t of e)a=r(a+r(t*t));for(let e of t)o=r(o+r(e*e));a=r(r(Math.sqrt(a))+r(1e-8)),o=r(r(Math.sqrt(o))+r(1e-8));let s=0;for(let n=0;n<e.length;n++)s=r(s+r(r(e[n]/a)*r(t[n]/o)));let c=r(Math.acos(Math.min(1,Math.max(-1,s)))),l=new Float32Array(e.length);if(c<r(1e-6)){for(let n=0;n<l.length;n++)l[n]=r(r(r(1-i)*e[n])+r(i*t[n]));return l}let u=r(Math.sin(c)),d=r(r(Math.sin(r(r(1-i)*c)))/u),f=r(r(Math.sin(r(i*c)))/u);for(let n=0;n<l.length;n++)l[n]=r(r(d*e[n])+r(f*t[n]));return l}function He(e){let t=e&32768?-1:1,n=e>>10&31,r=e&1023;return n===0?t*r*2**-24:n===31?r?NaN:t*(1/0):t*(1+r/1024)*2**(n-15)}function Ue(e){let t=new DataView(e.buffer,e.byteOffset,e.byteLength);if(e.length<10||e[0]!==147||String.fromCharCode(...e.subarray(1,6))!==`NUMPY`)return`not an NPY payload`;let n=e[6],r,i;if(n===1)r=t.getUint16(8,!0),i=10;else if((n===2||n===3)&&e.length>=12)r=t.getUint32(8,!0),i=12;else return`unsupported NPY version`;if(i+r>e.length)return`truncated NPY header`;let a=String.fromCharCode(...e.subarray(i,i+r));i+=r;let o=e=>{let t=a.indexOf(`'${e}'`);return t<0?-1:a.indexOf(`:`,t)},s=o(`descr`),c=o(`fortran_order`),l=o(`shape`);if(s<0||c<0||l<0)return`invalid NPY header`;let u=a.slice(s+1).search(/[^ ]/)+s+1;if(u<=s||a[u]!==`'`&&a[u]!==`"`)return`structured NPY arrays are not supported`;let d=a.indexOf(a[u],u+1),f=a.slice(u+1,d),p=a.slice(c+1).search(/[^ ]/)+c+1,m=a.startsWith(`True`,p),h=a.indexOf(`(`,l),g=a.indexOf(`)`,l);if(h<0||g<0)return`invalid NPY shape`;let _=(a.slice(h+1,g).match(/\d+/g)??[]).map(Number),v=_.reduce((e,t)=>e*t,1);if(f.length<3||!`<|=`.includes(f[0]))return`big-endian NPY data`;let y=f[1],b=parseInt(f.slice(2),10);if(!(y===`f`&&[2,4,8].includes(b)||(y===`i`||y===`u`)&&[1,2,4,8].includes(b)||y===`b`&&b===1))return`unsupported NPY dtype `+f;if(i+v*b>e.length)return`truncated NPY data`;let x=new Float64Array(v);for(let e=0;e<v;e++){let n=i+e*b,r;r=y===`f`?b===2?He(t.getUint16(n,!0)):b===4?t.getFloat32(n,!0):t.getFloat64(n,!0):y===`i`?b===1?t.getInt8(n):b===2?t.getInt16(n,!0):b===4?t.getInt32(n,!0):Number(t.getBigInt64(n,!0)):b===1?t.getUint8(n):b===2?t.getUint16(n,!0):b===4?t.getUint32(n,!0):Number(t.getBigUint64(n,!0)),x[e]=r}if(m&&_.length>1){let e=new Float64Array(v),t=Array(_.length).fill(0);for(let n=0;n<v;n++){let r=0,i=1;for(let e=0;e<_.length;e++)r+=t[e]*i,i*=_[e];e[n]=x[r];for(let e=_.length-1;e>=0&&!(++t[e]<_[e]);e--)t[e]=0}x=e}return{shape:_,data:x}}function We(e){let t=new DataView(e.buffer,e.byteOffset,e.byteLength);if(e.length<22)return`not a zip archive`;let n=-1;for(let r=e.length-22;r>=0&&e.length-r<=65557;r--)if(t.getUint32(r,!0)===101010256){n=r;break}if(n<0)return`not a zip archive`;let r=t.getUint16(n+10,!0),i=t.getUint32(n+16,!0),a=[];for(let n=0;n<r;n++){if(i+46>e.length||t.getUint32(i,!0)!==33639248)return`corrupt zip directory`;let n=t.getUint16(i+10,!0),r=t.getUint32(i+20,!0),o=t.getUint16(i+28,!0),s=t.getUint16(i+30,!0),c=t.getUint16(i+32,!0),l=t.getUint32(i+42,!0),u=new TextDecoder().decode(e.subarray(i+46,i+46+o));if(i+=46+o+s+c,l+30>e.length||t.getUint32(l,!0)!==67324752)return`corrupt zip entry`;let d=l+30+t.getUint16(l+26,!0)+t.getUint16(l+28,!0);if(n!==0)return`compressed .npz archives (numpy.savez_compressed) are not supported; use numpy.savez or .npy`;if(d+r>e.length)return`truncated zip entry`;a.push([u,e.subarray(d,d+r)])}return a}function Ge(e,t,n){let r=`${n||`Speaker embedding file`} must be a valid .npy or .npz file saved without pickle.`,i;if(e.length>=4&&e[0]===80&&e[1]===75){let t=We(e);typeof t==`string`&&L(400,`${r} (${t})`);let n=t.find(([e])=>e===`emb.npy`)?.[1];!n&&t.length===1&&(n=t[0][1]),n||L(400,`Embedding archive must contain an 'emb' array or exactly one array.`),i=Ue(n)}else i=Ue(e);typeof i==`string`&&L(400,r);let a=i.shape.filter(e=>e!==1),o;if(a.length===1)o=Float32Array.from(i.data);else if(a.length===2){a[0]===0&&L(400,`Speaker embedding file is empty.`);let[e,t]=a;o=new Float32Array(t);for(let n=0;n<t;n++){let r=0;for(let a=0;a<e;a++)r=Math.fround(r+Math.fround(i.data[a*t+n]));o[n]=Math.fround(r/e)}}else L(400,`Unsupported embedding array shape (${a.join(`, `)}${a.length===1?`,`:``}). Expected (D,) or (N, D).`);return o.length!==t&&L(400,`Reference embedding dimension mismatch. Model expects ${t}, but loaded file has ${o.length}.`),o}const Ke=/* @__PURE__ */ new Float32Array(1),qe=new Uint32Array(Ke.buffer);function Je(e){return(e&2147483647)>2139095040?e:(e+32767+(e>>>16&1)&4294901760)>>>0}function Ye(e){return Ke[0]=e,qe[0]=Je(qe[0]),Ke[0]}function Xe(e){let t=new Uint32Array(e.buffer,e.byteOffset,e.length);for(let e=0;e<t.length;e++)t[e]=Je(t[e])}const Ze=16e3,V=Math.fround;function Qe(e,t){for(;t;)[e,t]=[t,e%t];return e}function $e(e,t){if(!(t>0)||!Number.isInteger(t))throw Error(`resampleTo16k: invalid sample rate ${t}`);if(t===16e3)return e.slice();let n=Qe(t,Ze),r=t/n,i=Ze/n,a=Math.min(r,i)*.99,o=Math.ceil(6*r/a),s=2*o+r,c=V(a),l=V(Math.PI),u=V(a/r),d=new Float32Array(i*s),f=new Int32Array(i),p=new Int32Array(i);for(let e=0;e<i;e++){let t=V(-e/i),n=s,a=0;for(let i=0;i<s;i++){let f=V((i-o)/r),p=V(V(t+f)*c);if(p<=-6||p>=6)continue;let m=V(Math.cos(V(V(V(p*l)/6)/2))),h=V(m*m);p=V(p*l);let g=p===0?1:V(V(Math.sin(p))/p);d[e*s+i]=V(g*V(h*u)),n=Math.min(n,i),a=i+1}f[e]=n,p[e]=Math.max(n,a)}let m=e.length,h=o+m+o+r,g=Math.floor((h-s)/r)+1,_=Math.min(Math.ceil(i*m/r),g*i),v=new Float32Array(_);for(let t=0;t<_;t++){let n=Math.floor(t/i),a=t-n*i,c=n*r-o,l=a*s,u=0;for(let t=f[a];t<p[a];t++){let n=c+t;n>=0&&n<m&&(u+=d[l+t]*e[n])}v[t]=u}return v}const et=new TextEncoder;function tt(e){return/[\p{L}\p{N}]/u.test(e)}function nt(e){let t=Math.max(0,e.length-1);for(let n of e)t+=et.encode(n).length;return t}function rt(e){let t=[1,32],n=new Uint32Array(2*e.length);return e.forEach((e,r)=>{r&&t.push(32),n[2*r]=t.length-2;for(let n of et.encode(e))t.push(n);n[2*r+1]=t.length-2}),{ids:Int32Array.from(t),spans:n}}function it(e){let t=e.length,n=0;for(let r=0;r<t;r++)n+=e[r];let r=V(V(n)/t),i=new Float32Array(t),a=0;for(let n=0;n<t;n++){let t=V(e[n]-r);i[n]=t,a+=t*t}let o=V(V(Math.sqrt(V(V(a)/t)))+V(1e-5));for(let e=0;e<t;e++)i[e]=V(i[e]/o);return i}function at(e,t){return Float32Array.from({length:e/2},(n,r)=>V(t**+V(-(2*r)/e)))}function ot(e,t){return Float32Array.from({length:e/2},(n,r)=>V(1/V(t**+V(2*r/e))))}function st(e,t,n){let r=t.length,i=new Float32Array(e.length*r),a=new Float32Array(e.length*r);for(let o=0;o<e.length;o++)for(let s=0;s<r;s++){let c=V(e[o]*t[s]),l=Math.cos(c),u=Math.sin(c);i[o*r+s]=n?Ye(l):l,a[o*r+s]=n?Ye(u):u}return{cos:i,sin:a}}function ct(e,t){let n=new Float32Array(e+t),r=V(e/Math.max(t-1,1));for(let t=0;t<e;t++)n[t]=t;for(let i=0;i<t;i++)n[e+i]=V(i*r);return n}function lt(e,t){let n=e.slice(),r=0;for(;r<n.length;){if(n[r]!==null){r++;continue}let e=r;for(;r<n.length&&n[r]===null;)r++;let i=e?n[e-1][1]:0,a=r<n.length?n[r][0]:t,o=(a-i)/(r-e);for(let t=0;t<r-e;t++)n[e+t]=[i+t*o,e+t+1===r?a:i+(t+1)*o]}return n}function ut(e,t,n,r,i){let a=lt(n,i),o=a.length?a[0][0]:0,s=[],c=null,l=0;return e.forEach((e,i)=>{if(l<t.length&&t[l]===i)s.push({word:e,start:a[l][0],end:a[l][1],presence:r[l],placed:n[l]!==null}),c=a[l][1],l++;else{let t=c??o;s.push({word:e,start:t,end:t,presence:0,placed:!1}),c=t}}),s}var dt={description:`The languages of every server and the studio (zonos3.languages). server: the TTS language codes requests use, in display order (label: the studio's name; nemo: the NeMo text-normalization package; lexicon: the pronunciation lexicon's ISO 639-3 code; speech: its row in spoken). spoken: the languages speech recognition, forced alignment and other references understand, by Whisper-style code (name: the Qwen3-ASR language name (Filipino for Tagalog; the English name of a language Qwen3-ASR does not recognize: speech editing aligns it but does not transcribe it); unspaced: written without spaces between words; tts: the server language that speaks it). espeak: lexicon code -> the espeak-ng voice that guesses its unknown words.`,server:[{code:`en_us`,label:`US English`,nemo:`en`,lexicon:`eng`,speech:`en`},{code:`en_gb`,label:`UK English`,nemo:`en`,lexicon:`eng`,speech:`en`},{code:`fr_fr`,label:`French`,nemo:`fr`,lexicon:`fra`,speech:`fr`},{code:`de`,label:`German`,nemo:`de`,lexicon:`deu`,speech:`de`},{code:`es`,label:`Spanish`,nemo:`es`,lexicon:`spa`,speech:`es`},{code:`it`,label:`Italian`,nemo:`it`,lexicon:`ita`,speech:`it`},{code:`pt_br`,label:`Portuguese`,nemo:`pt`,lexicon:`por`,speech:`pt`},{code:`ja`,label:`Japanese`,nemo:`ja`,lexicon:`jpn`,speech:`ja`},{code:`cmn`,label:`Mandarin`,nemo:`zh`,lexicon:`cmn`,speech:`zh`},{code:`ko`,label:`Korean`,nemo:`ko`,lexicon:`kor`,speech:`ko`},{code:`ar`,label:`Arabic`,nemo:`ar`,lexicon:`ara`,speech:`ar`},{code:`bn`,label:`Bengali`,nemo:`bn`,lexicon:`ben`,speech:`bn`},{code:`bg`,label:`Bulgarian`,nemo:`bg`,lexicon:`bul`,speech:`bg`},{code:`cs`,label:`Czech`,nemo:`cs`,lexicon:`ces`,speech:`cs`},{code:`da`,label:`Danish`,nemo:`da`,lexicon:`dan`,speech:`da`},{code:`nl`,label:`Dutch`,nemo:`nl`,lexicon:`nld`,speech:`nl`},{code:`fi`,label:`Finnish`,nemo:`fi`,lexicon:`fin`,speech:`fi`},{code:`ka`,label:`Georgian`,nemo:`ka`,lexicon:`kat`,speech:`ka`},{code:`el`,label:`Greek`,nemo:`el`,lexicon:`ell`,speech:`el`},{code:`gu`,label:`Gujarati`,nemo:`gu`,lexicon:`guj`,speech:`gu`},{code:`he`,label:`Hebrew`,nemo:`he`,lexicon:`heb`,speech:`he`},{code:`hi`,label:`Hindi`,nemo:`hi`,lexicon:`hin`,speech:`hi`},{code:`hu`,label:`Hungarian`,nemo:`hu`,lexicon:`hun`,speech:`hu`},{code:`id`,label:`Indonesian`,nemo:`id`,lexicon:`ind`,speech:`id`},{code:`kn`,label:`Kannada`,nemo:`kn`,lexicon:`kan`,speech:`kn`},{code:`ms`,label:`Malay`,nemo:`ms`,lexicon:`msa`,speech:`ms`},{code:`ml`,label:`Malayalam`,nemo:`ml`,lexicon:`mal`,speech:`ml`},{code:`mr`,label:`Marathi`,nemo:`mr`,lexicon:`mar`,speech:`mr`},{code:`no`,label:`Norwegian`,nemo:`nb`,lexicon:`nob`,speech:`no`},{code:`or`,label:`Odia`,nemo:`or`,lexicon:`ori`,speech:`or`},{code:`pl`,label:`Polish`,nemo:`pl`,lexicon:`pol`,speech:`pl`},{code:`pa`,label:`Punjabi`,nemo:`pa`,lexicon:`pan`,speech:`pa`},{code:`ro`,label:`Romanian`,nemo:`ro`,lexicon:`ron`,speech:`ro`},{code:`ru`,label:`Russian`,nemo:`ru`,lexicon:`rus`,speech:`ru`},{code:`sk`,label:`Slovak`,nemo:`sk`,lexicon:`slk`,speech:`sk`},{code:`sv`,label:`Swedish`,nemo:`sv`,lexicon:`swe`,speech:`sv`},{code:`tl`,label:`Tagalog`,nemo:`tl`,lexicon:`tgl`,speech:`tl`},{code:`ta`,label:`Tamil`,nemo:`ta`,lexicon:`tam`,speech:`ta`},{code:`te`,label:`Telugu`,nemo:`te`,lexicon:`tel`,speech:`te`},{code:`th`,label:`Thai`,nemo:`th`,lexicon:`tha`,speech:`th`},{code:`tr`,label:`Turkish`,nemo:`tr`,lexicon:`tur`,speech:`tr`},{code:`uk`,label:`Ukrainian`,nemo:`uk`,lexicon:`ukr`,speech:`uk`},{code:`ur`,label:`Urdu`,nemo:`ur`,lexicon:`urd`,speech:`ur`},{code:`vi`,label:`Vietnamese`,nemo:`vi`,lexicon:`vie`,speech:`vi`}],spoken:[{code:`en`,name:`English`,tts:`en_us`},{code:`fr`,name:`French`,tts:`fr_fr`},{code:`de`,name:`German`,tts:`de`},{code:`es`,name:`Spanish`,tts:`es`},{code:`it`,name:`Italian`,tts:`it`},{code:`pt`,name:`Portuguese`,tts:`pt_br`},{code:`ja`,name:`Japanese`,tts:`ja`,unspaced:!0},{code:`zh`,name:`Chinese`,tts:`cmn`,unspaced:!0},{code:`ko`,name:`Korean`,tts:`ko`},{code:`ru`,name:`Russian`,tts:`ru`},{code:`yue`,name:`Cantonese`,unspaced:!0},{code:`ar`,name:`Arabic`,tts:`ar`},{code:`bn`,name:`Bengali`,tts:`bn`},{code:`bg`,name:`Bulgarian`,tts:`bg`},{code:`cs`,name:`Czech`,tts:`cs`},{code:`da`,name:`Danish`,tts:`da`},{code:`nl`,name:`Dutch`,tts:`nl`},{code:`fi`,name:`Finnish`,tts:`fi`},{code:`ka`,name:`Georgian`,tts:`ka`},{code:`el`,name:`Greek`,tts:`el`},{code:`gu`,name:`Gujarati`,tts:`gu`},{code:`he`,name:`Hebrew`,tts:`he`},{code:`hi`,name:`Hindi`,tts:`hi`},{code:`hu`,name:`Hungarian`,tts:`hu`},{code:`id`,name:`Indonesian`,tts:`id`},{code:`kn`,name:`Kannada`,tts:`kn`},{code:`ms`,name:`Malay`,tts:`ms`},{code:`ml`,name:`Malayalam`,tts:`ml`},{code:`mr`,name:`Marathi`,tts:`mr`},{code:`no`,name:`Norwegian`,tts:`no`},{code:`or`,name:`Odia`,tts:`or`},{code:`pl`,name:`Polish`,tts:`pl`},{code:`pa`,name:`Punjabi`,tts:`pa`},{code:`ro`,name:`Romanian`,tts:`ro`},{code:`sk`,name:`Slovak`,tts:`sk`},{code:`sv`,name:`Swedish`,tts:`sv`},{code:`tl`,name:`Filipino`,tts:`tl`},{code:`ta`,name:`Tamil`,tts:`ta`},{code:`te`,name:`Telugu`,tts:`te`},{code:`th`,name:`Thai`,tts:`th`},{code:`tr`,name:`Turkish`,tts:`tr`},{code:`uk`,name:`Ukrainian`,tts:`uk`},{code:`ur`,name:`Urdu`,tts:`ur`},{code:`vi`,name:`Vietnamese`,tts:`vi`}],espeak:{eng:`en-us`,deu:`de`,fra:`fr`,spa:`es-419`,ita:`it`,por:`pt-br`,nld:`nl`,pol:`pl`,ces:`cs`,swe:`sv`,fin:`fi`,dan:`da`,nob:`nb`,isl:`is`,hun:`hu`,ron:`ro`,cat:`ca`,tur:`tr`,ind:`id`,msa:`ms`,rus:`ru`,ukr:`uk`,ell:`el`,heb:`he`,ara:`ar`,fas:`fa`,hin:`hi`}};const ft=`opus_dual_3n_600k_sched600k_r4096_step600000`,pt=dt.server.map(e=>e.code);function mt(e){return{id:e.id,kind:`istft_mr`,label:`Multi-resolution iSTFT head (${e.checkpoint}); causal`,checkpoint:e.checkpoint,expect_step:null,headroom_db:e.headroomDb,causal:!0,codec:ft}}function ht(e){let t=Math.fround(e);for(let e=1;e<10;e++){let n=Number(t.toPrecision(e));if(Math.fround(n)===t)return n}return t}const gt={frames:s,on:!0};function _t(e){return[...e.laci.keys()].sort()}const vt=[];function yt(e){if(!e.edit)return 0;let t=e.edit.hp,n=JSON.parse(t.textTokenizerSpec),r=n&&typeof n==`object`?n:{},i=e=>e&&typeof e==`object`?e:void 0,a=i(r.phonemes),o=i(r.start),s=i(r.pauses);if(!r.phonemes&&!r.start&&!r.pauses)return t.textExtraTokens;if(r.phonemes&&!a||r.start&&!o||r.pauses&&!s)return 0;let c=a?.symbols,l=s?.ids;if(a&&!Array.isArray(c)||s&&!Array.isArray(l))return 0;let u=a?a.open_id:o?o.id:l[0];if(typeof u!=`number`)return 0;let d=(a?2+c.length:0)+ +!!o+(s?l.length:0),f=u-t.textVocab-1;return f+d===t.textExtraTokens?Math.max(f,0):0}function bt(e){let t=e.hp;if(t.nCond===0)return null;let n={},r={},i={},a=`[reference prefix | speaker row]`;return t.condNames.forEach((e,o)=>{n[e]=(t.condEdges[o]??[]).map(ht),i[e]=t.condBucketCounts[o],o<t.condUnits.length&&(r[e]=t.condUnits[o]),a+=`[${e}]`}),{enabled:!0,names:t.condNames,flags:{},count:t.nCond,bucket_counts:i,unknown_ids:{...i},edges:n,units:r,layout:a+` BOS text EOS`}}function xt(e,t){let n=e.hp,r=n.speakerDim>0,i=t.length>0,o=gt.frames;return{text_tokenizer_spec:JSON.parse(n.textTokenizerSpec),text_normalization_enabled:!1,text_norm_languages:pt,accents:vt,speaker_enabled:t.length>0,speaker_conditioning_type:`raw_reference_prefix`,speaker_embedding_dim:r?n.speakerDim:null,speaker_embedding_codec:r?`ownmect_s2`:null,n_codebooks:n.nCodebooks,codebook_sizes:Array(n.nCodebooks).fill(4096),audio_codec:ft,max_tokens:d,stream_decode_modes:[`prefix`,`whole`],stream_decode_default:`prefix`,silence_prefill:{available:!0,default_frames:o,default_on:gt.on,default_seconds:Math.round(o*m/a*1e3)/1e3,frame_seconds:m/a,codec:ft,note:`codec-matched silence frames open the audio stream before the model starts (their audio is not emitted); a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length`},decode_context:{available:!0,default_frames:l,max_frames:450,note:`decode the generated frames behind the last decode_context_frames of the raw-reference prompt (their audio dropped), so the first generated frame is not the decoder's position 0; no-op without a reference prompt`},speaker_modes:t,speaker_mode_default:t.length?t[0]:null,decoder:mt(e.decoders[0]),decoders:e.decoders.map(mt),condition_tokens:bt(e),speaker_audio_upload:t.length>0,speaker_cfg_supported:i,speaker_cfg_modes:i?t:[],speaker_cfg_unconditional:`remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_generated_history`,speaker_cfg_formula:`uncond + scale * (cond - uncond)`,laci_languages:_t(e),plugins:[],speaker_embedding_upload:r,speaker_embedding_cache:t.length>0,speaker_embedding_blend:r,default_voices_enabled:!0,projects:{enabled:!1},steer_release:ue(e.steer),speech_editing:e.edit!==null&&yt(e)>0,edit_transcribe:!1,edit_max_spans:yt(e),edit_frame_rate:e.edit?a/m:null,edit_max_seconds:v,edit_align_max_seconds:30,phoneme_tokens:null,start_token:null,pause_tokens:null,phonemize_enabled:!1,phonemize_languages:[],phonemize_guess_languages:[]}}function St(e,t,n){if(t!==null){if(n===null)throw Error(`region_controls needs explicit spans (one entry per span).`);if(t.length!==n.length)throw Error(`region_controls has ${t.length} entries for ${n.length} spans; send one per span (null for none).`)}let r=[];for(let i=0;i<(n===null?1:n.length);i++){let n=new Map(Object.entries(e??{}));for(let[e,r]of Object.entries(t?.[i]??{}))n.set(e,(n.get(e)??0)+r);r.push(Object.fromEntries([...n].filter(([,e])=>e!==0)))}return r.some(e=>Object.keys(e).length>0)?r:null}var Ct=class{mt=/* @__PURE__ */ new Uint32Array(624);idx=625;constructor(e){this.mt[0]=e>>>0;for(let e=1;e<624;e++){let t=this.mt[e-1]^this.mt[e-1]>>>30;this.mt[e]=Math.imul(1812433253,t)+e>>>0}this.idx=624}next(){let e=this.mt;if(this.idx>=624){for(let t=0;t<624;t++){let n=e[t]&2147483648|e[(t+1)%624]&2147483647,r=e[(t+397)%624]^n>>>1;n&1&&(r^=2567483615),e[t]=r>>>0}this.idx=0}let t=e[this.idx++];return t^=t>>>11,t^=t<<7&2636928640,t^=t<<15&4022730752,t^=t>>>18,t>>>0}};function wt(e){return(e.next()+e.next()*4294967296)/0x10000000000000000}function Tt(){return{temperature:o.temperature,top_k:o.topk,top_p:o.top_p,min_p:o.min_p,rep_penalty:o.repetition_penalty,rep_window:o.repetition_window,rep_codebooks:o.repetition_codebooks,seed:0,greedy:!1}}function Et(e,t={}){let n=t.spanEnd===!0||t.spanEndStop===!0,r=e-(n?3:2);if(r<1)throw Error(`sampler: vocabulary of ${e} has no audio codes`);let i=n?r+2:-1;return{codebookSize:r,eoaId:r,padId:r+1,spanEndId:i,stopId:t.spanEndStop?i:r}}function Dt(e,t,n,r,i=/* @__PURE__ */ new Int32Array(160),a=!1){i.fill(0);for(let o=0;o<10;o++)for(let s=0;s<r;s++){let r=n+s+o;if(r>=t&&a&&o>0){i[o*16+s]=-1;continue}let c=r<t?e[r*10+o]:4097;i[o*16+s]=Math.min(Math.max(c,0),4095)}return i}function Ot(e=0){return{prefill:e,step:0,eosFrame:-1,countdown:-1,done:!1,codes:[],nextIds:/* @__PURE__ */ new Int32Array(11)}}function kt(e){return e.prefill+e.step}function At(e,t,n,r){let i=kt(e),a=Array.from({length:10},(e,n)=>t[n]);for(let t of a)e.codes.push(t);let o=-1;for(let e=0;e<10;e++)a[e]===n&&(o=e);e.eosFrame<0&&o>=0&&(e.eosFrame=Math.max(0,i-o),e.countdown=11);let s=e.countdown>0&&--e.countdown===0;for(let t=0;t<10;t++)e.nextIds[t]=a[t];return e.nextIds[10]=b,e.step+=1,(s||e.step>=r)&&(e.done=!0),a}const jt=Math.fround(10**(y/20)),Mt=Math.fround(1-jt);function Nt(e,t){let n=new Float32Array(e.length);for(let r=0;r<e.length;r++){let i=t===1?e[r]:Math.fround(e[r]*t),a=Math.abs(i);n[r]=a>jt?Math.sign(i)*Math.fround(jt+Mt*Math.tanh((a-jt)/Mt)):i}return n}function Pt(e,t,n){if(!e.length||e.length>n)throw Error(`Edit requires between one and max_spans regions`);let r=-1;for(let[n,i]of e){if(n<0||i<1||n+i>t||n<=r)throw Error(`Edit spans must be ascending, separated and within the audio`);r=n+i}}function Ft(e,t){if(e.length%t)throw Error(`Invalid codec frame shape`);return e.length/t}function It(e,t,n){let r=t.nCodebooks,i=r+1,a=Ft(e,r),o=a+(n===null?0:1)+r-1,s=new Int32Array(o*i).fill(t.audioPadId);for(let c=0;c<o;c++){s[c*i+r]=t.textVocab;for(let t=0;t<r;t++){let o=c-t;o>=0&&o<a?s[c*i+t]=e[o*r+t]:o===a&&n!==null&&(s[c*i+t]=n)}}return s}function Lt(e){let t=new Int32Array(e.reduce((e,t)=>e+t.length,0)),n=0;for(let r of e)t.set(r,n),n+=r.length;return t}function Rt(e,t,n,r,i,a){let o=i.nCodebooks;if(a!==i.audioPadId+1)throw Error(`span_end_id must equal audio_pad_id + 1`);if(Pt(n,Ft(t,o),n.length),r.length>=n.length)throw Error(`Prompt needs an ungenerated span`);let s=e=>{let t=new Int32Array(o+1).fill(i.audioPadId);return t[o]=i.textVocab+1+e,t},c=[e],l=0;return n.forEach(([e,n],r)=>{e>l&&c.push(It(t.subarray(l*o,e*o),i,null)),c.push(s(r)),l=e+n}),c.push(It(t.subarray(l*o),i,i.audioPadId-1)),r.forEach((e,t)=>c.push(s(t),It(e,i,a))),c.push(s(r.length)),Lt(c)}function zt(e,t,n,r){let i=r.length,a=Ft(e,i),o=Math.min(a,Math.max(0,t??a-(i-1))),s=!1;for(let t=0;t<o&&!s;t++)for(let c=0;c<i;c++){let l=t+c<a?e[(t+c)*i+c]:n;if(l<0||l>=r[c]){s=!0,o=t;break}}let c=new Int32Array(o*i);for(let t=0;t<o;t++)for(let n=0;n<i;n++)c[t*i+n]=e[(t+n)*i+n];return{fill:c,ended:t!==null&&!s}}function Bt(e,t,n,r){let i=r;if(Pt(t,Ft(e,i),t.length),n.length!==t.length)throw Error(`One fill is required per span`);let a=[],o=0;return t.forEach(([t,r],s)=>{if(n[s].length%i)throw Error(`Invalid fill shape`);a.push(e.subarray(o*i,t*i),n[s]),o=t+r}),a.push(e.subarray(o*i)),Lt(a)}function Vt(e,t,n){if(t.spanEndId===null)throw Error(`the backbone has no span-end token`);let r=T(e,n.text,{speakerEmbedding:n.speakerEmbedding??void 0,buckets:n.buckets,silencePrefill:0},t),i=Rt(r.ids,n.windowCodes,n.spans,n.fills,{nCodebooks:t.nCodebooks,audioPadId:t.audioPad,textVocab:t.textVocab},t.spanEndId);return{...r,ids:i,nRows:i.length/(t.nCodebooks+1)}}async function Ht(e,t,n,r,i){let a=Et(t.audioVocab,{spanEndStop:!0}).stopId,o=Ot(0);await e.prefill(0,n.ids,n.cond),e.startSampling({sp:r.sampling,vocab:{spanEndStop:!0},minFrames:r.minFrames,cfgScale:null});let s=await e.sampleFirst(kt(o));for(;;){if(i())throw Error(`aborted`);if(At(o,s,a,r.maxFrames),o.done)break;s=(await e.stepSample(kt(o),r.steering?.at(o.step)??null,null,null)).frame}return zt(Int32Array.from(o.codes.slice(0,Math.max(0,o.codes.length-10))),o.eosFrame>=0?o.eosFrame:null,t.audioPad,Array(10).fill(4096))}async function Ut(e,t,n){let r=t.length/10,i=r+10-1,a=new Int32Array(i*10).fill(n);for(let e=0;e<r;e++)for(let n=0;n<10;n++)a[(e+n)*10+n]=t[e*10+n];e.reset();let o=[];for(let t=0;t<r;t+=16){let n=Math.min(16,r-t);o.push(await e.chunk(Dt(a,i,t,n),t,n))}o.push(await e.flush());let s=new Float32Array(o.reduce((e,t)=>e+t.length,0)),c=0;for(let e of o)s.set(e,c),c+=e.length;return Nt(s,e.gain)}function Wt(e){return e>=9&&e<=13||e>=28&&e<=32||e===133||e===160||e===5760||e>=8192&&e<=8202||e===8232||e===8233||e===8239||e===8287||e===12288}const Gt=e=>Wt(e.codePointAt(0));function Kt(e){let t=[],n=``;for(let r of e)Gt(r)?(n&&t.push(n),n=``):n+=r;return n&&t.push(n),t}function qt(e){let t=Array.from(e),n=0,r=t.length;for(;n<r&&Gt(t[n]);)n++;for(;r>n&&Gt(t[r-1]);)r--;return n===0&&r===t.length?e:t.slice(n,r).join(``)}function Jt(e){let t=0;for(let n of e)t++;return t}function Yt(e){let t=Math.floor(e),n=e-t;return n>.5?t+1:n<.5||t%2==0?t:t+1}function Xt(e,t){let n=e.toFixed(t);if(!Number.isFinite(e))return n;let r=Math.abs(e).toFixed(100),i=r.indexOf(`.`);if(!/^50*$/.test(r.slice(i+1+t)))return n;let a=r.slice(0,t?i+1+t:i);return Number(a.at(-1))%2==0?(e<0?`-`:``)+a:n}function Zt(e){let t=0,n=0,r=0,i=!1;for(let a of e){if(!i){if(a.int){t+=a.value;continue}n=t+a.value,i=!0;continue}if(a.int){n+=a.value;continue}let e=a.value,o=n+e;r+=Math.abs(n)>=Math.abs(e)?n-o+e:e-o+n,n=o}return i?r&&Number.isFinite(r)?n+r:n:t}function Qt(e){return Zt((function*(){for(let t of e)yield{value:t,int:!1}})())}const $t=/(\ue000[^\ue000\ue001]*\ue001)/u,en=/[\u2018\u2019\u201b\u02bc]/g,tn=/[^\p{L}\p{N}']+/gu;function nn(e){return e.replace(en,`'`).replaceAll(`_`,` `).toUpperCase().replace(tn,` `).trim()}function rn(e){return Kt(nn(e)).flatMap(fn)}const an=new Set(dt.spoken.filter(e=>`unspaced`in e&&e.unspaced).map(e=>e.code)),on=`\\u3005\\u3007\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff\\u31f0-\\u31ff\\uff66-\\uff9f`,sn=RegExp(`[${on}]+`,`gu`),cn=RegExp(`^[${on}]$`,`u`),ln=new Intl.Segmenter(`und`,{granularity:`word`}),un=/^[\p{L}\p{N}']$/u;function dn(e){return[...ln.segment(e)].filter(e=>e.isWordLike).map(e=>[e.index,e.index+e.segment.length])}function fn(e){let t=[],n=0;for(let r of e.matchAll(sn)){r.index>n&&t.push(e.slice(n,r.index));for(let[e,n]of dn(r[0]))t.push(r[0].slice(e,n));n=r.index+r[0].length}return n<e.length&&t.push(e.slice(n)),t}function pn(e){let t=Array.from(e),n=/* @__PURE__ */ new Set,r=/* @__PURE__ */ new Set,i=/* @__PURE__ */ new Set;for(let e=0;e<t.length;){if(!cn.test(t[e])){e++;continue}let a=e;for(;a<t.length&&cn.test(t[a]);)n.add(a++);for(let[n,o]of dn(t.slice(e,a).join(``))){r.add(e+n);for(let t=e+n;t<e+o;t++)i.add(t)}e=a}let a=[],o=null,s=-1,c=e=>{a.length?a[a.length-1][1]=e+1:o??=e};return t.forEach((e,t)=>{Wt(e.codePointAt(0))||(n.has(t)?(s=-1,r.has(t)?a.push([t,t+1]):i.has(t)?a[a.length-1][1]=t+1:c(t)):un.test(e)?(s===t?a[a.length-1][1]=t+1:a.push([t,t+1]),s=t+1):c(t))}),a.length&&o!==null&&(a[0][0]=o),a.map(([e,n])=>t.slice(e,n).join(``))}function mn(e,t){return an.has(t)?pn(e).map(e=>Kt(e).join(``)).filter(Boolean):Kt(e)}function hn(e){return e.startsWith(``)&&e.endsWith(``)}function gn(e){return hn(e)?{value:1.4*(Jt(e)-2),int:!1}:{value:Jt(e),int:!0}}function _n(e){let t=Kt(e);if(!e.includes(``))return[rn(e),...t.map(rn)];let n=t.map(e=>e.split($t).filter(Boolean).flatMap(e=>hn(e)?[e]:rn(e)));return[n.flat(),...n]}function vn(e,t){if(e.length!==t.length)throw Error(`One token list is needed per aligned word.`);let n=[];e.forEach((e,r)=>{t[r].length&&n.push({word:e.word,start:e.start,end:e.end,confidence:e.presence,tokens:[...t[r]]})});for(let e=1;e<n.length;e++){let t=n[e-1],r=n[e];r.start<t.end&&(t.end=r.start=(t.end+r.start)/2)}return n}function yn(e,t,n,r){if(!e.length)throw Error(`original_words is empty.`);if(e[0].start<0)throw Error(`original_words[0] (${Me(e[0].word)}) starts before the clip.`);let i=0;e.forEach((e,t)=>{let{start:n,end:a}=e,o=`original_words[${t}] (${Me(e.word)})`;if(!Number.isFinite(n)||!Number.isFinite(a))throw Error(`${o} has a non-finite time.`);if(!(n<a))throw Error(`${o} must start before it ends (${Xt(n,3)} >= ${Xt(a,3)}).`);if(n<i-1e-6)throw Error(`${o} starts at ${Xt(n,3)} s, before the previous word ends (${Xt(i,3)} s).`);if(a>r+.001)throw Error(`${o} ends at ${Xt(a,3)} s, after the clip (${Xt(r,3)} s).`);i=a});let a=t.flat();if(!(a.length===n.length&&a.every((e,t)=>e===n[t]))){let e=Math.min(a.length,n.length),t=0;for(;t<e&&a[t]===n[t];)t++;let r=e=>e.slice(Math.max(0,t-2),t+3).join(` `)||`(nothing)`;throw Error(`original_words do not spell original_text: they read ${Me(r(a))} where the text reads ${Me(r(n))} (normalized).`)}return e.slice(0,t.length).map((e,n)=>({word:e.word,start:e.start,end:e.end,confidence:e.confidence??null,tokens:[...t[n]]}))}function bn(e,t,n=15){return e.map(([e,r])=>{let i=Math.max(0,Math.floor(e*n+1e-6));return[i,Math.min(t,Math.ceil(r*n-1e-6))-i]})}function xn(e,t){let n=/* @__PURE__ */ new Map;t.forEach((e,t)=>{let r=n.get(e);r?r.push(t):n.set(e,[t])});let r=(t,r,i,a)=>{let o=t,s=i,c=0,l=/* @__PURE__ */ new Map;for(let u=t;u<r;u++){let t=/* @__PURE__ */ new Map;for(let r of n.get(e[u])??[]){if(r<i)continue;if(r>=a)break;let e=(l.get(r-1)??0)+1;t.set(r,e),e>c&&([o,s,c]=[u-e+1,r-e+1,e])}l=t}return[o,s,c]},i=[],a=[[0,e.length,0,t.length]];for(;a.length;){let[e,t,n,o]=a.pop(),[s,c,l]=r(e,t,n,o);l&&(i.push([s,c,l]),e<s&&n<c&&a.push([e,s,n,c]),s+l<t&&c+l<o&&a.push([s+l,t,c+l,o]))}i.sort((e,t)=>e[0]-t[0]||e[1]-t[1]||e[2]-t[2]);let o=[],[s,c,l]=[0,0,0];for(let[e,t,n]of i)s+l===e&&c+l===t?l+=n:(l&&o.push([s,c,l]),[s,c,l]=[e,t,n]);l&&o.push([s,c,l]),o.push([e.length,t.length,0]);let u=[],d=0,f=0;for(let[e,t,n]of o){let r=d<e&&f<t?`replace`:d<e?`delete`:f<t?`insert`:null;r&&u.push([r,d,e,f,t]),d=e+n,f=t+n,n&&u.push([`equal`,e,d,t,f])}return u}function Sn(e,t,n){let{totalFrames:r,frameRate:i=15,marginSeconds:a=.08,minGapFrames:o=5,maxSpans:s=3}=n,c=e.flatMap(e=>e.tokens.map(t=>({token:t,w:e}))),l=[],u=[];for(let[e,n,s,d,f]of xn(c.map(e=>e.token),t)){if(e===`equal`)continue;let t,p;n===s?(t=n?c[n-1].w.end:0,p=n<c.length?c[n].w.start:r/i):(t=c[n].w.start,p=c[s-1].w.end);let m=Math.min(r-1,Math.max(0,Math.floor((t-a)*i))),h=Math.max(m+1,Math.min(r,Math.ceil((p+a)*i))),g=l.at(-1);g&&m-(g[0]+g[1])<o?g[1]=Math.max(h,g[0]+g[1])-g[0]:l.push([m,h-m]);for(let e=d;e<f;e++)u.push(e)}if(!l.length)throw Error(`target text equals the original transcript`);if(l.length>s)throw Error(`edit touches ${l.length} regions; at most ${s} are supported`);return{spans:l,newTargetTokens:u}}var Cn=class{words;origStart=[0];tgtStart=[0];ops;constructor(e,t,n){if(this.words=e,n.length!==t.length)throw Error(`One token list is needed per target word.`);for(let t of e)this.origStart.push(this.origStart.at(-1)+t.tokens.length);for(let e of n)this.tgtStart.push(this.tgtStart.at(-1)+e.length);this.ops=xn(e.flatMap(e=>e.tokens),n.flat())}targetCut(e,t){let n=t?this.ops:[...this.ops].reverse();for(let[r,i,a,o,s]of n){if(i<e&&e<a)return r===`equal`?o+e-i:null;if((t?i:a)===e)return t?o:s}return e===0?0:this.tgtStart.at(-1)}targetWord(e,t){let n=this.targetCut(this.origStart[e],t);if(n===null)return null;let r=[];return this.tgtStart.forEach((e,t)=>{e===n&&r.push(t)}),r.length?t?r[0]:r.at(-1):null}clean(e,t){for(;e>0&&this.targetWord(e,!0)===null;)e--;for(;t<this.words.length&&this.targetWord(t,!1)===null;)t++;return[e,t]}targetRange(e,t){return[this.targetWord(e,!0),this.targetWord(t,!1)]}};function wn(e,t,n){return e.slice(t??0,n??e.length)}function Tn(e,t,n){return{start:0,end:t,regions:e.map((e,t)=>t),text:n}}function En(e,t){return e.regions.map(n=>[t[n][0]-e.start,t[n][1]])}function Dn(e,t,n,r,i){let{totalFrames:a,frameRate:o=15,contextSeconds:s=4,targetText:c=null}=i,l=t.length;if(!l)throw Error(`The aligner found no words in the audio, so the edit cannot be windowed.`);let u=new Cn(t,n,r),d=e=>e===0?0:e===l?a:Math.min(a,Yt((t[e-1].end+t[e].start)/2*o)),f=e.map(([e,n],r)=>{let i=e/o-s,a=(e+n)/o+s,c=t.findIndex(e=>e.end>i);c<0&&(c=l);let d=0;for(let e=l-1;e>=0;e--)if(t[e].start<a){d=e+1;break}return[...u.clean(c,Math.max(c,d)),[r]]}),p=([t,n,r])=>[Math.min(d(t),...r.map(t=>e[t][0])),Math.max(d(n),...r.map(t=>e[t][0]+e[t][1]))];f.sort((e,t)=>e[0]-t[0]||e[1]-t[1]);let m=[f[0]];for(let e of f.slice(1)){let t=m.at(-1);e[0]<t[1]||p(e)[0]<p(t)[1]?(t[0]=Math.min(t[0],e[0]),t[1]=Math.max(t[1],e[1]),t[2]=[...t[2],...e[2]].sort((e,t)=>e-t)):m.push(e)}return m.map(([e,t,r])=>{let[i,a]=p([e,t,r]);return{start:i,end:a,regions:r,text:e===0&&t===l&&c!==null?c:wn(n,...u.targetRange(e,t)).join(` `)}})}function On(e,t,n,r,i=15){let a=new Cn(t,n,r),o=e=>Zt(e.flatMap(e=>e.map(gn))),s=Qt(t.map(e=>e.end-e.start)),c=s>0?o(t.map(e=>e.tokens))/s:0,l=t.map(e=>(e.start+e.end)/2);return e.map(([e,n])=>{let s=e/i,u=(e+n)/i,d=l.flatMap((e,t)=>s<=e&&e<u?[t]:[]),f=d.length?d[0]:l.findIndex(e=>e>=s);f<0&&(f=t.length);let[p,m]=a.clean(f,d.length?d.at(-1)+1:f),h=o(t.slice(p,m).map(e=>e.tokens)),g=o(wn(r,...a.targetRange(p,m)));return h?(u-s)*g/h:c>0?g/c:u-s})}function kn(e,t){if(t<=0)return{argmax:-1,centroid:0};let n=0,r=0,i=0;for(let a=0;a<t;a++)e[a]>e[n]&&(n=a),r+=e[a],i+=e[a]*a;return{argmax:n,centroid:Math.fround(i/Math.max(r,1e-30))}}function An(e,t=10,n=2,r=3){let i=t+1,a=i-1,o=Math.floor(e.length/i),s=-1;for(let t=0;t<o&&s<0;t++)e[t*i+a]===n&&(s=t);if(s<0)return null;for(let t=s+1;t<o;t++){let n=e[t*i+a];if(n===r)return{start:s,len:t-s+1};if(n<4)return null}return null}function jn(e,t,n){return e=Math.max(0,Math.min(e,n-1)),[e,Math.min(n-1,Math.max(t,e))]}const Mn=()=>({binTokens:8,coverFrac:.5,skipFrac:.15,stallFactor:3,minStallFrames:45,tailFrames:15,rollbackMarginFrames:8,maxRetries:8,paceWindowBins:16,warmupBins:2,stopBoost:3,stopBoostDelay:6}),Nn=2**53-1;function Pn(e){let t=e.slice().sort((e,t)=>e-t),n=t.length,r=n>>1;return n%2==1?t[r]:(t[r-1]+t[r])/2}function Fn(e,t){let n=0;for(;n<e.length&&e[n]<t;)n++;return n}var In=class{textLen;prior;cfg;minRollbackRow;nb;obsRows=[];obsPos=[];bumps=[];countsArr=[];firstRow=[];frontierV=0;lastAdvance=null;done=null;readRow=null;constructor(e,t,n,r){if(this.textLen=e,this.prior=t,this.cfg=n,this.minRollbackRow=r,e<1)throw Error(`text_len must be >= 1, got ${e}`);this.nb=Math.floor((e+n.binTokens-1)/n.binTokens),this.reset()}frontier(){return this.frontierV}counts(){return this.countsArr}lastAdvanceRow(){return this.lastAdvance}doneRow(){return this.done}reset(){this.countsArr=Array(this.nb).fill(0),this.firstRow=Array(this.nb).fill(null),this.frontierV=0,this.lastAdvance=null,this.done=null,this.readRow=null}tokens(e){return Math.min(this.cfg.binTokens,this.textLen-e*this.cfg.binTokens)}paceTok(){let e=Math.max(0,this.frontierV-this.cfg.paceWindowBins),t=[];for(let n=e;n<this.frontierV;n++)t.push(this.countsArr[n]/this.tokens(n));return t.length<this.cfg.warmupBins?this.prior:Pn(t)}share(e){return this.paceTok()*this.tokens(e)}lastPosBefore(e){let t=Fn(this.obsRows,e);return t?this.obsPos[t-1]:0}stopRow(){return this.done===null?null:this.done+this.cfg.tailFrames}commitRow(e){if(this.done!==null)return Nn;let t=Math.min(this.lastAdvance??e,e);for(let e=this.frontierV+2;e<this.nb;e++){let n=this.firstRow[e];n!==null&&(t=Math.min(t,n))}return this.rollback(t)}rollback(e){return Math.max(e-this.cfg.rollbackMarginFrames,this.minRollbackRow)}observe(e,t){if(!(0<=t&&t<this.textLen))throw Error(`pos ${t} outside text span [0, ${this.textLen})`);if(this.obsRows.length&&e<=this.obsRows[this.obsRows.length-1])throw Error(`rows must increase: got ${e} after ${this.obsRows[this.obsRows.length-1]}`);return this.obsRows.push(e),this.obsPos.push(t),this.step(e,t)}step(e,t){let n=this.cfg,r=Math.floor(t/n.binTokens);if(this.countsArr[r]+=1,this.firstRow[r]===null&&(this.firstRow[r]=e),this.lastAdvance===null&&(this.lastAdvance=e),r>this.frontierV&&this.countsArr[r]>=n.coverFrac*this.share(r)){for(let t=this.frontierV+1;t<r;t++)if(this.countsArr[t]<n.skipFrac*this.share(t)){let n=null;for(let e=t+1;e<this.nb;e++){let t=this.firstRow[e];t!==null&&(n===null||t<n)&&(n=t)}return{kind:`skip`,detectRow:e,onsetRow:n,rollbackRow:this.rollback(n),bin:t,frontier:r}}this.frontierV=r,this.lastAdvance=e}if(this.done===null){let t=Math.max(n.stallFactor*this.paceTok()*n.binTokens,n.minStallFrames);if(e-this.lastAdvance>t){let t=this.lastAdvance;return{kind:`hallucination`,detectRow:e,onsetRow:t,rollbackRow:this.rollback(t),bin:this.frontierV+1,frontier:this.frontierV}}}return this.readRow===null&&t>=this.textLen-1&&(this.readRow=e),this.done===null&&this.readRow!==null&&this.frontierV>=this.nb-2&&this.countsArr[this.nb-1]>=this.share(this.nb-1)&&(this.done=e),null}onEos(e){return this.frontierV<this.nb-2?{kind:`truncation`,detectRow:e,onsetRow:e,rollbackRow:this.rollback(e),bin:this.frontierV+1,frontier:this.frontierV}:null}truncate(e){let t=Fn(this.obsRows,e),n=this.obsRows.slice(0,t),r=this.obsPos.slice(0,t),i=this.bumps.filter(t=>t<e);this.obsRows=[],this.obsPos=[],this.reset();let a=0;for(let e=0;e<n.length;e++){let t=n[e];for(;a<i.length&&t>i[a];)this.lastAdvance!==null&&(this.lastAdvance=Math.max(this.lastAdvance,i[a])),a++;if(this.obsRows.push(t),this.obsPos.push(r[e]),this.step(t,r[e]))throw Error(`LACI detector: replay raised a failure`)}this.lastAdvance!==null&&(this.lastAdvance=Math.max(this.lastAdvance,e)),i.push(e),this.bumps=i}},Ln=class{textLen;c0;center;d=[0];constructor(e,t){this.textLen=t,this.c0=Math.min(Math.max(e,0),t-1),this.center=this.c0}update(e){let t=this.d,n=this.c0;n+t.length<this.textLen&&t.push(1/0);for(let r=t.length-1;r>0;r--){let i=e-(n+r);t[r]=Math.min(t[r],t[r-1])+i*i}let r=e-n;t[0]+=r*r;let i=0;for(let e=1;e<t.length;e++)t[e]<t[i]&&(i=e);return this.center=Math.min(Math.max(n+i,this.center),this.center+1),this.center}};const Rn=(e,t)=>{if(typeof e!=`number`||!Number.isInteger(e))throw Error(`${t} must be an integer`);return e};var zn=class e{heads=[];radius=[];framesPerToken=0;static parse(t,n=`heads_json`){let r=typeof t==`string`?JSON.parse(t):t;if(typeof r!=`object`||!r)throw Error(`${n}: no alignment heads`);let i=r,a=i.heads;if(a==null||a===!1||Array.isArray(a)&&a.length===0)throw Error(`${n}: no alignment heads`);if(!Array.isArray(a))throw Error(`${n}: heads is not an array`);let o=new e;for(let e of a){let t={layer:Rn(e.layer,`layer`),head:Rn(e.head,`head`)};o.heads.push(t);let n=Rn(e.radius,`radius`),r=o.radius.find(([e])=>e.layer===t.layer&&e.head===t.head);r?r[1]=n:o.radius.push([t,n])}if(typeof i.frames_per_token!=`number`)throw Error(`${n}: frames_per_token must be a number`);return o.framesPerToken=i.frames_per_token,o}},Bn=class{index;edges;nBuckets;first;constructor(e,t,n,r=0){this.index=e,this.edges=t,this.nBuckets=n,this.first=r}last(){return this.first+this.edges.length}row(e){return e>=0&&e<this.nBuckets?e:this.nBuckets}},Vn=class{attempts=0;capped=!1;end=``;textLen=0;nBins=0;finalRows=0;finalEosRow=null;generatedTotal=0;paceTok=null;heads=[];failures=[];paceRetries=0;rateBucket=null;toJson(){return{attempts:this.attempts,capped:this.capped,end:this.end,text_len:this.textLen,n_bins:this.nBins,final_rows:this.finalRows,final_eos_row:this.finalEosRow,generated_total:this.generatedTotal,pace_tok:this.paceTok,heads:this.heads.map(e=>[e.layer,e.head]),failures:this.failures.map(e=>({kind:e.kind,detect_row:e.detectRow,onset_row:e.onsetRow,rollback_row:e.rollbackRow,clamped:e.clamped,bin:e.bin,frontier:e.frontier,retry_seed:e.retrySeed,ignored:e.ignored,retry_bucket:e.retryBucket})),pace_retries:this.paceRetries,rate_bucket:this.rateBucket}}};function Hn(e,t,n,r=null,i=null){let a=r??e.rollbackRow;return{kind:e.kind,detectRow:e.detectRow,onsetRow:e.onsetRow,rollbackRow:a,clamped:a!==e.rollbackRow,bin:e.bin,frontier:e.frontier,retrySeed:t,ignored:n,retryBucket:i}}var Un=class{p;nPrefill;stream;attemptStart;emitted=0;attempts=0;textDone=!1;failures=[];end=null;detector=null;textLen=0;probation=null;pendingFailure=null;eosRow=null;generatedTotal=0;ignored=/* @__PURE__ */ new Set;conditionValues;bucket;constructor(e){if(this.p=e,this.nPrefill=e.prefillRows.length,this.stream=e.prefillRows.slice(),this.attemptStart=this.nPrefill,this.conditionValues=e.conditionValues?e.conditionValues.slice():null,this.bucket=e.bucket??null,this.bucket===null&&e.rates&&this.conditionValues&&(this.bucket=this.conditionValues[e.rates.index]),e.rateDeltas){let t=e.rates?e.rates.last()-e.rates.first+1:0;if(e.rateDeltas.length!==t)throw Error(`rate_deltas: ${e.rateDeltas.length} for ${t} buckets`)}}rateBucket(){return!this.p.rates||!this.conditionValues?null:this.bucket}window(e){return this.p.heads.radius.map(([t,n])=>({head:t,lo:e-n+1,hi:e+n-1}))}probeMask(){return this.probation?this.window(this.probation[1].center):null}stopBoost(){let e=this.detector?.doneRow()??null;return e===null||this.stream.length<e+this.p.cfg.stopBoostDelay?0:this.p.cfg.stopBoost}onStep(e,t,n,r){let i=this.attemptStart+t;this.p.follower?.observe(i-this.nPrefill,n),this.detector||=(this.textLen=e.textLen,new In(e.textLen,this.p.heads.framesPerToken,this.p.cfg,this.nPrefill));let a=this.detector;if(this.probation){let[t,n]=this.probation;e.mask=this.window(n.update(r)),a.frontier()>t.frontier&&(this.probation=null,e.mask=null)}let o=a.observe(i,n);if(o){if(this.attempts<this.p.cfg.maxRetries){this.pendingFailure=o,e.stop=!0;return}this.ignore(o)}let s=a.stopRow();s!==null&&i>=s+this.p.nCodebooks+2&&(this.textDone=!0,e.stop=!0)}ignore(e){let t=`${e.kind}\u0000${e.bin}\u0000${e.onsetRow}`;this.ignored.has(t)||(this.ignored.add(t),this.failures.push(Hn(e,null,!0)))}append(e,t){this.stream.push(e),this.generatedTotal+=1,t!==null&&(this.eosRow=this.attemptStart+t)}commitRow(){let e=this.stream.length;if(this.end)return e;if(this.p.hold)return this.nPrefill;let t;if(this.attempts>=this.p.cfg.maxRetries)t=e;else{let n=this.eosRow??e-(this.p.nCodebooks-1);t=Math.max(n-this.p.cfg.rollbackMarginFrames,this.nPrefill),t=this.detector?Math.min(t,this.detector.commitRow(e)):this.nPrefill}return Math.max(this.nPrefill,Math.min(t,e-1))}drain(e=!1){let t=e?this.stream.length:this.commitRow(),n=this.nPrefill+this.emitted,r=Math.max(n,Math.min(t,this.stream.length));return this.emitted+=r-n,{begin:n,end:r}}finishAttempt(){let e=this.pendingFailure;!e&&this.eosRow!==null&&this.detector&&(e=this.detector.onEos(this.eosRow),e&&this.attempts>=this.p.cfg.maxRetries&&(this.ignore(e),e=null));let t=0;if(e&&(t=Math.max(e.rollbackRow,this.nPrefill+this.emitted)),e&&this.p.maxTokens-(t-this.nPrefill)<=0&&(this.ignore(e),e=null),!e)return this.end=this.textDone?[`text_done`,this.detector.stopRow()]:this.eosRow===null?[`max_tokens`,null]:[`eos`,this.eosRow],null;this.attempts+=1;let n=this.p.seed===null?null:this.p.seed+1e3*this.attempts;this.failures.push(Hn(e,n,!1,t,null)),this.stream.length=t,this.detector.truncate(t),this.p.follower?.truncate(t-this.nPrefill),this.probation=[e,new Ln(this.detector.lastPosBefore(t),this.textLen)],this.pendingFailure=null,this.textDone=!1,this.eosRow=null,this.attemptStart=t;let r=null;if(this.p.rateDeltas&&this.bucket!==null&&this.p.rates){let e=this.p.rateDeltas[this.bucket-this.p.rates.first];e&&e.length&&(r=e)}return{nRows:t,historyRows:t-this.nPrefill,seed:n,maxTokens:this.p.maxTokens-(t-this.nPrefill),conditionValues:this.conditionValues?this.conditionValues.slice():null,swapDelta:!!this.p.rateDeltas,steeringDelta:r}}eosFrame(){return!this.end||this.end[1]===null?null:this.end[1]-this.nPrefill}record(){if(!this.end)throw Error(`LaciSession::record before the result is final`);let e=this.detector,t=new Vn;return t.attempts=this.attempts,t.capped=this.attempts>=this.p.cfg.maxRetries,t.end=this.end[0],t.textLen=this.textLen,t.nBins=e?e.nb:0,t.finalRows=(this.end[1]??this.stream.length)-this.nPrefill,t.finalEosRow=this.end[1],t.generatedTotal=this.generatedTotal,e&&(t.paceTok=e.paceTok()),t.heads=this.p.heads.heads,t.failures=this.failures,t.paceRetries=0,t.rateBucket=this.rateBucket(),t}};const Wn=()=>({lead:1,lag:0,smooth:3,ramp:3});function Gn(e){let t=e.slice().sort((e,t)=>e-t),n=t.length,r=n>>1;return n%2==1?t[r]:(t[r-1]+t[r])/2}function Kn(e,t){let n=/* @__PURE__ */ new Map;t.forEach((e,t)=>{let r=n.get(e);r?r.push(t):n.set(e,[t])});let r=(r,i,a,o)=>{let s=r,c=a,l=0,u=/* @__PURE__ */ new Map;for(let t=r;t<i;t++){let r=/* @__PURE__ */ new Map;for(let i of n.get(e[t])??[]){if(i<a)continue;if(i>=o)break;let e=(u.get(i-1)??0)+1;r.set(i,e),e>l&&(s=t-e+1,c=i-e+1,l=e)}u=r}for(;s>r&&c>a&&e[s-1]===t[c-1];)s--,c--,l++;for(;s+l<i&&c+l<o&&e[s+l]===t[c+l];)l++;return{i:s,j:c,k:l}},i=e.length,a=t.length,o=[[0,i,0,a]],s=[];for(;o.length;){let[e,t,n,i]=o.pop(),a=r(e,t,n,i);a.k&&(s.push(a),e<a.i&&n<a.j&&o.push([e,a.i,n,a.j]),a.i+a.k<t&&a.j+a.k<i&&o.push([a.i+a.k,t,a.j+a.k,i]))}s.sort((e,t)=>e.i-t.i||e.j-t.j||e.k-t.k);let c=0,l=0,u=0,d=[];for(let e of s)c+u===e.i&&l+u===e.j?u+=e.k:(u&&d.push({i:c,j:l,k:u}),c=e.i,l=e.j,u=e.k);return u&&d.push({i:c,j:l,k:u}),d.push({i,j:a,k:0}),d}const qn=e=>Array.from(e,e=>e.codePointAt(0));function Jn(e,t){let n=0,r=0,i=[];for(let a of Kn(qn(e),qn(t))){let e=n<a.i&&r<a.j?`replace`:n<a.i?`delete`:r<a.j?`insert`:null;e&&i.push({tag:e,i1:n,i2:a.i,j1:r,j2:a.j}),n=a.i+a.k,r=a.j+a.k,a.k&&i.push({tag:`equal`,i1:a.i,i2:n,j1:a.j,j2:r})}return i}function Yn(e,t,n,r=!1){if(e===t)return n.slice();let i=qn(e).length,a=qn(t).length,o=Jn(e,t).filter(e=>e.i2>e.i1);return n.map(e=>{if(e>=i)return a;let t=0;for(;t<o.length&&o[t].i1<=e;)t++;let n=o[t-1];if(n.tag===`equal`)return n.j1+e-n.i1;let s=n.j1+(e-n.i1)*(n.j2-n.j1)/(n.i2-n.i1);return r?Math.ceil(s):Math.trunc(s)})}const Xn=e=>e<128?1:e<2048?2:e<65536?3:4;function Zn(e,t,n){let r=Array.from(e),i=r.length,a=[[0,0]];if(t){let o=(e,n)=>{if(e)for(let[r,i]of t(e))a.push([n+r,n+i])},s=(e,t)=>{let n=Array.from(e);for(let e=t;e+n.length<=i;e++)if(n.every((t,n)=>r[e+n]===t))return e;return-1};if(!n||s(n.open,0)<0&&s(n.close,0)<0)o(e,0);else{let e=0;for(;e<i;){let t=s(n.open,e);if(o(r.slice(e,t<0?i:t).join(``),e),t<0)break;let c=s(n.close,t+1);for(let e=t;e<=c;e++)a.push([e,e+1]);e=c+1}}}else for(let e=0;e<i;e++)for(let t=0;t<Xn(r[e].codePointAt(0));t++)a.push([e,e+1]);return a.push([i,i]),a}function Qn(e,t,n,r){let i=qn(e),a=qn(t),o=r.map(([e,t])=>{let n=e,r=t;for(;n<r&&Wt(a[n]);)n++;for(;r>n&&Wt(a[r-1]);)r--;return[n,r]}),s=[];for(let[a,c]of n){for(;a<c&&Wt(i[a]);)a++;for(;c>a&&Wt(i[c-1]);)c--;let n=Yn(e,t,[a])[0],l=Yn(e,t,[c],!0)[0],u=[];if(o.forEach(([e,t],r)=>{e<t&&e<l&&n<t&&u.push(r)}),u.length)s.push([u[0],u[u.length-1]+1]);else{let e=r.length-1;for(let t=0;t<o.length;t++)if(o[t][0]<o[t][1]&&o[t][1]>n){e=t;break}s.push([e,e])}}return s}var $n=class{ranges;deltas;cfg;origin;frames=[];pos=[];best=0;enter;exit;decided=/* @__PURE__ */ new Map;constructor(e,t,n=Wn(),r=0){if(this.ranges=e,this.deltas=t,this.cfg=n,this.origin=r,!t.every(e=>e.length===t[0].length)||t.length!==e.length)throw Error(`span follower: ${e.length} token ranges for deltas of shape (${t.length}, ${t.length?t[0].length:0})`);if(n.smooth<1||n.ramp<1)throw Error(`span follower: smooth and ramp must be >= 1`);this.enter=e.map(()=>null),this.exit=e.map(()=>null)}onStep(e,t){this.observe(this.origin+e,t)}observe(e,t){if(this.frames.length&&e<=this.frames[this.frames.length-1])throw Error(`span follower: frames must increase, got ${e} after ${this.frames[this.frames.length-1]}`);this.frames.push(e),this.pos.push(t),this.advance(this.pos.length)}position(){return this.best}advance(e){let t=Gn(this.pos.slice(Math.max(0,e-this.cfg.smooth),e));this.best=Math.min(Math.max(this.best,t),this.best+1)}weights(e){let t=this.decided.get(e);if(t)return t;let n=this.best,r=this.cfg;this.ranges.forEach(([t,i],a)=>{t>=i||(!this.enter[a]&&n>=t-r.lead&&(this.enter[a]=[e,this.frames.length===0?e-r.ramp+1:e]),this.enter[a]&&!this.exit[a]&&n>=i+r.lag&&(this.exit[a]=[e,e]))});let i=this.ranges.map((t,n)=>{let i=this.enter[n],a=this.exit[n];if(!i)return 0;let o=(e-i[1]+1)/r.ramp,s=a?(a[1]+r.ramp-1-e)/r.ramp:1;return Math.min(1,Math.max(0,Math.min(o,s)))});return this.decided.set(e,i),i}delta(e){let t=this.weights(e);if(!t.some(e=>e>0))return null;let n=this.deltas.length?this.deltas[0].length:0,r=new Float32Array(n);return t.forEach((e,t)=>{let i=Math.fround(e);for(let e=0;e<n;e++)r[e]+=Math.fround(i*this.deltas[t][e])}),r}truncate(e){let t=0;for(;t<this.frames.length&&this.frames[t]<e;)t++;this.frames.length=t,this.pos.length=t,this.best=0;for(let e=1;e<=t;e++)this.advance(e);for(let t of[this.enter,this.exit])for(let n=0;n<t.length;n++)t[n]&&t[n][0]>=e&&(t[n]=null);for(let t of[...this.decided.keys()])t>=e&&this.decided.delete(t)}};function er(e,t,n){if(t<=0||e.length===0)return;let r=Math.min(e.length,Math.floor(t*.001*n));for(let t=0;t<r;t++){let n=Math.fround(t/r),i=Math.fround(.5*(1+Math.fround(Math.cos(Math.fround(Math.PI*n)))));e[e.length-r+t]=Math.fround(e[e.length-r+t]*i)}}function tr(e){try{return e()}catch(e){if(e instanceof we)throw e;L(400,e instanceof Error?e.message:String(e))}}function nr(e,t){let n=e.hp,r=R(t,`condition_buckets`)?t.condition_buckets:null,i=R(t,`condition_values`)?t.condition_values:null,a=e=>e!==null&&(Array.isArray(e)?e.length>0:Object.keys(e).length>0);if(n.nCond===0)return(a(r)||a(i))&&L(400,`This checkpoint has no condition rows (loudness / fmax / speaking rate)`),[];let o=n.condNames,s=(e,t)=>{let n=/* @__PURE__ */ new Map;if(e===null)return n;if(!Array.isArray(e)){let r=[];for(let[t,i]of Object.entries(e))o.includes(t)?n.set(t,i):r.push(t);return r.length&&L(400,`${t}: unknown condition name(s) ${Ne(r)}; expected ${Ne(o)}`),n}return e.length!==o.length&&L(400,`${t}: expected ${o.length} entries in the order ${Ne(o)}`),o.forEach((t,r)=>n.set(t,e[r])),n},c=s(r,`condition_buckets`),l=s(i,`condition_values`);return o.map((e,t)=>{let r=c.get(e),i=l.get(e),a=n.condBucketCounts[t];if(r!=null){let t=Number(r);return(t<0||t>a)&&L(400,`condition_buckets[${e}] must be in [0, ${a-1}] or ${a} (= unknown)`),t}if(i!=null){let r=Number(i);Number.isFinite(r)||L(400,`condition_values[${e}] must be finite`);let a=n.condEdges[t]??[];return a.length||L(400,`the checkpoint carries no edges for ${e}; send condition_buckets[${e}] instead`),D(a,r)}return a})}function rr(e,t){if(!R(t,`decoder`))return e.decoders[0];let n=B(t,`decoder`),r=e.decoders.find(e=>e.id===n);return r||L(400,`Unknown decoder '${n}'; this server serves: ${e.decoders.map(e=>e.id).join(`, `)}.`),r}function ir(e){let t=B(e,`language`)??`en_us`,n=t.trim().toLowerCase().replaceAll(`-`,`_`);return pt.includes(n)||L(400,`Unsupported language code: ${Me(t)}. Supported: ${pt.join(`, `)}.`),n}function ar(e){return e.speakerMode===`embedding`&&e.speakerEmbedding?e.speakerEmbedding:null}function or(e){let t=B(e,`accent`);if(t!==null&&t!==``&&t!==`none`&&!vt.includes(t)){let e=vt.length?vt.join(`, `):`none (load accent adapters)`;L(400,`Unknown accent ${Me(t)}; loaded accents: ${e}.`)}}function sr(e,t){let n=e=>R(t,e)?Number(t[e]):null;return tr(()=>de(e.steer,n(`steer_hold`),n(`steer_onset_seconds`),n(`steer_ramp_seconds`),a/m))}function cr(e,t,n){let r=sr(e,t);if(!je(t,`controls`)&&!je(t,`control_spans`))return;e.steer||L(400,`${M}; \`controls\` are unavailable.`);let i=R(t,`controls`)?t.controls:{},a=R(t,`control_spans`)?t.control_spans:[],o=z(t,`control_span_rate`,0),s=n.speakerMode===`embedding`?n.speakerEmbedding:null;n.steering=tr(()=>ge(e.steer,i,a,me(n.rawText),o,s,r))}function lr(e,t,n){Ae(t,`laci`)&&(e.laci.size||L(400,`LACI is not enabled on this server (start it with --laci-heads LANG=PATH)`),e.laci.has(n)||L(400,`No LACI alignment heads for language ${Me(n)} (configured: ${_t(e).join(`, `)})`),(z(t,`speaker_cfg_scale`,1)!==1||z(t,`controls_cfg_scale`,1)!==1)&&L(400,`LACI needs speaker_cfg_scale = controls_cfg_scale = 1`))}function ur(e,t){if(!t.follow)return;let n=e.tokenizer,r=new TextEncoder,i=e=>{let t=[],i=r.encode(e),a=Array.from(e).length,o=Array(i.length+1).fill(a);for(let e=0,t=0;e<i.length;e++)e>0&&(i[e]&192)!=128&&t++,o[e]=t;let s=n.encode(e),c=0;for(let e=1;e+1<s.length;e++){let r=n.tokenBytes(s[e]);r!==0&&(t.push([o[c],o[c+r-1]+1]),c+=r)}return t},a=t.steering.spans.map(e=>[e.charStart,e.charEnd]),o=Zn(t.text,i,null);t.followTokens=Qn(t.rawText,t.text,a,o)}async function dr(e,t,n,r,i){let a=B(n,`text`),s=rr(e,n),u=z(n,`speaker_cfg_scale`,1),m=z(n,`controls_cfg_scale`,1),g=t.checkpointModes(),_=g.length?g[0]:``;R(n,`speaker_mode`)&&(_=B(n,`speaker_mode`),g.includes(_)||L(400,`speaker_mode=${Me(_)} is not available for this checkpoint (supported: ${Ne(g)})`));let v=nr(e,n),y=await t.resolveRequest(n,r,_,i),b={text:a,rawText:a,language:`en_us`,sp:Tt(),maxFrames:d,speakerMode:y.mode,referenceCodes:y.codes,speakerEmbedding:y.embedding?Float32Array.from(y.embedding):null,conditionBuckets:v,silencePrefill:0,decodeContext:null,cfgScale:1,cfgKind:``,twinSteered:!0,decoder:s,headroomDb:-1,fadeOutMs:0,stream:!0,wav:!1,prefix:!1,streamCodebooks:f,streamFirstOnly:p===`first`,steering:new ne,spanFollow:``,laci:null,follow:null,followTokens:[],followLead:1,followLag:0,prompt:null,twin:null};if(b.language=ir(n),R(n,`max_tokens`)){let e=Number(n.max_tokens);e<=0&&L(400,`max_tokens must be positive.`),b.maxFrames=Math.min(e,d)}if(b.silencePrefill=gt.on?gt.frames:0,R(n,`silence_prefill_frames`)){let e=Number(n.silence_prefill_frames);(!Number.isInteger(e)||e<0||e>c)&&L(400,`silence_prefill_frames must be 0..${c}`),b.silencePrefill=e}if(or(n),cr(e,n,b),B(n,`control_span_follow`)===`reading`&&b.steering.spans.length){let t=e.laci.get(b.language);if(t){let e=Wn();b.follow=t,b.followLead=z(n,`control_span_lead`,e.lead),b.followLag=z(n,`control_span_lag`,e.lag)}}je(n,`control_spans`)&&(b.spanFollow=b.follow?`reading`:`rate`),b.stream=Ae(n,`stream`)??!0,b.prefix=b.stream&&(!R(n,`stream_decode`)||B(n,`stream_decode`)===`prefix`),R(n,`stream_codebooks`)&&(b.streamCodebooks=Number(n.stream_codebooks),b.streamCodebooks>10&&L(400,`stream_codebooks must be 1..10`)),R(n,`stream_codebooks_scope`)&&(b.streamFirstOnly=B(n,`stream_codebooks_scope`)===`first`),u!==1&&(b.speakerMode===`reference`&&b.referenceCodes?.length||b.speakerMode===`embedding`&&b.speakerEmbedding?.length||L(400,`Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or speaker_mode=embedding with a clip or an embedding`),m!==1&&L(400,`Speaker and controls CFG cannot be combined`),b.cfgScale=u,b.cfgKind=`speaker`),m!==1&&(b.steering.hidden||b.steering.release)&&ar(b)&&(b.cfgScale=m,b.twinSteered=!1,b.cfgKind=`controls`),(a.includes(``)||a.includes(``))&&L(400,`This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups`),a.includes(``)&&L(400,`This checkpoint has no start token: remove the U+E002 start marker`),/[\uE003-\uE00A]/.test(a)&&L(400,`This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers`),Ae(n,`start_immediately`)&&L(400,`start_immediately needs a checkpoint with a start token`),lr(e,n,b.language),Ae(n,`laci`)&&(b.laci=e.laci.get(b.language));let x=b.sp;if(x.temperature=z(n,`temperature`,o.temperature),x.top_k=z(n,`topk`,o.topk),x.top_p=z(n,`top_p`,o.top_p),x.min_p=z(n,`min_p`,o.min_p),x.rep_penalty=z(n,`repetition_penalty`,o.repetition_penalty),x.rep_window=z(n,`repetition_window`,o.repetition_window),x.rep_codebooks=z(n,`repetition_codebooks`,o.repetition_codebooks),x.rep_codebooks<0&&(x.rep_codebooks=e.hp.nCodebooks),x.seed=R(n,`seed`)?Number(n.seed)>>>0:crypto.getRandomValues(/* @__PURE__ */ new Uint32Array(1))[0]&2147483647,x.greedy=x.temperature<=0,b.fadeOutMs=z(n,`fade_out_ms`,0),b.headroomDb=z(n,`headroom_db`,-1),Ae(n,`decode_context`)&&b.referenceCodes?.length){let e=z(n,`decode_context_frames`,0)||l,t=b.referenceCodes.length/10,r=Math.max(0,Math.min(e,t));b.decodeContext=b.referenceCodes.slice(b.referenceCodes.length-r*10)}ur(e,b);let S={referenceCodes:b.speakerMode===`reference`&&b.referenceCodes?.length?b.referenceCodes:void 0,speakerEmbedding:b.speakerMode===`embedding`&&b.speakerEmbedding?.length?b.speakerEmbedding:void 0,buckets:b.conditionBuckets,silencePrefill:b.silencePrefill};try{b.prompt=T(e.tokenizer,b.text,S,e.hp)}catch(e){L(400,`could not build the prompt: ${e instanceof Error?e.message:String(e)}`)}if(b.cfgKind===`speaker`)try{b.twin=E(b.prompt,e.hp.condBucketCounts)}catch{L(400,`could not build the speaker-CFG twin prompt`)}else b.cfgKind===`controls`&&(b.twin={...b.prompt,cond:{...b.prompt.cond}});let C=Math.max(b.prompt.nRows,b.twin?.nRows??0);return C>=h&&L(400,`TTS input len ${C} exceeds ${h}`),b.maxFrames=Math.min(b.maxFrames,h-C),b}function fr(e,t){let n=t.laci??t.follow;if(!n)return{probe:null,follower:null,laci:null};let r=An(t.prompt.ids,10);r||L(400,`the prompt has no complete text span for the alignment probe`),r.len>2048&&L(400,`the text is too long for the alignment probe (${r.len} text rows; at most ${g})`);let i={textStart:r.start,textLen:r.len,heads:n.heads.map(e=>({...e})),windows:[]},a=null;if(t.follow&&t.steering.spans.length){let e={...Wn(),lead:t.followLead,lag:t.followLag};a=new $n(t.followTokens.map(e=>[e[0],e[1]]),t.steering.spans.map(e=>e.delta),e)}if(!t.laci)return{probe:i,follower:a,laci:null};let o=t.prompt.prefillFrames,s=[];for(let e=t.prompt.nRows-o;e<t.prompt.nRows;e++)s.push(t.prompt.ids.slice(e*11,(e+1)*11));let c=null,l=e.hp;l.condNames.forEach((e,t)=>{e===`speaking_rate`&&l.condEdges[t]?.length&&(c=new Bn(t,l.condEdges[t].slice(),l.condBucketCounts[t]))});let u=tr(()=>new Un({heads:t.laci,cfg:Mn(),prefillRows:s,seed:t.sp.seed,maxTokens:t.maxFrames,nCodebooks:10,hold:!t.prefix,rates:c,conditionValues:l.nCond>0?t.prompt.cond.buckets.slice():null,bucket:null,rateDeltas:null,follower:a}));return{probe:i,follower:a,laci:u}}function pr(e,t,n,r){if(r===0)return e.slice(0,t*10);let i=Array((r+t)*10).fill(4097),a=n.length/10-r;for(let o=0;o<r+t;o++){if(o>=r)for(let t=0;t<10;t++)i[o*10+t]=e[(o-r)*10+t];for(let e=0;e<10;e++){let t=o-e;t>=0&&t<r&&(i[o*10+e]=n[(a+t)*10+e])}}return i}async function mr(e,t,n,r){let{probe:i,follower:o,laci:s}=fr(e,t),c=e.backbone,l=await t.decoder.codec(),u=t.decodeContext?t.decodeContext.length/10:0,d=(t.prompt.prefillFrames+u)*m,f=t.headroomDb<0?l.gain:Math.fround(10**(-t.headroomDb/20)),p=e=>{let t=e;if(d>0){let e=Math.min(t.length,d);t=t.subarray(e),d-=e}return Nt(t,f)},h=Ot(t.prompt.prefillFrames),g=Et(e.hp.audioVocab).stopId,_=Array.from(O(t.prompt)),v=-1,y=t.maxFrames,b=0,x=t.twin,S=t.twinSteered,C=x?t.cfgScale:null,w=s?.probeMask()??[],T={textLen:i?.textLen??0,mask:null,stop:!1},E=t.steering;l.reset();let D=0,k=Promise.resolve(),A=null,ee=(e,t,r,i=!1)=>{for(;D<r;){let a=Math.min(16,r-D),o=l.chunk(Dt(e,t,D,a,void 0,i),D,a);o.catch(()=>{}),D+=a,k=k.then(()=>o).then(e=>{let t=p(e);t.length&&n(t)}).catch(e=>{A??=e})}},j=t.prompt.prefillFrames,M=l.partialFrames?t.streamCodebooks:10,te=e.hp.audioPad,N=()=>{let e=_.length/10,n=e-9;v>=0&&(n=Math.min(n,v));let r=n;if(M<10&&!(t.streamFirstOnly&&j>t.prompt.prefillFrames))for(r=e-(M-1),v>=0&&(r=Math.min(r,v));r>Math.max(n,j)&&_[(r-1)*10]>=te-1;)r--;let i=r-0,a=Math.min(15,1+j-t.prompt.prefillFrames);i-j<a||(ee(pr(_,e,t.decodeContext,u),e+u,i+u,i>n),j=i)},P=()=>i?{...i,windows:w}:null,ne=e=>{let t=b+e;if(o){let e=E.baseAt(t),n=o.delta(t);if(!n)return e;if(e)for(let t=0;t<e.length&&t<n.length;t++)n[t]+=e[t];return n}return E.at(t)},F=i===null,re=[],I=0,ie=()=>{let e=I++,t=e===0?c.sampleFirst(h.prefill).then(e=>({frame:e,probe:null})):(()=>{let t=ne(e);return c.stepSample(h.prefill+e,t,S?t:null,P(),s?.stopBoost()??0)})();t.catch(()=>{}),re.push(t)},ae=async()=>{await Promise.allSettled(re),re.length=0};for(await Promise.all([c.prefill(0,t.prompt.ids,t.prompt.cond),x?c.prefill(1,x.ids,x.cond):null]),c.startSampling({sp:t.sp,minFrames:0,cfgScale:C});;){if(r()){await ae(),await k;return}if(A)throw await ae(),A;re.length||ie(),F&&re.length<2&&I<y&&ie();let e=await re.shift();if(i&&e.probe){let t=kn(e.probe,i.textLen);if(s){try{s.onStep(T,h.step,t.argmax,t.centroid)}catch(e){throw Error(`LACI: ${e instanceof Error?e.message:String(e)}`)}w=T.mask??[]}else o&&o.onStep(h.step,t.argmax)}if(s){At(h,e.frame,g,y);let t=h.eosFrame>=0?Math.max(0,h.eosFrame-s.attemptStart):null;if(s.append(Int32Array.from(h.nextIds),t),T.stop&&(h.done=!0),!h.done){let e=s.drain();for(let t=e.begin;t<e.end;t++)for(let e=0;e<10;e++)_.push(s.stream[t][e])}}else{let t=At(h,e.frame,g,y);for(let e of t)_.push(e);v=h.eosFrame}if(t.prefix&&N(),h.done){if(await ae(),s){let e=s.finishAttempt();if(e){let n=t.prompt.nRows-t.prompt.prefillFrames,r=new Int32Array((n+e.nRows)*11);r.set(t.prompt.ids.subarray(0,n*11));for(let t=0;t<e.nRows;t++)r.set(s.stream[t].subarray(0,11),(n+t)*11);let i={...t.prompt.cond};e.conditionValues&&(i.buckets=e.conditionValues.slice()),e.swapDelta&&(E.hidden=e.steeringDelta),Object.assign(h,Ot(e.nRows)),I=0,w=s.probeMask()??[],T.mask=null,T.stop=!1,b=e.historyRows,y=e.maxTokens,await c.prefill(0,r,i),c.startSampling({sp:{...t.sp,seed:(e.seed??t.sp.seed)>>>0},minFrames:0,cfgScale:C,history:s.stream.slice(t.prompt.prefillFrames,e.nRows)});let a=s.drain();for(let e=a.begin;e<a.end;e++)for(let t=0;t<10;t++)_.push(s.stream[e][t]);t.prefix&&N();continue}let n=s.drain(!0);for(let e=n.begin;e<n.end;e++)for(let t=0;t<10;t++)_.push(s.stream[e][t]);v=s.end&&s.end[1]!==null?s.end[1]:-1}if(v>=0&&v<=t.prompt.prefillFrames)throw Error(`generation failed`);if(await k,A)throw A;let e=_.length/10,r=e+u,i=Math.min(v>=0?v+u:r,r-9);if(i>0){let o=pr(_,e,t.decodeContext,u),s=[],c=e=>{e.length&&s.push(e)};for(;D<i;){let e=Math.min(16,i-D);c(p(await l.chunk(Dt(o,r,D,e),D,e))),D+=e}c(p(await l.flush()));let d=s.reduce((e,t)=>e+t.length,0),f=new Float32Array(d),m=0;for(let e of s)f.set(e,m),m+=e.length;er(f,t.fadeOutMs,a),f.length&&n(f)}return}}}async function hr(e,t,n,r,i,o){let s=B(n,`format`)===`wav`;(Ae(n,`stream`)??!0)&&s&&L(400,`format=wav needs stream=false`);let c=await dr(e,t,n,Oe(r),r.pcm);c.wav=s;let l={"x-audio-sample-rate":String(a),"x-audio-channels":`1`,"x-audio-format":s?`pcm16`:`float32`,"x-seed":String(c.sp.seed),"x-decoder":c.decoder.id};if(c.spanFollow&&(l[`x-control-span-follow`]=c.spanFollow),c.stream){let t=!1,n=()=>{t||(t=!0,i.start(200,{...l,"content-type":`audio/pcm`}))};try{await mr(e,c,e=>{n(),i.chunk(new Uint8Array(e.buffer,e.byteOffset,e.byteLength))},o)}catch(e){if(!t)throw e;console.error(`generate:`,e)}n(),i.end();return}let u=[];try{await mr(e,c,e=>u.push(e.slice()),o)}catch(e){if(e instanceof we)throw e;console.error(`generate:`,e),L(500,`generation failed`)}let d=new Float32Array(u.reduce((e,t)=>e+t.length,0)),f=0;for(let e of u)d.set(e,f),f+=e.length;s?(i.start(200,{...l,"content-type":`audio/wav`}),i.chunk(_e(d,a))):(i.start(200,{...l,"content-type":`audio/pcm`}),i.chunk(new Uint8Array(d.buffer))),i.end()}const gr=[`speaker_audio_base64`,`speaker_audio_name`,`speaker_reference_codes`,`speaker_embedding_base64`,`speaker_embedding_name`,`speaker_embedding_id`,`speaker_blend_embedding_id_a`,`speaker_blend_embedding_id_b`,`speaker_blend_t`];async function _r(e,t,n,r,i){await hr(e,t,ke(n,`GenerateRequest`),n,r,i)}async function vr(e,t,n,r,i){let a=ke(n,`SpeechRequest`),o=Oe(n),s=B(a,`response_format`)??`pcm`;if(R(a,`voice`)){for(let e of gr)R(a,e)&&L(400,`voice cannot be combined with speaker_* fields`);let e=B(a,`voice`);t.known(o,e)||L(400,`unknown voice '${e}'`),a.speaker_embedding_id=e}a.text=a.input,a.stream=s===`pcm`,a.format=s;for(let e of[`model`,`input`,`voice`,`response_format`])delete a[e];await hr(e,t,a,n,r,i)}const yr=`send the clip's transcript as original_text`,H=a/m,br=new Map(dt.server.map(e=>[e.code,e.speech]));function xr(e){L(503,`Speech recognition is not available on this server: `+e)}function Sr(e){return(!e.edit||yt(e)<=0)&&L(503,`Speech editing is not available on this server: the model export has no speech-edit adapter (edit) or FuseAlign aligner (aligner).`),e.edit}function Cr(e,t){let r=B(e,`audio_base64`)??``;qt(r).startsWith(`data:`)&&!r.includes(`,`)&&L(400,`Invalid data URL for audio_base64.`),n(r)||L(400,`audio_base64 must be valid base64-encoded data.`);let i=t.pcm;i&&i.length||L(400,`could not decode the audio (any container this browser decodes)`);let o=t.pcmSeconds??i.length/a;return o>v&&L(400,`Audio is ${Xt(o,1)} s long; at most ${Xt(v,0)} s are supported here.`),{pcm:i,duration:i.length/a}}async function wr(e,t,n,r,i){let o=t.length/a;o>30&&L(400,`Audio is ${Xt(o,1)} s long; this server aligns at most 30 s (edit_align_max_seconds)${i}.`);let s=mn(n,r),c=s.length?await e.align($e(t,a),s):[];return tr(()=>vn(c,s.map(rn)))}function Tr(e){return e.map(e=>({word:e.word,start:e.start,end:e.end,confidence:e.confidence,tokens:e.tokens}))}function Er(e,t){let n=ke(t,`EditTranscribeRequest`);Sr(e),ir(n),xr(`send the transcript to /v2/edit/align instead`)}async function Dr(e,t,n){let r=ke(t,`EditAlignRequest`),i=Sr(e),a=qt(B(r,`text`));a||L(400,`text is empty.`);let o=br.get(ir(r)),{pcm:s,duration:c}=Cr(r,t);Ee(n,{text:a,duration:c,words:Tr(await wr(i,s,a,o,``))})}function Or(e,t,n,r){let i=sr(e,t);/[\uE002-\uE00A]/.test(n)&&L(400,`Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text`),(n.includes(``)||n.includes(``))&&L(400,`This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups`);let a=/* @__PURE__ */ new Set;if(r){let t=e.steer;t||L(400,`${M}; \`controls\` are unavailable.`);for(let n of r){tr(()=>ge(t,n,[],0,1,new Float32Array(e.hp.speakerDim)));for(let e of Object.keys(n))t.dirs[t.index.get(e)].hidden||a.add(e)}}return{release:i,buckets:nr(e,t),raw:[...a].sort()}}function kr(e,t){let n=Tt();return n.temperature=z(t,`temperature`,o.temperature),n.top_k=z(t,`topk`,o.topk),n.top_p=z(t,`top_p`,o.top_p),n.min_p=z(t,`min_p`,o.min_p),n.rep_penalty=z(t,`repetition_penalty`,o.repetition_penalty),n.rep_window=z(t,`repetition_window`,o.repetition_window),n.rep_codebooks=z(t,`repetition_codebooks`,o.repetition_codebooks),n.rep_codebooks<0&&(n.rep_codebooks=e.hp.nCodebooks),n.greedy=n.temperature<=0,n}async function Ar(e,t,n,i){let o=ke(t,`EditRequest`),s=Sr(e),c=yt(e),l=rr(e,o),u=qt(B(o,`target_text`)),f=br.get(ir(o));u||L(400,`target_text is empty.`);let p=R(o,`original_words`)?o.original_words:null,g=B(o,`original_text`);p&&!qt(g??``)&&L(400,`original_words needs the original_text they spell.`);let _=R(o,`spans`)?o.spans:null,y=p===null&&!g;Ae(o,`verify`)&&xr(`set verify to false`),y&&_===null&&xr(yr);let b=tr(()=>St(R(o,`controls`)?o.controls:null,R(o,`region_controls`)?o.region_controls:null,_)),x=e.hp.speakerDim>0,S=R(o,`speaker_embedding`)?Ae(o,`speaker_embedding`):x;S&&!x&&L(400,`speaker_embedding needs a checkpoint with a speaker-embedding row.`);let{release:C,buckets:w,raw:T}=Or(e,o,u,b);T.length&&!S&&L(400,`Controls ${T.join(`, `)} move the speaker embedding and need the speaker row (speaker_embedding true or unset, on a speaker-embedding checkpoint).`);let{pcm:E,duration:D}=Cr(o,t),O=z(o,`max_context_seconds`,16);y&&_!==null&&D>O&&xr(yr);let k=Math.ceil(E.length/m),A=k/H>O,ee=Kt(u),j=_n(u),M=z(o,`min_fill_ratio`,.7),te=g,N=null;if(p){let e=p.map(e=>e.tokens??rn(e.word));N=tr(()=>yn(p,e,rn(te),D))}else(_===null||A||M>0&&te)&&(te||xr(yr),N=await wr(s,E,te,f,`; send original_words for a longer clip`));let P=null;if(S){try{P=await e.embedSpeaker(E)}catch{L(400,`speaker embedding computation failed`)}P.length===e.hp.speakerDim&&P.every(Number.isFinite)||L(400,`speaker embedding computation failed`)}let ne;try{ne=await e.encodeReference(E)}catch{L(400,`reference audio encoding failed (maximum ${v} seconds)`)}ne.length!==k*10&&L(500,`reference audio encoding returned an unexpected frame count`);let F=tr(()=>{let e=_===null?Sn(N,j[0],{totalFrames:k,frameRate:H,marginSeconds:z(o,`margin_seconds`,.08),maxSpans:c}).spans:bn(_,k,H);return Pt(e,k,c),e}),re=A?tr(()=>Dn(F,N,ee,j.slice(1),{totalFrames:k,frameRate:H,contextSeconds:z(o,`context_seconds`,4),targetText:u})):[Tn(F,k,u)],I=N===null?F.map(([,e])=>e/H):tr(()=>On(F,N,ee,j.slice(1),H)),ie=z(o,`max_span_seconds`,30),ae=I.map(e=>Math.min(Math.trunc(M*e*H),Math.trunc(ie*H))),oe=Math.min(Math.trunc(ie*H)+10+1,d),se=F.map((e,t)=>b===null?null:b[_===null?0:t]),ce=R(o,`seed`)?Number(o.seed):crypto.getRandomValues(/* @__PURE__ */ new Uint32Array(1))[0]%(2**31-8),le=kr(e,o),ue=await s.backbone(),de=await l.codec(),fe=[];for(let t=0;t<z(o,`num_takes`,1);t++){let n=Array(F.length),o=Array(F.length).fill(null);for(let r of re){let a=ne.subarray(r.start*10,r.end*10),c=En(r,F),l=[];for(let d of r.regions){let f=P?Float32Array.from(P):null,p=se[d],m=p&&Object.keys(p).length?tr(()=>ge(e.steer,p,[],me(u),1,f,C)):null,g={text:r.text,sampling:{...le,seed:ce+t>>>0},maxFrames:oe,minFrames:ae[d],buckets:w,speakerEmbedding:f,steering:m,windowCodes:a,spans:c,fills:[...l]},_;try{_=Vt(e.tokenizer,s.hp,g)}catch(e){L(400,`could not build the edit prompt: ${e instanceof Error?e.message:String(e)}`)}_.nRows>=h&&L(400,`TTS input len ${_.nRows} exceeds ${h}`),g.maxFrames=Math.min(g.maxFrames,h-_.nRows);let v;try{v=await Ht(ue,s.hp,_,g,i)}catch(e){if(e instanceof we)throw e;console.error(`edit fill:`,e),L(500,`generation failed`)}l.push(v.fill),n[d]=v.fill,o[d]=v.ended}}let c=Bt(ne,F,n,10),l;try{l=await Ut(de,c,e.hp.audioPad)}catch(e){console.error(`edit decode:`,e),L(500,`decoding the edited codes failed`)}let d=[],f=0;F.forEach(([e,t],r)=>{let i=n[r].length/10;d.push([(e+f)/H,(e+f+i)/H]),f+=i-t}),fe.push({seed:ce+t,audio_base64:r(_e(l,a)),duration:l.length/a,edited_regions:d,fill_seconds:n.map(e=>e.length/10/H),stopped:o,verify:null,words:null})}Ee(n,{sample_rate:a,original_text:te,target_text:u,words:N===null?null:Tr(N),spans:F.map(([e,t])=>[e/H,(e+t)/H]),contexts:A?re.map(e=>[e.start/H,e.end/H]):null,expected_seconds:I,takes:fe})}var jr=class{e;speakers;constructor(e,t=Date.now()/1e3){this.e=e,this.speakers=new Fe(e,t)}async handle(e,t,n=()=>!1){return Pr(e)?this.keepalive(e,t,n):this.serve(e,t,n)}async keepalive(e,t,n){let r=500,i=[],a={start:e=>{r=e},chunk:e=>{i.push(e.slice())},end:()=>{}};t.start(200,{"content-type":`application/json`,"cache-control":`no-store`,"x-keepalive":`1`});let o=new Uint8Array([32]);t.chunk(o);let s=setInterval(()=>t.chunk(o),Mr);try{await this.serve(e,a,n)}finally{clearInterval(s)}let c=new Uint8Array(i.reduce((e,t)=>e+t.length,0)),l=0;for(let e of i)c.set(e,l),l+=e.length;if(r>=400){let e=new TextDecoder().decode(c),t;try{let n=JSON.parse(e);t=n&&typeof n==`object`&&!Array.isArray(n)?n.detail??null:e}catch{t=e}c=new TextEncoder().encode(JSON.stringify({detail:t,status_code:r}))}t.chunk(c),t.end()}async serve(e,t,n){let r=!1,i={start:(e,n)=>{r=!0,t.start(e,n)},chunk:e=>t.chunk(e),end:()=>t.end()};try{await this.route(e,i,n)}catch(e){if(r){console.error(`engine api:`,e),t.end();return}e instanceof we?Ee(t,e.body,e.status):Ee(t,{detail:e instanceof Error?e.message:String(e)},500)}}async route(e,t,n){let r=this.e,i=this.speakers,a=e.path.split(`?`)[0],o=e.method.toUpperCase(),s=o===`GET`||o===`HEAD`;if(s&&a===`/v2/health`)return Ee(t,{status:`ok`});if(s&&a===`/v1/models`)return Ee(t,{object:`list`,data:[{id:`zonos3`,object:`model`,created:0,owned_by:`zyphra`,root:r.modelFile}]});if(s&&a===`/v2/capabilities`)return Ee(t,xt(r,i.checkpointModes()));if(s&&a===`/v2/controls`)return r.steer||L(404,`${M}.`),Ee(t,r.controlsDoc);if(a===`/v2/speakers`){if(s)return i.list(e,t);if(o===`POST`)return i.create(e,t,Date.now()/1e3)}let c=/^\/v2\/speakers\/([^/]+)\/(preview|embedding)$/.exec(a);if(c&&s){let n=decodeURIComponent(c[1]);return c[2]===`preview`?i.preview(e,t,n):i.embedding(e,t,n)}if(o===`POST`&&a===`/v2/generate`)return _r(r,i,e,t,n);if(o===`POST`&&a===`/v1/audio/speech`)return vr(r,i,e,t,n);if(o===`POST`&&a===`/v2/edit/align`)return Dr(r,e,t);if(o===`POST`&&a===`/v2/edit`)return Ar(r,e,t,n);o===`POST`&&a===`/v2/edit/transcribe`&&Er(r,e),o===`POST`&&a===`/v2/phonemize`&&(ke(e,`PhonemizeRequest`),L(404,`This server has no pronunciation lexicon.`)),L(404,`Not Found`)}};const Mr=1e4,Nr=[`/v2/edit`];function Pr(e){if(e.method.toUpperCase()!==`POST`||e.headers[`x-keepalive`]!==`1`)return!1;let t=e.path.split(`?`)[0];return Nr.some(e=>t===e||t.startsWith(e+`/`))}var Fr=`// Per row i (input row r = row0 + i): if has_x, res[r] += x[r] (in place);
-// out[i] = res[r] * rsqrt(mean(res[r]^2) + eps) * (has_w ? w : 1).
-struct P { N: u32, eps: f32, has_x: u32, has_w: u32, row0: u32 }
-@group(0) @binding(0) var<storage, read_write> res: array<f32>;
-@group(0) @binding(1) var<storage, read> x: array<f32>;
-@group(0) @binding(2) var<storage, read> w: array<f32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let i = wid.x;
-  let rb = (p.row0 + i) * p.N;
-  var ss = 0.0;
-  for (var c = lid; c < p.N; c += 256u) {
-    var v = res[rb + c];
-    if (p.has_x != 0u) { v += x[rb + c]; res[rb + c] = v; }
-    ss += v * v;
-  }
-  red[lid] = ss;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  let scale = inverseSqrt(red[0] / f32(p.N) + p.eps);
-  let ob = i * p.N;
-  for (var c = lid; c < p.N; c += 256u) {
-    var v = res[rb + c] * scale;
-    if (p.has_w != 0u) { v *= w[c]; }
-    outp[ob + c] = v;
-  }
-}
-`,Ir=`// Attentive statistics pooling over time, one workgroup per column k < N: alpha = softmax_t(att[:, k]),
-// pooled[k] = mean = sum_t alpha*x, pooled[N + k] = sqrt(clamp(sum_t alpha*x*x - mean^2, var_floor, 3e38)).
-struct P { T: u32, N: u32, var_floor: f32 }
-@group(0) @binding(0) var<storage, read> att: array<f32>;
-@group(0) @binding(1) var<storage, read> x: array<f32>;
-@group(0) @binding(2) var<storage, read_write> pooled: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<f32, 256>;
-var<workgroup> red2: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let k = wid.x + wid.y * nwg.x;
-  if (k >= p.N) { return; }
-  var m = -3.0e38;
-  for (var t = lid; t < p.T; t += 256u) { m = max(m, att[t * p.N + k]); }
-  red[lid] = m;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] = max(red[lid], red[lid + st]); }
-    workgroupBarrier();
-  }
-  let M = red[0];
-  workgroupBarrier();
-  var s = 0.0;
-  for (var t = lid; t < p.T; t += 256u) { s += exp(att[t * p.N + k] - M); }
-  red[lid] = s;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  let inv = 1.0 / red[0];
-  workgroupBarrier();
-  var s1 = 0.0;
-  var s2 = 0.0;
-  for (var t = lid; t < p.T; t += 256u) {
-    let a = exp(att[t * p.N + k] - M) * inv;
-    let v = x[t * p.N + k];
-    s1 += a * v;
-    s2 += a * (v * v);
-  }
-  red[lid] = s1;
-  red2[lid] = s2;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] += red[lid + st]; red2[lid] += red2[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lid == 0u) {
-    let mean = red[0];
-    pooled[k] = mean;
-    pooled[p.N + k] = sqrt(clamp(red2[0] - mean * mean, p.var_floor, 3.0e38));
-  }
-}
-`,Lr=`// Causal/windowed attention over a (ring) KV store; 32 threads per (row, head), online softmax + merge.
-// Head dim hd <= 64. Dynamic mode: pos = dyn.a + i.
-struct P {
-  n: u32, nh: u32, nkv: u32, pos_dyn: u32, pos0: u32, window: u32, ring: u32, scale: f32,
-  has_gate: u32, gate_stride: u32, gate_off: u32, hd: u32,
-}
-@group(0) @binding(0) var<storage, read> q: array<f32>;
-@group(0) @binding(1) var<storage, read> kc: array<f32>;
-@group(0) @binding(2) var<storage, read> vc: array<f32>;
-@group(0) @binding(3) var<storage, read> gate: array<f32>;
-@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> qs: array<f32, 64>;
-var<workgroup> ms: array<f32, 32>;
-var<workgroup> ls: array<f32, 32>;
-var<workgroup> accs: array<f32, 2048>;
-
-@compute @workgroup_size(32)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) s: u32) {
-  let id = wid.x + wid.y * nwg.x;
-  if (id >= p.n * p.nh) { return; }
-  let hd = p.hd;
-  let i = id / p.nh;
-  let h = id - i * p.nh;
-  let pos = select(p.pos0, dyn.a, p.pos_dyn != 0u) + i;
-  let kvh = h / (p.nh / p.nkv);
-  let qb = (i * p.nh + h) * hd;
-  for (var d = s; d < hd; d += 32u) { qs[d] = q[qb + d]; }
-  workgroupBarrier();
-  var jlo = 0u;
-  if (pos + 1u > p.window) { jlo = pos + 1u - p.window; }
-  var m = -3.0e38;
-  var l = 0.0;
-  var acc: array<f32, 64>;
-  for (var d = 0u; d < hd; d++) { acc[d] = 0.0; }
-  for (var j = jlo + s; j <= pos; j += 32u) {
-    let base = ((j % p.ring) * p.nkv + kvh) * hd;
-    var qk = 0.0;
-    for (var d = 0u; d < hd; d++) { qk += qs[d] * kc[base + d]; }
-    let sc = qk * p.scale;
-    let mn = max(m, sc);
-    let corr = exp(m - mn);
-    let pe = exp(sc - mn);
-    l = l * corr + pe;
-    for (var d = 0u; d < hd; d++) { acc[d] = acc[d] * corr + pe * vc[base + d]; }
-    m = mn;
-  }
-  ms[s] = m;
-  ls[s] = l;
-  for (var d = 0u; d < hd; d++) { accs[s * 64u + d] = acc[d]; }
-  workgroupBarrier();
-  var M = -3.0e38;
-  for (var t = 0u; t < 32u; t++) { M = max(M, ms[t]); }
-  var L = 0.0;
-  for (var t = 0u; t < 32u; t++) { L += ls[t] * exp(ms[t] - M); }
-  var g = 1.0;
-  if (p.has_gate != 0u) { g = sigmoid(gate[p.gate_off + i * p.gate_stride + h]); }
-  for (var hh = 0u; hh < 2u; hh++) {
-    let d = s + hh * 32u;
-    if (d < hd) {
-      var o = 0.0;
-      for (var t = 0u; t < 32u; t++) { o += accs[t * 64u + d] * exp(ms[t] - M); }
-      outp[qb + d] = o / L * g;
-    }
-  }
-}
-`,Rr=`// attention.wgsl specialised to head dim 32 (the backbone's): constant-trip loops keep q, the accumulator and the
-// merge in registers. Same params (\`hd\` is unused) and bindings as attention.wgsl.
-struct P {
-  n: u32, nh: u32, nkv: u32, pos_dyn: u32, pos0: u32, window: u32, ring: u32, scale: f32,
-  has_gate: u32, gate_stride: u32, gate_off: u32, hd: u32,
-}
-@group(0) @binding(0) var<storage, read> q: array<f32>;
-@group(0) @binding(1) var<storage, read> kc: array<f32>;
-@group(0) @binding(2) var<storage, read> vc: array<f32>;
-@group(0) @binding(3) var<storage, read> gate: array<f32>;
-@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-const HD = 32u;
-
-var<workgroup> qs: array<f32, 32>;
-var<workgroup> ms: array<f32, 32>;
-var<workgroup> ls: array<f32, 32>;
-var<workgroup> accs: array<f32, 1024>;
-
-@compute @workgroup_size(32)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) s: u32) {
-  let id = wid.x + wid.y * nwg.x;
-  if (id >= p.n * p.nh) { return; }
-  let i = id / p.nh;
-  let h = id - i * p.nh;
-  let pos = select(p.pos0, dyn.a, p.pos_dyn != 0u) + i;
-  let kvh = h / (p.nh / p.nkv);
-  let qb = (i * p.nh + h) * HD;
-  for (var d = s; d < HD; d += 32u) { qs[d] = q[qb + d]; }
-  workgroupBarrier();
-  var jlo = 0u;
-  if (pos + 1u > p.window) { jlo = pos + 1u - p.window; }
-  var m = -3.0e38;
-  var l = 0.0;
-  var acc: array<f32, 32>;
-  for (var d = 0u; d < HD; d++) { acc[d] = 0.0; }
-  for (var j = jlo + s; j <= pos; j += 32u) {
-    let base = ((j % p.ring) * p.nkv + kvh) * HD;
-    var qk = 0.0;
-    for (var d = 0u; d < HD; d++) { qk += qs[d] * kc[base + d]; }
-    let sc = qk * p.scale;
-    let mn = max(m, sc);
-    let corr = exp(m - mn);
-    let pe = exp(sc - mn);
-    l = l * corr + pe;
-    for (var d = 0u; d < HD; d++) { acc[d] = acc[d] * corr + pe * vc[base + d]; }
-    m = mn;
-  }
-  ms[s] = m;
-  ls[s] = l;
-  for (var d = 0u; d < HD; d++) { accs[s * HD + d] = acc[d]; }
-  workgroupBarrier();
-  var M = -3.0e38;
-  for (var t = 0u; t < 32u; t++) { M = max(M, ms[t]); }
-  var L = 0.0;
-  for (var t = 0u; t < 32u; t++) { L += ls[t] * exp(ms[t] - M); }
-  var g = 1.0;
-  if (p.has_gate != 0u) { g = sigmoid(gate[p.gate_off + i * p.gate_stride + h]); }
-  for (var d = s; d < HD; d += 32u) {
-    var o = 0.0;
-    for (var t = 0u; t < 32u; t++) { o += accs[t * HD + d] * exp(ms[t] - M); }
-    outp[qb + d] = o / L * g;
-  }
-}
-`,zr=`// Masked probe heads (zonos3-graph.cpp build_probe): decode-row attention of head h over keys 0..dyn.a with the text
-// keys (cache rows text_start + j, j < text_len) outside the head's window [lo, hi] blocked; overwrites the head's row of
-// outp with o * sigmoid(gate). Only heads with flag != 0 of probe layer \`layer\` (pin layout: probe.wgsl) write.
-// 32 threads per head, online softmax + merge (attention.wgsl).
-struct P { layer: u32, nh: u32, nkv: u32, hd: u32, ring: u32, scale: f32, gate_off: u32 }
-@group(0) @binding(0) var<storage, read> q: array<f32>;
-@group(0) @binding(1) var<storage, read> kc: array<f32>;
-@group(0) @binding(2) var<storage, read> vc: array<f32>;
-@group(0) @binding(3) var<storage, read> gate: array<f32>;
-@group(0) @binding(4) var<storage, read> pin: array<u32>;
-@group(0) @binding(5) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> qs: array<f32, 64>;
-var<workgroup> ms: array<f32, 32>;
-var<workgroup> ls: array<f32, 32>;
-var<workgroup> accs: array<f32, 2048>;
-
-@compute @workgroup_size(32)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) s: u32) {
-  let h = wid.x;
-  let hd = p.hd;
-  let e = 4u + (p.layer * p.nh + h) * 4u;
-  let ts = i32(pin[0]);
-  let tl = i32(pin[1]);
-  let on = tl != 0 && pin[e + 3u] != 0u;
-  let lo = i32(pin[e + 1u]);
-  let hi = i32(pin[e + 2u]);
-  let nkeys = select(0u, dyn.a + 1u, on);
-  let kvh = h / (p.nh / p.nkv);
-  let qb = h * hd;
-  for (var d = s; d < hd; d += 32u) { qs[d] = q[qb + d]; }
-  workgroupBarrier();
-  var m = -3.0e38;
-  var l = 0.0;
-  var acc: array<f32, 64>;
-  for (var d = 0u; d < hd; d++) { acc[d] = 0.0; }
-  for (var j = s; j < nkeys; j += 32u) {
-    let t = i32(j) - ts;
-    if (t < 0 || t >= tl || (t >= lo && t <= hi)) {
-      let base = ((j % p.ring) * p.nkv + kvh) * hd;
-      var qk = 0.0;
-      for (var d = 0u; d < hd; d++) { qk += qs[d] * kc[base + d]; }
-      let sc = qk * p.scale;
-      let mn = max(m, sc);
-      let corr = exp(m - mn);
-      let pe = exp(sc - mn);
-      l = l * corr + pe;
-      for (var d = 0u; d < hd; d++) { acc[d] = acc[d] * corr + pe * vc[base + d]; }
-      m = mn;
-    }
-  }
-  ms[s] = m;
-  ls[s] = l;
-  for (var d = 0u; d < hd; d++) { accs[s * 64u + d] = acc[d]; }
-  workgroupBarrier();
-  if (!on) { return; }
-  var M = -3.0e38;
-  for (var t = 0u; t < 32u; t++) { M = max(M, ms[t]); }
-  var L = 0.0;
-  for (var t = 0u; t < 32u; t++) { L += ls[t] * exp(ms[t] - M); }
-  let g = sigmoid(gate[p.gate_off + h]);
-  for (var hh = 0u; hh < 2u; hh++) {
-    let d = s + hh * 32u;
-    if (d < hd) {
-      var o = 0.0;
-      for (var t = 0u; t < 32u; t++) { o += accs[t * 64u + d] * exp(ms[t] - M); }
-      outp[qb + d] = o / L * g;
-    }
-  }
-}
-`,Br=`// Windowed causal self-attention for the codec stages (head dim 64, nkv == nh, no gate) over a ring KV
-// store. One workgroup per (16 query rows, head): K/V tiles of 16 keys are staged in workgroup memory and
-// each row keeps an online softmax. pos = dyn.a * pos_mul + i; tiles starting at or past the
-// dyn.b * pos_mul valid rows exit (padded rows never feed valid rows).
-struct P { n: u32, nh: u32, window: u32, ring: u32, scale: f32, pos_mul: u32 }
-@group(0) @binding(0) var<storage, read> q: array<f32>;
-@group(0) @binding(1) var<storage, read> kc: array<f32>;
-@group(0) @binding(2) var<storage, read> vc: array<f32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-const BQ = 16u;
-const BK = 16u;
-const HD = 64u;
-var<workgroup> Qs: array<f32, 1024>;   // [BQ][HD]
-var<workgroup> Ks: array<f32, 1040>;   // [BK][HD + 1], padded against bank conflicts
-var<workgroup> Vs: array<f32, 1024>;   // [BK][HD]
-var<workgroup> Ss: array<f32, 272>;    // [BQ][BK + 1]
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let h = wid.y;
-  let i0 = wid.x * BQ;
-  if (i0 >= dyn.b * p.pos_mul) { return; }
-  let pos0 = dyn.a * p.pos_mul;
-  for (var e = lid; e < BQ * HD; e += 256u) {
-    let i = i0 + e / HD;
-    Qs[e] = select(0.0, q[(i * p.nh + h) * HD + e % HD], i < p.n);
-  }
-  let r = lid >> 4u;      // query row within the tile (scores and outputs)
-  let c = lid & 15u;      // key column within the tile (scores)
-  let od = c * 4u;        // output dims od..od+3
-  let qpos = pos0 + i0 + r;
-  let first = pos0 + i0;
-  let last = first + BQ - 1u;
-  var jlo = 0u;
-  if (first + 1u > p.window) { jlo = first + 1u - p.window; }
-  var o = vec4f(0.0);
-  var m = -3.0e38;
-  var l = 0.0;
-  workgroupBarrier();
-  for (var j0 = jlo; j0 <= last; j0 += BK) {
-    for (var e = lid; e < BK * HD; e += 256u) {
-      let kk = e / HD;
-      let d = e % HD;
-      let slot = (((j0 + kk) % p.ring) * p.nh + h) * HD + d;
-      Ks[kk * (HD + 1u) + d] = kc[slot];
-      Vs[e] = vc[slot];
-    }
-    workgroupBarrier();
-    let j = j0 + c;
-    var s = -3.0e38;
-    if (j <= qpos && qpos - j < p.window) {
-      var acc = 0.0;
-      for (var d = 0u; d < HD; d++) { acc += Qs[r * HD + d] * Ks[c * (HD + 1u) + d]; }
-      s = acc * p.scale;
-    }
-    Ss[r * (BK + 1u) + c] = s;
-    workgroupBarrier();
-    var mt = m;
-    for (var k = 0u; k < BK; k++) { mt = max(mt, Ss[r * (BK + 1u) + k]); }
-    let cr = exp(m - mt);
-    var ls = 0.0;
-    var acc4 = vec4f(0.0);
-    for (var k = 0u; k < BK; k++) {
-      let sv = Ss[r * (BK + 1u) + k];
-      let pe = select(0.0, exp(sv - mt), sv > -1.0e38);
-      ls += pe;
-      acc4 += pe * vec4f(Vs[k * HD + od], Vs[k * HD + od + 1u], Vs[k * HD + od + 2u], Vs[k * HD + od + 3u]);
-    }
-    o = o * cr + acc4;
-    l = l * cr + ls;
-    m = mt;
-    workgroupBarrier();
-  }
-  let i = i0 + r;
-  if (i < p.n) {
-    let ob = (i * p.nh + h) * HD + od;
-    let inv = 1.0 / l;
-    outp[ob] = o.x * inv; outp[ob + 1u] = o.y * inv; outp[ob + 2u] = o.z * inv; outp[ob + 3u] = o.w * inv;
-  }
-}
-`,Vr=`// Full AttnRes route fused with the following weighted RMSNorm. One 256-thread workgroup per output
-// row i (source row r = row0 + i), D <= 1024. Sources s < ns are bank[s] ([ns][n][D]).
-// Logit l_s = q[qi] . rmsnorm(src_s); mix = softmax(l) . src; out[i] = rmsnorm(mix) * w.
-struct P { D: u32, n: u32, ns: u32, qi: u32, row0: u32, eps: f32 }
-@group(0) @binding(0) var<storage, read> bank: array<f32>;
-@group(0) @binding(1) var<storage, read> q: array<u32>;
-@group(0) @binding(2) var<storage, read> w: array<f32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<vec2f, 256>;
-var<workgroup> lg: array<f32, 32>;
-
-fn reduce2(lid: u32, v: vec2f) -> vec2f {
-  red[lid] = v;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  let r = red[0];
-  workgroupBarrier();
-  return r;
-}
-
-fn src_at(s: u32, r: u32, c: u32) -> f32 { return bank[(s * p.n + r) * p.D + c]; }
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let i = wid.x;
-  let r = p.row0 + i;
-  let D = p.D;
-  for (var s = 0u; s < p.ns; s++) {
-    var acc = vec2f(0.0);
-    for (var k = 0u; k < 4u; k++) {
-      let c = lid + 256u * k;
-      if (c < D) {
-        let v = src_at(s, r, c);
-        let qp = unpack2x16float(q[(p.qi * D + c) >> 1u]);
-        let qv = select(qp.y, qp.x, (c & 1u) == 0u);
-        acc += vec2f(v * v, qv * v);
-      }
-    }
-    let t = reduce2(lid, acc);
-    if (lid == 0u) { lg[s] = t.y * inverseSqrt(t.x / f32(D) + p.eps); }
-  }
-  workgroupBarrier();
-  var mx = -3.0e38;
-  for (var s = 0u; s < p.ns; s++) { mx = max(mx, lg[s]); }
-  var sum = 0.0;
-  for (var s = 0u; s < p.ns; s++) { sum += exp(lg[s] - mx); }
-  var mixv: array<f32, 4>;
-  for (var k = 0u; k < 4u; k++) { mixv[k] = 0.0; }
-  for (var s = 0u; s < p.ns; s++) {
-    let wt = exp(lg[s] - mx) / sum;
-    for (var k = 0u; k < 4u; k++) {
-      let c = lid + 256u * k;
-      if (c < D) { mixv[k] += wt * src_at(s, r, c); }
-    }
-  }
-  var ss = 0.0;
-  for (var k = 0u; k < 4u; k++) { ss += mixv[k] * mixv[k]; }
-  let scale = inverseSqrt(reduce2(lid, vec2f(ss, 0.0)).x / f32(D) + p.eps);
-  for (var k = 0u; k < 4u; k++) {
-    let c = lid + 256u * k;
-    if (c < D) { outp[i * D + c] = mixv[k] * scale * w[c]; }
-  }
-}
-`,Hr=`// Shared helpers, prepended to every kernel.
-struct Dyn { a: u32, b: u32, c: u32, d: u32 }
-
-fn erf_as(x: f32) -> f32 {
-  // Abramowitz & Stegun 7.1.26
-  let a = abs(x);
-  let t = 1.0 / (1.0 + 0.3275911 * a);
-  let y = 1.0 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t) * exp(-a * a);
-  return select(y, -y, x < 0.0);
-}
-
-fn tanh_c(x: f32) -> f32 {
-  let c = clamp(x, -15.0, 15.0);
-  let e = exp(-2.0 * abs(c));
-  let t = (1.0 - e) / (1.0 + e);
-  return select(t, -t, c < 0.0);
-}
-
-fn silu(x: f32) -> f32 { return x / (1.0 + exp(-x)); }
-fn sigmoid(x: f32) -> f32 { return 1.0 / (1.0 + exp(-x)); }
-fn gelu_erf(x: f32) -> f32 { return 0.5 * x * (1.0 + erf_as(x * 0.70710678118654752)); }
-fn new_gelu(x: f32) -> f32 { return 0.5 * x * (1.0 + tanh_c(0.7978845608028654 * (x + 0.044715 * (x * x * x)))); }
-
-fn act(x: f32, code: u32, cap: f32) -> f32 {
-  switch code {
-    case 1u: { return silu(x); }
-    case 2u: { return gelu_erf(x); }
-    case 3u: { return max(x, 0.0); }
-    case 4u: { return tanh_c(x); }
-    case 5u: { return cap * tanh_c(x / cap); }
-    case 6u: { return new_gelu(x); }
-    default: { return x; }
-  }
-}
-
-// Round to the nearest BF16 value (ties to even), returned as f32: ggml_compute_fp32_to_bf16 for finite x.
-fn bf16r(x: f32) -> f32 {
-  let u = bitcast<u32>(x);
-  return bitcast<f32>((u + 0x7fffu + ((u >> 16u) & 1u)) & 0xffff0000u);
-}
-
-fn unpack_i8(w: u32) -> vec4<f32> {
-  return vec4<f32>(
-    f32(bitcast<i32>(w << 24u) >> 24u),
-    f32(bitcast<i32>(w << 16u) >> 24u),
-    f32(bitcast<i32>(w << 8u) >> 24u),
-    f32(bitcast<i32>(w) >> 24u));
-}
-
-// q4_0: u32 word w of a 16-byte block holds elements 4w..4w+3 (low nibbles) and 16+4w..16+4w+3 (high nibbles).
-fn unpack_q4_lo(w: u32) -> vec4<f32> {
-  return vec4<f32>(f32(w & 15u), f32((w >> 8u) & 15u), f32((w >> 16u) & 15u), f32((w >> 24u) & 15u)) - vec4<f32>(8.0);
-}
-fn unpack_q4_hi(w: u32) -> vec4<f32> {
-  return vec4<f32>(f32((w >> 4u) & 15u), f32((w >> 12u) & 15u), f32((w >> 20u) & 15u), f32(w >> 28u)) - vec4<f32>(8.0);
-}
-`;const Ur=/* #__PURE__ */ Object.assign({"./kernels/add_rmsnorm.wgsl":Fr,"./kernels/astp_pool.wgsl":Ir,"./kernels/attention.wgsl":Lr,"./kernels/attention_hd32.wgsl":Rr,"./kernels/attention_masked.wgsl":zr,"./kernels/attention_win.wgsl":Br,"./kernels/attnres.wgsl":Vr,"./kernels/common.wgsl":Hr,"./kernels/cond_rows.wgsl":`// Conditioning rows (zonos3-graph.cpp build_graph): the summed embedding of the row at absolute position dyn.a + t is
-// replaced by the projected speaker row (pos == speaker_row) or cond_embd.i[bucket_i] (pos == condition_row + i).
-// cond (u32 words): speaker_row i32, condition_row i32, n_cond, bucket[3], 0, 0, then the projected speaker row f32[1024].
-// Tables are f16 [count_i + 1][1024] packed in u32 (the JS side checks bucket_i <= count_i). One thread per column, grid [4, n].
-struct P { n: u32 }
-@group(0) @binding(0) var<storage, read_write> emb: array<f32>;
-@group(0) @binding(1) var<storage, read> cond: array<u32>;
-@group(0) @binding(2) var<storage, read> t0: array<u32>;
-@group(0) @binding(3) var<storage, read> t1: array<u32>;
-@group(0) @binding(4) var<storage, read> t2: array<u32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.y;
-  if (t >= p.n) { return; }
-  let c = wid.x * 256u + lid;
-  let pos = i32(dyn.a + t);
-  let sr = bitcast<i32>(cond[0]);
-  let cr = bitcast<i32>(cond[1]);
-  let nc = i32(cond[2]);
-  if (sr >= 0 && pos == sr) {
-    emb[t * 1024u + c] = bitcast<f32>(cond[8u + c]);
-    return;
-  }
-  if (cr < 0 || pos < cr || pos >= cr + nc) { return; }
-  let i = u32(pos - cr);
-  let word = cond[3u + i] * 512u + c / 2u;
-  var v: vec2f;
-  if (i == 0u) { v = unpack2x16float(t0[word]); }
-  else if (i == 1u) { v = unpack2x16float(t1[word]); }
-  else { v = unpack2x16float(t2[word]); }
-  emb[t * 1024u + c] = select(v.x, v.y, (c & 1u) != 0u);
-}
-`,"./kernels/dense_fuse.wgsl":`// Dense stage fusion: acc[t][k] = (S == 0 ? 0 : acc[t][k]) + feat[t][k] * w[S*N + k], n = T * N.
-struct P { n: u32, N: u32, S: u32 }
-@group(0) @binding(0) var<storage, read> feat: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;
-@group(0) @binding(2) var<storage, read_write> acc: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  let v = feat[i] * w[p.S * p.N + i % p.N];
-  acc[i] = select(acc[i] + v, v, p.S == 0u);
-}
-`,"./kernels/dwconv.wgsl":`// Causal depthwise conv over a history-prefixed input: y[t][c] = act(sum_k w[k][c] * Xf[t + k][c] (+ b[c])).
-// rnd bits round to bf16: 1 each input as loaded, 2 the tap sum (before bias), 4 the output.
-// rows_dyn != 0: rows at or past dyn.b * rows_dyn valid rows exit.
-struct P { T: u32, C: u32, K: u32, has_bias: u32, act: u32, rnd: u32, rows_dyn: u32 }
-@group(0) @binding(0) var<storage, read> Xf: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;
-@group(0) @binding(2) var<storage, read> b: array<f32>;
-@group(0) @binding(3) var<storage, read_write> y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.T * p.C) { return; }
-  let t = i / p.C;
-  if (p.rows_dyn != 0u && t >= dyn.b * p.rows_dyn) { return; }
-  let ch = i - t * p.C;
-  var s = 0.0;
-  let rin = (p.rnd & 1u) != 0u;
-  for (var k = 0u; k < p.K; k++) {
-    let xv = Xf[(t + k) * p.C + ch];
-    s += w[k * p.C + ch] * select(xv, bf16r(xv), rin);
-  }
-  if ((p.rnd & 2u) != 0u) { s = bf16r(s); }
-  if (p.has_bias != 0u) { s += b[ch]; }
-  var o = act(s, p.act, 0.0);
-  if ((p.rnd & 4u) != 0u) { o = bf16r(o); }
-  y[i] = o;
-}
-`,"./kernels/edit_logits.wgsl":`// Logits head of the speech-edit vocabulary over the release head: per codebook block cb of VE = V + AX rows,
-// row j < V is the release head's row cb*V + j (base) and row j >= V the grown row cb*AX + j - V (extra); the adapter
-// adds U[r] . t (U f16 [NCB*VE][K], t = down . h), then the softcap: logits[r] = cap * tanh((head + U[r] . t) / cap).
-struct P { n: u32, V: u32, AX: u32, K: u32, cap: f32 }
-@group(0) @binding(0) var<storage, read> base: array<f32>;
-@group(0) @binding(1) var<storage, read> extra: array<f32>;
-@group(0) @binding(2) var<storage, read> t: array<f32>;
-@group(0) @binding(3) var<storage, read> U: array<vec4<u32>>;
-@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> ts: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  if (lid < p.K) { ts[lid] = t[lid]; }
-  workgroupBarrier();
-  let r = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (r >= p.n) { return; }
-  let ve = p.V + p.AX;
-  let cb = r / ve;
-  let j = r - cb * ve;
-  var s = 0.0;
-  if (j < p.V) { s = base[cb * p.V + j]; } else { s = extra[cb * p.AX + j - p.V]; }
-  let k8 = p.K / 8u;
-  for (var i = 0u; i < k8; i++) {
-    let w = U[r * k8 + i];
-    let b = i * 8u;
-    s += dot(vec4f(unpack2x16float(w.x), unpack2x16float(w.y)), vec4f(ts[b], ts[b + 1u], ts[b + 2u], ts[b + 3u])) +
-         dot(vec4f(unpack2x16float(w.z), unpack2x16float(w.w)), vec4f(ts[b + 4u], ts[b + 5u], ts[b + 6u], ts[b + 7u]));
-  }
-  outp[r] = act(s, 5u, p.cap);
-}
-`,"./kernels/elementwise.wgsl":`// op 0 silu_mul: y = a * silu(b); 1 glu_split: y[r][c] = a[r][c] * sigmoid(a[r][C + c]);
-// op 2 add: y = a + b; 3 snake: y = a + c[ch] * sin2(b[ch] * a)  (b = alpha, c = inv_alpha);
-// op 4 glu_split_bf16: glu_split rounded to bf16 (nn.GLU under BF16 autocast).
-struct P { op: u32, n: u32, C: u32, a_off: u32, y_off: u32 }
-@group(0) @binding(0) var<storage, read> a: array<f32>;
-@group(0) @binding(1) var<storage, read> b: array<f32>;
-@group(0) @binding(2) var<storage, read> c: array<f32>;
-@group(0) @binding(3) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-// Port of sin2_f32 (zac.cpp): Cody-Waite reduction + Cephes sinf/cosf polynomials.
-fn sin2(v: f32) -> f32 {
-  let q = round(v * 0.63661977236758134);
-  var r = v - q * 1.5703125;
-  r -= q * 4.837512969970703125e-4;
-  r -= q * 7.54978995489188216e-8;
-  let r2 = r * r;
-  let s = r + r * r2 * ((-1.9515295891e-4 * r2 + 8.3321608736e-3) * r2 - 1.6666654611e-1);
-  let cc = 1.0 - 0.5 * r2 + r2 * r2 * ((2.443315711809948e-5 * r2 - 1.388731625493765e-3) * r2 + 4.166664568298827e-2);
-  let t = select(s, cc, (i32(q) & 1) != 0);
-  return t * t;
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  var v = 0.0;
-  switch p.op {
-    case 0u: { v = a[p.a_off + i] * silu(b[i]); }
-    case 1u, 4u: {
-      let r = i / p.C; let ch = i - r * p.C;
-      let base = p.a_off + r * 2u * p.C;
-      v = a[base + ch] * sigmoid(a[base + p.C + ch]);
-      if (p.op == 4u) { v = bf16r(v); }
-    }
-    case 2u: { v = a[p.a_off + i] + b[i]; }
-    default: {
-      let ch = i % p.C;
-      let xv = a[p.a_off + i];
-      v = xv + sin2(b[ch] * xv) * c[ch];
-    }
-  }
-  y[p.y_off + i] = v;
-}
-`,"./kernels/embed.wgsl":`// out[t][c] = sum_{k<11} embd_all[k*V + ids[t*11+k]][c], V = audio vocabulary (4098, 4099 with span-end): the ten audio
-// tables of V rows each, then the text table at row 10*V.
-struct P { n: u32, V: u32 }
-@group(0) @binding(0) var<storage, read> ids: array<i32>;
-@group(0) @binding(1) var<storage, read> E: array<u32>;
-@group(0) @binding(2) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.y;
-  if (t >= p.n) { return; }
-  let pr = wid.x * 256u + lid;
-  var s = vec2f(0.0);
-  for (var k = 0u; k < 11u; k++) {
-    let row = k * p.V + u32(ids[t * 11u + k]);
-    s += unpack2x16float(E[row * 512u + pr]);
-  }
-  outp[t * 1024u + 2u * pr] = s.x;
-  outp[t * 1024u + 2u * pr + 1u] = s.y;
-}
-`,"./kernels/embed_edit.wgsl":`// embed.wgsl over the speech-edit vocabulary: the release table E (ten audio tables of V rows, then TV text rows at
-// row 10*V) plus the grown rows X (AX per audio table, then the text marker rows at row 10*AX). Audio id j >= V reads
-// X[k*AX + j - V]; text id j >= TV reads X[10*AX + j - TV].
-struct P { n: u32, V: u32, AX: u32, TV: u32 }
-@group(0) @binding(0) var<storage, read> ids: array<i32>;
-@group(0) @binding(1) var<storage, read> E: array<u32>;
-@group(0) @binding(2) var<storage, read> X: array<u32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.y;
-  if (t >= p.n) { return; }
-  let pr = wid.x * 256u + lid;
-  var s = vec2f(0.0);
-  for (var k = 0u; k < 11u; k++) {
-    let id = u32(ids[t * 11u + k]);
-    let lim = select(p.V, p.TV, k == 10u);
-    if (id < lim) {
-      s += unpack2x16float(E[(k * p.V + id) * 512u + pr]);
-    } else {
-      s += unpack2x16float(X[(k * p.AX + id - lim) * 512u + pr]);
-    }
-  }
-  outp[t * 1024u + 2u * pr] = s.x;
-  outp[t * 1024u + 2u * pr + 1u] = s.y;
-}
-`,"./kernels/fa_argmax.wgsl":`// Per row w of lg [rows][F]: out[out_off + w] = the first index of the row's maximum (torch.argmax), as f32.
-// One workgroup per row.
-struct P { F: u32, out_off: u32 }
-@group(0) @binding(0) var<storage, read> lg: array<f32>;
-@group(0) @binding(1) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> bv: array<f32, 256>;
-var<workgroup> bi: array<u32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let w = wid.x;
-  var best = -3.4e38;
-  var idx = 0xffffffffu;
-  for (var f = lid; f < p.F; f += 256u) {
-    let v = lg[w * p.F + f];
-    if (v > best || idx == 0xffffffffu) { best = v; idx = f; }
-  }
-  bv[lid] = best;
-  bi[lid] = idx;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) {
-      let ov = bv[lid + st];
-      let oi = bi[lid + st];
-      if (oi != 0xffffffffu && (bi[lid] == 0xffffffffu || ov > bv[lid] || (ov == bv[lid] && oi < bi[lid]))) {
-        bv[lid] = ov;
-        bi[lid] = oi;
-      }
-    }
-    workgroupBarrier();
-  }
-  if (lid == 0u) { outp[p.out_off + w] = f32(bi[0]); }
-}
-`,"./kernels/fa_attention.wgsl":`// Full (non-causal) softmax attention for FuseAlign (head dim 64) and Dia (head dim 128) over n rows of a fused qkv
-// buffer: q, k, v at q_off, k_off, v_off of each \`stride\`-float row, each [nh][hd]; out rows of out_stride floats.
-// One workgroup per (bq query rows, head). Each row is split over cpr = hd / 16 threads holding 16 query dims and 16
-// output dims in registers; tiles of bk = 512 / hd keys/values are staged in workgroup memory, the score partials
-// reduced through it, and every row keeps an online softmax (F32 throughout).
-struct P { n: u32, nh: u32, hd: u32, stride: u32, q_off: u32, k_off: u32, v_off: u32, out_stride: u32, scale: f32 }
-@group(0) @binding(0) var<storage, read> qkv: array<f32>;
-@group(0) @binding(1) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-const DPT = 16u;
-var<workgroup> Ks: array<f32, 512>;    // [bk][hd]
-var<workgroup> Vs: array<f32, 512>;    // [bk][hd]
-var<workgroup> Ps: array<f32, 2048>;   // [bq][cpr][bk] score partials
-var<workgroup> Ss: array<f32, 512>;    // [bq][bk] scores
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let cpr = p.hd / DPT;
-  let bq = 256u / cpr;
-  let bk = 512u / p.hd;
-  let h = wid.y;
-  let r = lid / cpr;
-  let c = lid - r * cpr;
-  let i = wid.x * bq + r;
-  let valid = i < p.n;
-  var qr: array<f32, 16>;
-  var o: array<f32, 16>;
-  for (var d = 0u; d < DPT; d++) { qr[d] = 0.0; o[d] = 0.0; }
-  if (valid) {
-    let qb = i * p.stride + p.q_off + h * p.hd + c * DPT;
-    for (var d = 0u; d < DPT; d++) { qr[d] = qkv[qb + d]; }
-  }
-  var m = -3.0e38;
-  var l = 0.0;
-  for (var j0 = 0u; j0 < p.n; j0 += bk) {
-    for (var e = lid; e < 512u; e += 256u) {
-      let jj = e / p.hd;
-      let d = e - jj * p.hd;
-      let j = j0 + jj;
-      var kv = 0.0;
-      var vv = 0.0;
-      if (j < p.n) {
-        let base = j * p.stride + h * p.hd + d;
-        kv = qkv[base + p.k_off];
-        vv = qkv[base + p.v_off];
-      }
-      Ks[e] = kv;
-      Vs[e] = vv;
-    }
-    workgroupBarrier();
-    for (var jj = 0u; jj < bk; jj++) {
-      let kb = jj * p.hd + c * DPT;
-      var acc = 0.0;
-      for (var d = 0u; d < DPT; d++) { acc += qr[d] * Ks[kb + d]; }
-      Ps[(r * cpr + c) * bk + jj] = acc;
-    }
-    workgroupBarrier();
-    for (var jj = c; jj < bk; jj += cpr) {
-      var s = 0.0;
-      for (var cc = 0u; cc < cpr; cc++) { s += Ps[(r * cpr + cc) * bk + jj]; }
-      Ss[r * bk + jj] = select(-3.0e38, s * p.scale, j0 + jj < p.n);
-    }
-    workgroupBarrier();
-    var mt = m;
-    for (var jj = 0u; jj < bk; jj++) { mt = max(mt, Ss[r * bk + jj]); }
-    let corr = exp(m - mt);
-    l *= corr;
-    for (var d = 0u; d < DPT; d++) { o[d] *= corr; }
-    for (var jj = 0u; jj < bk; jj++) {
-      let sv = Ss[r * bk + jj];
-      if (sv > -1.0e38) {
-        let pe = exp(sv - mt);
-        l += pe;
-        let vb = jj * p.hd + c * DPT;
-        for (var d = 0u; d < DPT; d++) { o[d] += pe * Vs[vb + d]; }
-      }
-    }
-    m = mt;
-    workgroupBarrier();
-  }
-  if (valid) {
-    let inv = 1.0 / l;
-    let ob = i * p.out_stride + h * p.hd + c * DPT;
-    for (var d = 0u; d < DPT; d++) { outp[ob + d] = o[d] * inv; }
-  }
-}
-`,"./kernels/fa_ew.wgsl":`// FuseAlign elementwise ops over n outputs. op 0 swiglu: y[r][c] = silu(x[r][c]) * x[r][C + c] (x rows of 2C: gate,
-// then up); op 1 bf16: y = x rounded to bf16 (the Dia encoder's bf16 output).
-struct P { op: u32, n: u32, C: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  if (p.op == 0u) {
-    let r = i / p.C;
-    let c = i - r * p.C;
-    let base = r * 2u * p.C + c;
-    y[i] = silu(x[base]) * x[base + p.C];
-  } else {
-    y[i] = bf16r(x[i]);
-  }
-}
-`,"./kernels/fa_pool.wgsl":`// FuseAlign word mean pooling: y[w][c] = sum over the word's byte rows j in [spans[2w], spans[2w+1]) of
-// x[(row0 + j) * dim + c] / count (each term scaled, as the pooling matmul does). One workgroup per word.
-struct P { dim: u32, row0: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> spans: array<u32>;
-@group(0) @binding(2) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let w = wid.x;
-  let a = spans[2u * w];
-  let b = spans[2u * w + 1u];
-  let inv = 1.0 / f32(max(b - a, 1u));
-  for (var c = lid; c < p.dim; c += 256u) {
-    var s = 0.0;
-    for (var j = a; j < b; j++) { s += x[(p.row0 + j) * p.dim + c] * inv; }
-    y[w * p.dim + c] = s;
-  }
-}
-`,"./kernels/fa_rope.wgsl":`// FuseAlign / Dia RoPE, in place on the q and k parts of a fused qkv buffer (rows of \`stride\` floats; q at q_off, k at
-// k_off, each [nh][hd]). rotate_half: (x1, x2) -> (x1 c - x2 s, x2 c + x1 s) with per-row tables cs/sn [n][hd / 2]
-// (cos/sin of position * inv_freq; both halves share them).
-struct P { n: u32, nh: u32, hd: u32, stride: u32, q_off: u32, k_off: u32 }
-@group(0) @binding(0) var<storage, read_write> qkv: array<f32>;
-@group(0) @binding(1) var<storage, read> cs: array<f32>;
-@group(0) @binding(2) var<storage, read> sn: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let hh = p.hd / 2u;
-  let per_row = p.nh * hh;
-  let id = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (id >= p.n * per_row) { return; }
-  let row = id / per_row;
-  let rem = id - row * per_row;
-  let h = rem / hh;
-  let i = rem - h * hh;
-  let c = cs[row * hh + i];
-  let s = sn[row * hh + i];
-  for (var part = 0u; part < 2u; part++) {
-    let base = row * p.stride + select(p.q_off, p.k_off, part == 1u) + h * p.hd + i;
-    let x1 = qkv[base];
-    let x2 = qkv[base + hh];
-    qkv[base] = x1 * c - x2 * s;
-    qkv[base + hh] = x2 * c + x1 * s;
-  }
-}
-`,"./kernels/gconv3x3.wgsl":`// Grouped 3x3 conv, pad 1, channel-last x [T_in][F_in][IC] -> y [T_out][F_out][OC]; w [OC][a][3][3] (kh along F, kw along T):
-// y[t][f][oc] = sum_j (sum_kh sum_kw w[oc][j][kh][kw] * x[t*s_t+kw-1][f*s_f+kh-1][(oc/bg)*a + j]), zero outside.
-// flags: 1 +bias, 2 *scl, 4 +shf, then act.
-struct P {
-  T_in: u32, F_in: u32, IC: u32, OC: u32, a: u32, bg: u32, s_f: u32, s_t: u32,
-  T_out: u32, F_out: u32, flags: u32, act: u32,
-}
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.T_out * p.F_out * p.OC) { return; }
-  let oc = i % p.OC;
-  let r = i / p.OC;
-  let f = r % p.F_out;
-  let t = r / p.F_out;
-  let c0 = (oc / p.bg) * p.a;
-  var s = 0.0;
-  for (var j = 0u; j < p.a; j++) {
-    var term = 0.0;
-    for (var kh = 0u; kh < 3u; kh++) {
-      let fi = i32(f * p.s_f + kh) - 1;
-      if (fi < 0 || fi >= i32(p.F_in)) { continue; }
-      for (var kw = 0u; kw < 3u; kw++) {
-        let ti = i32(t * p.s_t + kw) - 1;
-        if (ti < 0 || ti >= i32(p.T_in)) { continue; }
-        term += w[((oc * p.a + j) * 3u + kh) * 3u + kw] * x[(u32(ti) * p.F_in + u32(fi)) * p.IC + c0 + j];
-      }
-    }
-    s += term;
-  }
-  if ((p.flags & 1u) != 0u) { s += bias[oc]; }
-  if ((p.flags & 2u) != 0u) { s *= scl[oc]; }
-  if ((p.flags & 4u) != 0u) { s += shf[oc]; }
-  y[i] = act(s, p.act, 0.0);
-}
-`,"./kernels/gdn_conv.wgsl":`// GDN causal depthwise conv (kernel 4) over the raw q|k|v channels of \`mixed\` with a 3-row history:
-// outp[t][c] = silu(h0*w[c][0] + h1*w[c][1] + h2*w[c][2] + x_t*w[c][3]), tap 0 oldest. One thread per
-// channel walks the rows; hist[c*3 + r] (r = 0 oldest) ends as the last 3 raw rows (exact for n < 3).
-struct P { n: u32, stride: u32 }
-@group(0) @binding(0) var<storage, read> mixed: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;
-@group(0) @binding(2) var<storage, read_write> hist: array<f32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-const C = 1536u;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let c = wid.x * 256u + lid;
-  if (c >= C) { return; }
-  var h0 = hist[c * 3u];
-  var h1 = hist[c * 3u + 1u];
-  var h2 = hist[c * 3u + 2u];
-  let w0 = w[c * 4u]; let w1 = w[c * 4u + 1u]; let w2 = w[c * 4u + 2u]; let w3 = w[c * 4u + 3u];
-  for (var t = 0u; t < p.n; t++) {
-    let x = mixed[t * p.stride + c];
-    outp[t * C + c] = silu(h0 * w0 + h1 * w1 + h2 * w2 + x * w3);
-    h0 = h1; h1 = h2; h2 = x;
-  }
-  hist[c * 3u] = h0;
-  hist[c * 3u + 1u] = h1;
-  hist[c * 3u + 2u] = h2;
-}
-`,"./kernels/gdn_out.wgsl":`// GDN output gate: outp[t][h][d] = rmsnorm_h(o)[d] * nw[d] * silu(z[t][h][d]), eps 1e-5, z = mixed[1536..2048).
-// One 128-thread workgroup per (t, h).
-struct P { n: u32 }
-@group(0) @binding(0) var<storage, read> o: array<f32>;
-@group(0) @binding(1) var<storage, read> mixed: array<f32>;
-@group(0) @binding(2) var<storage, read> nw: array<f32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<f32, 128>;
-
-@compute @workgroup_size(128)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) d: u32) {
-  let id = wid.x + wid.y * nwg.x;
-  if (id >= p.n * 4u) { return; }
-  let t = id / 4u;
-  let h = id % 4u;
-  let idx = t * 512u + h * 128u + d;
-  let v = o[idx];
-  red[d] = v * v;
-  workgroupBarrier();
-  for (var st = 64u; st > 0u; st >>= 1u) {
-    if (d < st) { red[d] += red[d + st]; }
-    workgroupBarrier();
-  }
-  let rs = inverseSqrt(red[0] / 128.0 + 1e-5);
-  outp[idx] = v * rs * nw[d] * silu(mixed[t * 2056u + 1536u + h * 128u + d]);
-}
-`,"./kernels/gdn_prep.wgsl":`// GDN per-(token, head) prep: q/k l2-normalized as x / sqrt(sum x^2 + 1e-6) (FLA convention);
-// decay = exp(-softplus(a + dt_bias) * exp(A_log)), beta = sigmoid(b). One 128-thread workgroup per (t, h).
-struct P { n: u32 }
-@group(0) @binding(0) var<storage, read> conv: array<f32>;
-@group(0) @binding(1) var<storage, read> mixed: array<f32>;
-@group(0) @binding(2) var<storage, read> dt_bias: array<f32>;
-@group(0) @binding(3) var<storage, read> a_log: array<f32>;
-@group(0) @binding(4) var<storage, read_write> qn: array<f32>;
-@group(0) @binding(5) var<storage, read_write> kn: array<f32>;
-@group(0) @binding(6) var<storage, read_write> decay: array<f32>;
-@group(0) @binding(7) var<storage, read_write> beta: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<vec2f, 128>;
-
-@compute @workgroup_size(128)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) d: u32) {
-  let id = wid.x + wid.y * nwg.x;
-  if (id >= p.n * 4u) { return; }
-  let t = id / 4u;
-  let h = id % 4u;
-  let q = conv[t * 1536u + h * 128u + d];
-  let k = conv[t * 1536u + 512u + h * 128u + d];
-  red[d] = vec2f(q * q, k * k);
-  workgroupBarrier();
-  for (var st = 64u; st > 0u; st >>= 1u) {
-    if (d < st) { red[d] += red[d + st]; }
-    workgroupBarrier();
-  }
-  let s = red[0];
-  qn[t * 512u + h * 128u + d] = q / sqrt(s.x + 1e-6);
-  kn[t * 512u + h * 128u + d] = k / sqrt(s.y + 1e-6);
-  if (d == 0u) {
-    let a = mixed[t * 2056u + 2048u + h] + dt_bias[h];
-    let b = mixed[t * 2056u + 2052u + h];
-    let sp = select(log(1.0 + exp(a)), a, a > 20.0);
-    decay[t * 4u + h] = exp(-sp * exp(a_log[h]));
-    beta[t * 4u + h] = sigmoid(b);
-  }
-}
-`,"./kernels/gdn_scan.wgsl":`// Gated delta rule recurrence (ggml_gated_delta_net, scalar gate). State M[h][j][i] (row j = v index)
-// lives in state[(h*128 + j)*128 + i]; one thread owns one row. Per token:
-//   M *= decay;  dl[j] = (v[j] - M[j].k) * beta;  M[j] += dl[j] * k;  o[j] = (M[j].q) / sqrt(128).
-// 64-thread workgroups never straddle a head, so k and q for the token are staged in workgroup memory.
-struct P { n: u32 }
-@group(0) @binding(0) var<storage, read> qn: array<f32>;
-@group(0) @binding(1) var<storage, read> kn: array<f32>;
-@group(0) @binding(2) var<storage, read> conv: array<f32>;
-@group(0) @binding(3) var<storage, read> decay: array<f32>;
-@group(0) @binding(4) var<storage, read> beta: array<f32>;
-@group(0) @binding(5) var<storage, read_write> state: array<f32>;
-@group(0) @binding(6) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> ks: array<f32, 128>;
-var<workgroup> qs: array<f32, 128>;
-
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let g = wid.x * 64u + lid;
-  let h = g / 128u;
-  let j = g % 128u;
-  let sb = (h * 128u + j) * 128u;
-  var row: array<f32, 128>;
-  for (var i = 0u; i < 128u; i++) { row[i] = state[sb + i]; }
-  for (var t = 0u; t < p.n; t++) {
-    let hb = t * 512u + h * 128u;
-    workgroupBarrier();
-    ks[lid] = kn[hb + lid];
-    ks[lid + 64u] = kn[hb + lid + 64u];
-    qs[lid] = qn[hb + lid];
-    qs[lid + 64u] = qn[hb + lid + 64u];
-    workgroupBarrier();
-    let dc = decay[t * 4u + h];
-    var sk = 0.0;
-    for (var i = 0u; i < 128u; i++) { row[i] *= dc; sk += row[i] * ks[i]; }
-    let dl = (conv[t * 1536u + 1024u + h * 128u + j] - sk) * beta[t * 4u + h];
-    var o = 0.0;
-    for (var i = 0u; i < 128u; i++) { row[i] += dl * ks[i]; o += row[i] * qs[i]; }
-    outp[hb + j] = o * 0.08838834764831845;
-  }
-  for (var i = 0u; i < 128u; i++) { state[sb + i] = row[i]; }
-}
-`,"./kernels/gemm.wgsl":`// Implicit-GEMM causal conv / linear: 64x64 output tile, 16x16 threads x 4x4 outputs, K-step 16.
-// acc[t][o] = sum_k sum_i X[x_off + (t + k*d)*x_stride + i] * W[(k*O + o)*IC + i]   (IC % 16 == 0)
-// rows_dyn != 0: row tiles at or past dyn.b * rows_dyn valid rows exit.
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<f32>;
-@group(0) @binding(1) var<storage, read> Wt: array<u32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> Xs: array<array<f32, 64>, 16>;
-var<workgroup> Ws: array<array<f32, 64>, 16>;
-
-@compute @workgroup_size(16, 16)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let o0 = wid.x * 64u;
-  let t0 = wid.y * 64u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  let tx = l3.x;
-  let ty = l3.y;
-  var acc: array<array<f32, 4>, 4>;
-  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
-  let RR = p.K * p.IC;
-  let xt = lid >> 2u;
-  let xr = (lid & 3u) * 4u;
-  let wo = lid >> 3u;
-  let wr = (lid & 7u) * 2u;
-  for (var r0 = 0u; r0 < RR; r0 += 16u) {
-    let k = r0 / p.IC;
-    let i0 = r0 - k * p.IC;
-    let t = t0 + xt;
-    if (t < p.T) {
-      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
-      Xs[xr][xt] = X[base];
-      Xs[xr + 1u][xt] = X[base + 1u];
-      Xs[xr + 2u][xt] = X[base + 2u];
-      Xs[xr + 3u][xt] = X[base + 3u];
-    } else {
-      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
-    }
-    for (var h = 0u; h < 2u; h++) {
-      let oo = wo + h * 32u;
-      let o = o0 + oo;
-      var v = vec2f(0.0);
-      if (o < p.O) { v = unpack2x16float(Wt[((k * p.O + o) * p.IC + i0 + wr) >> 1u]); }
-      Ws[wr][oo] = v.x;
-      Ws[wr + 1u][oo] = v.y;
-    }
-    workgroupBarrier();
-    for (var r = 0u; r < 16u; r++) {
-      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
-      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
-      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
-      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
-      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
-      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
-    }
-    workgroupBarrier();
-  }
-  for (var a = 0u; a < 4u; a++) {
-    let t = t0 + ty + 16u * a;
-    if (t >= p.T) { continue; }
-    for (var b = 0u; b < 4u; b++) {
-      let o = o0 + tx + 16u * b;
-      if (o >= p.O) { continue; }
-      var y = acc[a][b];
-      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-      y = act(y, p.act, p.cap);
-      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-      if ((p.flags & 4u) != 0u) { y += shf[o]; }
-      y *= p.alpha;
-      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-      Y[p.y_off + t * p.y_stride + o] = y;
-    }
-  }
-}
-`,"./kernels/gemm_bf16.wgsl":`// gemm.wgsl with bf16 weights (two per u32, element 2i in the low half) for the native BF16 autocast recipe
-// (reference encoder + SSL teacher): the X operand is rounded to bf16 as it is loaded (ggml converts src1 to the
-// BF16 vec_dot type), products accumulate in f32, and \`rnd\` rounds the epilogue to bf16 at the requested points:
-// 1 after the accumulation, 2 after +bias, 4 after act, 8 after *alpha, 16 after +res.
-// Same tile and params as gemm.wgsl (64x64 output tile, 16x16 threads x 4x4 outputs, K-step 16, IC % 16 == 0).
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32, rnd: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<f32>;
-@group(0) @binding(1) var<storage, read> Wt: array<u32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> Xs: array<array<f32, 64>, 16>;
-var<workgroup> Ws: array<array<f32, 64>, 16>;
-
-@compute @workgroup_size(16, 16)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let o0 = wid.x * 64u;
-  let t0 = wid.y * 64u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  let tx = l3.x;
-  let ty = l3.y;
-  var acc: array<array<f32, 4>, 4>;
-  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
-  let RR = p.K * p.IC;
-  let xt = lid >> 2u;
-  let xr = (lid & 3u) * 4u;
-  let wo = lid >> 3u;
-  let wr = (lid & 7u) * 2u;
-  for (var r0 = 0u; r0 < RR; r0 += 16u) {
-    let k = r0 / p.IC;
-    let i0 = r0 - k * p.IC;
-    let t = t0 + xt;
-    if (t < p.T) {
-      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
-      Xs[xr][xt] = bf16r(X[base]);
-      Xs[xr + 1u][xt] = bf16r(X[base + 1u]);
-      Xs[xr + 2u][xt] = bf16r(X[base + 2u]);
-      Xs[xr + 3u][xt] = bf16r(X[base + 3u]);
-    } else {
-      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
-    }
-    for (var h = 0u; h < 2u; h++) {
-      let oo = wo + h * 32u;
-      let o = o0 + oo;
-      var v = vec2f(0.0);
-      if (o < p.O) {
-        let w = Wt[((k * p.O + o) * p.IC + i0 + wr) >> 1u];
-        v = vec2f(bitcast<f32>(w << 16u), bitcast<f32>(w & 0xffff0000u));
-      }
-      Ws[wr][oo] = v.x;
-      Ws[wr + 1u][oo] = v.y;
-    }
-    workgroupBarrier();
-    for (var r = 0u; r < 16u; r++) {
-      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
-      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
-      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
-      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
-      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
-      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
-    }
-    workgroupBarrier();
-  }
-  for (var a = 0u; a < 4u; a++) {
-    let t = t0 + ty + 16u * a;
-    if (t >= p.T) { continue; }
-    for (var b = 0u; b < 4u; b++) {
-      let o = o0 + tx + 16u * b;
-      if (o >= p.O) { continue; }
-      var y = acc[a][b];
-      if ((p.rnd & 1u) != 0u) { y = bf16r(y); }
-      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-      if ((p.rnd & 2u) != 0u) { y = bf16r(y); }
-      y = act(y, p.act, p.cap);
-      if ((p.rnd & 4u) != 0u) { y = bf16r(y); }
-      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-      if ((p.flags & 4u) != 0u) { y += shf[o]; }
-      y *= p.alpha;
-      if ((p.rnd & 8u) != 0u) { y = bf16r(y); }
-      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-      if ((p.rnd & 16u) != 0u) { y = bf16r(y); }
-      Y[p.y_off + t * p.y_stride + o] = y;
-    }
-  }
-}
-`,"./kernels/gemm_f32.wgsl":`// gemm.wgsl with f32 weights: 64x64 output tile, 16x16 threads x 4x4 outputs, K-step 16.
-// acc[t][o] = sum_k sum_i X[x_off + (t + k*d)*x_stride + i] * W[(k*O + o)*IC + i]   (IC % 16 == 0)
-// rows_dyn != 0: row tiles at or past dyn.b * rows_dyn valid rows exit. flags bit 16: act after scale/shift.
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<f32>;
-@group(0) @binding(1) var<storage, read> Wt: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> Xs: array<array<f32, 64>, 16>;
-var<workgroup> Ws: array<array<f32, 64>, 16>;
-
-@compute @workgroup_size(16, 16)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let o0 = wid.x * 64u;
-  let t0 = wid.y * 64u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  let tx = l3.x;
-  let ty = l3.y;
-  var acc: array<array<f32, 4>, 4>;
-  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
-  let RR = p.K * p.IC;
-  let xt = lid >> 2u;
-  let xr = (lid & 3u) * 4u;
-  let wo = lid >> 3u;
-  let wr = (lid & 7u) * 2u;
-  for (var r0 = 0u; r0 < RR; r0 += 16u) {
-    let k = r0 / p.IC;
-    let i0 = r0 - k * p.IC;
-    let t = t0 + xt;
-    if (t < p.T) {
-      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
-      Xs[xr][xt] = X[base];
-      Xs[xr + 1u][xt] = X[base + 1u];
-      Xs[xr + 2u][xt] = X[base + 2u];
-      Xs[xr + 3u][xt] = X[base + 3u];
-    } else {
-      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
-    }
-    for (var h = 0u; h < 2u; h++) {
-      let oo = wo + h * 32u;
-      let o = o0 + oo;
-      var v = vec2f(0.0);
-      if (o < p.O) {
-        let wi = (k * p.O + o) * p.IC + i0 + wr;
-        v = vec2f(Wt[wi], Wt[wi + 1u]);
-      }
-      Ws[wr][oo] = v.x;
-      Ws[wr + 1u][oo] = v.y;
-    }
-    workgroupBarrier();
-    for (var r = 0u; r < 16u; r++) {
-      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
-      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
-      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
-      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
-      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
-      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
-    }
-    workgroupBarrier();
-  }
-  for (var a = 0u; a < 4u; a++) {
-    let t = t0 + ty + 16u * a;
-    if (t >= p.T) { continue; }
-    for (var b = 0u; b < 4u; b++) {
-      let o = o0 + tx + 16u * b;
-      if (o >= p.O) { continue; }
-      var y = acc[a][b];
-      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-      let late = (p.flags & 16u) != 0u;
-      if (!late) { y = act(y, p.act, p.cap); }
-      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-      if ((p.flags & 4u) != 0u) { y += shf[o]; }
-      if (late) { y = act(y, p.act, p.cap); }
-      y *= p.alpha;
-      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-      Y[p.y_off + t * p.y_stride + o] = y;
-    }
-  }
-}
-`,"./kernels/gemm_h8.wgsl":`// Register-tiled implicit GEMM over k-major half weights (repack_h8 layout W[K][IC][Op], Op = ceil32(O); one
-// vec4<u32> = 8 halves): adjacent threads (consecutive og) read adjacent half8 chunks; no workgroup memory
-// (native/cl/kernels/gemm_h8.cl GEMM_H8, f32 accumulation). R, LX, LY are module constants injected by Gpu.kernel
-// (name gemm_h8_r<R>_<LX>x<LY>). Thread (og, tg): rows tg*R .. +R-1 x outputs og*8 .. +7.
-// acc[t][o] = sum_k sum_i X[x_off + (min(t,T-1) + k*d)*x_stride + i] * W[k][i][o]; IC % 16 == 0, x_off and x_stride
-// multiples of 4. rows_dyn != 0: row groups at or past dyn.b * rows_dyn valid rows exit. Epilogue as gemm_q8.wgsl.
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> W: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-fn lo8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.x), unpack2x16float(w.y)); }
-fn hi8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.z), unpack2x16float(w.w)); }
-
-fn store1(v: f32, t: u32, o: u32) {
-  if (o >= p.O) { return; }
-  var y = v;
-  if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-  y = act(y, p.act, p.cap);
-  if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-  if ((p.flags & 4u) != 0u) { y += shf[o]; }
-  y *= p.alpha;
-  if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-  Y[p.y_off + t * p.y_stride + o] = y;
-}
-
-fn store8(a: vec4f, b: vec4f, t: u32, o: u32) {
-  store1(a.x, t, o); store1(a.y, t, o + 1u); store1(a.z, t, o + 2u); store1(a.w, t, o + 3u);
-  store1(b.x, t, o + 4u); store1(b.y, t, o + 5u); store1(b.z, t, o + 6u); store1(b.w, t, o + 7u);
-}
-
-@compute @workgroup_size(LX, LY)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let og = gid.x;
-  let t0 = gid.y * R;
-  let OG = (p.O + 7u) / 8u;
-  let OP8 = ((p.O + 31u) / 32u) * 4u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (og >= OG || t0 >= nv) { return; }
-  var acc: array<vec4f, 2u * R>;
-  for (var r = 0u; r < 2u * R; r++) { acc[r] = vec4f(0.0); }
-  var xb: array<u32, R>;
-  for (var k = 0u; k < p.K; k++) {
-    let wb = k * p.IC * OP8 + og;
-    for (var r = 0u; r < R; r++) { xb[r] = (p.x_off + (min(t0 + r, p.T - 1u) + k * p.d) * p.x_stride) >> 2u; }
-    for (var i = 0u; i < p.IC; i += 4u) {
-      let wi = wb + i * OP8;
-      let w0 = W[wi]; let w1 = W[wi + OP8]; let w2 = W[wi + 2u * OP8]; let w3 = W[wi + 3u * OP8];
-      let a0 = lo8(w0); let a1 = lo8(w1); let a2 = lo8(w2); let a3 = lo8(w3);
-      let b0 = hi8(w0); let b1 = hi8(w1); let b2 = hi8(w2); let b3 = hi8(w3);
-      let xi = i >> 2u;
-      for (var r = 0u; r < R; r++) {
-        let xv = X[xb[r] + xi];
-        acc[2u * r] += xv.x * a0 + xv.y * a1 + xv.z * a2 + xv.w * a3;
-        acc[2u * r + 1u] += xv.x * b0 + xv.y * b1 + xv.z * b2 + xv.w * b3;
-      }
-    }
-  }
-  for (var r = 0u; r < R; r++) {
-    let t = t0 + r;
-    if (t < p.T) { store8(acc[2u * r], acc[2u * r + 1u], t, og * 8u); }
-  }
-}
-`,"./kernels/gemm_h8_ks.wgsl":`// Split-K gemm_h8 for few rows (T <= 32; native/cl/kernels/gemm_h8.cl GEMM_H8_KS, f32 accumulation). S is a module
-// constant injected by Gpu.kernel (name gemm_h8_ks<S>). Workgroup = 8 channel groups (64 outputs) x S K-slices over
-// 4 rows: slice s covers input channels [s*IC/S, (s+1)*IC/S) of every tap (IC % (4*S) == 0); partials reduce in
-// workgroup memory and the 32 (row, output) results of each channel group are finished by the S slice threads.
-// Weights, params, bindings and epilogue as gemm_h8.wgsl.
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> W: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-/** [slice][channel group][row][half] partial sums of 8 outputs (two vec4f per row). */
-var<workgroup> red: array<vec4f, 8u * S * 4u * 2u>;
-
-fn lo8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.x), unpack2x16float(w.y)); }
-fn hi8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.z), unpack2x16float(w.w)); }
-
-@compute @workgroup_size(8, S)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u) {
-  let lx = l3.x;
-  let s = l3.y;
-  let og = wid.x * 8u + lx;
-  let t0 = wid.z * 4u;
-  let OG = (p.O + 7u) / 8u;
-  let OP8 = ((p.O + 31u) / 32u) * 4u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  var acc: array<vec4f, 8>;
-  for (var r = 0u; r < 8u; r++) { acc[r] = vec4f(0.0); }
-  if (og < OG) {
-    let len = p.IC / S;
-    let lo = s * len;
-    let hi = lo + len;
-    var xb: array<u32, 4>;
-    for (var k = 0u; k < p.K; k++) {
-      let wb = k * p.IC * OP8 + og;
-      for (var r = 0u; r < 4u; r++) { xb[r] = (p.x_off + (min(t0 + r, p.T - 1u) + k * p.d) * p.x_stride) >> 2u; }
-      for (var i = lo; i < hi; i += 4u) {
-        let wi = wb + i * OP8;
-        let w0 = W[wi]; let w1 = W[wi + OP8]; let w2 = W[wi + 2u * OP8]; let w3 = W[wi + 3u * OP8];
-        let a0 = lo8(w0); let a1 = lo8(w1); let a2 = lo8(w2); let a3 = lo8(w3);
-        let b0 = hi8(w0); let b1 = hi8(w1); let b2 = hi8(w2); let b3 = hi8(w3);
-        let xi = i >> 2u;
-        for (var r = 0u; r < 4u; r++) {
-          let xv = X[xb[r] + xi];
-          acc[2u * r] += xv.x * a0 + xv.y * a1 + xv.z * a2 + xv.w * a3;
-          acc[2u * r + 1u] += xv.x * b0 + xv.y * b1 + xv.z * b2 + xv.w * b3;
-        }
-      }
-    }
-  }
-  let rb = (s * 8u + lx) * 8u;
-  for (var r = 0u; r < 8u; r++) { red[rb + r] = acc[r]; }
-  workgroupBarrier();
-  if (og >= OG) { return; }
-  for (var e = s; e < 32u; e += S) {
-    let r = e >> 3u;
-    let j = e & 7u;
-    let t = t0 + r;
-    let o = og * 8u + j;
-    if (t >= p.T || o >= p.O) { continue; }
-    var y = 0.0;
-    for (var q = 0u; q < S; q++) { y += red[(q * 8u + lx) * 8u + 2u * r + (j >> 2u)][j & 3u]; }
-    if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-    y = act(y, p.act, p.cap);
-    if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-    if ((p.flags & 4u) != 0u) { y += shf[o]; }
-    y *= p.alpha;
-    if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-    Y[p.y_off + t * p.y_stride + o] = y;
-  }
-}
-`,"./kernels/gemm_q8.wgsl":`// gemm.wgsl with q8_0 weights: int8 W[(k*O + o)*IC + i] packed 4 per u32, one f32 scale per 32-weight
-// block (Wsc[e / 32]). Same tile, params and epilogue as gemm.wgsl; requires IC % 32 == 0.
-// rows_dyn != 0: row tiles at or past dyn.b * rows_dyn valid rows exit.
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<f32>;
-@group(0) @binding(1) var<storage, read> Wq: array<u32>;
-@group(0) @binding(7) var<storage, read> Wsc: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> Xs: array<array<f32, 64>, 16>;
-var<workgroup> Ws: array<array<f32, 64>, 16>;
-
-@compute @workgroup_size(16, 16)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let o0 = wid.x * 64u;
-  let t0 = wid.y * 64u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  let tx = l3.x;
-  let ty = l3.y;
-  var acc: array<array<f32, 4>, 4>;
-  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
-  let RR = p.K * p.IC;
-  let xt = lid >> 2u;
-  let xr = (lid & 3u) * 4u;
-  let wo = lid >> 2u;
-  let wr = (lid & 3u) * 4u;
-  for (var r0 = 0u; r0 < RR; r0 += 16u) {
-    let k = r0 / p.IC;
-    let i0 = r0 - k * p.IC;
-    let t = t0 + xt;
-    if (t < p.T) {
-      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
-      Xs[xr][xt] = X[base];
-      Xs[xr + 1u][xt] = X[base + 1u];
-      Xs[xr + 2u][xt] = X[base + 2u];
-      Xs[xr + 3u][xt] = X[base + 3u];
-    } else {
-      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
-    }
-    let o = o0 + wo;
-    var v = vec4f(0.0);
-    if (o < p.O) {
-      let e = (k * p.O + o) * p.IC + i0 + wr;
-      v = unpack_i8(Wq[e >> 2u]) * Wsc[e >> 5u];
-    }
-    Ws[wr][wo] = v.x; Ws[wr + 1u][wo] = v.y; Ws[wr + 2u][wo] = v.z; Ws[wr + 3u][wo] = v.w;
-    workgroupBarrier();
-    for (var r = 0u; r < 16u; r++) {
-      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
-      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
-      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
-      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
-      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
-      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
-    }
-    workgroupBarrier();
-  }
-  for (var a = 0u; a < 4u; a++) {
-    let t = t0 + ty + 16u * a;
-    if (t >= p.T) { continue; }
-    for (var b = 0u; b < 4u; b++) {
-      let o = o0 + tx + 16u * b;
-      if (o >= p.O) { continue; }
-      var y = acc[a][b];
-      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-      y = act(y, p.act, p.cap);
-      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-      if ((p.flags & 4u) != 0u) { y += shf[o]; }
-      y *= p.alpha;
-      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-      Y[p.y_off + t * p.y_stride + o] = y;
-    }
-  }
-}
-`,"./kernels/gemm_skinny.wgsl":`// Skinny implicit-GEMM causal conv / linear for small T: 16(T) x 64(O) output tile, 256 threads x 4 outputs,
-// K-step 32. Same math, params and bindings as gemm.wgsl; weights are read 8 f16 per vec4<u32> (IC % 32 == 0).
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<f32>;
-@group(0) @binding(1) var<storage, read> Wt: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> Xs: array<array<f32, 16>, 32>;   // [r][t]
-var<workgroup> Ws: array<array<f32, 65>, 32>;   // [r][o], padded
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let o0 = wid.x * 64u;
-  let t0 = wid.y * 16u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  let tx = lid & 15u;
-  let ty = lid >> 4u;
-  var acc: array<f32, 4>;
-  for (var b = 0u; b < 4u; b++) { acc[b] = 0.0; }
-  let RR = p.K * p.IC;
-  for (var r0 = 0u; r0 < RR; r0 += 32u) {
-    let k = r0 / p.IC;
-    let i0 = r0 - k * p.IC;
-    let t = t0 + ty;
-    let xr = tx * 2u;
-    if (t < p.T) {
-      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
-      Xs[xr][ty] = X[base];
-      Xs[xr + 1u][ty] = X[base + 1u];
-    } else {
-      Xs[xr][ty] = 0.0;
-      Xs[xr + 1u][ty] = 0.0;
-    }
-    let col = lid >> 2u;
-    let part = (lid & 3u) * 8u;
-    let o = o0 + col;
-    var w = vec4<u32>(0u);
-    if (o < p.O) { w = Wt[((k * p.O + o) * p.IC + i0 + part) >> 3u]; }
-    let a = unpack2x16float(w.x); let b2 = unpack2x16float(w.y);
-    let c = unpack2x16float(w.z); let d = unpack2x16float(w.w);
-    Ws[part][col] = a.x; Ws[part + 1u][col] = a.y; Ws[part + 2u][col] = b2.x; Ws[part + 3u][col] = b2.y;
-    Ws[part + 4u][col] = c.x; Ws[part + 5u][col] = c.y; Ws[part + 6u][col] = d.x; Ws[part + 7u][col] = d.y;
-    workgroupBarrier();
-    for (var r = 0u; r < 32u; r++) {
-      let x = Xs[r][ty];
-      acc[0] += x * Ws[r][tx]; acc[1] += x * Ws[r][tx + 16u];
-      acc[2] += x * Ws[r][tx + 32u]; acc[3] += x * Ws[r][tx + 48u];
-    }
-    workgroupBarrier();
-  }
-  let t = t0 + ty;
-  if (t >= p.T) { return; }
-  for (var b = 0u; b < 4u; b++) {
-    let o = o0 + tx + 16u * b;
-    if (o >= p.O) { continue; }
-    var y = acc[b];
-    if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-    y = act(y, p.act, p.cap);
-    if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-    if ((p.flags & 4u) != 0u) { y += shf[o]; }
-    y *= p.alpha;
-    if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-    Y[p.y_off + t * p.y_stride + o] = y;
-  }
-}
-`,"./kernels/gemm_skinny_q8.wgsl":`// gemm_skinny.wgsl with q8_0 weights: int8 W packed 4 per u32 (8 per vec2<u32>), one f32 scale per
-// 32-weight block. Same tile, params and epilogue as gemm_skinny.wgsl; requires IC % 32 == 0.
-struct P {
-  T: u32, O: u32, IC: u32, K: u32, d: u32,
-  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
-  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
-}
-@group(0) @binding(0) var<storage, read> X: array<f32>;
-@group(0) @binding(1) var<storage, read> Wq: array<vec2<u32>>;
-@group(0) @binding(7) var<storage, read> Wsc: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> scl: array<f32>;
-@group(0) @binding(4) var<storage, read> shf: array<f32>;
-@group(0) @binding(5) var<storage, read> res: array<f32>;
-@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> Xs: array<array<f32, 16>, 32>;   // [r][t]
-var<workgroup> Ws: array<array<f32, 65>, 32>;   // [r][o], padded
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let o0 = wid.x * 64u;
-  let t0 = wid.y * 16u;
-  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
-  if (t0 >= nv) { return; }
-  let tx = lid & 15u;
-  let ty = lid >> 4u;
-  var acc: array<f32, 4>;
-  for (var b = 0u; b < 4u; b++) { acc[b] = 0.0; }
-  let RR = p.K * p.IC;
-  for (var r0 = 0u; r0 < RR; r0 += 32u) {
-    let k = r0 / p.IC;
-    let i0 = r0 - k * p.IC;
-    let t = t0 + ty;
-    let xr = tx * 2u;
-    if (t < p.T) {
-      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
-      Xs[xr][ty] = X[base];
-      Xs[xr + 1u][ty] = X[base + 1u];
-    } else {
-      Xs[xr][ty] = 0.0;
-      Xs[xr + 1u][ty] = 0.0;
-    }
-    let col = lid >> 2u;
-    let part = (lid & 3u) * 8u;
-    let o = o0 + col;
-    var lo = vec4f(0.0);
-    var hi = vec4f(0.0);
-    if (o < p.O) {
-      let e = (k * p.O + o) * p.IC + i0 + part;
-      let w = Wq[e >> 3u];
-      let s = Wsc[e >> 5u];
-      lo = unpack_i8(w.x) * s;
-      hi = unpack_i8(w.y) * s;
-    }
-    Ws[part][col] = lo.x; Ws[part + 1u][col] = lo.y; Ws[part + 2u][col] = lo.z; Ws[part + 3u][col] = lo.w;
-    Ws[part + 4u][col] = hi.x; Ws[part + 5u][col] = hi.y; Ws[part + 6u][col] = hi.z; Ws[part + 7u][col] = hi.w;
-    workgroupBarrier();
-    for (var r = 0u; r < 32u; r++) {
-      let x = Xs[r][ty];
-      acc[0] += x * Ws[r][tx]; acc[1] += x * Ws[r][tx + 16u];
-      acc[2] += x * Ws[r][tx + 32u]; acc[3] += x * Ws[r][tx + 48u];
-    }
-    workgroupBarrier();
-  }
-  let t = t0 + ty;
-  if (t >= p.T) { return; }
-  for (var b = 0u; b < 4u; b++) {
-    let o = o0 + tx + 16u * b;
-    if (o >= p.O) { continue; }
-    var y = acc[b];
-    if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
-    y = act(y, p.act, p.cap);
-    if ((p.flags & 2u) != 0u) { y *= scl[o]; }
-    if ((p.flags & 4u) != 0u) { y += shf[o]; }
-    y *= p.alpha;
-    if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
-    Y[p.y_off + t * p.y_stride + o] = y;
-  }
-}
-`,"./kernels/layernorm.wgsl":`// y = act((x - mean) / sqrt(var + eps) * w + b), biased variance (ggml_norm), one row per workgroup.
-// rows_dyn != 0: rows at or past dyn.b * rows_dyn valid rows exit.
-struct P { N: u32, eps: f32, act: u32, rows_dyn: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;
-@group(0) @binding(2) var<storage, read> b: array<f32>;
-@group(0) @binding(3) var<storage, read_write> y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<f32, 256>;
-
-fn reduce(v: f32, lid: u32) -> f32 {
-  red[lid] = v;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  let r = red[0];
-  workgroupBarrier();
-  return r;
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let row = wid.x + wid.y * nwg.x;
-  if (p.rows_dyn != 0u && row >= dyn.b * p.rows_dyn) { return; }
-  let rb = row * p.N;
-  var s = 0.0;
-  for (var c = lid; c < p.N; c += 256u) { s += x[rb + c]; }
-  let mean = reduce(s, lid) / f32(p.N);
-  var s2 = 0.0;
-  for (var c = lid; c < p.N; c += 256u) { let d = x[rb + c] - mean; s2 += d * d; }
-  let scale = inverseSqrt(reduce(s2, lid) / f32(p.N) + p.eps);
-  for (var c = lid; c < p.N; c += 256u) {
-    y[rb + c] = act((x[rb + c] - mean) * scale * w[c] + b[c], p.act, 0.0);
-  }
-}
-`,"./kernels/lora_up.wgsl":`// LoRA up-projection added into a linear's output: Y[y_off + r*O + o] += U[o] . t[r*K .. r*K + K), r < n.
-// U f16 [O][K] (K % 8 == 0, K <= 256); t [n][K] = down . x (the adapter's down-projection, gemm / matvec).
-struct P { O: u32, K: u32, y_off: u32 }
-@group(0) @binding(0) var<storage, read> t: array<f32>;
-@group(0) @binding(1) var<storage, read> U: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read_write> Y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> ts: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let r = wid.y;
-  if (lid < p.K) { ts[lid] = t[r * p.K + lid]; }
-  workgroupBarrier();
-  let o = wid.x * 256u + lid;
-  if (o >= p.O) { return; }
-  let k8 = p.K / 8u;
-  var s = 0.0;
-  for (var j = 0u; j < k8; j++) {
-    let w = U[o * k8 + j];
-    let b = j * 8u;
-    s += dot(vec4f(unpack2x16float(w.x), unpack2x16float(w.y)), vec4f(ts[b], ts[b + 1u], ts[b + 2u], ts[b + 3u])) +
-         dot(vec4f(unpack2x16float(w.z), unpack2x16float(w.w)), vec4f(ts[b + 4u], ts[b + 5u], ts[b + 6u], ts[b + 7u]));
-  }
-  Y[p.y_off + r * p.O + o] += s;
-}
-`,"./kernels/lora_vec.wgsl":`// Decode-row LoRA side path in one dispatch: y[y_off + o] += U[o] . (D . x), D f16 [K][I], U f16 [O][K].
-// Every workgroup recomputes t = D . x (K x I MACs, 256 / K lanes per rank row) before its 256 outputs.
-// K a power of two in 8..256; I even, I <= 2048.
-struct P { O: u32, I: u32, K: u32, y_off: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> D: array<u32>;
-@group(0) @binding(2) var<storage, read> U: array<vec4<u32>>;
-@group(0) @binding(3) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> xs: array<f32, 2048>;
-var<workgroup> red: array<f32, 256>;
-var<workgroup> ts: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  for (var i = lid; i < p.I; i += 256u) { xs[i] = x[i]; }
-  workgroupBarrier();
-  let lanes = 256u / p.K;
-  let k = lid / lanes;
-  let lane = lid - k * lanes;
-  let i2 = p.I / 2u;
-  var s = 0.0;
-  for (var i = lane; i < i2; i += lanes) {
-    let w = unpack2x16float(D[k * i2 + i]);
-    s += w.x * xs[2u * i] + w.y * xs[2u * i + 1u];
-  }
-  red[lid] = s;
-  workgroupBarrier();
-  for (var st = lanes >> 1u; st > 0u; st >>= 1u) {
-    if (lane < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) { ts[k] = red[lid]; }
-  workgroupBarrier();
-  let o = wid.x * 256u + lid;
-  if (o >= p.O) { return; }
-  let k8 = p.K / 8u;
-  var acc = 0.0;
-  for (var j = 0u; j < k8; j++) {
-    let w = U[o * k8 + j];
-    let b = j * 8u;
-    acc += dot(vec4f(unpack2x16float(w.x), unpack2x16float(w.y)), vec4f(ts[b], ts[b + 1u], ts[b + 2u], ts[b + 3u])) +
-           dot(vec4f(unpack2x16float(w.z), unpack2x16float(w.w)), vec4f(ts[b + 4u], ts[b + 5u], ts[b + 6u], ts[b + 7u]));
-  }
-  y[p.y_off + o] += acc;
-}
-`,"./kernels/matvec.wgsl":`// y[y_off + o] = act(W[o] . x[x_off:] + bias[o % nb_bias]) + res[o]; W f16 [O][I] (I % 8 == 0), x_off % 4 == 0.
-// 16 rows per 64-thread workgroup: 4 row-groups x 16 lanes, each row-group computing 4 rows that share every x load
-// (native/cl/kernels/matvec.cl).
-struct P { O: u32, I: u32, x_off: u32, y_off: u32, nb_bias: u32, flags: u32, act: u32, cap: f32 }
-@group(0) @binding(0) var<storage, read> x: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> Wt: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> res: array<f32>;
-@group(0) @binding(4) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<vec4f, 64>;
-
-fn dot8(w: vec4<u32>, xa: vec4f, xb: vec4f) -> f32 {
-  let a = unpack2x16float(w.x); let b = unpack2x16float(w.y);
-  let c = unpack2x16float(w.z); let d = unpack2x16float(w.w);
-  return dot(vec4f(a, b), xa) + dot(vec4f(c, d), xb);
-}
-
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let lane = lid & 15u;
-  let rg = lid >> 4u;
-  let o0 = (wid.x + wid.y * nwg.x) * 16u + rg * 4u;
-  let n8 = p.I / 8u;
-  let last = p.O - 1u;
-  let w0 = min(o0, last) * n8;
-  let w1 = min(o0 + 1u, last) * n8;
-  let w2 = min(o0 + 2u, last) * n8;
-  let w3 = min(o0 + 3u, last) * n8;
-  let xb = p.x_off >> 2u;
-  var s = vec4f(0.0);
-  for (var j = lane; j < n8; j += 16u) {
-    let xa = x[xb + 2u * j];
-    let xc = x[xb + 2u * j + 1u];
-    s.x += dot8(Wt[w0 + j], xa, xc);
-    s.y += dot8(Wt[w1 + j], xa, xc);
-    s.z += dot8(Wt[w2 + j], xa, xc);
-    s.w += dot8(Wt[w3 + j], xa, xc);
-  }
-  red[lid] = s;
-  workgroupBarrier();
-  for (var st = 8u; st > 0u; st >>= 1u) {
-    if (lane < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) {
-    let r = red[lid];
-    var v = array<f32, 4>(r.x, r.y, r.z, r.w);
-    for (var k = 0u; k < 4u; k++) {
-      let o = o0 + k;
-      if (o >= p.O) { break; }
-      var t = v[k];
-      if ((p.flags & 1u) != 0u) { t += bias[o % p.nb_bias]; }
-      t = act(t, p.act, p.cap);
-      if ((p.flags & 8u) != 0u) { t += res[o]; }
-      y[p.y_off + o] = t;
-    }
-  }
-}
-`,"./kernels/matvec_glu.wgsl":`// y[o] = (Wu[o] . x) * silu(Wg[o] . x)
-struct P { O: u32, I: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> Wu: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read> Wg: array<vec4<u32>>;
-@group(0) @binding(3) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> ru: array<f32, 256>;
-var<workgroup> rg: array<f32, 256>;
-
-fn dot8(w: vec4<u32>, xb: u32) -> f32 {
-  let a = unpack2x16float(w.x); let b = unpack2x16float(w.y);
-  let c = unpack2x16float(w.z); let d = unpack2x16float(w.w);
-  return a.x * x[xb] + a.y * x[xb + 1u] + b.x * x[xb + 2u] + b.y * x[xb + 3u]
-       + c.x * x[xb + 4u] + c.y * x[xb + 5u] + d.x * x[xb + 6u] + d.y * x[xb + 7u];
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let lane = lid & 31u;
-  let o = (wid.x + wid.y * nwg.x) * 8u + (lid >> 5u);
-  var su = 0.0;
-  var sg = 0.0;
-  if (o < p.O) {
-    let n8 = p.I / 8u;
-    for (var j = lane; j < n8; j += 32u) {
-      su += dot8(Wu[o * n8 + j], j * 8u);
-      sg += dot8(Wg[o * n8 + j], j * 8u);
-    }
-  }
-  ru[lid] = su;
-  rg[lid] = sg;
-  workgroupBarrier();
-  for (var st = 16u; st > 0u; st >>= 1u) {
-    if (lane < st) { ru[lid] += ru[lid + st]; rg[lid] += rg[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u && o < p.O) { y[o] = ru[lid] * silu(rg[lid]); }
-}
-`,"./kernels/matvec_q8.wgsl":`// matvec.wgsl with q8_0 weights: int8 W[o][i] (2 vec4<u32> per 32-weight block), f32 scale Wsc[o*I/32 + j];
-// I % 32 == 0, x_off % 4 == 0. y[y_off + o] = act(W[o] . x[x_off:] + bias[o % nb_bias]) + res[o].
-// 16 rows per 64-thread workgroup: 4 row-groups x 16 lanes, each row-group computing 4 rows that share every x load;
-// lane = quant block (native/cl/kernels/matvec_q8.cl).
-struct P { O: u32, I: u32, x_off: u32, y_off: u32, nb_bias: u32, flags: u32, act: u32, cap: f32 }
-@group(0) @binding(0) var<storage, read> x: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> Wq: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read> res: array<f32>;
-@group(0) @binding(4) var<storage, read_write> y: array<f32>;
-@group(0) @binding(7) var<storage, read> Wsc: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> red: array<vec4f, 64>;
-
-/** One 32-weight block of row r (quants qa | qb) against x0..x7. */
-fn blk32(qa: vec4<u32>, qb: vec4<u32>, x0: vec4f, x1: vec4f, x2: vec4f, x3: vec4f,
-         x4: vec4f, x5: vec4f, x6: vec4f, x7: vec4f) -> f32 {
-  return dot(unpack_i8(qa.x), x0) + dot(unpack_i8(qa.y), x1) + dot(unpack_i8(qa.z), x2) + dot(unpack_i8(qa.w), x3)
-       + dot(unpack_i8(qb.x), x4) + dot(unpack_i8(qb.y), x5) + dot(unpack_i8(qb.z), x6) + dot(unpack_i8(qb.w), x7);
-}
-
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let lane = lid & 15u;
-  let rg = lid >> 4u;
-  let o0 = (wid.x + wid.y * nwg.x) * 16u + rg * 4u;
-  let nb = p.I / 32u;
-  let last = p.O - 1u;
-  let r0 = min(o0, last) * nb;
-  let r1 = min(o0 + 1u, last) * nb;
-  let r2 = min(o0 + 2u, last) * nb;
-  let r3 = min(o0 + 3u, last) * nb;
-  let xb = p.x_off >> 2u;
-  var s = vec4f(0.0);
-  for (var j = lane; j < nb; j += 16u) {
-    let xo = xb + j * 8u;
-    let x0 = x[xo]; let x1 = x[xo + 1u]; let x2 = x[xo + 2u]; let x3 = x[xo + 3u];
-    let x4 = x[xo + 4u]; let x5 = x[xo + 5u]; let x6 = x[xo + 6u]; let x7 = x[xo + 7u];
-    s.x += Wsc[r0 + j] * blk32(Wq[(r0 + j) * 2u], Wq[(r0 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
-    s.y += Wsc[r1 + j] * blk32(Wq[(r1 + j) * 2u], Wq[(r1 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
-    s.z += Wsc[r2 + j] * blk32(Wq[(r2 + j) * 2u], Wq[(r2 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
-    s.w += Wsc[r3 + j] * blk32(Wq[(r3 + j) * 2u], Wq[(r3 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
-  }
-  red[lid] = s;
-  workgroupBarrier();
-  for (var st = 8u; st > 0u; st >>= 1u) {
-    if (lane < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) {
-    let r = red[lid];
-    var v = array<f32, 4>(r.x, r.y, r.z, r.w);
-    for (var k = 0u; k < 4u; k++) {
-      let o = o0 + k;
-      if (o >= p.O) { break; }
-      var t = v[k];
-      if ((p.flags & 1u) != 0u) { t += bias[o % p.nb_bias]; }
-      t = act(t, p.act, p.cap);
-      if ((p.flags & 8u) != 0u) { t += res[o]; }
-      y[p.y_off + o] = t;
-    }
-  }
-}
-`,"./kernels/moe_dense_mix.wgsl":`// Dense 4-expert MoE mix (speaker encoder): y[t][k] = newgelu(sum_i softmax(lg[t])[i] * e[t][64i + k]), k < 64.
-struct P { T: u32 }
-@group(0) @binding(0) var<storage, read> lg: array<f32>;
-@group(0) @binding(1) var<storage, read> e: array<f32>;
-@group(0) @binding(2) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.T * 64u) { return; }
-  let t = i / 64u;
-  let k = i - t * 64u;
-  let l = vec4f(lg[t * 4u], lg[t * 4u + 1u], lg[t * 4u + 2u], lg[t * 4u + 3u]);
-  let m = max(max(l.x, l.y), max(l.z, l.w));
-  let ex = exp(l - vec4f(m));
-  let r = ex * (1.0 / (ex.x + ex.y + ex.z + ex.w));
-  let eb = t * 256u + k;
-  var v = e[eb] * r.x;
-  v += e[eb + 64u] * r.y;
-  v += e[eb + 128u] * r.z;
-  v += e[eb + 192u] * r.w;
-  y[i] = act(v, 6u, 0.0);
-}
-`,"./kernels/moe_down.wgsl":`// out[t][o] = sum_j wts[t][j] * (Wd[sel[t][j]][o] . hbuf[t][j]); q4_0 Wd [64][256][1536] (48 blocks = 192 u32 per row).
-@group(0) @binding(0) var<storage, read> hbuf: array<f32>;
-@group(0) @binding(1) var<storage, read> sel: array<u32>;
-@group(0) @binding(2) var<storage, read> wts: array<f32>;
-@group(0) @binding(3) var<storage, read> dq: array<u32>;
-@group(0) @binding(4) var<storage, read> ds: array<f32>;
-@group(0) @binding(5) var<storage, read_write> outp: array<f32>;
-
-var<workgroup> hs: array<f32, 3072>;
-var<workgroup> red: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.z;
-  for (var m = 0u; m < 12u; m++) { hs[lid + 256u * m] = hbuf[t * 3072u + lid + 256u * m]; }
-  workgroupBarrier();
-  let r = wid.x * 8u + (lid >> 5u);
-  let lane = lid & 31u;
-  var total = 0.0;
-  for (var j = 0u; j < 2u; j++) {
-    let row = sel[t * 2u + j] * 256u + r;
-    var s = 0.0;
-    for (var u = lane; u < 192u; u += 32u) {
-      let hb = j * 1536u + (u >> 2u) * 32u + (u & 3u) * 4u;
-      let lo = vec4f(hs[hb], hs[hb + 1u], hs[hb + 2u], hs[hb + 3u]);
-      let hi = vec4f(hs[hb + 16u], hs[hb + 17u], hs[hb + 18u], hs[hb + 19u]);
-      let q = dq[row * 192u + u];
-      s += ds[row * 48u + (u >> 2u)] * (dot(unpack_q4_lo(q), lo) + dot(unpack_q4_hi(q), hi));
-    }
-    red[lid] = s;
-    workgroupBarrier();
-    for (var st = 16u; st > 0u; st >>= 1u) {
-      if (lane < st) { red[lid] += red[lid + st]; }
-      workgroupBarrier();
-    }
-    if (lane == 0u) { total += red[lid] * wts[t * 2u + j]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) { outp[t * 256u + r] = total; }
-}
-`,"./kernels/moe_down_lora.wgsl":`// moe_down.wgsl plus the speech-edit adapter's expert output shift:
-// out[t][o] = sum_j wts[t][j] * (Wd[e][o] . hbuf[t][j] + Ud[e][o] . td[t][j]), e = sel[t][j]; td [n][2][16] the
-// down-projections of hbuf (moe_lora_t, R = 16), Ud f16 [64][256][16]. Lanes 0..7 of a row add f16 pair \`lane\`.
-@group(0) @binding(0) var<storage, read> hbuf: array<f32>;
-@group(0) @binding(1) var<storage, read> sel: array<u32>;
-@group(0) @binding(2) var<storage, read> wts: array<f32>;
-@group(0) @binding(3) var<storage, read> dq: array<u32>;
-@group(0) @binding(4) var<storage, read> ds: array<f32>;
-@group(0) @binding(5) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(6) var<storage, read> td: array<f32>;
-@group(0) @binding(7) var<storage, read> U: array<u32>;
-
-var<workgroup> hs: array<f32, 3072>;
-var<workgroup> red: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.z;
-  for (var m = 0u; m < 12u; m++) { hs[lid + 256u * m] = hbuf[t * 3072u + lid + 256u * m]; }
-  workgroupBarrier();
-  let r = wid.x * 8u + (lid >> 5u);
-  let lane = lid & 31u;
-  var total = 0.0;
-  for (var j = 0u; j < 2u; j++) {
-    let e = sel[t * 2u + j];
-    let row = e * 256u + r;
-    var s = 0.0;
-    for (var u = lane; u < 192u; u += 32u) {
-      let hb = j * 1536u + (u >> 2u) * 32u + (u & 3u) * 4u;
-      let lo = vec4f(hs[hb], hs[hb + 1u], hs[hb + 2u], hs[hb + 3u]);
-      let hi = vec4f(hs[hb + 16u], hs[hb + 17u], hs[hb + 18u], hs[hb + 19u]);
-      let q = dq[row * 192u + u];
-      s += ds[row * 48u + (u >> 2u)] * (dot(unpack_q4_lo(q), lo) + dot(unpack_q4_hi(q), hi));
-    }
-    if (lane < 8u) {
-      let f = unpack2x16float(U[row * 8u + lane]);
-      let tb = (t * 2u + j) * 16u + 2u * lane;
-      s += f.x * td[tb] + f.y * td[tb + 1u];
-    }
-    red[lid] = s;
-    workgroupBarrier();
-    for (var st = 16u; st > 0u; st >>= 1u) {
-      if (lane < st) { red[lid] += red[lid + st]; }
-      workgroupBarrier();
-    }
-    if (lane == 0u) { total += red[lid] * wts[t * 2u + j]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) { outp[t * 256u + r] = total; }
-}
-`,"./kernels/moe_lora_t.wgsl":`// LoRA down-projection of the routed experts: tout[t_off + (t*2 + j)*R + o] = D[e][o] . x[t*x_t + j*x_j ..+I),
-// e = sel[t][j], o < R. D f16 [64][R][I] (R <= 32, I % 2 == 0, I <= 1536). One workgroup per (token, pick): 8 lanes
-// per output row.
-struct P { R: u32, I: u32, x_t: u32, x_j: u32, t_off: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> sel: array<u32>;
-@group(0) @binding(2) var<storage, read> D: array<u32>;
-@group(0) @binding(3) var<storage, read_write> tout: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> xs: array<f32, 1536>;
-var<workgroup> red: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.x;
-  let j = wid.y;
-  let x0 = t * p.x_t + j * p.x_j;
-  for (var i = lid; i < p.I; i += 256u) { xs[i] = x[x0 + i]; }
-  workgroupBarrier();
-  let o = lid >> 3u;
-  let lane = lid & 7u;
-  let e = sel[t * 2u + j];
-  var s = 0.0;
-  if (o < p.R) {
-    let i2 = p.I / 2u;
-    let row = (e * p.R + o) * i2;
-    for (var i = lane; i < i2; i += 8u) {
-      let w = unpack2x16float(D[row + i]);
-      s += w.x * xs[2u * i] + w.y * xs[2u * i + 1u];
-    }
-  }
-  red[lid] = s;
-  workgroupBarrier();
-  for (var st = 4u; st > 0u; st >>= 1u) {
-    if (lane < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u && o < p.R) { tout[p.t_off + (t * 2u + j) * p.R + o] = red[lid]; }
-}
-`,"./kernels/moe_topk.wgsl":`// Linear-router top-2 of 64 experts, one 64-thread workgroup per token. Selection on lg - rbias (strict >,
-// lowest index wins ties): each thread ranks its expert against all 64 in parallel; ranks 0..1 are picked
-// (native/cl/kernels/moe_topk.cl). Weights = softmax over the two selected raw logits.
-@group(0) @binding(0) var<storage, read> lg: array<f32>;
-@group(0) @binding(1) var<storage, read> rbias: array<f32>;
-@group(0) @binding(2) var<storage, read_write> sel: array<u32>;
-@group(0) @binding(3) var<storage, read_write> wts: array<f32>;
-
-var<workgroup> lgs: array<f32, 64>;
-var<workgroup> scs: array<f32, 64>;
-var<workgroup> picked: array<u32, 2>;
-
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) j: u32) {
-  let t = wid.x;
-  let v = lg[t * 64u + j];
-  lgs[j] = v;
-  scs[j] = v - rbias[j];
-  workgroupBarrier();
-  let sj = scs[j];
-  var rank = 0u;
-  for (var e = 0u; e < 64u; e++) {
-    let se = scs[e];
-    rank += select(0u, 1u, se > sj || (se == sj && e < j));
-  }
-  if (rank < 2u) { picked[rank] = j; }
-  workgroupBarrier();
-  if (j == 0u) {
-    let p0 = picked[0];
-    let p1 = picked[1];
-    let l0 = lgs[p0];
-    let l1 = lgs[p1];
-    let mx = max(l0, l1);
-    let e0 = exp(l0 - mx);
-    let e1 = exp(l1 - mx);
-    sel[t * 2u] = p0;
-    sel[t * 2u + 1u] = p1;
-    wts[t * 2u] = e0 / (e0 + e1);
-    wts[t * 2u + 1u] = e1 / (e0 + e1);
-  }
-}
-`,"./kernels/moe_up.wgsl":`// hbuf[t][j][f] = silu(Wg[e] . z_t) * (Wu[e] . z_t), e = sel[t][j]; q4_0 weights [64][1536][256] (4 u32 per block, ggml nibble order).
-// Workgroup = 32 rows x 8 lanes; lane l handles quant block l (32 nibbles = 4 u32) of the row.
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> sel: array<u32>;
-@group(0) @binding(2) var<storage, read> gq: array<u32>;
-@group(0) @binding(3) var<storage, read> gs: array<f32>;
-@group(0) @binding(4) var<storage, read> uq: array<u32>;
-@group(0) @binding(5) var<storage, read> us: array<f32>;
-@group(0) @binding(6) var<storage, read_write> hbuf: array<f32>;
-
-var<workgroup> xs: array<f32, 256>;
-var<workgroup> rg: array<f32, 256>;
-var<workgroup> ru: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.z;
-  let j = wid.y;
-  xs[lid] = x[t * 256u + lid];
-  workgroupBarrier();
-  let e = sel[t * 2u + j];
-  let r = wid.x * 32u + (lid >> 3u);
-  let lane = lid & 7u;
-  let row = e * 1536u + r;
-  let qb = row * 32u + lane * 4u;
-  var sg = 0.0;
-  var su = 0.0;
-  for (var w = 0u; w < 4u; w++) {
-    let xl = lane * 32u + w * 4u;
-    let xlo = vec4f(xs[xl], xs[xl + 1u], xs[xl + 2u], xs[xl + 3u]);
-    let xhi = vec4f(xs[xl + 16u], xs[xl + 17u], xs[xl + 18u], xs[xl + 19u]);
-    let g = gq[qb + w]; let u = uq[qb + w];
-    sg += dot(unpack_q4_lo(g), xlo) + dot(unpack_q4_hi(g), xhi);
-    su += dot(unpack_q4_lo(u), xlo) + dot(unpack_q4_hi(u), xhi);
-  }
-  rg[lid] = sg * gs[row * 8u + lane];
-  ru[lid] = su * us[row * 8u + lane];
-  workgroupBarrier();
-  for (var st = 4u; st > 0u; st >>= 1u) {
-    if (lane < st) { rg[lid] += rg[lid + st]; ru[lid] += ru[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) { hbuf[(t * 2u + j) * 1536u + r] = ru[lid] * silu(rg[lid]); }
-}
-`,"./kernels/moe_up_lora.wgsl":`// moe_up.wgsl plus the speech-edit adapter's expert shifts on the gate/up pre-activations:
-// hbuf[t][j][f] = silu(Wg[e] . z_t + Ug[e][f] . tl[t][j][0..16)) * (Wu[e] . z_t + Uu[e][f] . tl[t][j][16..32)),
-// e = sel[t][j]; tl = the stacked down-projections (moe_lora_t, R = 32: gate rows then up rows), read from hbuf at
-// float tl_off (past the n x 2 x 1536 outputs: eight storage bindings at most); U f16 [64][2][1536][16] (gate, up).
-// Lane l of a row adds f16 pair l of each factor row.
-struct P { tl_off: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> sel: array<u32>;
-@group(0) @binding(2) var<storage, read> gq: array<u32>;
-@group(0) @binding(3) var<storage, read> gs: array<f32>;
-@group(0) @binding(4) var<storage, read> uq: array<u32>;
-@group(0) @binding(5) var<storage, read> us: array<f32>;
-@group(0) @binding(6) var<storage, read_write> hbuf: array<f32>;
-@group(0) @binding(7) var<storage, read> U: array<u32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> xs: array<f32, 256>;
-var<workgroup> rg: array<f32, 256>;
-var<workgroup> ru: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.z;
-  let j = wid.y;
-  xs[lid] = x[t * 256u + lid];
-  workgroupBarrier();
-  let e = sel[t * 2u + j];
-  let r = wid.x * 32u + (lid >> 3u);
-  let lane = lid & 7u;
-  let row = e * 1536u + r;
-  let qb = row * 32u + lane * 4u;
-  var sg = 0.0;
-  var su = 0.0;
-  for (var w = 0u; w < 4u; w++) {
-    let xl = lane * 32u + w * 4u;
-    let xlo = vec4f(xs[xl], xs[xl + 1u], xs[xl + 2u], xs[xl + 3u]);
-    let xhi = vec4f(xs[xl + 16u], xs[xl + 17u], xs[xl + 18u], xs[xl + 19u]);
-    let g = gq[qb + w]; let u = uq[qb + w];
-    sg += dot(unpack_q4_lo(g), xlo) + dot(unpack_q4_hi(g), xhi);
-    su += dot(unpack_q4_lo(u), xlo) + dot(unpack_q4_hi(u), xhi);
-  }
-  let tb = (t * 2u + j) * 32u + 2u * lane;
-  let fg = unpack2x16float(U[((e * 2u) * 1536u + r) * 8u + lane]);
-  let fu = unpack2x16float(U[((e * 2u + 1u) * 1536u + r) * 8u + lane]);
-  let tg = hbuf[p.tl_off + tb]; let tg1 = hbuf[p.tl_off + tb + 1u];
-  let tu = hbuf[p.tl_off + tb + 16u]; let tu1 = hbuf[p.tl_off + tb + 17u];
-  rg[lid] = sg * gs[row * 8u + lane] + fg.x * tg + fg.y * tg1;
-  ru[lid] = su * us[row * 8u + lane] + fu.x * tu + fu.y * tu1;
-  workgroupBarrier();
-  for (var st = 4u; st > 0u; st >>= 1u) {
-    if (lane < st) { rg[lid] += rg[lid + st]; ru[lid] += ru[lid + st]; }
-    workgroupBarrier();
-  }
-  if (lane == 0u) { hbuf[(t * 2u + j) * 1536u + r] = ru[lid] * silu(rg[lid]); }
-}
-`,"./kernels/patch_down.wgsl":`// Patch down (time-major rows): y[t][ch*h + j] = x[t*h + j][ch]; n = T*C*h outputs, C input channels.
-struct P { n: u32, C: u32, h: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  let row = p.C * p.h;
-  let t = i / row;
-  let k = i - t * row;
-  let ch = k / p.h;
-  let j = k - ch * p.h;
-  y[i] = x[(t * p.h + j) * p.C + ch];
-}
-`,"./kernels/patch_up.wgsl":`// Patch up (time-major rows): y[t*h + j][ch] = x[t][ch*h + j]; n = T*h*C outputs, C output channels.
-// rows_dyn != 0: output rows at or past dyn.b * rows_dyn valid rows exit.
-struct P { n: u32, C: u32, h: u32, rows_dyn: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read_write> y: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  let r = i / p.C;
-  if (p.rows_dyn != 0u && r >= dyn.b * p.rows_dyn) { return; }
-  let ch = i % p.C;
-  let t = r / p.h;
-  let j = r % p.h;
-  y[i] = x[t * p.C * p.h + ch * p.h + j];
-}
-`,"./kernels/probe.wgsl":`// Decode-step alignment-probe readout (zonos3-graph.cpp build_probe). pin (u32 words) = [text_start, text_len, 0, 0],
-// then per probe layer l and head h at 4 + (l*nh + h)*4: weight f32, lo, hi, flag (window clipped into [0, text_len)).
-// text_len 0 = probe off.
-// mode 0, one workgroup per head of probe layer \`layer\`:
-//   sc[layer][h][j] = softmax_{j in [lo, hi]}(q_h . kc[text_start + j][h / (nh/nkv)] * scale), heads with weight != 0.
-// mode 1, one thread per text index j < lmax: acc[j] = sum_l (sum_h w * sc[l][h][j]) over weighted heads with
-//   j in [lo, hi] (0 elsewhere).
-struct P { mode: u32, layer: u32, nl: u32, nh: u32, nkv: u32, hd: u32, ring: u32, scale: f32, lmax: u32 }
-@group(0) @binding(0) var<storage, read> q: array<f32>;
-@group(0) @binding(1) var<storage, read> kc: array<f32>;
-@group(0) @binding(2) var<storage, read> pin: array<u32>;
-@group(0) @binding(3) var<storage, read_write> sc: array<f32>;
-@group(0) @binding(4) var<storage, read_write> acc: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> qs: array<f32, 64>;
-var<workgroup> red: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let tl = pin[1];
-  if (p.mode == 1u) {
-    let j = wid.x * 256u + lid;
-    if (tl != 0u && j < p.lmax) {
-      var total = 0.0;
-      for (var l = 0u; l < p.nl; l++) {
-        var s = 0.0;
-        for (var h = 0u; h < p.nh; h++) {
-          let e = 4u + (l * p.nh + h) * 4u;
-          let w = bitcast<f32>(pin[e]);
-          if (w != 0.0 && j >= pin[e + 1u] && j <= pin[e + 2u]) { s += sc[(l * p.nh + h) * p.lmax + j] * w; }
-        }
-        total += s;
-      }
-      acc[j] = total;
-    }
-    return;
-  }
-  let h = wid.x;
-  let e = 4u + (p.layer * p.nh + h) * 4u;
-  let on = tl != 0u && bitcast<f32>(pin[e]) != 0.0;
-  let lo = select(1u, pin[e + 1u], on);
-  let hi = select(0u, pin[e + 2u], on);
-  let kvh = h / (p.nh / p.nkv);
-  if (lid < p.hd) { qs[lid] = q[h * p.hd + lid]; }
-  workgroupBarrier();
-  let ts = pin[0];
-  let base = (p.layer * p.nh + h) * p.lmax;
-  var m = -3.0e38;
-  for (var j = lo + lid; j <= hi; j += 256u) {
-    let kb = (((ts + j) % p.ring) * p.nkv + kvh) * p.hd;
-    var s = 0.0;
-    for (var d = 0u; d < p.hd; d++) { s += qs[d] * kc[kb + d]; }
-    let v = s * p.scale;
-    sc[base + j] = v;
-    m = max(m, v);
-  }
-  red[lid] = m;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] = max(red[lid], red[lid + st]); }
-    workgroupBarrier();
-  }
-  let M = red[0];
-  workgroupBarrier();
-  var sum = 0.0;
-  for (var j = lo + lid; j <= hi; j += 256u) {
-    let ev = exp(sc[base + j] - M);
-    sc[base + j] = ev;
-    sum += ev;
-  }
-  red[lid] = sum;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { red[lid] += red[lid + st]; }
-    workgroupBarrier();
-  }
-  let inv = 1.0 / red[0];
-  for (var j = lo + lid; j <= hi; j += 256u) { sc[base + j] *= inv; }
-}
-`,"./kernels/repack_h8.wgsl":`// Repack a q8_0 [K][O][IC] matrix (int8 quants packed 4 per u32, f32 scale per 32-weight block) into the gemm_h8
-// layout: f16 [K][IC][Op], Op = ceil32(O), output channels contiguous per input channel, columns o >= O zero
-// (native/cl/kernels/repack_h8.cl). One thread per output u32 (two adjacent outputs).
-struct P { O: u32, IC: u32, K: u32, words: u32 }
-@group(0) @binding(0) var<storage, read> Wq: array<u32>;
-@group(0) @binding(1) var<storage, read> Wsc: array<f32>;
-@group(0) @binding(2) var<storage, read_write> outp: array<u32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-fn q8(e: u32) -> f32 {
-  return f32(bitcast<i32>(Wq[e >> 2u] << (24u - 8u * (e & 3u))) >> 24u) * Wsc[e >> 5u];
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.words) { return; }
-  let half_op = ((p.O + 31u) / 32u) * 16u;
-  let o = (i % half_op) * 2u;
-  let r = i / half_op;
-  let ic = r % p.IC;
-  let k = r / p.IC;
-  var v0 = 0.0;
-  var v1 = 0.0;
-  if (o < p.O) { v0 = q8((k * p.O + o) * p.IC + ic); }
-  if (o + 1u < p.O) { v1 = q8((k * p.O + o + 1u) * p.IC + ic); }
-  outp[i] = pack2x16float(vec2f(v0, v1));
-}
-`,"./kernels/rope_kv.wgsl":`// Split a fused qkv row into heads; optional per-head RMS norm (+ temp on q); interleaved RoPE from a
-// [pos][hd] (cos, sin) table on q and k; q -> q buffer, k/v -> KV store row (pos % ring).
-// One 64-thread workgroup per (row, head slot); slots = nh q heads, nkv k heads, nkv v heads.
-// hd <= 64: threads d >= hd read 0, join every barrier and never write.
-// Dynamic mode: pos = dyn.a * pos_mul + i, valid rows = dyn.b * pos_mul. rnd != 0: roped q/k rounded to bf16.
-struct P {
-  n: u32, nh: u32, nkv: u32, in_stride: u32, qk_norm: u32, has_temp: u32, eps: f32, ring: u32,
-  pos_dyn: u32, pos0: u32, n_dyn: u32, hd: u32, pos_mul: u32, rnd: u32,
-}
-@group(0) @binding(0) var<storage, read> qkv: array<f32>;
-@group(0) @binding(1) var<storage, read> temp: array<f32>;
-@group(0) @binding(2) var<storage, read> rope: array<f32>;
-@group(0) @binding(3) var<storage, read_write> qo: array<f32>;
-@group(0) @binding(4) var<storage, read_write> kc: array<f32>;
-@group(0) @binding(5) var<storage, read_write> vc: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> xs: array<f32, 64>;
-var<workgroup> red: array<f32, 64>;
-
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) d: u32) {
-  let slots = p.nh + 2u * p.nkv;
-  let id = wid.x + wid.y * nwg.x;
-  if (id >= p.n * slots) { return; }
-  let i = id / slots;
-  let sl = id - i * slots;
-  let nvalid = select(p.n, dyn.b * p.pos_mul, p.n_dyn != 0u);
-  if (i >= nvalid) { return; }
-  let hd = p.hd;
-  let live = d < hd;
-  let pos = select(p.pos0, dyn.a * p.pos_mul, p.pos_dyn != 0u) + i;
-  let row = pos % p.ring;
-  let base = i * p.in_stride + sl * hd;
-  var x = select(0.0, qkv[base + min(d, hd - 1u)], live);
-  if (sl >= p.nh + p.nkv) {
-    if (live) { vc[(row * p.nkv + (sl - p.nh - p.nkv)) * hd + d] = x; }
-    return;
-  }
-  if (p.qk_norm != 0u) {
-    red[d] = x * x;
-    workgroupBarrier();
-    for (var st = 32u; st > 0u; st >>= 1u) {
-      if (d < st) { red[d] += red[d + st]; }
-      workgroupBarrier();
-    }
-    x = x * inverseSqrt(red[0] / f32(hd) + p.eps);
-  }
-  if (sl < p.nh && p.has_temp != 0u) { x *= temp[sl]; }
-  xs[d] = x;
-  workgroupBarrier();
-  if (!live) { return; }
-  let pr = d >> 1u;
-  let c = rope[pos * hd + 2u * pr];
-  let sn = rope[pos * hd + 2u * pr + 1u];
-  let x0 = xs[2u * pr];
-  let x1 = xs[2u * pr + 1u];
-  var o = select(x1 * c + x0 * sn, x0 * c - x1 * sn, (d & 1u) == 0u);
-  if (p.rnd != 0u) { o = bf16r(o); }
-  if (sl < p.nh) {
-    qo[(i * p.nh + sl) * hd + d] = o;
-  } else {
-    kc[(row * p.nkv + (sl - p.nh)) * hd + d] = o;
-  }
-}
-`,"./kernels/sample.wgsl":`// Sampler.sample (src/sampler.ts) plus a frame's cold start on the GPU (src/gpu/sampler.ts GpuSampler): one 256-thread
-// workgroup per codebook cb samples logits[cb*V .. +V) (CFG: twin + cfg_scale * (logits - twin)). Order as the host
-// sampler: the audio pad and the special ids other than stop_id masked (stop_id until generated >= min_frames + cb), the
-// stop id's logit raised by stop_bias (LACI's stop boost),
-// repetition penalty on every id among the ring's last rep_window entries, greedy argmax (lowest index on ties),
-// temperature, top-k (ties at the threshold kept), softmax, top-p on the mass before each token (equal probabilities in
-// index order), min-p, then the first kept id in index order whose inclusive prefix mass reaches u[cb] * kept mass
-// (no kept mass: the most probable candidate). Codebooks past the stream row get the audio pad (cold start). Writes
-// ids[cb] (and ids[ncb] = text_pad: the next decode row) and appends the id to the codebook's ring hist[cb][W]
-// (cnt[cb] ids so far). Thread t holds ids [t*C, t*C + C) in registers, C = ceil(V / 256) <= MAXC. Sums run in f32 in
-// GPU order, so draws near a boundary may differ from the host sampler's.
-struct Smp {
-  V: u32, codebook_size: u32, pad_id: u32, stop_id: u32,
-  min_frames: u32, generated: u32, row: u32, text_pad: u32,
-  greedy: u32, temperature: f32, top_k: u32, top_p: f32,
-  min_p: f32, rep_penalty: f32, rep_window: u32, rep_codebooks: u32,
-  cfg: u32, cfg_scale: f32, W: u32, neg_inf: u32,
-  u: array<vec4<f32>, 3>,
-  stop_bias: f32,
-}
-@group(0) @binding(0) var<storage, read> logits: array<f32>;
-@group(0) @binding(1) var<storage, read> twin: array<f32>;
-@group(0) @binding(2) var<storage, read_write> hist: array<u32>;
-@group(0) @binding(3) var<storage, read_write> cnt: array<u32>;
-@group(0) @binding(4) var<storage, read_write> ids: array<i32>;
-@group(0) @binding(5) var<uniform> smp: Smp;
-
-const MAXC = 20u;
-const NONE = 0xffffffffu;
-
-var<workgroup> redf: array<f32, 256>;
-var<workgroup> redu: array<u32, 256>;
-var<workgroup> seen: array<atomic<u32>, 160>;   // repetition penalty bitmap, MAXC * 256 / 32 words
-var<workgroup> wg_pick: atomic<u32>;
-var<workgroup> wg_last: atomic<u32>;
-
-struct Best { v: f32, i: u32 }
-
-// Order-preserving u32 key of a float (NaN-free).
-fn okey(x: f32) -> u32 {
-  let b = bitcast<u32>(x);
-  return select(b | 0x80000000u, ~b, (b >> 31u) == 1u);
-}
-fn ounkey(k: u32) -> f32 { return bitcast<f32>(select(~k, k & 0x7fffffffu, (k >> 31u) == 1u)); }
-
-fn sum_f(lid: u32, v: f32) -> f32 {
-  redf[lid] = v;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { redf[lid] += redf[lid + st]; }
-    workgroupBarrier();
-  }
-  let r = redf[0];
-  workgroupBarrier();
-  return r;
-}
-
-fn max_f(lid: u32, v: f32) -> f32 {
-  redf[lid] = v;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { redf[lid] = max(redf[lid], redf[lid + st]); }
-    workgroupBarrier();
-  }
-  let r = redf[0];
-  workgroupBarrier();
-  return r;
-}
-
-fn sum_u(lid: u32, v: u32) -> u32 {
-  redu[lid] = v;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { redu[lid] += redu[lid + st]; }
-    workgroupBarrier();
-  }
-  let r = redu[0];
-  workgroupBarrier();
-  return r;
-}
-
-fn min_u(lid: u32, v: u32) -> u32 {
-  redu[lid] = v;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) { redu[lid] = min(redu[lid], redu[lid + st]); }
-    workgroupBarrier();
-  }
-  let r = redu[0];
-  workgroupBarrier();
-  return r;
-}
-
-// Largest v, lowest i on ties.
-fn best(lid: u32, v: f32, i: u32) -> Best {
-  redf[lid] = v;
-  redu[lid] = i;
-  workgroupBarrier();
-  for (var st = 128u; st > 0u; st >>= 1u) {
-    if (lid < st) {
-      let ov = redf[lid + st];
-      let oi = redu[lid + st];
-      if (ov > redf[lid] || (ov == redf[lid] && oi < redu[lid])) {
-        redf[lid] = ov;
-        redu[lid] = oi;
-      }
-    }
-    workgroupBarrier();
-  }
-  let r = Best(redf[0], redu[0]);
-  workgroupBarrier();
-  return r;
-}
-
-// Exclusive prefix sum over threads.
-fn scan_u(lid: u32, v: u32) -> u32 {
-  redu[lid] = v;
-  workgroupBarrier();
-  for (var st = 1u; st < 256u; st <<= 1u) {
-    var t = 0u;
-    if (lid >= st) { t = redu[lid - st]; }
-    workgroupBarrier();
-    redu[lid] += t;
-    workgroupBarrier();
-  }
-  var ex = 0u;
-  if (lid > 0u) { ex = redu[lid - 1u]; }
-  workgroupBarrier();
-  return ex;
-}
-
-// Exclusive prefix sum over threads and the total.
-fn scan_f(lid: u32, v: f32) -> vec2<f32> {
-  redf[lid] = v;
-  workgroupBarrier();
-  for (var st = 1u; st < 256u; st <<= 1u) {
-    var t = 0.0;
-    if (lid >= st) { t = redf[lid - st]; }
-    workgroupBarrier();
-    redf[lid] += t;
-    workgroupBarrier();
-  }
-  var ex = 0.0;
-  if (lid > 0u) { ex = redf[lid - 1u]; }
-  let total = redf[255];
-  workgroupBarrier();
-  return vec2<f32>(ex, total);
-}
-
-// Cold start, the next decode row and the repetition ring (one thread per codebook).
-fn emit(cb: u32, ncb: u32, sampled: u32) {
-  var id = sampled;
-  if (cb > smp.row) { id = smp.pad_id; }
-  ids[cb] = i32(id);
-  if (cb == 0u) { ids[ncb] = i32(smp.text_pad); }
-  let c = cnt[cb];
-  hist[cb * smp.W + c % smp.W] = id;
-  cnt[cb] = c + 1u;
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let cb = wid.x;
-  let V = smp.V;
-  let C = (V + 255u) / 256u;
-  let base = lid * C;
-  var n = 0u;
-  if (base < V) { n = min(C, V - base); }
-  let NEG = bitcast<f32>(smp.neg_inf);
-  let off = cb * V;
-  let gate = smp.generated < smp.min_frames + cb;
-  var l: array<f32, MAXC>;
-  for (var j = 0u; j < n; j++) {
-    let i = base + j;
-    var v = logits[off + i];
-    if (smp.cfg != 0u) {
-      let t = twin[off + i];
-      v = t + smp.cfg_scale * (v - t);
-    }
-    if (i >= smp.codebook_size && (i == smp.pad_id || i != smp.stop_id || gate)) { v = NEG; }
-    if (i == smp.stop_id && smp.stop_bias != 0.0 && !gate) { v = v + smp.stop_bias; }
-    l[j] = v;
-  }
-
-  // repetition penalty, once per id among the ring's last rep_window entries
-  let words = (V + 31u) / 32u;
-  for (var w = lid; w < words; w += 256u) { atomicStore(&seen[w], 0u); }
-  if (lid == 0u) {
-    atomicStore(&wg_pick, NONE);
-    atomicStore(&wg_last, 0u);
-  }
-  workgroupBarrier();
-  let penal = smp.rep_penalty != 1.0 && cb < smp.rep_codebooks;
-  if (penal) {
-    let c = cnt[cb];
-    let m = min(c, smp.rep_window);
-    for (var k = lid; k < m; k += 256u) {
-      let t = hist[cb * smp.W + (c - m + k) % smp.W];
-      if (t < smp.codebook_size) { atomicOr(&seen[t >> 5u], 1u << (t & 31u)); }
-    }
-  }
-  workgroupBarrier();
-  if (penal) {
-    for (var j = 0u; j < n; j++) {
-      let i = base + j;
-      if (((atomicLoad(&seen[i >> 5u]) >> (i & 31u)) & 1u) != 0u) {
-        l[j] = select(l[j] * smp.rep_penalty, l[j] / smp.rep_penalty, l[j] > 0.0);
-      }
-    }
-  }
-
-  if (smp.greedy != 0u) {
-    var bv = NEG;
-    var bi = NONE;
-    for (var j = 0u; j < n; j++) {
-      if (bi == NONE || l[j] > bv) { bv = l[j]; bi = base + j; }
-    }
-    let b = best(lid, bv, bi);
-    if (lid == 0u) { emit(cb, nwg.x, b.i); }
-    return;
-  }
-
-  if (smp.temperature > 0.0) {
-    for (var j = 0u; j < n; j++) { l[j] = l[j] / smp.temperature; }
-  }
-
-  // top-k: the k-th largest value (largest key with at least k keys >= it), built bit by bit
-  var kth = NEG;
-  if (smp.top_k > 0u && smp.top_k < V) {
-    var T = 0u;
-    for (var b = 0u; b < 32u; b++) {
-      let probe = T | (0x80000000u >> b);
-      var c = 0u;
-      for (var j = 0u; j < n; j++) { c += select(0u, 1u, okey(l[j]) >= probe); }
-      if (sum_u(lid, c) >= smp.top_k) { T = probe; }
-    }
-    kth = ounkey(T);
-  }
-  var cand = 0u;
-  var mx = NEG;
-  for (var j = 0u; j < n; j++) {
-    if (l[j] >= kth) {
-      cand |= 1u << j;
-      mx = max(mx, l[j]);
-    }
-  }
-
-  // softmax over the candidates; l becomes p (0 outside them)
-  mx = max_f(lid, mx);
-  var e = 0.0;
-  for (var j = 0u; j < n; j++) {
-    var v = 0.0;
-    if (((cand >> j) & 1u) != 0u) { v = exp(l[j] - mx); }
-    l[j] = v;
-    e += v;
-  }
-  let total = sum_f(lid, e);
-  var bv = -1.0;
-  var bi = NONE;
-  for (var j = 0u; j < n; j++) {
-    l[j] = l[j] / total;
-    if (((cand >> j) & 1u) != 0u && l[j] > bv) { bv = l[j]; bi = base + j; }
-  }
-  let top = best(lid, bv, bi);
-
-  var keep = cand;
-  // top-p (a token is dropped when the mass ranked before it exceeds top_p): T = the largest key with mass(p > T) >
-  // top_p; every candidate with p > T is kept except, at the smallest such probability v, the ties (in index order)
-  // ranked past mass(p > v) + rank * v > top_p. Larger levels keep all their ties (their mass is part of mass(p > v)).
-  if (smp.top_p > 0.0 && smp.top_p < 1.0) {
-    let tp = smp.top_p;
-    var T = 0u;
-    for (var b = 0u; b < 32u; b++) {
-      let probe = T | (0x80000000u >> b);
-      var s = 0.0;
-      for (var j = 0u; j < n; j++) { if (bitcast<u32>(l[j]) > probe) { s += l[j]; } }
-      if (sum_f(lid, s) > tp) { T = probe; }
-    }
-    var vmin = NONE;
-    for (var j = 0u; j < n; j++) {
-      let k = bitcast<u32>(l[j]);
-      if (k > T && ((cand >> j) & 1u) != 0u) { vmin = min(vmin, k); }
-    }
-    let vk = min_u(lid, vmin);
-    let vs = bitcast<f32>(vk);
-    var above = 0.0;
-    var ties = 0u;
-    for (var j = 0u; j < n; j++) {
-      let k = bitcast<u32>(l[j]);
-      if (k > vk) { above += l[j]; } else if (k == vk && ((cand >> j) & 1u) != 0u) { ties++; }
-    }
-    let mv = sum_f(lid, above);
-    var rank = scan_u(lid, ties);
-    for (var j = 0u; j < n; j++) {
-      if (((cand >> j) & 1u) == 0u) { continue; }
-      let k = bitcast<u32>(l[j]);
-      if (k == vk) {
-        if (mv + f32(rank) * vs > tp) { keep &= ~(1u << j); }
-        rank++;
-      } else if (k < vk) {
-        keep &= ~(1u << j);
-      }
-    }
-  }
-  if (smp.min_p > 0.0) {
-    let thr = smp.min_p * top.v;
-    for (var j = 0u; j < n; j++) { if (l[j] < thr) { keep &= ~(1u << j); } }
-  }
-
-  // multinomial: the first kept id whose inclusive prefix mass reaches u * (kept mass)
-  var own = 0.0;
-  var lastk = NONE;
-  for (var j = 0u; j < n; j++) {
-    if (((keep >> j) & 1u) != 0u) { own += l[j]; lastk = base + j; }
-  }
-  if (lastk != NONE) { atomicMax(&wg_last, lastk); }
-  let sc = scan_f(lid, own);
-  let r = sc.y * smp.u[cb / 4u][cb % 4u];
-  var acc = sc.x;
-  for (var j = 0u; j < n; j++) {
-    if (((keep >> j) & 1u) == 0u) { continue; }
-    acc += l[j];
-    if (acc >= r) {
-      atomicMin(&wg_pick, base + j);
-      break;
-    }
-  }
-  workgroupBarrier();
-  if (lid == 0u) {
-    var id = top.i;
-    if (sc.y > 0.0) {
-      id = atomicLoad(&wg_pick);
-      if (id == NONE) { id = atomicLoad(&wg_last); }
-    }
-    emit(cb, nwg.x, id);
-  }
-}
-`,"./kernels/ssl_attention_bf16.wgsl":`// SSL teacher self-attention (16 heads x 64, Shaw relative bias) at the native BF16 autocast boundaries
-// (ssl-encoder.cpp build_graph): content = bf16(q.k), score = bf16(bf16(content) * scale), rel = bf16(bf16(dist.q) *
-// scale), score = bf16(score + rel[clamp(j - i, -64, 8) + 64]); F32 softmax over all T keys; the probabilities are
-// rounded to bf16 as the BF16 value matmul reads them and out = bf16(sum_j p_j * v_j). q, k, v and dist hold bf16
-// values. One 64-thread workgroup per (query row, head); T <= 1024.
-struct P { T: u32, scale: f32 }
-@group(0) @binding(0) var<storage, read> qb: array<f32>;
-@group(0) @binding(1) var<storage, read> kb: array<f32>;
-@group(0) @binding(2) var<storage, read> vb: array<f32>;
-@group(0) @binding(3) var<storage, read> dist: array<f32>;
-@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-var<workgroup> qs: array<f32, 64>;
-var<workgroup> rb: array<f32, 73>;
-var<workgroup> sc: array<f32, 1024>;
-var<workgroup> red: array<f32, 64>;
-
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) s: u32) {
-  let id = wid.x + wid.y * nwg.x;
-  if (id >= p.T * 16u) { return; }
-  let qi = id / 16u;
-  let h = id - qi * 16u;
-  let qo = qi * 1024u + h * 64u;
-  qs[s] = qb[qo + s];
-  workgroupBarrier();
-  for (var r = s; r < 73u; r += 64u) {
-    var d = 0.0;
-    for (var c = 0u; c < 64u; c++) { d += dist[r * 64u + c] * qs[c]; }
-    rb[r] = bf16r(bf16r(d) * p.scale);
-  }
-  workgroupBarrier();
-  var mx = -3.0e38;
-  for (var j = s; j < p.T; j += 64u) {
-    let base = j * 1024u + h * 64u;
-    var qk = 0.0;
-    for (var d = 0u; d < 64u; d++) { qk += qs[d] * kb[base + d]; }
-    let ri = u32(clamp(i32(j) - i32(qi), -64, 8) + 64);
-    let v = bf16r(bf16r(bf16r(qk) * p.scale) + rb[ri]);
-    sc[j] = v;
-    mx = max(mx, v);
-  }
-  red[s] = mx;
-  workgroupBarrier();
-  for (var st = 32u; st > 0u; st >>= 1u) {
-    if (s < st) { red[s] = max(red[s], red[s + st]); }
-    workgroupBarrier();
-  }
-  let M = red[0];
-  workgroupBarrier();
-  var sum = 0.0;
-  for (var j = s; j < p.T; j += 64u) {
-    let e = exp(sc[j] - M);
-    sc[j] = e;
-    sum += e;
-  }
-  red[s] = sum;
-  workgroupBarrier();
-  for (var st = 32u; st > 0u; st >>= 1u) {
-    if (s < st) { red[s] += red[s + st]; }
-    workgroupBarrier();
-  }
-  let inv = 1.0 / red[0];
-  for (var j = s; j < p.T; j += 64u) { sc[j] = bf16r(sc[j] * inv); }
-  workgroupBarrier();
-  var o = 0.0;
-  for (var j = 0u; j < p.T; j++) { o += sc[j] * vb[j * 1024u + h * 64u + s]; }
-  outp[qo + s] = bf16r(o);
-}
-`,"./kernels/steer_add.wgsl":`// Hidden-space steering (zonos3-graph.cpp route): x[x_off + i] += d[d_off + i], i < n, when dyn.b != 0 (per-step gate).
-struct P { n: u32, x_off: u32, d_off: u32 }
-@group(0) @binding(0) var<storage, read_write> x: array<f32>;
-@group(0) @binding(1) var<storage, read> d: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let i = wid.x * 256u + lid;
-  if (dyn.b == 0u || i >= p.n) { return; }
-  x[p.x_off + i] += d[p.d_off + i];
-}
-`,"./kernels/subsample_rows.wgsl":`// Time subsampling of [T][row] rows: y[t][c] = x[t*s][c], n = T_out * row.
-struct P { n: u32, row: u32, s: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  let t = i / p.row;
-  y[i] = x[t * p.s * p.row + (i - t * p.row)];
-}
-`,"./kernels/upsample_add.wgsl":`// Repeat-upsample along time and add: y[t][k] = e[t / s][k] + xf[t][k], n = T * N.
-struct P { n: u32, N: u32, s: u32 }
-@group(0) @binding(0) var<storage, read> e: array<f32>;
-@group(0) @binding(1) var<storage, read> xf: array<f32>;
-@group(0) @binding(2) var<storage, read_write> y: array<f32>;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
-        @builtin(local_invocation_index) lid: u32) {
-  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
-  if (i >= p.n) { return; }
-  let t = i / p.N;
-  y[i] = e[(t / p.s) * p.N + (i - t * p.N)] + xf[i];
-}
-`,"./kernels/zac_embed.wgsl":`// Codec RVQ lookup; idx i32 [10][F], tables f16 pairs (row stride C/2), t < n.
-// mode 0 (semantic): outp[y_off + t*C + c] = tables[idx[0][t]][c] + bias[c]
-// mode 1 (residual, in place): outp[y_off + t*C + c] += sum_{cb=1..9} tables[(cb-1)*4096 + idx[cb][t]][c] + bias[c]
-//   (bias = the sum of the 9 out_proj biases). A missing residual code (idx -1, early partial-frame decode) leaves its
-//   codebook's term out: no table row, and its own bias biases[(cb-1)*C + c] comes off the sum. Complete codes take
-//   the same operations as without the branch (bit-identical).
-// rows_dyn != 0: rows at or past dyn.b * rows_dyn valid rows exit.
-struct P { n: u32, C: u32, F: u32, y_off: u32, mode: u32, rows_dyn: u32 }
-@group(0) @binding(0) var<storage, read> idx: array<i32>;
-@group(0) @binding(1) var<storage, read> tables: array<u32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
-@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
-@group(0) @binding(4) var<storage, read> biases: array<f32>;
-@group(0) @binding(14) var<uniform> dyn: Dyn;
-@group(0) @binding(15) var<uniform> p: P;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
-  let t = wid.y;
-  let pr = wid.x * 256u + lid;
-  let hw = p.C >> 1u;
-  if (t >= p.n || pr >= hw || (p.rows_dyn != 0u && t >= dyn.b * p.rows_dyn)) { return; }
-  let o = p.y_off + t * p.C + 2u * pr;
-  var s = vec2f(bias[2u * pr], bias[2u * pr + 1u]);
-  if (p.mode == 0u) {
-    s += unpack2x16float(tables[u32(idx[t]) * hw + pr]);
-  } else {
-    var acc = vec2f(0.0);
-    for (var cb = 1u; cb < 10u; cb++) {
-      let code = idx[cb * p.F + t];
-      if (code >= 0) {
-        let row = (cb - 1u) * 4096u + u32(code);
-        acc += unpack2x16float(tables[row * hw + pr]);
-      } else {
-        let b = (cb - 1u) * p.C + 2u * pr;
-        s -= vec2f(biases[b], biases[b + 1u]);
-      }
-    }
-    s += acc + vec2f(outp[o], outp[o + 1u]);
-  }
-  outp[o] = s.x;
-  outp[o + 1u] = s.y;
-}
-`}),Wr=GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST;async function Gr(e){if(typeof navigator>`u`||!navigator.gpu)throw Error(`WebGPU is not available in this browser`);let t=await navigator.gpu.requestAdapter({powerPreference:`high-performance`});if(!t)throw Error(`No WebGPU adapter found`);let n=await t.requestDevice({requiredLimits:{maxStorageBufferBindingSize:t.limits.maxStorageBufferBindingSize,maxBufferSize:t.limits.maxBufferSize}});return n.lost.then(t=>{t.reason!==`destroyed`&&e?.(`GPU device lost: `+t.message+`; reload the page`)}),n.addEventListener(`uncapturederror`,e=>console.error(`WebGPU error:`,e.error.message)),n}const Kr=/^gemm_h8_r(\d+)_(\d+)x(\d+)$/,qr=/^gemm_h8_ks(\d+)$/;function Jr(e){let t=Kr.exec(e);return t?{base:`gemm_h8`,header:`const R = ${t[1]}u;\nconst LX = ${t[2]}u;\nconst LY = ${t[3]}u;\n`}:(t=qr.exec(e),t?{base:`gemm_h8_ks`,header:`const S = ${t[1]}u;\n`}:{base:e,header:``})}function Yr(e,t,n){let r=Math.ceil(n/8),i=Kr.exec(e);if(i){let[e,n,a]=[Number(i[1]),Number(i[2]),Number(i[3])];return[Math.ceil(r/n),Math.ceil(Math.ceil(t/e)/a),1]}if(i=qr.exec(e),i)return[Math.ceil(r/8),1,Math.ceil(t/4)];throw Error(`h8Grid: ${e} is not a gemm_h8 kernel`)}var Xr=class{device;kernels=/* @__PURE__ */ new Map;dummies=/* @__PURE__ */ new Map;staging=/* @__PURE__ */ new Map;constructor(e){this.device=e}kernel(e){let t=this.kernels.get(e);if(t)return t;let{base:n,header:r}=Jr(e),i=Ur[`./kernels/${n}.wgsl`];if(i===void 0)throw Error(`unknown kernel ${e}`);let a=Hr+`
-`+r+i,o=this.device.createShaderModule({code:a,label:e}),s=this.device.createComputePipeline({layout:`auto`,compute:{module:o,entryPoint:`main`},label:e}),c=[];for(let e of i.matchAll(/@binding\((\d+)\)\s+var(<[^>]+>)?\s+(\w+)/g)){let t=e[2]??``;c.push({binding:Number(e[1]),name:e[3],writable:t.includes(`read_write`),uniform:t.includes(`uniform`)})}let l=[],u=/struct P\s*\{([^}]*)\}/.exec(i);if(u)for(let e of u[1].matchAll(/(\w+)\s*:\s*(u32|f32|i32)/g))l.push({name:e[1],type:e[2]});return t={name:e,pipeline:s,bindings:c,fields:l},this.kernels.set(e,t),t}dummy(e){let t=this.dummies.get(e);return t||(t=this.device.createBuffer({size:256,usage:Wr,label:`dummy${e}`}),this.dummies.set(e,t)),t}dummyU=null;dummyUniform(){return this.dummyU||=this.uniform(16,`dyn0`),this.dummyU}buffer(e,t){return this.device.createBuffer({size:Math.max(16,Math.ceil(e/16)*16),usage:Wr,label:t})}uniform(e=16,t){return this.device.createBuffer({size:Math.max(16,Math.ceil(e/16)*16),usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST,label:t})}write(e,t,n){this.device.queue.writeBuffer(e,t,n.buffer,n.byteOffset,Math.ceil(n.byteLength/4)*4)}upload(e,t){let n=this.buffer(e.byteLength,t);return this.write(n,0,e),n}takeStaging(e){let t=this.staging.get(e);return t&&t.length?t.pop():this.device.createBuffer({size:e,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST})}async submitRead(e,t=[]){let n=this.device.createCommandEncoder();e(n);let r=t.map(e=>{let t=Math.ceil(e.bytes/4)*4,r=this.takeStaging(Math.max(16,Math.ceil(t/16)*16));return n.copyBufferToBuffer(e.buf,e.offset,r,0,t),r});if(this.device.queue.submit([n.finish()]),!r.length)return await this.device.queue.onSubmittedWorkDone(),[];await Promise.all(r.map(e=>e.mapAsync(GPUMapMode.READ)));let i=[];for(let e=0;e<r.length;e++){i.push(new Float32Array(r[e].getMappedRange(0,Math.ceil(t[e].bytes/4)*4).slice(0))),r[e].unmap();let n=this.staging.get(r[e].size)??[];n.push(r[e]),this.staging.set(r[e].size,n)}return i}async read(e,t=0,n=e.size){return(await this.submitRead(()=>{},[{buf:e,offset:t,bytes:n}]))[0]}};function Zr(e,t){let n=null;for(let r of t)r.k===`d`?(n||=e.beginComputePass(),n.setPipeline(r.pipeline),n.setBindGroup(0,r.bindGroup),n.dispatchWorkgroups(r.wg[0],r.wg[1],r.wg[2])):(n&&=(n.end(),null),r.k===`c`?e.copyBufferToBuffer(r.src,r.srcOff,r.dst,r.dstOff,r.size):r.k===`clear`&&e.clearBuffer(r.buf,r.off,r.size));n&&n.end()}var Qr=class{steps;owned;segments=null;constructor(e,t){this.steps=e,this.owned=t}encode(e){Zr(e,this.steps)}run(e,t=[],n){if(!this.segments){this.segments=[[]];for(let e of this.steps)e.k===`split`?this.segments.push([]):this.segments[this.segments.length-1].push(e)}let r=this.segments;for(let t=0;t<r.length-1;t++){let i=e.device.createCommandEncoder();t===0&&n?.(i),Zr(i,r[t]),e.device.queue.submit([i.finish()])}return e.submitRead(e=>{r.length===1&&n?.(e),Zr(e,r[r.length-1])},t)}destroy(){for(let e of this.owned)e.destroy();this.owned=[]}};const $r=65535;function U(e){return e<=$r?[Math.max(1,e),1,1]:[$r,Math.ceil(e/$r),1]}var ei=class{gpu;steps=[];uniforms=[];constructor(e){this.gpu=e}dispatch(e,t,n,r){let i=this.gpu.kernel(e),a=this.gpu.device,o=[],s=/* @__PURE__ */ new Set,c=/* @__PURE__ */ new Set;for(let r of i.bindings){if(r.name===`p`){let t=new ArrayBuffer(Math.max(16,Math.ceil(i.fields.length*4/16)*16)),s=new DataView(t);for(let t of Object.keys(n))if(!i.fields.some(e=>e.name===t))throw Error(`${e}: unknown param ${t}`);i.fields.forEach((e,t)=>{let r=n[e.name]??0;e.type===`f32`?s.setFloat32(t*4,r,!0):e.type===`i32`?s.setInt32(t*4,r,!0):s.setUint32(t*4,r>>>0,!0)});let c=a.createBuffer({size:t.byteLength,usage:GPUBufferUsage.UNIFORM,mappedAtCreation:!0,label:e+`.p`});new Uint8Array(c.getMappedRange()).set(new Uint8Array(t)),c.unmap(),this.uniforms.push(c),o.push({binding:r.binding,resource:{buffer:c}});continue}let l=t[r.name];if(r.uniform){if(!l)throw Error(`${e}: missing uniform ${r.name}`)}else if(!l)l=this.gpu.dummy(r.binding);else{if(r.writable&&c.has(l)||s.has(l))throw Error(`${e}: buffer bound twice with a writable alias (${r.name})`);(r.writable?s:c).add(l)}o.push({binding:r.binding,resource:{buffer:l}})}for(let n of Object.keys(t))if(!i.bindings.some(e=>e.name===n))throw Error(`${e}: unknown binding ${n}`);let l=a.createBindGroup({layout:i.pipeline.getBindGroupLayout(0),entries:o,label:e});this.steps.push({k:`d`,pipeline:i.pipeline,bindGroup:l,wg:r,label:e})}freeBySize=/* @__PURE__ */ new Map;buf(e,t){let n=this.gpu.buffer(e,t);return this.uniforms.push(n),n}tmp(e,t){let n=Math.max(16,Math.ceil(e/16)*16);return this.freeBySize.get(n)?.pop()??this.buf(n,t)}release(e){let t=this.freeBySize.get(e.size)??[];t.push(e),this.freeBySize.set(e.size,t)}copy(e,t,n,r,i){i>0&&this.steps.push({k:`c`,src:e,srcOff:t,dst:n,dstOff:r,size:i})}clear(e,t,n){n>0&&this.steps.push({k:`clear`,buf:e,off:t,size:n})}split(){this.steps.push({k:`split`})}finish(){let e=new Qr(this.steps,this.uniforms);return this.steps=[],this.uniforms=[],e}};const W={none:0,silu:1,gelu:2,relu:3,tanh:4,softcap:5,newgelu:6},G={acc:1,bias:2,act:4,alpha:8,out:16};function K(e,t,n,r,i,a={}){if(i.IC%16)throw Error(`gemm: IC=${i.IC} must be a multiple of 16`);if(i.rowsDyn&&!a.dyn)throw Error(`gemm: rowsDyn requires ex.dyn`);let o=n.dtype===`q8`,s=n.dtype===`bf16`;if(n.dtype===`h8`){let e=i.x_stride??i.IC,t=i.x_off??0;if(!i.kernel||e%4||t%4)throw Error(`gemm: h8 needs a kernel and x_stride, x_off multiples of 4 (x_stride=${e}, x_off=${t})`);let n=/^gemm_h8_ks(\d+)$/.exec(i.kernel);if(n&&(i.T>32||i.IC%(4*Number(n[1]))))throw Error(`gemm: h8 needs T <= 32 and IC % ${4*Number(n[1])} == 0 for ${i.kernel} (T=${i.T}, IC=${i.IC})`)}else if(i.kernel)throw Error(`gemm: kernel needs h8 weights`);if(o&&(i.IC%32||!n.scales))throw Error(`gemm: q8 weights need IC % 32 == 0 (IC=${i.IC}) and scales`);if(!o&&!s&&n.dtype!==`f16`&&n.dtype!==`h8`)throw Error(`gemm: unsupported weight dtype ${n.dtype}`);if(i.rnd&&!s)throw Error(`gemm: rnd needs bf16 weights`);let c=+!!a.bias|(a.scale?2:0)|(a.shift?4:0)|(a.res?8:0),l=!s&&i.T<=32&&i.IC%32==0,u={X:t,bias:a.bias,scl:a.scale,shf:a.shift,res:a.res,Y:r,dyn:a.dyn??e.gpu.dummyUniform()},d={T:i.T,O:i.O,IC:i.IC,K:i.K??1,d:i.d??1,x_stride:i.x_stride??i.IC,x_off:i.x_off??0,y_stride:i.y_stride??i.O,y_off:i.y_off??0,r_stride:i.r_stride??i.O,r_off:i.r_off??0,nb_bias:i.nb_bias??i.O,flags:c,act:i.act??0,alpha:i.alpha??1,cap:i.cap??0,rows_dyn:i.rowsDyn??0};s?e.dispatch(`gemm_bf16`,{...u,Wt:n.buf},{...d,rnd:i.rnd??0},[Math.ceil(i.O/64),Math.ceil(i.T/64),1]):n.dtype===`h8`?e.dispatch(i.kernel,{...u,W:n.buf},d,Yr(i.kernel,i.T,i.O)):e.dispatch((l?`gemm_skinny`:`gemm`)+(o?`_q8`:``),o?{...u,Wq:n.buf,Wsc:n.scales}:{...u,Wt:n.buf},d,l?[Math.ceil(i.O/64),Math.ceil(i.T/16),1]:[Math.ceil(i.O/64),Math.ceil(i.T/64),1])}function ti(e,t,n,r,i,a={}){let o=n.dtype===`q8`;if(o){if(i.I%32!=0||!n.scales)throw Error(`matvec: q8 weights need I % 32 == 0 (I=${i.I}) and scales`)}else if(n.dtype!==`f16`)throw Error(`matvec: unsupported weight dtype ${n.dtype}`);else if(i.I%8)throw Error(`matvec: I=${i.I} must be a multiple of 8`);if((i.x_off??0)%4)throw Error(`matvec: x_off must be a multiple of 4`);let s=o?{x:t,Wq:n.buf,Wsc:n.scales,bias:a.bias,res:a.res,y:r}:{x:t,Wt:n.buf,bias:a.bias,res:a.res,y:r};e.dispatch(o?`matvec_q8`:`matvec`,s,{O:i.O,I:i.I,x_off:i.x_off??0,y_off:i.y_off??0,nb_bias:i.nb_bias??i.O,flags:+!!a.bias|(a.res?8:0),act:i.act??0,cap:i.cap??0},U(Math.ceil(i.O/16)))}function ni(e,t,n,r,i,a,o){e.dispatch(`matvec_glu`,{x:t,Wu:n,Wg:r,y:i},{O:a,I:o},U(Math.ceil(a/8)))}function ri(e,t,n,r,i={}){e.dispatch(`add_rmsnorm`,{res:t,x:i.x,w:i.w,outp:n},{N:r.N,eps:r.eps,has_x:+!!i.x,has_w:+!!i.w,row0:r.row0??0},[r.rows,1,1])}function ii(e,t,n,r,i,a){if(a.D>1024||a.ns>32||a.ns<1)throw Error(`attnres: D=${a.D} ns=${a.ns} out of range`);e.dispatch(`attnres`,{bank:t,q:n,w:r,outp:i},{D:a.D,n:a.n,ns:a.ns,qi:a.qi,row0:a.row0??0,eps:a.eps},[a.rows,1,1])}function ai(e,t,n,r,i,a,o,s){let c=s;e.dispatch(`gdn_conv`,{mixed:t,w:r.conv,hist:a,outp:c.conv},{n,stride:2056},U(6)),e.dispatch(`gdn_prep`,{conv:c.conv,mixed:t,dt_bias:r.dtBias,a_log:r.aLog,qn:c.qn,kn:c.kn,decay:c.decay,beta:c.beta},{n},U(n*4)),e.dispatch(`gdn_scan`,{qn:c.qn,kn:c.kn,conv:c.conv,decay:c.decay,beta:c.beta,state:i,outp:c.o},{n},[8,1,1]),e.dispatch(`gdn_out`,{o:c.o,mixed:t,nw:r.norm,outp:o},{n},U(n*4))}function oi(e,t,n,r,i,a,o,s,c,l){if(i.dtype!==`q4`||a.dtype!==`q4`||o.dtype!==`q4`)throw Error(`moe: experts must be q4; re-export with npm run export`);let{sel:u,wts:d,hbuf:f}=l;e.dispatch(`moe_topk`,{lg:t,rbias:n,sel:u,wts:d},{},[c,1,1]),e.dispatch(`moe_up`,{x:r,sel:u,gq:a.buf,gs:a.scales,uq:i.buf,us:i.scales,hbuf:f},{},[48,2,c]),e.dispatch(`moe_down`,{hbuf:f,sel:u,wts:d,dq:o.buf,ds:o.scales,outp:s},{},[32,1,c])}function si(e,t,n,r,i,a,o,s,c,l,u){if(i.dtype!==`q4`||a.dtype!==`q4`||o.dtype!==`q4`)throw Error(`moe: experts must be q4; re-export with npm run export`);let d=(e,t)=>e.dtype===`f16`&&e.shape.length===t.length&&e.shape.every((e,n)=>e===t[n]);if(!d(u.gateUpDown,[256,32,64])||!d(u.gateUpUp,[16,1536,2,64])||!d(u.downDown,[1536,16,64])||!d(u.downUp,[16,256,64]))throw Error(`moe: the speech-edit expert factors must be rank-16 f16; re-export with pnpm export`);let{sel:f,wts:p,hbuf:m,td:h}=l,g=c*2*1536;if(m.size<(g+c*2*32)*4)throw Error(`moe: hbuf too small for the adapter`);e.dispatch(`moe_topk`,{lg:t,rbias:n,sel:f,wts:p},{},[c,1,1]),e.dispatch(`moe_lora_t`,{x:r,sel:f,D:u.gateUpDown.buf,tout:m},{R:32,I:256,x_t:256,x_j:0,t_off:g},[c,2,1]),e.dispatch(`moe_up_lora`,{x:r,sel:f,gq:a.buf,gs:a.scales,uq:i.buf,us:i.scales,hbuf:m,U:u.gateUpUp.buf},{tl_off:g},[48,2,c]),e.dispatch(`moe_lora_t`,{x:m,sel:f,D:u.downDown.buf,tout:h},{R:16,I:1536,x_t:3072,x_j:1536},[c,2,1]),e.dispatch(`moe_down_lora`,{hbuf:m,sel:f,wts:p,dq:o.buf,ds:o.scales,outp:s,td:h,U:u.downUp.buf},{},[32,1,c])}function ci(e,t,n,r,i,a,o={}){let s=r*a*i;e.dispatch(`patch_up`,{x:t,y:n,dyn:o.dyn??e.gpu.dummyUniform()},{n:s,C:i,h:a,rows_dyn:o.rowsDyn??0},U(Math.ceil(s/256)))}function li(e,t,n,r,i,a){let o=r*a*i;e.dispatch(`patch_down`,{x:t,y:n},{n:o,C:i,h:a},U(Math.ceil(o/256)))}function ui(e,t,n,r,i,a,o,s,c=0,l={}){e.dispatch(`layernorm`,{x:t,w:n,b:r,y:i,dyn:l.dyn??e.gpu.dummyUniform()},{N:o,eps:s,act:c,rows_dyn:l.rowsDyn??0},U(a))}const di={siluMul:0,gluSplit:1,add:2,snake:3,gluSplitBf16:4};function fi(e,t,n,r,i,a={},o,s){e.dispatch(`elementwise`,{a:r,b:o,c:s,y:i},{op:t,n,C:a.C??1,a_off:a.a_off??0,y_off:a.y_off??0},U(Math.ceil(n/256)))}function pi(e,t,n,r,i,a,o,s=0){fi(e,di.snake,a*o,t,i,{C:o,y_off:s},n,r)}function mi(e,t,n,r,i,a,o,s,c=0,l=0,u={}){e.dispatch(`dwconv`,{Xf:t,w:n,b:s,y:r,dyn:u.dyn??e.gpu.dummyUniform()},{T:i,C:a,K:o,has_bias:+!!s,act:c,rnd:l,rows_dyn:u.rowsDyn??0},U(Math.ceil(i*a/256)))}function hi(e,t,n,r,i,a,o={}){if(a.hd>64)throw Error(`attention: hd=${a.hd} > 64`);e.dispatch(a.hd===32?`attention_hd32`:`attention`,{q:t,kc:n,vc:r,gate:o.gate,outp:i,dyn:o.dyn??e.gpu.dummyUniform()},{n:a.n,nh:a.nh,nkv:a.nkv,pos_dyn:+!!a.posDyn,pos0:a.pos0??0,window:a.window,ring:a.ring,scale:a.scale,has_gate:+!!o.gate,gate_stride:a.gate_stride??0,gate_off:a.gate_off??0,hd:a.hd},U(a.n*a.nh))}function gi(e,t,n,r,i,a,o){e.dispatch(`attention_win`,{q:t,kc:n,vc:r,outp:i,dyn:o},{n:a.n,nh:a.nh,window:a.window,ring:a.ring,scale:a.scale,pos_mul:a.posMul},[Math.ceil(a.n/16),a.nh,1])}function _i(e,t,n,r,i,a,o,s={}){if(o.hd>64||o.hd%2)throw Error(`ropeKv: hd=${o.hd} must be even and <= 64`);e.dispatch(`rope_kv`,{qkv:t,temp:s.temp,rope:n,qo:r,kc:i,vc:a,dyn:s.dyn??e.gpu.dummyUniform()},{n:o.n,nh:o.nh,nkv:o.nkv,in_stride:o.in_stride,qk_norm:+!!o.qkNorm,has_temp:+!!s.temp,eps:o.eps??0,ring:o.ring,pos_dyn:+!!o.posDyn,pos0:o.pos0??0,n_dyn:+!!o.nDyn,hd:o.hd,pos_mul:o.posMul??1,rnd:+!!o.bf16},U(o.n*(o.nh+2*o.nkv)))}function vi(e,t,n,r,i,a){e.dispatch(`cond_rows`,{emb:t,cond:n,t0:r[0],t1:r[1],t2:r[2],dyn:a},{n:i},[4,i,1])}function yi(e,t,n,r,i,a,o){e.dispatch(`steer_add`,{x:t,d:n,dyn:o},{n:r,x_off:i,d_off:a},U(Math.ceil(r/256)))}function bi(e,t,n,r,i,a,o){if(o.hd>64)throw Error(`probeReadout: hd=${o.hd} > 64`);e.dispatch(`probe`,{q:t,kc:n,pin:r,sc:i,acc:null},{mode:0,layer:a,...o},[o.nh,1,1])}function xi(e,t,n,r,i){e.dispatch(`probe`,{pin:t,sc:n,acc:r},{mode:1,...i},[Math.ceil(i.lmax/256),1,1])}function Si(e,t,n,r,i,a,o,s,c,l){if(c.hd>64)throw Error(`attentionMasked: hd=${c.hd} > 64`);e.dispatch(`attention_masked`,{q:t,kc:n,vc:r,gate:i,pin:a,outp:o,dyn:l},{layer:s,...c},[c.nh,1,1])}function q(e,t,n,r,i,a={}){if(i.IC%16)throw Error(`gemmF32: IC=${i.IC} must be a multiple of 16`);if(n.dtype!==`f32`)throw Error(`gemmF32: unsupported weight dtype ${n.dtype}`);if(i.rowsDyn&&!a.dyn)throw Error(`gemmF32: rowsDyn requires ex.dyn`);let o=+!!a.bias|(a.scale?2:0)|(a.shift?4:0)|(a.res?8:0)|(i.actAfterShift?16:0);e.dispatch(`gemm_f32`,{X:t,Wt:n.buf,bias:a.bias,scl:a.scale,shf:a.shift,res:a.res,Y:r,dyn:a.dyn??e.gpu.dummyUniform()},{T:i.T,O:i.O,IC:i.IC,K:i.K??1,d:i.d??1,x_stride:i.x_stride??i.IC,x_off:i.x_off??0,y_stride:i.y_stride??i.O,y_off:i.y_off??0,r_stride:i.r_stride??i.O,r_off:i.r_off??0,nb_bias:i.nb_bias??i.O,flags:o,act:i.act??0,alpha:i.alpha??1,cap:i.cap??0,rows_dyn:i.rowsDyn??0},[Math.ceil(i.O/64),Math.ceil(i.T/64),1])}function Ci(e,t,n,r,i,a={}){if(i.IC%i.a||i.OC%(i.IC/i.a))throw Error(`gconv3x3: IC=${i.IC} a=${i.a} OC=${i.OC} do not form groups`);let o=Math.floor((i.T_in-1)/i.s_t)+1,s=Math.floor((i.F_in-1)/i.s_f)+1;return e.dispatch(`gconv3x3`,{x:t,w:n,bias:a.bias,scl:a.scale,shf:a.shift,y:r},{T_in:i.T_in,F_in:i.F_in,IC:i.IC,OC:i.OC,a:i.a,bg:i.OC/(i.IC/i.a),s_f:i.s_f,s_t:i.s_t,T_out:o,F_out:s,flags:+!!a.bias|(a.scale?2:0)|(a.shift?4:0),act:i.act??0},U(Math.ceil(o*s*i.OC/256))),[o,s]}function wi(e,t,n,r,i,a){let o=r*i;e.dispatch(`subsample_rows`,{x:t,y:n},{n:o,row:i,s:a},U(Math.ceil(o/256)))}function Ti(e,t,n,r,i){e.dispatch(`moe_dense_mix`,{lg:t,e:n,y:r},{T:i},U(Math.ceil(i*64/256)))}function Ei(e,t,n,r,i,a,o){let s=i*a;e.dispatch(`upsample_add`,{e:t,xf:n,y:r},{n:s,N:a,s:o},U(Math.ceil(s/256)))}function Di(e,t,n,r,i,a,o){let s=i*a;e.dispatch(`dense_fuse`,{feat:t,w:n,acc:r},{n:s,N:a,S:o},U(Math.ceil(s/256)))}function Oi(e,t,n,r,i,a,o){e.dispatch(`astp_pool`,{att:t,x:n,pooled:r},{T:i,N:a,var_floor:o},U(a))}let ki=null;async function Ai(e,t,n=!0){n&&typeof caches<`u`&&await(ki??=caches.keys().then(e=>Promise.all(e.filter(e=>(e.startsWith(`zonos3-web-models-`)||e.startsWith(`zonos3-models-`))&&e!==`zonos3-web-models-v5`).map(e=>caches.delete(e)))).then(()=>{}));let r=n&&typeof caches<`u`?await caches.open(`zonos3-web-models-v5`):null,i=r?await r.match(e):void 0;if(i){let e=await i.arrayBuffer();return t(e.byteLength,!1),e}let a=await fetch(e);if(!a.ok||!a.body)throw Error(`failed to fetch ${e}: ${a.status}`);let o=Number(a.headers.get(`content-length`)??0),s=a.body.getReader(),c=[],l=0;for(;;){let{done:e,value:n}=await s.read();if(e)break;c.push(n),l+=n.byteLength,t(n.byteLength,!0)}if(o&&l!==o)throw Error(`failed to fetch ${e}: truncated (${l}/${o})`);let u=new Uint8Array(l),d=0;for(let e of c)u.set(e,d),d+=e.byteLength;if(r)try{await r.put(e,new Response(u.slice().buffer,{headers:{"content-type":`application/octet-stream`}}))}catch(t){console.warn(`zonos3-web: not caching ${e}:`,t)}return u.buffer}async function ji(e){let t=await fetch(e);if(!t.ok)throw Error(`failed to fetch ${e}: ${t.status}`);return t.json()}function Mi(e){let t=0;for(let n of Object.values(e.tensors))t+=n.nbytes+(n.scales_nbytes??0);return t}const Ni=/* @__PURE__ */ new Map;function Pi(e,t){let n=Ni.get(e);return n||(n=ji(e+`manifest.json`).then(e=>{if(e.format!==`zonos3-web-v1`)throw Error(`bad manifest format for ${t}`);return e}),n.catch(()=>Ni.delete(e)),Ni.set(e,n)),n}async function Fi(e,t,n){if(!n)return;let r=(await Promise.all(t.map(t=>Pi(new URL(t+`/`,e).href,t).then(Mi)))).reduce((e,t)=>e+t,0),i=/* @__PURE__ */ new Map,a=/* @__PURE__ */ new Map,o=-1/0;return e=>{i.set(e.model,e.loaded),a.set(e.model,e.fetched);let s=0,c=0;for(let e of i.values())s+=e;for(let e of a.values())c+=e;let l=performance.now();s<r&&l-o<100||(o=l,n({models:t,loaded:s,total:r,fetched:c}))}}async function Ii(e,t,n,r,i=!0){let a=new URL(n+`/`,t).href,o=await Pi(a,n),s=o.shards.map(()=>[]);for(let[e,t]of Object.entries(o.tensors))s[t.shard].push([e,t]);let c=Mi(o),l=0,u=0,d=0,f=0,p=()=>r?.({model:n,loaded:Math.min(l+Math.min(d,u),c),total:c,fetched:f});p();let m=/* @__PURE__ */ new Map,h=/* @__PURE__ */ new Map,g=e.device,_=(e,t,n,r)=>{let i=g.createBuffer({size:Math.max(16,Math.ceil(n/16)*16),usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC,label:r});return g.queue.writeBuffer(i,0,e,t,Math.ceil(n/4)*4),i};for(let e=0;e<o.shards.length;e++){u=s[e].reduce((e,[,t])=>e+t.nbytes+(t.scales_nbytes??0),0),d=0;let t=await Ai(a+o.shards[e],(e,t)=>{d+=e,t&&(f+=e),p()},i);l+=u,d=0;for(let[n,r]of s[e]){if(r.host){h.set(n,new Float32Array(t.slice(r.offset,r.offset+r.nbytes)));continue}let e={buf:_(t,r.offset,r.nbytes,n),dtype:r.dtype,shape:r.shape};(r.dtype===`q8`||r.dtype===`q4`)&&(e.scales=_(t,r.scales_offset,r.scales_nbytes,n+`.scales`)),m.set(n,e)}p()}return await g.queue.onSubmittedWorkDone(),{meta:o.meta,t:m,host:h,get(e){let t=m.get(e);if(!t)throw Error(`${n}: missing tensor '${e}'`);return t},has(e){return m.has(e)}}}function Li(e){let t=t=>{let n=e[t];if(typeof n!=`number`||!Number.isFinite(n))throw Error(`aligner: missing or invalid metadata ${t}`);return n};if(e[`general.architecture`]!==`fusealign`||e.format!==`fusealign-gguf/1`)throw Error(`aligner: not a FuseAlign export (scripts/export_web_aligner.py)`);let n={dim:t(`dim`),nl:t(`n_layers`),nh:t(`n_heads`),ffn:t(`ffn_dim`),feat:t(`feat_dim`),win:t(`patch_window`),hop:t(`patch_hop`),nup:t(`n_upsample`),ropeTheta:t(`rope_theta`),eps:t(`norm_eps`),threshold:t(`presence_threshold`),D:t(`dia_hidden`),dl:t(`dia_layers`),dnh:t(`dia_heads`),dhd:t(`dia_head_dim`),inter:t(`dia_intermediate`),diaEps:t(`dia_norm_eps`),diaTheta:t(`dia_rope_theta`)},r=n.dim/n.nh;if(n.win!==2*n.hop||n.hop%16||n.feat%16||r!==64&&r!==128||n.dhd!==64&&n.dhd!==128||t(`max_text_bytes`)<1022||t(`max_seconds`)<30)throw Error(`aligner: unsupported FuseAlign hyperparameters`);return n}function Ri(e,t,n,r,i){e.dispatch(`fa_rope`,{qkv:t,cs:n,sn:r},{n:i.n,nh:i.nh,hd:i.hd,stride:i.stride,q_off:0,k_off:i.kOff},U(Math.ceil(i.n*i.nh*(i.hd/2)/256)))}function zi(e,t,n,r){let i=r.nh*r.hd;e.dispatch(`fa_attention`,{qkv:t,outp:n},{n:r.n,nh:r.nh,hd:r.hd,stride:3*i,q_off:0,k_off:i,v_off:2*i,out_stride:i,scale:r.scale},[Math.ceil(r.n/(256/(r.hd/16))),r.nh,1])}function Bi(e,t,n,r,i,a=1){e.dispatch(`fa_ew`,{x:n,y:r},{op:t,n:i,C:a},U(Math.ceil(i/256)))}var Vi=class e{gpu;w;hp;queue=Promise.resolve();faInv;diaInv;embedding;constructor(e,t,n){this.gpu=e,this.w=t,this.hp=n,this.faInv=at(n.dim/n.nh,n.ropeTheta),this.diaInv=ot(n.dhd,n.diaTheta);let r=t.host.get(`dia.embedding`);if(!r||r.length!==256*n.D)throw Error(`aligner: missing dia.embedding`);this.embedding=r}static async load(t,n,r,i=!0){let a=await Ii(t,n,`aligner`,r,i);return new e(t,a,Li(a.meta))}async align(e,t){for(let e of t)(typeof e!=`string`||!e||/\s/u.test(e))&&L(400,`Alignment tokens must be non-empty strings without whitespace`);let n=e.length/Ze;n>30&&L(400,`Clip is ${n.toFixed(2)} s; in-browser alignment covers at most 30 s of audio`);let r=[];t.forEach((e,t)=>{tt(e)&&r.push(t)});let i=r.map(e=>t[e]),a=nt(i);a>1022&&L(400,`Transcript is ${a} UTF-8 bytes; in-browser alignment covers at most 1022 bytes`);let o=this.queue.then(async()=>{let a=i.map(()=>null),o=i.map(()=>0);return i.length&&e.length>=this.hp.win&&({intervals:a,presence:o}=await this.forward(e,i)),ut(t,r,a,o,n)});return this.queue=o.catch(()=>void 0),o}async forward(e,t){let{gpu:n,w:r,hp:i}=this,{ids:a,spans:o}=rt(t),s=a.length-2,c=s+2,l=t.length,u=Math.floor((e.length-i.win)/i.hop)+1,d=u+s,{dim:f,nh:p,feat:m,D:h,dnh:g,dhd:_}=i,v=f/p,y=g*_,b=new ei(n),x=e=>e*4,S=e=>{let t=b.buf(e.byteLength);return n.write(t,0,e),t},C=new Float32Array(c*h);for(let e=0;e<c;e++)C.set(this.embedding.subarray(a[e]*h,(a[e]+1)*h),e*h);let w=S(C),T=st(Float32Array.from({length:c},(e,t)=>t),this.diaInv,!0),E=S(T.cos),D=S(T.sin),O=b.buf(x(c*h)),k=b.buf(x(c*3*y)),A=b.buf(x(c*y)),ee=b.buf(x(c*2*i.inter)),j=b.buf(x(c*i.inter)),M=b.buf(x(c*h));for(let e=0;e<i.dl;e++)ri(b,w,O,{N:h,rows:c,eps:i.diaEps},{x:e?M:void 0,w:r.get(`dia.${e}.pre_norm`).buf}),K(b,O,r.get(`dia.${e}.qkv`),k,{T:c,O:3*y,IC:h}),Ri(b,k,E,D,{n:c,nh:g,hd:_,stride:3*y,kOff:y}),zi(b,k,A,{n:c,nh:g,hd:_,scale:1}),K(b,A,r.get(`dia.${e}.o`),M,{T:c,O:h,IC:y}),ri(b,w,O,{N:h,rows:c,eps:i.diaEps},{x:M,w:r.get(`dia.${e}.post_norm`).buf}),K(b,O,r.get(`dia.${e}.gate_up`),ee,{T:c,O:2*i.inter,IC:h}),Bi(b,0,ee,j,c*i.inter,i.inter),K(b,j,r.get(`dia.${e}.down`),M,{T:c,O:h,IC:i.inter}),b.split();ri(b,w,O,{N:h,rows:c,eps:i.diaEps},{x:M,w:r.get(`dia.norm`).buf});let te=k;Bi(b,1,O,te,c*h);let N=it(e),P=b.buf(x(d*f));q(b,S(N.subarray(0,(u+1)*i.hop)),r.get(`fa.audio_patch`),P,{T:u,O:f,IC:i.hop,K:2},{bias:r.get(`fa.audio_bias`).buf}),K(b,te,r.get(`fa.text_proj`),P,{T:s,O:f,IC:h,x_off:2*h,y_off:u*f},{bias:r.get(`fa.text_bias`).buf});let ne=st(ct(u,s),this.faInv,!1),F=S(ne.cos),re=S(ne.sin),I=b.buf(x(d*f)),ie=b.buf(x(d*3*f)),ae=b.buf(x(d*f)),oe=b.buf(x(d*2*i.ffn)),se=b.buf(x(d*i.ffn)),ce=b.buf(x(d*f));for(let e=0;e<i.nl;e++)ri(b,P,I,{N:f,rows:d,eps:i.eps},{x:e?ce:void 0,w:r.get(`fa.${e}.attn_norm`).buf}),K(b,I,r.get(`fa.${e}.qkv`),ie,{T:d,O:3*f,IC:f}),Ri(b,ie,F,re,{n:d,nh:p,hd:v,stride:3*f,kOff:f}),zi(b,ie,ae,{n:d,nh:p,hd:v,scale:1/Math.sqrt(v)}),K(b,ae,r.get(`fa.${e}.out`),ce,{T:d,O:f,IC:f}),ri(b,P,I,{N:f,rows:d,eps:i.eps},{x:ce,w:r.get(`fa.${e}.ffn_norm`).buf}),K(b,I,r.get(`fa.${e}.w13`),oe,{T:d,O:2*i.ffn,IC:f}),Bi(b,0,oe,se,d*i.ffn,i.ffn),K(b,se,r.get(`fa.${e}.w2`),ce,{T:d,O:f,IC:i.ffn}),b.split();let le=I;ri(b,P,le,{N:f,rows:d,eps:i.eps},{x:ce,w:r.get(`fa.final_norm`).buf});let ue=b.buf(x(l*f));b.dispatch(`fa_pool`,{x:le,spans:S(o),y:ue},{dim:f,row0:u},[l,1,1]);let de=b.buf(x(l*3*f));q(b,ue,r.get(`fa.mlp0`),de,{T:l,O:3*f,IC:f,act:W.gelu},{bias:r.get(`fa.mlp0_b`).buf});let fe=b.buf(x(l*m)),pe=b.buf(x(l*m)),me=b.buf(x(3*l));q(b,de,r.get(`fa.start_mlp2`),fe,{T:l,O:m,IC:f,x_stride:3*f},{bias:r.get(`fa.start_mlp2_b`).buf}),q(b,de,r.get(`fa.end_mlp2`),pe,{T:l,O:m,IC:f,x_stride:3*f,x_off:f},{bias:r.get(`fa.end_mlp2_b`).buf}),q(b,de,r.get(`fa.presence_mlp2`),me,{T:l,O:1,IC:f,x_stride:3*f,x_off:2*f,y_off:2*l},{bias:r.get(`fa.presence_mlp2_b`).buf});let he=u<<i.nup,ge=b.buf(x((he+4)*m)),_e=b.buf(x((he+4)*m)),ve=b.buf(x(he*m)),ye=b.buf(x(he*m)),be=b.buf(x(l*he));b.split();for(let[e,t,n]of[[`start`,fe,0],[`end`,pe,l]]){let a=u,o=ge,s=_e;b.clear(o,0,x(m)),b.clear(o,x((a+1)*m),x(m)),q(b,le,r.get(`fa.${e}.in`),o,{T:u,O:m,IC:f,y_off:m},{bias:r.get(`fa.${e}.in_b`).buf});for(let t=0;t<i.nup;t++){let n=t===i.nup-1?2:1;b.clear(s,0,x(n*m)),b.clear(s,x((2*a+n)*m),x(n*m));let c=r.get(`fa.${e}.up${t}.b`).buf,l={T:a,O:m,IC:m,K:2,y_stride:2*m,act:W.gelu};q(b,o,r.get(`fa.${e}.up${t}.even`),s,{...l,y_off:n*m},{bias:c}),q(b,o,r.get(`fa.${e}.up${t}.odd`),s,{...l,x_off:m,y_off:(n+1)*m},{bias:c}),a*=2,[o,s]=[s,o]}q(b,o,r.get(`fa.${e}.smooth`),ve,{T:he,O:m,IC:m,K:5,act:W.gelu},{bias:r.get(`fa.${e}.smooth_b`).buf}),q(b,ve,r.get(`fa.${e}.out`),ye,{T:he,O:m,IC:m},{bias:r.get(`fa.${e}.out_b`).buf}),q(b,t,{buf:ye,dtype:`f32`},be,{T:l,O:he,IC:m}),b.dispatch(`fa_argmax`,{lg:be,outp:me},{F:he,out_off:n},[l,1,1]),b.split()}let xe=b.finish();try{let[e]=await xe.run(n,[{buf:me,offset:0,bytes:x(3*l)}]),t=[],r=[];for(let n=0;n<l;n++){let a=1/(1+Math.exp(-e[2*l+n]));Number.isNaN(a)&&(a=0),r.push(a);let o=e[n],s=Math.max(e[l+n],o);t.push(a>=i.threshold?[o/1e3,s/1e3]:null)}return{intervals:t,presence:r}}finally{xe.destroy()}}};function Hi(e,t,n){let r=Math.fround,i=new Float32Array(e*n),a=r(t**(-2/n));for(let t=0;t<e;t++){let e=r(t);for(let o=0;o<n/2;o++)i[t*n+2*o]=Math.cos(e),i[t*n+2*o+1]=Math.sin(e),e=r(e*a)}return i}const Ui=Math.fround;var Wi=class{gpu;vocab;ncb;logits;twin;ids;uni;words=/* @__PURE__ */ new Uint32Array(36);floats=new Float32Array(this.words.buffer);cnt;hist=null;W=0;progs=[null,null];rng=null;greedy=!1;generated=0;guided=!1;constructor(e,t,n,r,i,a){if(this.gpu=e,this.vocab=t,this.ncb=n,this.logits=r,this.twin=i,this.ids=a,t>5120)throw Error(`sampler: the GPU sampler holds at most 5120 ids per codebook`);if(n>12)throw Error(`sampler: the GPU sampler holds at most 12 codebooks`);this.uni=e.uniform(144,`smp`),this.cnt=e.buffer(n*4,`smp.cnt`)}start(e){let t=e.sp,n=Et(this.vocab,e.vocab),r=this.ncb,i=Math.min(Math.max(0,Math.floor(t.rep_window)),h),a=Math.max(1,i);if(a!==this.W){this.hist?.destroy();for(let e of this.progs)e?.destroy();this.progs=[null,null],this.hist=this.gpu.buffer(r*a*4,`smp.hist`),this.W=a}let o=e.history??[],s=Math.min(i,o.length),c=new Uint32Array(r*a);for(let e=0;e<s;e++){let t=o[o.length-s+e];for(let n=0;n<r;n++)c[n*a+e]=t[n]}this.gpu.write(this.hist,0,c),this.gpu.write(this.cnt,0,new Uint32Array(r).fill(s));let l=this.words,u=this.floats;l.fill(0),l[0]=this.vocab,l[1]=n.codebookSize,l[2]=n.padId,l[3]=n.stopId,l[4]=Math.max(0,e.minFrames),l[7]=b,l[8]=+!!t.greedy,u[9]=Ui(t.temperature),l[10]=t.top_k>0?Math.min(Math.floor(t.top_k),this.vocab):0,u[11]=Ui(t.top_p),u[12]=Ui(t.min_p),u[13]=Ui(t.rep_penalty),l[14]=i,l[15]=Math.max(0,t.rep_codebooks),l[16]=e.cfgScale===null?0:1,u[17]=Ui(e.cfgScale??0),l[18]=a,l[19]=4286578688,this.rng=new Ct(t.seed>>>0),this.greedy=t.greedy,this.guided=e.cfgScale!==null,this.generated=0}next(e,t=0){if(!this.rng)throw Error(`backbone: startSampling must run before sampling`);let n=this.words;if(n[5]=this.generated++,n[6]=e,this.floats[32]=Ui(t),!this.greedy)for(let e=0;e<this.ncb;e++)this.floats[20+e]=wt(this.rng);this.gpu.write(this.uni,0,n);let r=+!!this.guided,i=this.progs[r];if(!i){let e=new ei(this.gpu);e.dispatch(`sample`,{logits:this.logits,twin:this.guided?this.twin:null,hist:this.hist,cnt:this.cnt,ids:this.ids,smp:this.uni},{},[this.ncb,1,1]),i=this.progs[r]=e.finish()}return i}};const J=1024,Gi=2056,Ki=1536,qi=2048,Ji=[3,7],Yi=4+Ji.length*16*4,Xi=1/Math.sqrt(32),Zi=1e-5,Qi=h*4*32*4,$i=e=>(e+1)%4==0;function ea(e,t,n){for(let r=0;r<10;r++)if(e[t*11+r]!==n.audioPad)return!1;return e[t*11+10]===n.textVocab}function ta(e,t,n,r){let i=r.condBucketCounts,a=r.condNames,o=n=>{if(n<0||n>=t||!ea(e,n,r))throw Error(`zonos3: conditioning row ${n} is not an all-pad row`)};if(n.speakerRow>=0){if(!n.speaker||n.speaker.length!==192)throw Error(`zonos3: expected a 192-value speaker embedding`);for(let e of n.speaker)if(!Number.isFinite(e))throw Error(`zonos3: speaker embedding contains a non-finite value`);o(n.speakerRow)}if(n.conditionRow>=0){if(n.buckets.length!==3)throw Error(`zonos3: expected 3 condition buckets`);for(let e=0;e<3;e++){let t=i[e];if(!Number.isInteger(n.buckets[e])||n.buckets[e]<0||n.buckets[e]>t)throw Error(`zonos3: condition bucket ${n.buckets[e]} for ${a[e]} outside 0..${t-1} (${t} = unknown)`);o(n.conditionRow+e)}}for(let i=0;i<t;i++){if(!ea(e,i,r))continue;let t=n.speakerRow>=0&&i===n.speakerRow,a=n.conditionRow>=0&&i>=n.conditionRow&&i<n.conditionRow+3;if(!t&&!a)throw Error(`zonos3: all-pad row ${i} has no speaker/condition embedding`)}}function na(e){let t=null;try{t=w(e)}catch{}if(!t||e[`general.architecture`]!==`zonos3`||e[`residual.type`]!==`full_attnres`||e[`attention.pattern`]!==`gdn3_global1`||t.speakerDim!==192||t.nCodebooks!==10||t.nCond!==3||t.condBucketCounts.length!==3||t.condBucketCounts.some(e=>!Number.isInteger(e)||e<2))throw Error(`backbone: unsupported model; re-export with pnpm export`);return t}function ra(e,t,n){let r=na(t.meta),i=r.audioVocab-n.audioVocab,a=t.meta[`adapter.rank`];if(t.meta[`adapter.base`]!==e.meta[`general.name`]||r.spanEndId===null||i<1||r.textExtraTokens<1||r.textVocab!==n.textVocab||r.audioPad!==n.audioPad||typeof a!=`number`||t.get(`embd_extra`).shape[1]!==10*i+r.textExtraTokens||t.get(`output_extra`).shape[1]!==10*i)throw Error(`backbone: the speech-edit adapter does not fit this backbone; re-export with pnpm export`);return r}var ia=class e{gpu;w;edit;steerSources;hp;logitsLen;baseHp;rope;slots;ids;chunkIds;dyn;dynData=/* @__PURE__ */ new Uint32Array(4);condBuf;spkIn;spkProg;steerBuf;probeBuf;probeSc;probeAcc;decodeProg;decodeLogits;chunkProg;chunkLogits;sampler;nPast=[0,0];constructor(e,t,n,r=null){this.gpu=e,this.w=t,this.edit=r,this.baseHp=na(t.meta),this.hp=r?ra(t,r,this.baseHp):this.baseHp,this.logitsLen=this.hp.audioVocab*10;for(let e=0;e<n.length;e++){let t=n[e];if(!Number.isInteger(t)||t<0||t>22||e>0&&t<=n[e-1])throw Error(`zonos3: steering sources must be ascending Full AttnRes bank indices in 0..22`)}this.steerSources=n.slice(),this.rope=e.upload(Hi(h,Number(t.meta[`rope.freq_base`]??1e4),32),`bb.rope`);let i=t=>{let n={kc:/* @__PURE__ */ new Map,vc:/* @__PURE__ */ new Map,gdnState:/* @__PURE__ */ new Map,gdnHist:/* @__PURE__ */ new Map};for(let r=0;r<11;r++)$i(r)?(n.kc.set(r,e.buffer(Qi,`s${t}.kc${r}`)),n.vc.set(r,e.buffer(Qi,`s${t}.vc${r}`))):(n.gdnState.set(r,e.buffer(262144,`s${t}.gdnState${r}`)),n.gdnHist.set(r,e.buffer(18432,`s${t}.gdnHist${r}`)));return n};this.slots=[i(0),i(1)],this.ids=e.buffer(44,`bb.ids`),this.chunkIds=e.buffer(11264,`bb.chunkIds`),this.dyn=[e.uniform(16,`bb.dyn0`),e.uniform(16,`bb.dyn1`)],this.condBuf=e.buffer(4128,`bb.cond`),this.spkIn=e.buffer(768,`bb.spkIn`),this.steerBuf=e.buffer(Math.max(1,this.steerSources.length)*J*4,`bb.steer`),this.probeBuf=e.buffer(Yi*4,`bb.probe`),this.probeSc=e.buffer(Ji.length*16*g*4,`bb.probeSc`),this.probeAcc=e.buffer(g*4,`bb.probeAcc`);let a=new ei(e);ti(a,this.spkIn,t.get(`speaker_proj.weight`),this.condBuf,{O:J,I:192,y_off:8},{bias:t.get(`speaker_proj.bias`).buf}),this.spkProg=a.finish();let o=[],s=[],c=[],l=[];for(let t of[0,1])a=new ei(e),o.push(this.record(a,1,!0,this.ids,null,t)),s.push(a.finish()),a=new ei(e),c.push(this.record(a,256,!1,this.chunkIds,null,t)),l.push(a.finish());this.decodeLogits=[o[0],o[1]],this.decodeProg=[s[0],s[1]],this.chunkLogits=[c[0],c[1]],this.chunkProg=[l[0],l[1]],this.sampler=new Wi(e,this.hp.audioVocab,10,this.decodeLogits[0],this.decodeLogits[1],this.ids)}record(e,t,n,r,i,a){let o=this.w,s=this.edit,c=e=>o.get(e).buf,l=this.dyn[a],u=this.slots[a],d=n&&a===0,f=(t,n,r,a=0)=>{if(!i)return;let o=e.buf(r*4,t);e.copy(n,a*4,o,0,r*4),i.push({name:t,buf:o,off:0,floats:r})},p=s?e.buf(t*256*4,`loraT`):null,m=e=>s!==null&&s.has(e+`.lora_down`),_=(r,i,a,o,c,l)=>{let u=s.get(i+`.lora_down`),d=s.get(i+`.lora_up`),f=u.shape[1];if(u.shape[0]!==c||d.shape[0]!==f||d.shape[1]!==o||f<8||f>256||f&f-1||c>2048)throw Error(`backbone: adapter factors of ${i} do not fit [${o}, ${c}]`);n?e.dispatch(`lora_vec`,{x:r,D:u.buf,U:d.buf,y:a},{O:o,I:c,K:f,y_off:l},[Math.ceil(o/256),1,1]):(K(e,r,u,p,{T:t,O:f,IC:c}),e.dispatch(`lora_up`,{t:p,U:d.buf,Y:a},{O:o,K:f,y_off:l},[Math.ceil(o/256),t,1]))},v=(r,i,a,s,c,l=0)=>{n?ti(e,r,o.get(i),a,{O:s,I:c,y_off:l}):K(e,r,o.get(i),a,{T:t,O:s,IC:c,y_off:l});let u=i.slice(0,-7);m(u)&&_(r,u,a,s,c,l)},y=e=>e*t*J,b=t=>{let r=this.steerSources.indexOf(t);n&&r>=0&&yi(e,C,this.steerBuf,J,y(t),r*J,l)},x={nl:Ji.length,nh:16,nkv:4,hd:32,ring:h,scale:Xi,lmax:g},S=e.buf(t*J*4,`emb`);s?e.dispatch(`embed_edit`,{ids:r,E:c(`embd_all`),X:s.get(`embd_extra`).buf,outp:S},{n:t,V:this.baseHp.audioVocab,AX:this.hp.audioVocab-this.baseHp.audioVocab,TV:this.baseHp.textVocab+1},[2,t,1]):e.dispatch(`embed`,{ids:r,E:c(`embd_all`),outp:S},{n:t,V:this.hp.audioVocab},[2,t,1]),f(`emb_sum`,S,t*J),n||(vi(e,S,this.condBuf,[c(`cond_embd.0.weight`),c(`cond_embd.1.weight`),c(`cond_embd.2.weight`)],t,l),f(`emb_cond`,S,t*J));let C=e.buf(23*t*J*4,`bank`);ri(e,S,C,{N:J,rows:t,eps:Zi}),b(0),f(`emb_norm`,C,t*J);let w=c(`attnres_q.weight`),T=e.buf(t*J*4,`cur`),E=e.buf(t*784*4,`qkvg`),D=e.buf(t*16*32*4,`q`),O=e.buf(t*16*32*4,`attnH`),k=e.buf(t*Gi*4,`gdnMixed`),A={conv:e.buf(t*Ki*4,`gdnConv`),qn:e.buf(t*512*4,`gdnQ`),kn:e.buf(t*512*4,`gdnK`),decay:e.buf(t*4*4,`gdnDecay`),beta:e.buf(t*4*4,`gdnBeta`),o:e.buf(t*512*4,`gdnO`)},ee=e.buf(t*512*4,`gdnGated`),j=!n||s!==null,M=j?e.buf(t*qi*4,`ffA`):null,te=j?e.buf(t*qi*4,`ffG`):null,N=e.buf(t*qi*4,`ffH`),P=e.buf(t*J*4,`routerIn`),ne=e.buf(t*64*4,`routerLogits`),F={sel:e.buf(t*2*4,`sel`),wts:e.buf(t*2*4,`wts`),hbuf:e.buf(t*2*(1536+(s?32:0))*4,`hbuf`)},re=s?e.buf(t*2*16*4,`moeLoraDown`):null,I=e.buf(t*256*4,`z`),ie=e.buf(t*256*4,`moeLat`);for(let n=0;n<11;n++){let r=`blk.${n}.`;if(ii(e,C,w,c(r+`attn_norm.weight`),T,{D:J,n:t,ns:2*n+1,qi:2*n,rows:t,eps:Zi}),f(`attn_in_${n}`,T,t*J),$i(n)){let i=u.kc.get(n),a=u.vc.get(n);v(T,r+`attn_qkvg.weight`,E,784,J),_i(e,E,this.rope,D,i,a,{n:t,nh:16,nkv:4,hd:32,in_stride:784,qkNorm:!0,eps:1e-6,ring:h,posDyn:!0},{temp:c(r+`attn_temp`),dyn:l}),hi(e,D,i,a,O,{n:t,nh:16,nkv:4,hd:32,window:4294967295,ring:h,scale:Xi,posDyn:!0,gate_stride:784,gate_off:768},{gate:E,dyn:l});let o=Ji.indexOf(n);d&&o>=0&&(bi(e,D,i,this.probeBuf,this.probeSc,o,x),Si(e,D,i,a,E,this.probeBuf,O,o,{nh:16,nkv:4,hd:32,ring:h,scale:Xi,gate_off:768},l)),v(O,r+`attn_output.weight`,C,J,512,y(2*n+1))}else{let a=u.gdnState.get(n),o=u.gdnHist.get(n);v(T,r+`gdn_in.weight`,k,Gi,J),ai(e,k,t,{conv:c(r+`gdn_conv.weight`),dtBias:c(r+`gdn_dt_bias`),aLog:c(r+`gdn_A_log`),norm:c(r+`gdn_norm.weight`)},a,o,ee,A),i&&(f(`gdn_conv_${n}`,A.conv,t*Ki),f(`gdn_q_${n}`,A.qn,t*512),f(`gdn_k_${n}`,A.kn,t*512),f(`gdn_decay_${n}`,A.decay,t*4),f(`gdn_beta_${n}`,A.beta,t*4),f(`gdn_recurrent_${n}`,A.o,t*512),f(`gdn_gated_${n}`,ee,t*512),f(`gdn_state_${n}`,a,65536),f(`gdn_conv_state_${n}`,o,Ki*3)),v(ee,r+`attn_output.weight`,C,J,512,y(2*n+1))}if(b(2*n+1),f(`attn_out_${n}`,C,t*J,y(2*n+1)),ii(e,C,w,c(r+`ffn_norm.weight`),T,{D:J,n:t,ns:2*n+2,qi:2*n+1,rows:t,eps:Zi}),f(`ffn_in_${n}`,T,t*J),!o.has(r+`router.weight`))j?(v(T,r+`ffn_up.weight`,M,qi,J),v(T,r+`ffn_gate.weight`,te,qi,J),fi(e,di.siluMul,t*qi,M,N,{},te)):ni(e,T,c(r+`ffn_up.weight`),c(r+`ffn_gate.weight`),N,qi,J),v(N,r+`ffn_down.weight`,C,J,qi,y(2*n+2));else{ri(e,T,P,{N:J,rows:t,eps:Zi},{w:c(r+`router_norm.weight`)}),v(P,r+`router.weight`,ne,64,J),f(`router_logits_${n}`,ne,t*64),v(T,r+`ffn_latent_down.weight`,I,256,J);let i=s?.has(r+`router_bias`)?s.get(r+`router_bias`).buf:c(r+`router_bias`),a=o.get(r+`ffn_up_exps.weight`),l=o.get(r+`ffn_gate_exps.weight`),u=o.get(r+`ffn_down_exps.weight`);if(m(r+`ffn_gate_up_exps`)&&m(r+`ffn_down_exps`))si(e,ne,i,I,a,l,u,ie,t,{...F,td:re},{gateUpDown:s.get(r+`ffn_gate_up_exps.lora_down`),gateUpUp:s.get(r+`ffn_gate_up_exps.lora_up`),downDown:s.get(r+`ffn_down_exps.lora_down`),downUp:s.get(r+`ffn_down_exps.lora_up`)});else if(m(r+`ffn_gate_up_exps`)||m(r+`ffn_down_exps`))throw Error(`backbone: the speech-edit adapter must shape every expert stack of layer ${n}`);else oi(e,ne,i,I,a,l,u,ie,t,F);v(ie,r+`ffn_latent_up.weight`,C,J,256,y(2*n+2))}b(2*n+2),f(`ffn_out_${n}`,C,t*J,y(2*n+2))}d&&xi(e,this.probeBuf,this.probeSc,this.probeAcc,x);let ae=e.buf(J*4,`hLast`);ii(e,C,w,c(`output_norm.weight`),ae,{D:J,n:t,ns:23,qi:22,rows:1,row0:t-1,eps:Zi});let oe=e.buf(this.logitsLen*4,`logits`);if(!s)return ti(e,ae,o.get(`output.weight`),oe,{O:this.logitsLen,I:J,act:W.softcap,cap:15}),oe;let se=this.baseHp.audioVocab,ce=this.hp.audioVocab-se,le=e.buf(se*10*4,`headBase`),ue=e.buf(ce*10*4,`headExtra`);ti(e,ae,o.get(`output.weight`),le,{O:se*10,I:J}),ti(e,ae,s.get(`output_extra`),ue,{O:ce*10,I:J});let de=s.get(`output.lora_down`),fe=s.get(`output.lora_up`),pe=de.shape[1];if(de.shape[0]!==1024||fe.shape[0]!==pe||fe.shape[1]!==this.logitsLen||pe%8||pe>256)throw Error(`backbone: the head adapter does not fit the edit vocabulary`);return ti(e,ae,de,p,{O:pe,I:J}),e.dispatch(`edit_logits`,{base:le,extra:ue,t:p,U:fe.buf,outp:oe},{n:this.logitsLen,V:se,AX:ce,K:pe,cap:15},[Math.ceil(this.logitsLen/256),1,1]),oe}clearRecurrent(e,t){for(let n of this.slots[t].gdnState.values())e.clearBuffer(n);for(let n of this.slots[t].gdnHist.values())e.clearBuffer(n)}writeCond(e){let t=/* @__PURE__ */ new Int32Array(8),n=e.speakerRow>=0;t[0]=n?e.speakerRow:-1,t[1]=e.conditionRow>=0?e.conditionRow:-1,t[2]=3;for(let n=0;n<3;n++)t[3+n]=e.conditionRow>=0?e.buckets[n]:0;return this.gpu.write(this.condBuf,0,t),n?(this.gpu.write(this.spkIn,0,e.speaker),!0):!1}async prefill(e,t,n,r={}){let i=t.length/11;if(!Number.isInteger(i)||i<1)throw Error(`empty prompt`);if(i>h)throw Error(`prompt has ${i} rows; maximum is ${h}`);ta(t,i,n,this.hp);let a=this.gpu,o=r.capture?i:Math.max(1,r.chunk??256),s=/* @__PURE__ */ new Map,c=t=>{if(t===256&&!r.capture)return{prog:this.chunkProg[e],ids:this.chunkIds,logits:this.chunkLogits[e],caps:null};let n=s.get(t);if(!n){let i=new ei(a),o=i.buf(t*11*4,`prefill.ids`),c=r.capture?[]:null,l=this.record(i,t,!1,o,c,e);n={prog:i.finish(),ids:o,logits:l,caps:c},s.set(t,n)}return n},l=this.writeCond(n);this.nPast[e]=0;try{for(let n=0;n<i;n+=o){let r=Math.min(o,i-n),s=n+r>=i,u=c(r);a.write(u.ids,0,t.subarray(n*11,(n+r)*11)),this.dynData[0]=n,this.dynData[1]=0,a.write(this.dyn[e],0,this.dynData);let d=n===0,f=t=>{d&&(this.clearRecurrent(t,e),l&&this.spkProg.encode(t)),u.prog.encode(t),s&&t.copyBufferToBuffer(u.logits,0,this.decodeLogits[e],0,this.logitsLen*4)};if(!s){let e=a.device.createCommandEncoder();f(e),a.device.queue.submit([e.finish()]);continue}let p=u.caps??[],m=await a.submitRead(f,[{buf:u.logits,offset:0,bytes:this.logitsLen*4},...p.map(e=>({buf:e.buf,offset:0,bytes:e.floats*4}))]);this.nPast[e]=i;let h={logits:m[0]};return u.caps&&(h.caps=new Map(u.caps.map((e,t)=>[e.name,m[t+1]]))),h}throw Error(`unreachable`)}finally{for(let e of s.values())e.prog.destroy()}}writeProbe(e,t){let n=new Uint32Array(Yi),r=new Float32Array(n.buffer),i=t!==null&&t.heads.length>0&&t.textLen>0;if(i){if(e!==0)throw Error(`backbone: the alignment probe runs on slot 0 only`);let i=this.nPast[e];if(t.textLen>2048||t.textStart<0||t.textStart+t.textLen>i)throw Error(`zonos3: alignment probe text span [${t.textStart}, +${t.textLen}) must lie in the slot's ${i} cached rows and hold at most ${g} rows (zonos3_batch_features::probe_max_text)`);let a=(e,t)=>4+(Ji.indexOf(e)*16+t)*4,o=(e,t)=>Ji.includes(e)&&Number.isInteger(t)&&t>=0&&t<16;for(let e of t.heads)if(!o(e.layer,e.head))throw Error(`zonos3: align probe head (${e.layer}, ${e.head}) is not an attention head of this model`);for(let e of t.windows)if(!o(e.head.layer,e.head.head))throw Error(`zonos3: align probe window head (${e.head.layer}, ${e.head.head}) is not an attention head of this model`);n[0]=t.textStart,n[1]=t.textLen;for(let e=0;e<Ji.length;e++)for(let r=0;r<16;r++)n[4+(e*16+r)*4+2]=t.textLen-1;for(let e of t.heads)r[a(e.layer,e.head)]=1;for(let e of t.windows){let[r,i]=jn(e.lo,e.hi,t.textLen),o=a(e.head.layer,e.head.head);n[o+1]=r,n[o+2]=i,n[o+3]=1}}return e===0&&this.gpu.write(this.probeBuf,0,n),i?t.textLen:0}checkStep(e,t){if(this.nPast[e]>=h)throw Error(`KV cache full`);let n=this.steerSources.length;if(t&&t.length!==n*1024)throw Error(`zonos3: slot steering delta must hold ${n} sources x ${J} values`)}writeDyn(e,t){this.dynData[0]=this.nPast[e],this.dynData[1]=t&&this.steerSources.length?1:0,this.gpu.write(this.dyn[e],0,this.dynData)}async step(e,t,n,r){this.checkStep(e,n);let i=this.writeProbe(e,r);this.gpu.write(this.ids,0,t),n&&this.steerSources.length&&this.gpu.write(this.steerBuf,0,n),this.writeDyn(e,n!==null);let a=[{buf:this.decodeLogits[e],offset:0,bytes:this.logitsLen*4}];i&&a.push({buf:this.probeAcc,offset:0,bytes:i*4});let o=await this.gpu.submitRead(t=>this.decodeProg[e].encode(t),a);return this.nPast[e]++,{logits:o[0],probe:i?o[1]:null}}async stepPair(e,t,n,r){if(n&&n!==t)throw Error(`backbone: the CFG twin shares the conditional slot's steering delta`);this.checkStep(0,t),this.checkStep(1,n);let i=this.writeProbe(0,r);this.gpu.write(this.ids,0,e),t&&this.steerSources.length&&this.gpu.write(this.steerBuf,0,t),this.writeDyn(0,t!==null),this.writeDyn(1,n!==null);let a=[{buf:this.decodeLogits[0],offset:0,bytes:this.logitsLen*4},{buf:this.decodeLogits[1],offset:0,bytes:this.logitsLen*4}];i&&a.push({buf:this.probeAcc,offset:0,bytes:i*4});let o=await this.gpu.submitRead(e=>{this.decodeProg[0].encode(e),this.decodeProg[1].encode(e)},a);return this.nPast[0]++,this.nPast[1]++,{logits:o[0],twinLogits:o[1],probe:i?o[2]:null}}startSampling(e){this.sampler.start(e)}async sampleFirst(e){let t=this.sampler.next(e),n=await this.gpu.submitRead(e=>t.encode(e),[{buf:this.ids,offset:0,bytes:44}]);return new Int32Array(n[0].buffer)}async stepSample(e,t,n,r,i=0){let a=this.sampler.guided;if(a&&n&&n!==t)throw Error(`backbone: the CFG twin shares the conditional slot's steering delta`);this.checkStep(0,t),a&&this.checkStep(1,n);let o=this.writeProbe(0,r);t&&this.steerSources.length&&this.gpu.write(this.steerBuf,0,t),this.writeDyn(0,t!==null),a&&this.writeDyn(1,n!==null);let s=this.sampler.next(e,i),c=[{buf:this.ids,offset:0,bytes:44}];o&&c.push({buf:this.probeAcc,offset:0,bytes:o*4});let l=this.gpu.submitRead(e=>{this.decodeProg[0].encode(e),a&&this.decodeProg[1].encode(e),s.encode(e)},c);this.nPast[0]++,a&&this.nPast[1]++;let u=await l;return{frame:new Int32Array(u[0].buffer),probe:o?u[1]:null}}withEdit(t){return new e(this.gpu,this.w,this.steerSources,t)}};const aa=[`gemm_h8_ks4`,`gemm_h8_ks8`,`gemm_h8_r2_8x8`],oa=[`gemm_h8_r4_8x8`,`gemm_h8_r8_8x8`,`gemm_h8_r4_16x4`],sa=e=>Math.ceil(e/32)*32;function ca(e,t,n,r){if(t.dtype!==`q8`||!t.scales)throw Error(`repackH8: expected q8 weights, got ${t.dtype}`);let i=r*sa(n)/2,a=e.buffer(i*4,`h8`),o=new ei(e);o.dispatch(`repack_h8`,{Wq:t.buf,Wsc:t.scales,outp:a},{O:n,IC:r,K:1,words:i},U(Math.ceil(i/256)));let s=o.finish(),c=e.device.createCommandEncoder();return s.encode(c),e.device.queue.submit([c.finish()]),e.device.queue.onSubmittedWorkDone().then(()=>s.destroy()),a}async function la(e,t,n,r,i,a){let o=e.buffer(r*a*4,`tune.x`),s=e.buffer(r*i*4,`tune.y`),c=new ei(e);for(let e=0;e<4;e++)K(c,o,t,s,{T:r,O:i,IC:a,kernel:n===`q8`?void 0:n});let l=c.finish(),u=async()=>{let t=e.device.createCommandEncoder();l.encode(t),e.device.queue.submit([t.finish()]),await e.device.queue.onSubmittedWorkDone()};try{await u();let e=1/0;for(let t=0;t<3;t++){let t=performance.now();await u(),e=Math.min(e,performance.now()-t)}return e/4}finally{l.destroy(),o.destroy(),s.destroy()}}async function ua(e,t,n,r,i){let a=t.get(n),[o,s]=a.shape,c={kernel:`q8`,ms:await la(e,a,`q8`,r,s,o)},l={buf:ca(e,a,s,o),dtype:`h8`,shape:a.shape};try{for(let t of i){let n=await la(e,l,t,r,s,o);n<c.ms&&(c={kernel:t,ms:n})}}finally{l.buf.destroy()}return c}async function da(e,t){let n=await ua(e,t,`stage.1.l0.ffn1.weight`,32,aa),r=await ua(e,t,`head.0.pw1.weight`,256,oa);return console.info(`zac: gemm skinny=${n.kernel} ${n.ms.toFixed(3)} ms, large=${r.kernel} ${r.ms.toFixed(3)} ms`),{skinny:n.kernel,large:r.kernel}}var fa=class{n;m;factors=[];wc;ws;cos;sin;leaf=/* @__PURE__ */ new Map;xr;xi;yr;yi;tr;ti;ur;ui;vr;vi;constructor(e){if(this.n=e,!Number.isInteger(e)||e<2||e%2)throw Error(`irfft: n=${e} must be even`);let t=this.m=e/2,n=t;for(let e of[2,3])for(;n%e===0;)this.factors.push(e),n/=e;for(let e=5;n>1;e+=2)for(;n%e===0;)this.factors.push(e),n/=e;this.factors.sort((e,t)=>e-t),this.wc=new Float64Array(t),this.ws=new Float64Array(t),this.cos=new Float64Array(t),this.sin=new Float64Array(t);for(let n=0;n<t;n++)this.wc[n]=Math.cos(2*Math.PI*n/e),this.ws[n]=Math.sin(2*Math.PI*n/e),this.cos[n]=Math.cos(2*Math.PI*n/t),this.sin[n]=Math.sin(2*Math.PI*n/t);for(let e of this.factors){if(e<5||this.leaf.has(e))continue;let t=(e-1)/2,n=new Float64Array(t*t),r=new Float64Array(t*t);for(let i=1;i<=t;i++)for(let a=1;a<=t;a++){let o=2*Math.PI*(i*a%e)/e;n[(i-1)*t+a-1]=Math.cos(o),r[(i-1)*t+a-1]=Math.sin(o)}this.leaf.set(e,{c:n,s:r})}this.xr=new Float64Array(t),this.xi=new Float64Array(t),this.yr=new Float64Array(t),this.yi=new Float64Array(t);let r=this.factors.length?this.factors[this.factors.length-1]:1;this.tr=new Float64Array(r),this.ti=new Float64Array(r);let i=r-1>>1;this.ur=new Float64Array(i),this.ui=new Float64Array(i),this.vr=new Float64Array(i),this.vi=new Float64Array(i)}exec(e,t,n){let{n:r,m:i,xr:a,xi:o,yr:s,yi:c,wc:l,ws:u}=this;for(let t=0;t<i;t++){let n=t?e[2*t-1]:e[0],s=t?e[2*t]:0,c=i-t,d=c===i?e[r-1]:e[2*c-1],f=c===i?0:-e[2*c],p=n+d,m=s+f,h=n-d,g=s-f,_=l[t],v=u[t];a[t]=p-(_*g+v*h),o[t]=m+(_*h-v*g)}this.factors.length?this.rec(0,1,0,0,i):(s[0]=a[0],c[0]=o[0]);for(let e=0;e<i;e++)t[2*e]=s[e]*n,t[2*e+1]=c[e]*n}rec(e,t,n,r,i){let{xr:a,xi:o,yr:s,yi:c,tr:l,ti:u,cos:d,sin:f,m:p}=this,m=this.factors[r],h=i/m;if(h===1){for(let n=0;n<m;n++)l[n]=a[e+n*t],u[n]=o[e+n*t];this.dft(m,n,1);return}for(let i=0;i<m;i++)this.rec(e+i*t,t*m,n+i*h,r+1,h);let g=p/i;if(m===2)for(let e=0,t=0;e<h;e++,t+=g){let r=n+e,i=r+h,a=s[i],o=c[i],l=d[t],u=f[t],p=a*l-o*u,m=a*u+o*l,g=s[r],_=c[r];s[r]=g+p,c[r]=_+m,s[i]=g-p,c[i]=_-m}else for(let e=0;e<h;e++){l[0]=s[n+e],u[0]=c[n+e];for(let t=1,r=e*g;t<m;t++,r+=e*g){let i=s[n+t*h+e],a=c[n+t*h+e],o=d[r],p=f[r];l[t]=i*o-a*p,u[t]=i*p+a*o}this.dft(m,n+e,h)}}dft(e,t,n){let{yr:r,yi:i,tr:a,ti:o}=this;if(e===2){r[t]=a[0]+a[1],i[t]=o[0]+o[1],r[t+n]=a[0]-a[1],i[t+n]=o[0]-o[1];return}if(e===3){let e=-.5,s=Math.sqrt(3)/2,c=a[1]+a[2],l=o[1]+o[2],u=a[1]-a[2],d=o[1]-o[2],f=a[0]+e*c,p=o[0]+e*l;r[t]=a[0]+c,i[t]=o[0]+l,r[t+n]=f-s*d,i[t+n]=p+s*u,r[t+2*n]=f+s*d,i[t+2*n]=p-s*u;return}let{ur:s,ui:c,vr:l,vi:u}=this,{c:d,s:f}=this.leaf.get(e),p=(e-1)/2,m=a[0],h=o[0];for(let t=1;t<=p;t++){let n=a[t],r=o[t],i=a[e-t],d=o[e-t];s[t-1]=n+i,c[t-1]=r+d,l[t-1]=n-i,u[t-1]=r-d,m+=n+i,h+=r+d}r[t]=m,i[t]=h;for(let m=1;m<=p;m++){let h=a[0],g=o[0],_=0,v=0,y=(m-1)*p;for(let e=0;e<p;e++){let t=d[y+e],n=f[y+e];h+=s[e]*t,g+=c[e]*t,_+=u[e]*n,v+=l[e]*n}r[t+m*n]=h-_,i[t+m*n]=g+v,r[t+(e-m)*n]=h+_,i[t+(e-m)*n]=g-v}}},pa=class{data=/* @__PURE__ */ new Float32Array;len=0;resize(e){if(e>this.data.length){let t=new Float32Array(Math.max(e,2*this.data.length));t.set(this.data.subarray(0,this.len)),this.data=t}else e>this.len&&this.data.fill(0,this.len,e);this.len=e}erase(e){this.data.copyWithin(0,e,this.len),this.len-=e}clear(){this.len=0}},ma=class{nFft;hop;windows;mixer;fir;maxLogMag;irfft;hc;buf;ola=[new pa,new pa];env=[new pa,new pa];olaBase=[0,0];mixIn=[new pa,new pa];mixAvail=[0,0];mixBase=0;mixNext=0;headFrames=0;headDone=!1;constructor(e){if(this.nFft=e.nFft,this.hop=e.hop,this.fir=e.mixer.length/2,!Number.isInteger(this.fir)||this.fir%2!=1)throw Error(`istft: mixer has ${e.mixer.length} taps, expected 2 x odd`);for(let t=0;t<2;t++)if(e.windows[t].length!==e.nFft[t])throw Error(`istft: window ${t} has ${e.windows[t].length} taps, expected ${e.nFft[t]}`);this.windows=e.windows,this.mixer=e.mixer,this.maxLogMag=e.maxLogMag,this.irfft=[new fa(e.nFft[0]),new fa(e.nFft[1])],this.hc=[new Float64Array(e.nFft[0]),new Float64Array(e.nFft[1])],this.buf=[new Float32Array(e.nFft[0]),new Float32Array(e.nFft[1])]}get frames(){return this.headFrames}reset(){for(let e=0;e<2;e++)this.ola[e].clear(),this.env[e].clear(),this.mixIn[e].clear(),this.olaBase[e]=0,this.mixAvail[e]=0;this.mixBase=0,this.mixNext=0,this.headFrames=0,this.headDone=!1}push(e,t,n){if(this.headDone)throw Error(`istft: push after flush`);this.headFrames===0&&this.init();let r=[e,t],i=this.hop;for(let e=0;e<2;e++){let t=this.nFft[e],a=t/2+1;if(r[e].length<n*(t+2))throw Error(`istft: branch ${e} has ${r[e].length} values, expected ${n*(t+2)}`);let o=this.windows[e],s=this.hc[e],c=this.buf[e],l=r[e],u=this.maxLogMag,d=this.ola[e],f=this.env[e];for(let r=0;r<n;r++){let n=this.headFrames+r,p=r*(t+2),m=p+a,h=e=>Math.exp(Math.min(l[p+e],u));s[0]=h(0)*Math.cos(l[m]);for(let e=1;e<t/2;e++){let t=h(e);s[2*e-1]=t*Math.cos(l[m+e]),s[2*e]=t*Math.sin(l[m+e])}s[t-1]=h(t/2)*Math.cos(l[m+t/2]),this.irfft[e].exec(s,c,1/t);let g=n*i+t-this.olaBase[e];d.len<g&&(d.resize(g),f.resize(g));let _=n*i-this.olaBase[e],v=d.data,y=f.data;for(let e=0;e<t;e++)v[_+e]+=o[e]*c[e],y[_+e]+=o[e]*o[e]}}this.headFrames+=n;for(let e=0;e<2;e++)this.olaFinalize(e,this.headFrames*i);return this.mixEmit()}flush(){if(this.headDone||this.headFrames===0)return/* @__PURE__ */ new Float32Array;this.headDone=!0;let e=(this.fir-1)/2;for(let t=0;t<2;t++){this.olaFinalize(t,this.olaBase[t]+this.ola[t].len);let n=e+this.headFrames*this.hop-this.mixBase;this.mixIn[t].resize(n),this.mixIn[t].resize(n+e),this.mixAvail[t]=this.mixBase+n+e}return this.mixEmit()}init(){let e=(this.fir-1)/2;for(let t=0;t<2;t++)this.mixIn[t].clear(),this.mixIn[t].resize(e),this.mixAvail[t]=e;this.mixBase=0,this.mixNext=0}olaFinalize(e,t){let n=this.nFft[e]/2,r=t-this.olaBase[e];if(r<=0)return;let i=this.ola[e],a=this.env[e],o=this.mixIn[e],s=Math.min(r,Math.max(0,n-this.olaBase[e])),c=o.len;o.resize(c+r-s);let l=o.data,u=i.data,d=a.data;for(let e=s;e<r;e++)l[c+e-s]=u[e]/d[e];this.mixAvail[e]+=r-s,i.erase(r),a.erase(r),this.olaBase[e]=t}mixEmit(){let e=this.fir,t=Math.min(this.mixAvail[0],this.mixAvail[1])-e+1;if(t<=this.mixNext)return/* @__PURE__ */ new Float32Array;let n=t-this.mixNext,r=new Float32Array(n);for(let t=0;t<2;t++){let i=this.mixIn[t].data,a=this.mixNext-this.mixBase,o=t*e;for(let t=0;t<e;t++){let e=this.mixer[o+t];for(let o=0;o<n;o++)r[o]+=e*i[a+o+t]}}this.mixNext=t;for(let e=0;e<2;e++)this.mixNext>this.mixBase&&this.mixIn[e].erase(this.mixNext-this.mixBase);return this.mixBase=this.mixNext,r}},ha=class{kernel;orig;nw;width;buf=/* @__PURE__ */ new Float32Array;len=0;base=0;inCount=0;nextBlock=0;kl;lo;hi;constructor(e,t=736,n=735,r=17){if(this.kernel=e,this.orig=t,this.nw=n,this.width=r,this.kl=2*r+t,e.length!==n*this.kl)throw Error(`resampler: kernel has ${e.length} taps, expected ${n*this.kl}`);this.lo=new Int32Array(n),this.hi=new Int32Array(n);for(let t=0;t<n;t++){let n=t*this.kl,r=0;for(;r<this.kl&&e[n+r]===0;)r++;let i=this.kl;for(;i>r&&e[n+i-1]===0;)i--;this.lo[t]=r,this.hi[t]=i}}push(e){if(this.len+e.length>this.buf.length){let t=new Float32Array(Math.max(this.len+e.length,2*this.buf.length));t.set(this.buf.subarray(0,this.len)),this.buf=t}return this.buf.set(e,this.len),this.len+=e.length,this.inCount+=e.length,this.run(!1)}flush(){return this.run(!0)}reset(){this.len=0,this.base=0,this.inCount=0,this.nextBlock=0}run(e){let{orig:t,nw:n,width:r,kl:i,kernel:a,lo:o,hi:s}=this,c=e?Math.floor((n*this.inCount+t-1)/t):-1,l=[],u=new Float32Array(i);for(;;this.nextBlock++){let d=this.nextBlock,f=d*t-r;if(e?d*n>=c:f+i>this.inCount)break;for(let e=0;e<i;e++){let t=f+e;u[e]=t<0||t>=this.inCount?0:this.buf[t-this.base]}let p=e?Math.min(n,c-d*n):n,m=new Float32Array(p);for(let e=0;e<p;e++){let t=e*i,n=0;for(let r=o[e];r<s[e];r++)n+=a[t+r]*u[r];m[e]=n}l.push(m)}let d=Math.min(this.inCount,Math.max(0,this.nextBlock*t-r));if(d>this.base){let e=d-this.base;this.buf.copyWithin(0,e,this.len),this.len-=e,this.base=d}let f=new Float32Array(l.reduce((e,t)=>e+t.length,0)),p=0;for(let e of l)f.set(e,p),p+=e.length;return f}};function ga(e){let t=new MessageChannel;return e.postMessage({type:`port`},[t.port2]),t.port1}var _a=class{istft;rs;constructor(e){this.istft=new ma(e),this.rs=new ha(e.resampleKernel)}async push(e,t,n){return this.rs.push(this.istft.push(e,t,n))}async flush(){let e=this.rs.push(this.istft.flush()),t=this.rs.flush(),n=new Float32Array(e.length+t.length);return n.set(e),n.set(t,e.length),n}reset(){this.istft.reset(),this.rs.reset()}},va=class{port;fifo=[];constructor(e,t){this.port=e,e.onmessage=e=>{let t=this.fifo.shift();if(!t)return;let n=e.data;n.type===`pcm`?t.resolve(n.pcm):t.reject(/* @__PURE__ */ Error(`codec worker: `+n.message))},this.post({type:`init`,...t})}post(e,t=[]){this.port.postMessage(e,t)}reply(){let{promise:e,resolve:t,reject:n}=Promise.withResolvers();return this.fifo.push({resolve:t,reject:n}),e}push(e,t,n){let r=this.reply();return this.post({type:`push`,s0:e,s1:t,cols:n},[e.buffer,t.buffer]),r}flush(){let e=this.reply();return this.post({type:`flush`}),e}reset(){this.post({type:`reset`})}};const ya=[{inDim:1024,outDim:1280,d:1280,ff:5120,ctx:150,patch:2},{inDim:640,outDim:768,d:768,ff:3072,ctx:300,patch:2},{inDim:384,outDim:768,d:768,ff:3072,ctx:480,patch:2},{inDim:384,outDim:768,d:768,ff:3072,ctx:480,patch:2},{inDim:384,outDim:0,d:768,ff:3072,ctx:480,patch:1}],ba=1024,xa=2048,Sa=2048,Ca=[736,2208],wa=ya.reduce((e,t)=>e*t.patch,1),Ta=1e-5,Ea=1e-6;function Da(e){let t={"general.architecture":`mossdual_istft`,"stage.d_model":ya.map(e=>e.d),"stage.context":ya.map(e=>e.ctx),"stage.patch":ya.map(e=>e.patch),"stage.out_dim":ya.map(e=>e.outDim),"head.depth":8,"head.hidden":Sa,"head.n_fft":Ca,"head.hop":184,"head.fir_kernel":127};for(let[n,r]of Object.entries(t))if(JSON.stringify(e[n])!==JSON.stringify(r))throw Error(`zac: unsupported codec; re-export with pnpm export`);if(typeof e[`head.max_log_magnitude`]!=`number`||typeof e.headroom_db!=`number`)throw Error(`zac: unsupported codec; re-export with pnpm export`);let n=e[`stage.n_layer`];if(!Array.isArray(n)||n.length!==ya.length||!n.every(e=>Number.isInteger(e)&&e>0))throw Error(`zac: unsupported codec; re-export with pnpm export`);return n}function Oa(e){if(e.startsWith(`sem_head.`)||e.startsWith(`stage.0.`))return 16;if(e.startsWith(`stage.1.`))return 32;if(e.startsWith(`stage.2.`))return 64;if(e.startsWith(`stage.3.`))return 128;if(e.startsWith(`stage.4.`)||e.startsWith(`head.`))return 256;throw Error(`zac: ${e} is not a codec matrix`)}const ka=[`sem_head.`,`stage.0.`,`stage.1.`,`stage.2.`,`stage.3.`,`stage.4.`,`head.`];var Aa=class e{gpu;w;gain;gemmPlan;partialFrames;prog;idx;dyn;dynData=/* @__PURE__ */ new Uint32Array(4);spec;rope;hists=[];needReset=!0;sink;tail=Promise.resolve();nLayer;static async create(t,n,r=e=>new _a(e),i){i??=await da(t,n);for(let e of ka){let r=[];for(let[a,o]of n.t)a.startsWith(e)&&o.dtype===`q8`&&i[Oa(a)<=32?`skinny`:`large`]!==`q8`&&(n.t.set(a,{buf:ca(t,o,o.shape[1],o.shape[0]),dtype:`h8`,shape:o.shape}),r.push(o.buf,o.scales));if(r.length){await t.device.queue.onSubmittedWorkDone();for(let e of r)e.destroy()}}return new e(t,n,i,r)}constructor(e,t,n,r){this.gpu=e,this.w=t,this.gemmPlan=n,this.nLayer=Da(t.meta);let i=e=>{let n=t.host.get(e);if(!n)throw Error(`zac: missing ${e}; re-export with pnpm export`);return n};this.gain=Math.fround(10**(-Number(t.meta.headroom_db)/20)),this.partialFrames=t.has(`res.biases`),this.partialFrames||console.warn(`zac: no per-codebook residual biases (res.biases; re-export with pnpm export): early partial-frame decode off`),this.sink=r({nFft:Ca,hop:184,windows:[i(`head.window.0`),i(`head.window.1`)],mixer:i(`head.mixer.weight`),maxLogMag:Number(t.meta[`head.max_log_magnitude`]),resampleKernel:i(`resample.kernel`)}),this.idx=e.buffer(640,`zac.idx`),this.dyn=e.uniform(16,`zac.dyn`),this.rope=e.upload(Hi(3088*wa,1e4,64),`zac.rope`);let a=new ei(e);this.spec=this.record(a),this.prog=a.finish()}record(e){let t=e=>this.w.get(e).buf,n=e=>this.w.get(e),r=this.dyn,i=1,a=(t,n,a,o,s={})=>K(e,t,n,a,{...o,rowsDyn:i,kernel:n.dtype===`h8`?16*i<=32?this.gemmPlan.skinny:this.gemmPlan.large:void 0},{...s,dyn:r}),o=(t,n)=>{let r=16*i,a=e.tmp((n+r)*t*4,`zac.xf`),o=e.buf(n*t*4,`zac.hist`);return e.copy(o,0,a,0,n*t*4),{xf:a,hist:o,off:n*t}},s=(t,n,r,a)=>{e.copy(t,0,n,0,a*r*4),this.hists.push({hist:n,step:e.steps[e.steps.length-1],rowBytes:r*4,cpf:i})},c=o(768,6);e.dispatch(`zac_embed`,{idx:this.idx,tables:t(`sem.table`),bias:t(`sem.bias`),outp:c.xf,dyn:r},{n:16,C:768,F:16,y_off:c.off,mode:0,rows_dyn:1},[2,16,1]);let l=e.buf(49152,`zac.sem`);for(let u=0;u<4;u++){let d=`sem_head.${u}.`,f=e.tmp(49152,`zac.cn`);mi(e,c.xf,t(d+`dw.weight`),f,16,768,7,t(d+`dw.bias`),0,0,{dyn:r,rowsDyn:i}),s(c.xf,c.hist,768,6);let p=e.tmp(49152,`zac.cn`);ui(e,f,t(d+`norm.weight`),t(d+`norm.bias`),p,16,768,Ea,0,{dyn:r,rowsDyn:i}),e.release(f);let m=e.tmp(16*xa*4,`zac.pw1`);a(p,n(d+`pw1.weight`),m,{T:16,O:xa,IC:768,act:W.gelu},{bias:t(d+`pw1.bias`)}),e.release(p);let h=u+1<4?o(768,6):null;a(m,n(d+`pw2.weight`),h?h.xf:l,{T:16,O:768,IC:xa,r_off:c.off,y_off:h?h.off:0},{bias:t(d+`pw2.bias`),res:c.xf}),e.release(m),e.release(c.xf),h&&(c=h)}let u=e.buf(16*ba*4,`zac.z`);a(l,n(`sem_head.out.weight`),u,{T:16,O:ba,IC:768},{bias:t(`sem_head.out.bias`)}),e.dispatch(`zac_embed`,{idx:this.idx,tables:t(`res.tables`),bias:t(`res.bias`),outp:u,dyn:r,...this.partialFrames?{biases:t(`res.biases`)}:{}},{n:16,C:ba,F:16,y_off:0,mode:1,rows_dyn:1},[2,16,1]);let d=u,f=null;for(let[s,c]of ya.entries()){let l=16*i,{d:u,ff:p}=c,m=this.nLayer[s],h=u/64,g=c.ctx-1+l,_=e.buf(l*u*4,`zac.xa`),v=e.buf(l*u*4,`zac.xb`),y=e.buf(l*u*4,`zac.xn`),b=e.buf(l*3*u*4,`zac.qkv`),x=e.buf(l*u*4,`zac.q`),S=e.buf(l*u*4,`zac.ao`),C=e.buf(l*p*4,`zac.f1`),w=`stage.${s}.`,T=c.outDim===0&&c.patch===1;a(d,n(w+`in.weight`),_,{T:l,O:u,IC:c.inDim});for(let d=0;d<m;d++){let E=`${w}l${d}.`,D=e.buf(g*h*64*4,`zac.k${s}.${d}`),O=e.buf(g*h*64*4,`zac.v${s}.${d}`);ui(e,_,t(E+`norm1.weight`),t(E+`norm1.bias`),y,l,u,Ta,0,{dyn:r,rowsDyn:i}),a(y,n(E+`qkv.weight`),b,{T:l,O:3*u,IC:u}),_i(e,b,this.rope,x,D,O,{n:l,nh:h,nkv:h,hd:64,in_stride:3*u,qkNorm:!1,ring:g,posDyn:!0,nDyn:!0,posMul:i},{dyn:r}),gi(e,x,D,O,S,{n:l,nh:h,window:c.ctx,ring:g,scale:1/8,posMul:i},r),a(S,n(E+`wo.weight`),v,{T:l,O:u,IC:u},{scale:t(E+`attn_scale`),res:_}),ui(e,v,t(E+`norm2.weight`),t(E+`norm2.bias`),y,l,u,Ta,0,{dyn:r,rowsDyn:i}),a(y,n(E+`ffn1.weight`),C,{T:l,O:p,IC:u,act:W.gelu}),T&&d===m-1?(f=o(u,6),a(C,n(E+`ffn2.weight`),f.xf,{T:l,O:u,IC:p,y_off:f.off},{scale:t(E+`ffn_scale`),res:v})):a(C,n(E+`ffn2.weight`),_,{T:l,O:u,IC:p},{scale:t(E+`ffn_scale`),res:v})}if(T)continue;let E=e.buf(l*c.outDim*4,`zac.sout`);a(_,n(w+`out.weight`),E,{T:l,O:c.outDim,IC:u});let D=e.buf(l*c.outDim*4,`zac.patch`);ci(e,E,D,l,c.outDim/c.patch,c.patch,{dyn:r,rowsDyn:i*c.patch}),d=D,i*=c.patch}if(!f||i!==wa)throw Error(`zac: unsupported codec; re-export with pnpm export`);let p=16*i,m=f,h=e.buf(p*768*4,`zac.hnorm`);for(let c=0;c<8;c++){let l=`head.${c}.`,u=e.tmp(p*768*4,`zac.hcn`);mi(e,m.xf,t(l+`dw.weight`),u,p,768,7,t(l+`dw.bias`),0,0,{dyn:r,rowsDyn:i}),s(m.xf,m.hist,768,6);let d=e.tmp(p*768*4,`zac.hcn`);ui(e,u,t(l+`norm.weight`),t(l+`norm.bias`),d,p,768,Ea,0,{dyn:r,rowsDyn:i}),e.release(u);let f=e.tmp(p*Sa*4,`zac.hpw1`);a(d,n(l+`pw1.weight`),f,{T:p,O:Sa,IC:768,act:W.gelu},{bias:t(l+`pw1.bias`)}),e.release(d);let g=c+1<8?o(768,6):null,_=g?g.xf:e.tmp(p*768*4,`zac.hout`);a(f,n(l+`pw2.weight`),_,{T:p,O:768,IC:Sa,r_off:m.off,y_off:g?g.off:0},{bias:t(l+`pw2.bias`),res:m.xf}),e.release(f),e.release(m.xf),g?m=g:(ui(e,_,t(`head.norm.weight`),t(`head.norm.bias`),h,p,768,Ea,0,{dyn:r,rowsDyn:i}),e.release(_))}let g=Ca.map((r,i)=>{let o=e.buf(p*(r+2)*4,`zac.spec${i}`);return a(h,n(`head.out.${i}.weight`),o,{T:p,O:r+2,IC:768},{bias:t(`head.out.${i}.bias`)}),o});return[g[0],g[1]]}reset(){this.needReset=!0,this.tail=this.tail.then(()=>this.sink.reset())}chunk(e,t,n){if(n<1||n>16)throw Error(`zac chunk size ${n} out of range`);if(t+n>3072)throw Error(`zac: utterance exceeds 3072 frames`);this.gpu.write(this.idx,0,e),this.dynData[0]=t,this.dynData[1]=n,this.gpu.write(this.dyn,0,this.dynData);for(let e of this.hists)e.step.srcOff=n*e.cpf*e.rowBytes;let r=this.needReset;this.needReset=!1;let i=n*wa,a=this.gpu.submitRead(e=>{if(r)for(let t of this.hists)e.clearBuffer(t.hist,0,t.hist.size);this.prog.encode(e)},[{buf:this.spec[0],offset:0,bytes:i*(Ca[0]+2)*4},{buf:this.spec[1],offset:0,bytes:i*(Ca[1]+2)*4}]);a.catch(()=>{});let o=this.tail.then(()=>a).then(([e,t])=>this.sink.push(e,t,i));return this.tail=o.then(()=>{},()=>{}),o}async flush(){return await this.tail,this.sink.flush()}};const Y=Math.fround;function ja(e,t,n=2){let r=1024,i=new Float32Array((t+1)*r);for(let n=0;n<t;n++)for(let t=0;t<r;t++)i[(n+1)*r+t]=i[n*r+t]+e[n*r+t];let a=new Float32Array(300*r),o=Y(t/300),s=Y(Y(.5*Y(n))*o);for(let n=0;n<300;n++){let c=Y(Y(n+.5)*o),l=Math.min(Math.max(Y(c-s),0),t),u=Math.min(Math.max(Y(c+s),0),t),d=Math.floor(l),f=Math.floor(u),p=Y(l-d),m=Y(u-f),h=Y(u-l),g=Math.min(d,t-1)*r,_=Math.min(f,t-1)*r;for(let t=0;t<r;t++){let o=Y(i[d*r+t]+Y(e[g+t]*p)),s=Y(i[f*r+t]+Y(e[_+t]*m));a[n*r+t]=Y(Y(s-o)/h)}}return a}var Ma=class{inputDim;codeDim=8;size=4096;inW;inB;outW;outB;codebook;normalized;normSquared;constructor(e,t){let n=n=>{let r=e.get(`rvq.${t}.${n}`);if(!r)throw Error(`encoder: missing rvq.${t}.${n}; re-export with npm run export`);return r};this.inputDim=t===0?768:1024,this.inW=n(`in_proj.weight`),this.inB=n(`in_proj.bias`),this.outW=n(`out_proj.weight`),this.outB=n(`out_proj.bias`),this.codebook=n(`codebook`);let r=this.codeDim;this.normalized=new Float32Array(this.codebook.length),this.normSquared=new Float32Array(this.size);for(let e=0;e<this.size;e++){let t=0;for(let n=0;n<r;n++){let i=this.codebook[e*r+n];t=Y(t+Y(i*i))}t=Math.max(Y(Math.sqrt(t)),Y(1e-12));let n=0;for(let i=0;i<r;i++){let a=Y(this.codebook[e*r+i]/t);this.normalized[e*r+i]=a,n=Y(n+Y(a*a))}this.normSquared[e]=n}}quantize(e,t){let n=this.inputDim,r=this.codeDim,i=new Int32Array(t),a=new Float32Array(t*n),o=new Float32Array(r),s=new Float32Array(r),c=new Float32Array(r);for(let l=0;l<t;l++){let t=0;for(let i=0;i<r;i++){let r=0;for(let t=0;t<n;t++)r=Y(r+Y(e[l*n+t]*this.inW[i*n+t]));r=Y(r+this.inB[i]),o[i]=r,t=Y(t+Y(r*r))}t=Math.max(Y(Math.sqrt(t)),Y(1e-12));let u=0;for(let e=0;e<r;e++)s[e]=Y(o[e]/t),u=Y(u+Y(s[e]*s[e]));let d=1/0,f=0;for(let e=0;e<this.size;e++){let t=0;for(let n=0;n<r;n++)t=Y(t+Y(s[n]*this.normalized[e*r+n]));let n=Y(Y(u-Y(2*t))+this.normSquared[e]);n<d&&(d=n,f=e)}i[l]=f;for(let e=0;e<r;e++){let t=o[e];c[e]=Y(t+Y(this.codebook[f*r+e]-t))}for(let e=0;e<n;e++){let t=0;for(let n=0;n<r;n++)t=Y(t+Y(c[n]*this.outW[e*r+n]));a[l*n+e]=Y(t+this.outB[e])}}return{ids:i,quantized:a}}};const Na=/* @__PURE__ */ new Float64Array(256),Pa=/* @__PURE__ */ new Float64Array(256);for(let e=0;e<256;e++){let t=-2*Math.acos(-1)*e/512;Na[e]=Math.cos(t),Pa[e]=Math.sin(t)}function Fa(e,t){for(let n=1,r=0;n<512;n++){let i=256;for(;r&i;i>>=1)r^=i;if(r^=i,n<r){let i=e[n];e[n]=e[r],e[r]=i,i=t[n],t[n]=t[r],t[r]=i}}for(let n=2;n<=512;n<<=1){let r=512/n,i=n/2;for(let a=0;a<512;a+=n)for(let n=0;n<i;n++){let o=Na[n*r],s=Pa[n*r],c=a+n,l=c+i,u=e[l]*o-t[l]*s,d=e[l]*s+t[l]*o;e[l]=e[c]-u,t[l]=t[c]-d,e[c]+=u,t[c]+=d}}}const X=Math.fround,Z=1024,Ia=4096;function La(e,t,n,r,i,a){let o=n=>{let o=e[t+n*r];if(!i)return o;let s=X(o-a);return X(s*s)};if(n<8){let e=-0;for(let t=0;t<n;t++)e=X(e+o(t));return e}if(n<=128){let e=/* @__PURE__ */ new Float32Array(8);for(let t=0;t<8;t++)e[t]=o(t);let t=n-n%8,r=8;for(;r<t;r+=8)for(let t=0;t<8;t++)e[t]=X(e[t]+o(r+t));let i=X(X(X(e[0]+e[1])+X(e[2]+e[3]))+X(X(e[4]+e[5])+X(e[6]+e[7])));for(;r<n;r++)i=X(i+o(r));return i}let s=Math.floor(n/2);return s-=s%8,X(La(e,t,s,r,i,a)+La(e,t+s*r,n-s,r,i,a))}function Ra(e,t,n){let r=e.length,i=r<400?0:1+Math.floor((r-400)/160);if(i<2)throw Error(`ssl: audio too short for normalized fbank`);let a=new Float32Array(i*80),o=/* @__PURE__ */ new Float64Array(512),s=/* @__PURE__ */ new Float64Array(512),c=/* @__PURE__ */ new Float64Array(257);for(let r=0;r<i;r++){let i=r*160,l=0;for(let t=0;t<400;t++)l+=e[i+t]*32768;l/=400;for(let t=0;t<400;t++)o[t]=e[i+t]*32768-l;for(let e=399;e>0;e--)o[e]-=.97*o[e-1];o[0]*=.030000000000000027;for(let e=0;e<400;e++)o[e]*=t[e];o.fill(0,400),s.fill(0),Fa(o,s);for(let e=0;e<257;e++){let t=X(o[e]),n=X(s[e]);c[e]=t*t+n*n}for(let e=0;e<80;e++){let t=0;for(let r=0;r<257;r++)t+=c[r]*n[r*80+e];a[r*80+e]=Math.log(Math.max(t,1.1920928955078125e-7))}}let l=/* @__PURE__ */ new Float32Array(80),u=/* @__PURE__ */ new Float32Array(80);for(let e=0;e<80;e++)l[e]=X(La(a,e,i,80,!1,0)/i),u[e]=X(Math.sqrt(X(X(La(a,e,i,80,!0,l[e])/(i-1))+X(1e-7))));let d=Math.ceil(i/2),f=new Float32Array(d*2*80).fill(1);for(let e=0;e<i;e++)for(let t=0;t<80;t++)f[e*80+t]=X(X(a[e*80+t]-l[t])/u[t]);return{feats:f,T:d}}var za=class e{gpu;w;prog=null;input;output;resampleKernel;constructor(e,t){this.gpu=e,this.w=t;let n=t.host.get(`frontend.resample_44100`);if(!n||t.meta.n_layer!==16||t.meta.n_embd!==Z)throw Error(`ssl: unsupported teacher; re-export with npm run export`);this.resampleKernel=n}static async load(t,n,r,i=!0){return new e(t,await Ii(t,n,`teacher`,r,i))}features(e){if(e.length!==882e3)throw Error(`ssl: teacher lane must have 882000 samples`);let t=new ha(this.resampleKernel,441,160,17),n=t.push(e),r=t.flush(),i=new Float32Array(n.length+r.length);i.set(n),i.set(r,n.length);let{feats:a,T:o}=Ra(i,this.w.host.get(`frontend.window`),this.w.host.get(`frontend.mel_filters`));if(o!==999)throw Error(`ssl: unexpected frame count`);return a}async encode(e){this.prog||this.record();let t=e.slice();Xe(t),this.gpu.write(this.input,0,t);let[n]=await this.prog.run(this.gpu,[{buf:this.output,offset:0,bytes:999*Z*4}]);return n}record(){let e=this.w,t=t=>e.get(t).buf,n=Number(e.meta.eps??1e-5),r=new ei(this.gpu);this.input=r.buf(639360,`ssl.in`);let i=(e,i,a,o=Z,s=0)=>ui(r,e,t(i+`.weight`),t(i+`.bias`),a,999,o,n,s),a=(n,i,a,o,s,c,l={})=>K(r,n,e.get(i+`.weight`),a,{T:999,O:o,IC:s,act:l.act,alpha:l.alpha,rnd:c},{bias:l.bias===!1?void 0:t(i+`.bias`),res:l.res}),o=r.buf(639360,`ssl.fpn`);i(this.input,`fp.ln`,o,160);let s=[r.buf(999*Z*4,`ssl.x0`),r.buf(999*Z*4,`ssl.x1`)],c=0;a(o,`fp.proj`,s[0],Z,160,G.bias);let l=r.buf(999*Z*4,`ssl.xn`),u=r.buf(999*Ia*4,`ssl.hff`),d=r.buf(999*Z*4,`ssl.q`),f=r.buf(999*Z*4,`ssl.k`),p=r.buf(999*Z*4,`ssl.v`),m=r.buf(999*Z*4,`ssl.att`),h=r.buf(1998*Z*4,`ssl.pw1`),g=r.buf(1029*Z*4,`ssl.xf`),_=r.buf(999*Z*4,`ssl.dw`);for(let e=0;e<16;e++){let n=`enc.${e}.`,o=e===0?G.out:0,v=e=>{e(s[c],s[c^1]),c^=1};v((e,t)=>{i(e,n+`ffn1_ln`,l),a(l,n+`ffn1.up`,u,Ia,Z,G.bias|G.act,{act:W.silu}),a(u,n+`ffn1.down`,t,Z,Ia,G.bias|G.alpha|o,{alpha:.5,res:e})}),v((e,s)=>{i(e,n+`attn_ln`,l),a(l,n+`attn.q`,d,Z,Z,G.bias),a(l,n+`attn.k`,f,Z,Z,G.bias),a(l,n+`attn.v`,p,Z,Z,G.bias),r.dispatch(`ssl_attention_bf16`,{qb:d,kb:f,vb:p,dist:t(n+`attn.dist`),outp:m},{T:999,scale:.125},[15984,1,1]),a(m,n+`attn.o`,s,Z,Z,G.bias|o,{res:e})}),v((e,s)=>{i(e,n+`conv_ln`,l),a(l,n+`conv.pw1`,h,2*Z,Z,G.acc,{bias:!1}),r.clear(g,0,30*Z*4),fi(r,di.gluSplitBf16,999*Z,h,g,{C:Z,y_off:30*Z}),mi(r,g,t(n+`conv.dw.weight`),_,999,Z,31,void 0,0,4),i(_,n+`conv.dw_ln`,l,Z,W.silu),a(l,n+`conv.pw2`,s,Z,Z,G.acc|o,{bias:!1,res:e})}),v((e,t)=>{i(e,n+`ffn2_ln`,l),a(l,n+`ffn2.up`,u,Ia,Z,G.bias|G.act,{act:W.silu}),a(u,n+`ffn2.down`,t,Z,Ia,G.bias|G.alpha|o,{alpha:.5,res:e})}),v((e,t)=>i(e,n+`final_ln`,t)),r.split()}this.output=s[c],this.prog=r.finish()}};const Ba=2944,Va=300*Ba,Ha=Va/10,Ua=1024,Wa=2048,Ga=1e-5,Ka=G.acc|G.bias,Q=[{inDim:5888,outDim:384,d:768,nh:12,nl:12,ff:3072,ctx:480,patch:23},{inDim:768,outDim:384,d:768,nh:12,nl:12,ff:3072,ctx:480,patch:2},{inDim:768,outDim:384,d:768,nh:12,nl:12,ff:3072,ctx:480,patch:2},{inDim:768,outDim:640,d:768,nh:12,nl:12,ff:3072,ctx:300,patch:2},{inDim:1280,outDim:1024,d:1280,nh:20,nl:32,ff:5120,ctx:150,patch:2}],qa=[4800,2400,1200,600,300],Ja=`reference audio encoding failed (maximum ${v} seconds)`;function Ya(e){let t={"stage.in_dim":Q.map(e=>e.inDim),"stage.out_dim":Q.map(e=>e.outDim),"stage.d_model":Q.map(e=>e.d),"stage.n_head":Q.map(e=>e.nh),"stage.n_layer":Q.map(e=>e.nl),"stage.n_ff":Q.map(e=>e.ff),"stage.context":Q.map(e=>e.ctx),"stage.patch":Q.map(e=>e.patch),lane_frames:300,context_frames:150};for(let[n,r]of Object.entries(t))if(JSON.stringify(e[n])!==JSON.stringify(r))throw Error(`encoder: unsupported model; re-export with npm run export`)}var Xa=class e{gpu;w;teacher;front;frontIn;frontOut;frontHists=[];stages;stageIn;stageOut;sem;rvq=[];internalKernel;windowRatio;constructor(e,t,n){this.gpu=e,this.w=t,this.teacher=n,Ya(t.meta);let r=t.host.get(`resample.kernel`);if(!r)throw Error(`encoder: unsupported model; re-export with npm run export`);this.internalKernel=r,this.windowRatio=Number(t.meta.window_ratio??2);for(let e=0;e<10;e++)this.rvq.push(new Ma(t.host,e));this.recordFront(),this.recordStages(),this.sem={enc:this.recordSemantic(!0),dec:this.recordSemantic(!1)}}static async load(t,n,r,i=!0){let[a,o]=await Promise.all([Ii(t,n,`encoder`,r,i),za.load(t,n,r,i)]);return new e(t,a,o)}recordFront(){let e=new ei(this.gpu),t=e=>this.w.get(e).buf,n=e=>this.w.get(e);this.frontIn=e.buf(353344,`enc.xin`);let r=e.tmp(Ha*64*4,`enc.act`);K(e,this.frontIn,n(`enc.in.weight`),r,{T:Ha/16,O:1024,IC:16,K:2,d:1,nb_bias:64,rnd:Ka},{bias:t(`enc.in.bias`)});let i=Ha,a=(t,n,r)=>{let i=e.tmp((n+r)*t*4,`enc.xf`),a=e.buf(n*t*4,`enc.hist`);return this.frontHists.push(a),e.copy(a,0,i,0,n*t*4),{xf:i,hist:a}};for(let o=0;o<2;o++){let s=`enc.b${o}`,c=64<<o,l=o===0?2:4;[1,3,9].forEach((o,l)=>{let u=`${s}.res${l}`,d=6*o,f=a(c,d,i);pi(e,r,t(u+`.snake1.alpha`),t(u+`.snake1.inv_alpha`),f.xf,i,c,d*c);let p=e.tmp(i*c*4,`enc.act`);K(e,f.xf,n(u+`.conv1.weight`),p,{T:i,O:c,IC:c,K:7,d:o,rnd:Ka},{bias:t(u+`.conv1.bias`)}),e.copy(f.xf,i*c*4,f.hist,0,d*c*4),e.release(f.xf);let m=e.tmp(i*c*4,`enc.act`);pi(e,p,t(u+`.snake2.alpha`),t(u+`.snake2.inv_alpha`),m,i,c),e.release(p);let h=e.tmp(i*c*4,`enc.act`);K(e,m,n(u+`.conv2.weight`),h,{T:i,O:c,IC:c,rnd:Ka|G.out},{bias:t(u+`.conv2.bias`),res:r}),e.release(m),e.release(r),r=h});let u=i/l,d=l*c,f=a(d,1,u);pi(e,r,t(s+`.snake.alpha`),t(s+`.snake.inv_alpha`),f.xf,i,c,d),e.release(r);let p=e.tmp(u*2*c*4,`enc.act`);K(e,f.xf,n(s+`.conv.weight`),p,{T:u,O:2*c,IC:d,K:2,d:1,rnd:Ka},{bias:t(s+`.conv.bias`)}),e.copy(f.xf,u*d*4,f.hist,0,d*4),e.release(f.xf),r=p,i=u}let o=e.buf(480*Q[0].inDim*4,`enc.pd`);li(e,r,o,480,256,Q[0].patch),this.frontOut=e.buf(480*Q[0].d*4,`enc.tileOut`),K(e,o,n(`stage.0.in.weight`),this.frontOut,{T:480,O:Q[0].d,IC:Q[0].inDim,rnd:G.acc}),this.front=e.finish()}recordStages(){let e=this.gpu,t=new ei(e),n=e=>this.w.get(e).buf,r=e=>this.w.get(e),i=Math.max(...Q.map((e,t)=>qa[t]*e.d)),a=Math.max(...Q.map((e,t)=>qa[t]*e.ff)),o=Math.max(...Q.map((e,t)=>qa[t]*e.outDim)),s=Math.max(...Q.slice(1).map((e,t)=>qa[t+1]*e.inDim)),c=t.buf(i*4,`enc.xa`),l=t.buf(i*4,`enc.xb`),u=t.buf(i*4,`enc.xn`),d=t.buf(i*4,`enc.q`),f=t.buf(i*4,`enc.ao`),p=t.buf(i*4,`enc.k`),m=t.buf(i*4,`enc.v`),h=t.buf(3*i*4,`enc.qkv`),g=t.buf(a*4,`enc.f1`),_=t.buf(o*4,`enc.sout`),v=t.buf(s*4,`enc.spd`),y=e.upload(Hi(qa[0],1e4,64),`enc.rope`);this.stageIn=c,this.stageOut=_,Q.forEach((i,a)=>{let o=qa[a],s=i.d,b=s/64,x=`stage.${a}.`;a>0&&(li(t,_,v,o,Q[a-1].outDim,i.patch),K(t,v,r(x+`in.weight`),c,{T:o,O:s,IC:i.inDim,rnd:G.acc}));let S=e.uniform(16,`enc.dyn${a}`);e.write(S,0,new Uint32Array([0,o,0,0]));for(let e=0;e<i.nl;e++){let a=`${x}l${e}.`;ui(t,c,n(a+`norm1.weight`),n(a+`norm1.bias`),u,o,s,Ga),K(t,u,r(a+`qkv.weight`),h,{T:o,O:3*s,IC:s,rnd:G.acc}),_i(t,h,y,d,p,m,{n:o,nh:b,nkv:b,hd:64,in_stride:3*s,qkNorm:!1,ring:o,pos0:0,bf16:!0}),gi(t,d,p,m,f,{n:o,nh:b,window:i.ctx,ring:o,scale:1/8,posMul:1},S),K(t,f,r(a+`wo.weight`),l,{T:o,O:s,IC:s,rnd:G.acc},{scale:n(a+`attn_scale`),res:c}),ui(t,l,n(a+`norm2.weight`),n(a+`norm2.bias`),u,o,s,Ga),K(t,u,r(a+`ffn1.weight`),g,{T:o,O:i.ff,IC:s,act:W.gelu,rnd:G.acc|G.act}),K(t,g,r(a+`ffn2.weight`),c,{T:o,O:s,IC:i.ff,rnd:G.acc},{scale:n(a+`ffn_scale`),res:l}),t.split()}K(t,c,r(x+`out.weight`),_,{T:o,O:i.outDim,IC:s,rnd:G.acc})}),this.stages=t.finish()}recordSemantic(e){let t=new ei(this.gpu),n=e=>this.w.get(e).buf,r=e=>this.w.get(e),i=t.buf(300*(e?Ua:768)*4,`sem.in`),a=[t.buf(940032,`sem.x0`),t.buf(940032,`sem.x1`)];for(let e of a)t.clear(e,0,18432);let o=4608,s=0;e?K(t,i,r(`sem_enc.in.weight`),a[0],{T:300,O:768,IC:Ua,y_off:o,rnd:Ka},{bias:n(`sem_enc.in.bias`)}):t.copy(i,0,a[0],o*4,921600);let c=t.buf(921600,`sem.h`),l=t.buf(921600,`sem.hn`),u=t.buf(300*Wa*4,`sem.h1`);for(let i=0;i<4;i++){let d=`${e?`sem_enc`:`sem_head`}.${i}.`,f=a[s],p=a[s^1];mi(t,f,n(d+`dw.weight`),c,300,768,7,n(d+`dw.bias`),0,7),ui(t,c,n(d+`norm.weight`),n(d+`norm.bias`),l,300,768,1e-6),K(t,l,r(d+`pw1.weight`),u,{T:300,O:Wa,IC:768,act:W.gelu,rnd:G.bias|G.act},{bias:n(d+`pw1.bias`)}),K(t,u,r(d+`pw2.weight`),p,{T:300,O:768,IC:Wa,r_off:o,y_off:o,rnd:G.bias|(e?G.out:0)},{bias:n(d+`pw2.bias`),res:f}),s^=1}let d,f;return e?(d=a[s],f=230400):(d=t.buf(300*Ua*4,`sem.out`),f=300*Ua,K(t,a[s],r(`sem_head.out.weight`),d,{T:300,O:Ua,IC:768,x_off:o,rnd:Ka},{bias:n(`sem_head.out.bias`)})),{prog:t.finish(),input:i,output:e?a[s]:d,outFloats:f}}async acoustic(e){if(e.length!==Va)throw Error(`encoder: acoustic lane must have 883200 samples`);let t=this.gpu,n=/* @__PURE__ */ new Float32Array(88336),r=480*Q[0].d*4;for(let i=0;i<10;i++){let a=i*Ha;n.fill(0,0,16),i>0&&n.set(e.subarray(a-16,a),0),n.set(e.subarray(a,a+Ha),16),t.write(this.frontIn,0,n),await t.submitRead(e=>{if(i===0)for(let t of this.frontHists)e.clearBuffer(t);this.front.encode(e),e.copyBufferToBuffer(this.frontOut,0,this.stageIn,i*r,r)})}let[i]=await this.stages.run(t,[{buf:this.stageOut,offset:0,bytes:300*Ua*4}]);return i}async semantic(e,t){let n=t?this.sem.enc:this.sem.dec;this.gpu.write(n.input,0,e);let r=t?18432:0,[i]=await this.gpu.submitRead(e=>n.prog.encode(e),[{buf:n.output,offset:r,bytes:n.outFloats*4}]);return i}quantize(e,t){return this.rvq[e].quantize(t,300)}async encode(e){let t=e.length;if(t<1||t>v*a||!e.every(Number.isFinite))throw Error(Ja);let n=Math.ceil(t/m),r=new ha(this.internalKernel,735,736,17),i=r.push(e),o=r.flush(),s=new Float32Array(n*Ba);s.set(i.subarray(0,s.length)),s.set(o.subarray(0,Math.max(0,s.length-i.length)),Math.min(i.length,s.length));let c=new Int32Array(n*10),l=new Float32Array(Va),u=/* @__PURE__ */ new Float32Array(882e3);for(let r=0;r<n;){let i=r===0?0:150,a=Math.min(n-r,300-i),o=r-i;l.fill(0),u.fill(0),l.set(s.subarray(o*Ba,(o+i+a)*Ba));let d=o*m;u.set(e.subarray(d,d+Math.min(t-d,(i+a)*m)));let f=await this.teacher.encode(this.teacher.features(u)),p=await this.acoustic(l),h=await this.semantic(ja(f,999,this.windowRatio),!0),g=this.quantize(0,h);for(let e=0;e<a;e++)c[(r+e)*10]=g.ids[i+e];let _=await this.semantic(g.quantized,!1),v=new Float32Array(p.length);for(let e=0;e<v.length;e++)v[e]=p[e]-_[e];for(let e=1;e<10;e++){let t=this.quantize(e,v);for(let n=0;n<a;n++)c[(r+n)*10+e]=t.ids[i+n];for(let e=0;e<v.length;e++)v[e]-=t.quantized[e]}r+=a}return c}};const Za=[`<i4`,`<i8`,`<u4`,`<u8`,`<f4`,`<f8`];function Qa(e){let t=new Uint8Array(e),n=e=>{throw Error(e)};(t.length<8||t[0]!==147||String.fromCharCode(...t.subarray(1,6))!==`NUMPY`||t[7]!==0||t[6]!==1&&t[6]!==2&&t[6]!==3)&&n(`invalid NPY reference header`);let r=t[6]===1?2:4;t.length<8+r&&n(`truncated NPY header`);let i=0;for(let e=r-1;e>=0;e--)i=i*256+t[8+e];i>65536&&n(`oversized NPY reference header`);let a=8+r;t.length<a+i&&n(`truncated NPY header`);let o=String.fromCharCode(...t.subarray(a,a+i)),s=o.indexOf(`fortran_order`),c=o.indexOf(`shape`),l=o.indexOf(`descr`);(s<0||c<0||l<0)&&n(`invalid NPY reference metadata`);let d=o.indexOf(`:`,s);for(d<0&&n(`invalid NPY array order`),d+=1;d<o.length&&(o[d]===` `||o[d]===`	`);)d++;(d>=o.length||!o.startsWith(`False`,d))&&n(`reference NPY must be C-order`),d=o.indexOf(`:`,l),d<0&&n(`invalid NPY dtype`);let f=o.slice(d+1).search(/['"]/);f<0&&n(`invalid NPY dtype`);let p=d+1+f,m=o.indexOf(o[p],p+1);m<0&&n(`invalid NPY dtype`);let h=o.slice(p+1,m);Za.includes(h)||n(`reference NPY needs little-endian i4/i8/u4/u8/f4/f8 dtype`);let g=`reference codes must have shape [T,10], T >= 1`;d=o.indexOf(`(`,c);let _=d<0?null:/^\(\s*([+-]?\d+)\s*,\s*([+-]?\d+)\s*/.exec(o.slice(d));if(!_)return n(g);let v=Number(_[1]),y=Number(_[2]);for((v<1||y!==10)&&n(g),d+=_[0].length;d<o.length&&(o[d]===` `||o[d]===`,`);)d++;(d===o.length||o[d]!==`)`)&&n(`reference codes must be two-dimensional`);let b=h.charCodeAt(2)-48,x=a+i,S=v*10;t.length<x+S*b&&n(`truncated reference codes`);let C=new DataView(e,x),w=Math.min(v,u)*10,T=new Int32Array(w);for(let e=0;e<S;e++){let t=e*b,r;r=h[1]===`f`?b===4?C.getFloat32(t,!0):C.getFloat64(t,!0):h[1]===`i`?b===4?C.getInt32(t,!0):Number(C.getBigInt64(t,!0)):b===4?C.getUint32(t,!0):Number(C.getBigUint64(t,!0)),(!Number.isFinite(r)||r<0||r>4095||r!==Math.floor(r))&&n(`reference codes must be ordinary integer codec IDs 0..4095`),e<w&&(T[e]=r)}return t.length>x+S*b&&n(`unexpected trailing data in reference NPY`),T}const $=2560,$a=10240,eo=`speaker embedding computation failed`,to=`spk: tensor layout does not match MECT_B2`,no=(e,t)=>Array.from({length:e},()=>t),ro=[no(2,{cnn:3,outCh:32,sF:1,sT:1,expansion:4}),[{cnn:3,outCh:64,sF:2,sT:1,expansion:2},...no(3,{cnn:3,outCh:64,sF:1,sT:2,expansion:2})],[{cnn:3,outCh:128,sF:2,sT:1,expansion:2},...no(4,{cnn:3,outCh:128,sF:1,sT:2,expansion:2})],[{cnn:3,outCh:256,sF:2,sT:1,expansion:1},...no(2,{cnn:2,outCh:256,sF:1,sT:2,expansion:1})]];function io(e){for(let[t,n]of Object.entries({"general.architecture":`mect_spk`,backbone:`MECT_B2`,sample_rate:16e3,max_seconds:60,embedding_length:192,n_mels:80,frame_length:400,frame_shift:160,n_fft:512,n_heads:4,n_experts:4,pos_kernel:113}))if(e[t]!==n)throw Error(`spk: unsupported or incomplete MECT-B2 speaker encoder metadata`)}var ao=class e{gpu;w;head;maxSeconds;maxBytes;progs=/* @__PURE__ */ new Map;queue=Promise.resolve();resampleKernel;window;melBanks;preemph;waveScale;logFloor;lnEps;varFloor;constructor(e,t,n){this.gpu=e,this.w=t,this.head=n;let r=e=>{let n=t.host.get(e);if(!n)throw Error(`spk: missing ${e}`);return n};this.resampleKernel=r(`frontend.resample_44100`),this.window=r(`frontend.window`),this.melBanks=r(`frontend.mel_banks`);let i=t.meta;this.preemph=Number(i.preemphasis),this.waveScale=Number(i.waveform_scale),this.logFloor=Number(i.log_floor),this.lnEps=Number(i.ln_eps),this.varFloor=Number(i.pool_var_floor);let a=e.device.limits;this.maxBytes=Math.min(a.maxStorageBufferBindingSize,a.maxBufferSize);let o=Math.floor(this.maxBytes/($a*4));if(this.maxSeconds=Math.min(60,Math.floor(o/100)),this.maxSeconds<1)throw Error(`${eo} (maximum 0 seconds)`)}static async load(t,n,r,i=!0){let a=await Ii(t,n,`spk`,r,i);io(a.meta);let o=await t.read(a.get(`bn.scale`).buf,0,2*$*4),s=await t.read(a.get(`bn.shift`).buf,0,2*$*4),c=await t.read(a.get(`linear.weight`).buf,0,384*$*4);return new e(t,a,{bnScale:o,bnShift:s,linear:c})}async embed(e){let{fbank:t,T:n}=this.features(e),{embedding:r}=await this.run(t,n);if(!r.every(Number.isFinite))throw Error(eo);return r}features(e){let t=new ha(this.resampleKernel,441,160,17),n=t.push(e.subarray(0,(this.maxSeconds+1)*44100)),r=t.flush(),i=Math.min(n.length+r.length,96e4,this.maxSeconds*16e3);if(i<400)throw Error(`spk: audio shorter than 25 ms`);let a=new Float32Array(i);a.set(n.subarray(0,i)),i>n.length&&a.set(r.subarray(0,i-n.length),n.length);let o=1+Math.floor((i-400)/160),s=new Float32Array(o*80),c=/* @__PURE__ */ new Float64Array(400),l=/* @__PURE__ */ new Float64Array(512),u=/* @__PURE__ */ new Float64Array(512),d=/* @__PURE__ */ new Float64Array(257),{preemph:f,waveScale:p,window:m,melBanks:h,logFloor:g}=this;for(let e=0;e<o;e++){let t=e*160,n=0;for(let e=0;e<400;e++)c[e]=a[t+e]*p,n+=c[e];n/=400;for(let e=0;e<400;e++)c[e]-=n;l.fill(0),u.fill(0);for(let e=399;e>=1;e--)l[e]=(c[e]-f*c[e-1])*m[e];l[0]=(c[0]-f*c[0])*m[0],Fa(l,u);for(let e=0;e<257;e++)d[e]=l[e]*l[e]+u[e]*u[e];for(let t=0;t<80;t++){let n=t*257,r=0;for(let e=0;e<257;e++)r+=h[n+e]*d[e];s[e*80+t]=Math.log(Math.max(r,g))}}return{fbank:s,T:o}}run(e,t,n=!1){let r=this.queue.then(()=>this.runNow(e,t,n));return this.queue=r.catch(()=>{}),r}async runNow(e,t,n){if(e.length!==t*80)throw Error(`spk: fbank must be [T][80]`);if(t*$a*4>this.maxBytes)throw Error(`${eo} (maximum ${this.maxSeconds} seconds)`);let r=new Float32Array(t*80);for(let n=0;n<80;n++){let i=0;for(let r=0;r<t;r++)i+=e[r*80+n];i/=t;for(let a=0;a<t;a++)r[a*80+n]=e[a*80+n]-i}let i=this.program(t,n);this.gpu.write(i.input,0,r);let[a,...o]=await i.prog.run(this.gpu,[{buf:i.pooled,offset:0,bytes:2*$*4},...i.feats.map(e=>({buf:e,offset:0,bytes:t*$*4}))]),{bnScale:s,bnShift:c,linear:l}=this.head,u=new Float64Array(2*$);for(let e=0;e<2*$;e++)u[e]=a[e]*s[e]+c[e];let d=/* @__PURE__ */ new Float32Array(192);for(let e=0;e<192;e++){let t=e*2*$,n=0;for(let e=0;e<2*$;e++)n+=l[t+e]*u[e];d[e]=n}return{embedding:d,pooled:a,feats:o}}program(e,t){let n=`${e}:${+!!t}`,r=this.progs.get(n);if(r)this.progs.delete(n);else if(r=this.record(e,t),this.progs.size>=4){let[e,t]=this.progs.entries().next().value;t.prog.destroy(),this.progs.delete(e)}return this.progs.set(n,r),r}record(e,t){let n=new ei(this.gpu),r=e=>this.w.get(e).buf,i=n.buf(e*80*4,`spk.in`),a=[n.buf(e*$*4,`spk.s0`),n.buf(e*$*4,`spk.s1`)],o=n.buf(e*$*4,`spk.fused`),s=n.buf(2*$*4,`spk.pooled`),c=t?ro.map((t,r)=>n.buf(e*$*4,`spk.feat${r+1}`)):[];Ci(n,i,r(`fe.head.conv.weight`),a[0],{T_in:e,F_in:80,IC:1,OC:32,a:1,s_f:1,s_t:1},{bias:r(`fe.head.conv.bias`),scale:r(`fe.head.bn.scale`),shift:r(`fe.head.bn.shift`)});let l=0,u=32,d=80;ro.forEach((i,s)=>{i.forEach((t,r)=>{[u,d]=this.block(n,a[l],a[l^1],e,u,d,t,`fe.b${s+1}.${r}.`),l^=1,n.split()}),Di(n,a[l],r(`fe.dense_w`),o,e,$,s),t&&n.copy(a[l],0,c[s],0,e*$*4)});let f=n.tmp(e*128*4,`spk.pool1`),p=a[l^1];return q(n,o,this.w.get(`pool.l1.weight`),f,{T:e,O:128,IC:$,act:W.tanh},{bias:r(`pool.l1.bias`)}),q(n,f,this.w.get(`pool.l2.weight`),p,{T:e,O:$,IC:128},{bias:r(`pool.l2.bias`)}),Oi(n,p,o,s,e,$,this.varFloor),{prog:n.finish(),input:i,pooled:s,feats:c}}block(e,t,n,r,i,a,o,s){let c=this.w,l=e=>c.get(e).buf,u=t,d=r,f=i,p=a;for(let n=0;n<o.cnn;n++){let r=this.resBlock(e,u,d,p,f,`${s}cnn.${n}.`,n===0?o.sF:1,n===0?o.sT:1);u!==t&&e.release(u),u=r.buf,d=r.T,p=r.F,f=r.C}if(c.has(s+`reduce.weight`)){let t=c.get(s+`reduce.weight`),n=t.shape[3],r=e.tmp(d*p*n*4,`spk.reduce`);q(e,u,t,r,{T:d*p,O:n,IC:f},{bias:l(s+`reduce.bias`),scale:l(s+`reduce.bn.scale`),shift:l(s+`reduce.bn.shift`)}),e.release(u),u=r,f=n}if(f*p!==$||i*a!==$)throw Error(to);let m=u,h=d,g=h*64*4,_=e.tmp(g,`spk.hA`),v=e.tmp(g,`spk.hB`),y=e.tmp(g,`spk.hC`),b=e.tmp(g,`spk.q`),x=e.tmp(g,`spk.k`),S=e.tmp(g,`spk.v`),C=e.tmp(g,`spk.att`),w=e.tmp((h+112)*64*4,`spk.hp`),T=e.tmp(h*4*4,`spk.gate`),E=e.tmp(h*4*64*4,`spk.experts`),D=e.tmp(g,`spk.mix`),O=(t,n,r,i,a,o={})=>q(e,t,c.get(n+`.weight`),r,{T:h,O:i,IC:a,act:o.act,alpha:o.alpha},{bias:o.bias===!1?void 0:l(n+`.bias`),res:o.res}),k=(t,n,r)=>ui(e,t,l(n+`.weight`),l(n+`.bias`),r,h,64,this.lnEps);O(m,s+`rproj`,_,64,$),k(_,s+`rproj.ln`,v),e.clear(w,0,14336),e.copy(v,0,w,14336,g),e.clear(w,(56+h)*64*4,14336),mi(e,w,l(s+`pos.dw.weight`),_,h,64,113,l(s+`pos.dw.bias`),W.gelu),O(_,s+`pos.pw`,y,64,64,{res:v}),O(y,s+`attn.q`,b,64,64,{alpha:1/4}),O(y,s+`attn.k`,x,64,64),O(y,s+`attn.v`,S,64,64),hi(e,b,x,S,C,{n:h,nh:4,nkv:4,hd:16,window:h,ring:h,scale:1,pos0:h-1}),O(C,s+`attn.o`,_,64,64,{res:y}),k(_,s+`ln1`,v),q(e,v,c.get(s+`moe.gate.weight`),T,{T:h,O:4,IC:64}),q(e,v,c.get(s+`moe.experts.weight`),E,{T:h,O:256,IC:64,act:W.newgelu}),Ti(e,T,E,D,h),O(D,s+`ffn_out`,_,64,64,{res:v}),k(_,s+`ln2`,y);let A=e.tmp(h*$*4,`spk.e`);O(y,s+`eproj`,A,$,64,{res:m}),Ei(e,A,t,n,r,$,o.sT);for(let t of[m,_,v,y,b,x,S,C,w,T,E,D,A])e.release(t);return[f,p]}resBlock(e,t,n,r,i,a,o,s){let c=this.w,l=e=>c.get(e).buf,u=c.get(a+`conv1.weight`),d=c.get(a+`conv2.weight`),f=u.shape[3],p=Math.floor((n-1)/s)+1,m=Math.floor((r-1)/o)+1,h=p*m*f*4,g=e.tmp(h,`spk.rA`),_=e.tmp(h,`spk.rB`);Ci(e,t,u.buf,g,{T_in:n,F_in:r,IC:i,OC:f,a:u.shape[2],s_f:o,s_t:s}),q(e,g,c.get(a+`pw1.weight`),_,{T:p*m,O:f,IC:f,act:W.relu,actAfterShift:!0},{bias:l(a+`pw1.bias`),scale:l(a+`bn1.scale`),shift:l(a+`bn1.shift`)}),Ci(e,_,d.buf,g,{T_in:p,F_in:m,IC:f,OC:f,a:d.shape[2],s_f:1,s_t:1});let v=t,y=null;if(c.has(a+`sc.weight`)){let n=t;s>1&&(n=e.tmp(p*r*i*4,`spk.sub`),wi(e,t,n,p,r*i,s)),y=e.tmp(h,`spk.sc`),q(e,n,c.get(a+`sc.weight`),y,{T:p*m,O:f,IC:i,x_stride:o*i},{scale:l(a+`sc.bn.scale`),shift:l(a+`sc.bn.shift`)}),n!==t&&e.release(n),v=y}else if(o>1||s>1||i!==f)throw Error(to);return q(e,g,c.get(a+`pw2.weight`),_,{T:p*m,O:f,IC:f,act:W.relu,actAfterShift:!0},{bias:l(a+`pw2.bias`),scale:l(a+`bn2.scale`),shift:l(a+`bn2.shift`),res:v}),e.release(g),y&&e.release(y),{buf:_,T:p,F:m,C:f}}},oo=`{
+const e=`ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/`,t=(/* @__PURE__ */ new Int8Array(256)).fill(-1);for(let n=0;n<64;n++)t[e.charCodeAt(n)]=n;function n(e){let n=e.trim();if(n.startsWith(`data:`)){let e=n.indexOf(`,`);if(e<0)return null;n=n.slice(e+1)}let r=n.length;for(;r>0&&n.charCodeAt(r-1)===61;)r--;if(n.length-r>2||n.length%4!=0)return null;let i=new Uint8Array(Math.floor(r*3/4)),a=0,o=0,s=0;for(let e=0;e<r;e++){let r=n.charCodeAt(e),c=r<256?t[r]:-1;if(c<0)return null;o=(o<<6|c)&16777215,s+=6,s>=8&&(s-=8,i[a++]=o>>s&255)}return i.subarray(0,a)}function r(t){let n=``;for(let r=0;r<t.length;r+=3){let i=t[r],a=r+1<t.length?t[r+1]:0,o=r+2<t.length?t[r+2]:0;n+=e[i>>2]+e[(i&3)<<4|a>>4],n+=r+1<t.length?e[(a&15)<<2|o>>6]:`=`,n+=r+2<t.length?e[o&63]:`=`}return n}var i={description:"Request defaults and limits of every server and the studio (zonos3.generation). sample_rate: the API's audio rate (Hz). sampling: the v2 sampling defaults (servers/api/openapi.yaml repeats them; model/tests/test_generation.py keeps the two equal). silence_prefill_frames: the server default length (ZONOS3_SILENCE_PREFILL_FRAMES overrides it) and the longest a request may ask for. decode_context_frames: the reference tail decoded ahead of the stream when a request leaves decode_context_frames unset or 0. reference_max_frames: the reference prefix of the GGUF servers (60 s at the dual codec's 2940-sample hop; longer reference codes keep their first frames). max_frames: the GGUF servers' default frame budget (--max). audio_max_seconds: the longest reference clip, upload and speech-edit clip. stream_codebooks: the prefix stream's early partial-frame decode defaults (request fields stream_codebooks / stream_codebooks_scope): a frame is decoded once its first `default` codebooks arrived, for the `scope` chunks (first: the first chunk only; all: every chunk); default = n_codebooks decodes complete frames only. output_limit_dbfs: the knee k of the soft limiter every server applies after the decoder's output gain: samples at or below it pass unchanged, louder ones bend smoothly into full scale, sign(x) (k + (1 - k) tanh((|x| - k) / (1 - k))).",sample_rate:44100,sampling:{temperature:.75,topk:80,top_p:.69,min_p:0,repetition_penalty:2.4,repetition_window:96,repetition_codebooks:6},silence_prefill_frames:{default:3,max:30},decode_context_frames:30,reference_max_frames:900,max_frames:2e3,audio_max_seconds:{reference:60,upload:600,edit:150},stream_codebooks:{default:1,scope:`first`},output_limit_dbfs:-1};const a=i.sample_rate,o=Object.freeze({...i.sampling}),s=i.silence_prefill_frames.default,c=i.silence_prefill_frames.max,l=i.decode_context_frames,u=i.reference_max_frames,d=i.max_frames,f=i.stream_codebooks.default,p=i.stream_codebooks.scope,m=2940,h=d+4096,g=2048,_=i.audio_max_seconds.reference,v=i.audio_max_seconds.edit,y=i.output_limit_dbfs;var b=`{
   "version": "1.0",
   "truncation": null,
   "padding": null,
@@ -43043,4 +39991,3056 @@ fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid:
       ]
     ]
   }
-}`;const so=new Uint32Array([65,90,97,122,170,170,181,181,186,186,192,214,216,246,248,705,710,721,736,740,748,748,750,750,880,884,886,887,890,893,895,895,902,902,904,906,908,908,910,929,931,1013,1015,1153,1162,1327,1329,1366,1369,1369,1376,1416,1488,1514,1519,1522,1568,1610,1646,1647,1649,1747,1749,1749,1765,1766,1774,1775,1786,1788,1791,1791,1808,1808,1810,1839,1869,1957,1969,1969,1994,2026,2036,2037,2042,2042,2048,2069,2074,2074,2084,2084,2088,2088,2112,2136,2144,2154,2160,2183,2185,2190,2208,2249,2308,2361,2365,2365,2384,2384,2392,2401,2417,2432,2437,2444,2447,2448,2451,2472,2474,2480,2482,2482,2486,2489,2493,2493,2510,2510,2524,2525,2527,2529,2544,2545,2556,2556,2565,2570,2575,2576,2579,2600,2602,2608,2610,2611,2613,2614,2616,2617,2649,2652,2654,2654,2674,2676,2693,2701,2703,2705,2707,2728,2730,2736,2738,2739,2741,2745,2749,2749,2768,2768,2784,2785,2809,2809,2821,2828,2831,2832,2835,2856,2858,2864,2866,2867,2869,2873,2877,2877,2908,2909,2911,2913,2929,2929,2947,2947,2949,2954,2958,2960,2962,2965,2969,2970,2972,2972,2974,2975,2979,2980,2984,2986,2990,3001,3024,3024,3077,3084,3086,3088,3090,3112,3114,3129,3133,3133,3160,3162,3165,3165,3168,3169,3200,3200,3205,3212,3214,3216,3218,3240,3242,3251,3253,3257,3261,3261,3293,3294,3296,3297,3313,3314,3332,3340,3342,3344,3346,3386,3389,3389,3406,3406,3412,3414,3423,3425,3450,3455,3461,3478,3482,3505,3507,3515,3517,3517,3520,3526,3585,3632,3634,3635,3648,3654,3713,3714,3716,3716,3718,3722,3724,3747,3749,3749,3751,3760,3762,3763,3773,3773,3776,3780,3782,3782,3804,3807,3840,3840,3904,3911,3913,3948,3976,3980,4096,4138,4159,4159,4176,4181,4186,4189,4193,4193,4197,4198,4206,4208,4213,4225,4238,4238,4256,4293,4295,4295,4301,4301,4304,4346,4348,4680,4682,4685,4688,4694,4696,4696,4698,4701,4704,4744,4746,4749,4752,4784,4786,4789,4792,4798,4800,4800,4802,4805,4808,4822,4824,4880,4882,4885,4888,4954,4992,5007,5024,5109,5112,5117,5121,5740,5743,5759,5761,5786,5792,5866,5873,5880,5888,5905,5919,5937,5952,5969,5984,5996,5998,6e3,6016,6067,6103,6103,6108,6108,6176,6264,6272,6276,6279,6312,6314,6314,6320,6389,6400,6430,6480,6509,6512,6516,6528,6571,6576,6601,6656,6678,6688,6740,6823,6823,6917,6963,6981,6988,7043,7072,7086,7087,7098,7141,7168,7203,7245,7247,7258,7293,7296,7304,7312,7354,7357,7359,7401,7404,7406,7411,7413,7414,7418,7418,7424,7615,7680,7957,7960,7965,7968,8005,8008,8013,8016,8023,8025,8025,8027,8027,8029,8029,8031,8061,8064,8116,8118,8124,8126,8126,8130,8132,8134,8140,8144,8147,8150,8155,8160,8172,8178,8180,8182,8188,8305,8305,8319,8319,8336,8348,8450,8450,8455,8455,8458,8467,8469,8469,8473,8477,8484,8484,8486,8486,8488,8488,8490,8493,8495,8505,8508,8511,8517,8521,8526,8526,8579,8580,11264,11492,11499,11502,11506,11507,11520,11557,11559,11559,11565,11565,11568,11623,11631,11631,11648,11670,11680,11686,11688,11694,11696,11702,11704,11710,11712,11718,11720,11726,11728,11734,11736,11742,11823,11823,12293,12294,12337,12341,12347,12348,12353,12438,12445,12447,12449,12538,12540,12543,12549,12591,12593,12686,12704,12735,12784,12799,13312,19903,19968,42124,42192,42237,42240,42508,42512,42527,42538,42539,42560,42606,42623,42653,42656,42725,42775,42783,42786,42888,42891,42954,42960,42961,42963,42963,42965,42969,42994,43009,43011,43013,43015,43018,43020,43042,43072,43123,43138,43187,43250,43255,43259,43259,43261,43262,43274,43301,43312,43334,43360,43388,43396,43442,43471,43471,43488,43492,43494,43503,43514,43518,43520,43560,43584,43586,43588,43595,43616,43638,43642,43642,43646,43695,43697,43697,43701,43702,43705,43709,43712,43712,43714,43714,43739,43741,43744,43754,43762,43764,43777,43782,43785,43790,43793,43798,43808,43814,43816,43822,43824,43866,43868,43881,43888,44002,44032,55203,55216,55238,55243,55291,63744,64109,64112,64217,64256,64262,64275,64279,64285,64285,64287,64296,64298,64310,64312,64316,64318,64318,64320,64321,64323,64324,64326,64433,64467,64829,64848,64911,64914,64967,65008,65019,65136,65140,65142,65276,65313,65338,65345,65370,65382,65470,65474,65479,65482,65487,65490,65495,65498,65500,65536,65547,65549,65574,65576,65594,65596,65597,65599,65613,65616,65629,65664,65786,66176,66204,66208,66256,66304,66335,66349,66368,66370,66377,66384,66421,66432,66461,66464,66499,66504,66511,66560,66717,66736,66771,66776,66811,66816,66855,66864,66915,66928,66938,66940,66954,66956,66962,66964,66965,66967,66977,66979,66993,66995,67001,67003,67004,67072,67382,67392,67413,67424,67431,67456,67461,67463,67504,67506,67514,67584,67589,67592,67592,67594,67637,67639,67640,67644,67644,67647,67669,67680,67702,67712,67742,67808,67826,67828,67829,67840,67861,67872,67897,67968,68023,68030,68031,68096,68096,68112,68115,68117,68119,68121,68149,68192,68220,68224,68252,68288,68295,68297,68324,68352,68405,68416,68437,68448,68466,68480,68497,68608,68680,68736,68786,68800,68850,68864,68899,69248,69289,69296,69297,69376,69404,69415,69415,69424,69445,69488,69505,69552,69572,69600,69622,69635,69687,69745,69746,69749,69749,69763,69807,69840,69864,69891,69926,69956,69956,69959,69959,69968,70002,70006,70006,70019,70066,70081,70084,70106,70106,70108,70108,70144,70161,70163,70187,70207,70208,70272,70278,70280,70280,70282,70285,70287,70301,70303,70312,70320,70366,70405,70412,70415,70416,70419,70440,70442,70448,70450,70451,70453,70457,70461,70461,70480,70480,70493,70497,70656,70708,70727,70730,70751,70753,70784,70831,70852,70853,70855,70855,71040,71086,71128,71131,71168,71215,71236,71236,71296,71338,71352,71352,71424,71450,71488,71494,71680,71723,71840,71903,71935,71942,71945,71945,71948,71955,71957,71958,71960,71983,71999,71999,72001,72001,72096,72103,72106,72144,72161,72161,72163,72163,72192,72192,72203,72242,72250,72250,72272,72272,72284,72329,72349,72349,72368,72440,72704,72712,72714,72750,72768,72768,72818,72847,72960,72966,72968,72969,72971,73008,73030,73030,73056,73061,73063,73064,73066,73097,73112,73112,73440,73458,73474,73474,73476,73488,73490,73523,73648,73648,73728,74649,74880,75075,77712,77808,77824,78895,78913,78918,82944,83526,92160,92728,92736,92766,92784,92862,92880,92909,92928,92975,92992,92995,93027,93047,93053,93071,93760,93823,93952,94026,94032,94032,94099,94111,94176,94177,94179,94179,94208,100343,100352,101589,101632,101640,110576,110579,110581,110587,110589,110590,110592,110882,110898,110898,110928,110930,110933,110933,110948,110951,110960,111355,113664,113770,113776,113788,113792,113800,113808,113817,119808,119892,119894,119964,119966,119967,119970,119970,119973,119974,119977,119980,119982,119993,119995,119995,119997,120003,120005,120069,120071,120074,120077,120084,120086,120092,120094,120121,120123,120126,120128,120132,120134,120134,120138,120144,120146,120485,120488,120512,120514,120538,120540,120570,120572,120596,120598,120628,120630,120654,120656,120686,120688,120712,120714,120744,120746,120770,120772,120779,122624,122654,122661,122666,122928,122989,123136,123180,123191,123197,123214,123214,123536,123565,123584,123627,124112,124139,124896,124902,124904,124907,124909,124910,124912,124926,124928,125124,125184,125251,125259,125259,126464,126467,126469,126495,126497,126498,126500,126500,126503,126503,126505,126514,126516,126519,126521,126521,126523,126523,126530,126530,126535,126535,126537,126537,126539,126539,126541,126543,126545,126546,126548,126548,126551,126551,126553,126553,126555,126555,126557,126557,126559,126559,126561,126562,126564,126564,126567,126570,126572,126578,126580,126583,126585,126588,126590,126590,126592,126601,126603,126619,126625,126627,126629,126633,126635,126651,131072,173791,173824,177977,177984,178205,178208,183969,183984,191456,194560,195101,196608,201546,201552,205743]),co=new Uint32Array([48,57,178,179,185,185,188,190,1632,1641,1776,1785,1984,1993,2406,2415,2534,2543,2548,2553,2662,2671,2790,2799,2918,2927,2930,2935,3046,3058,3174,3183,3192,3198,3302,3311,3416,3422,3430,3448,3558,3567,3664,3673,3792,3801,3872,3891,4160,4169,4240,4249,4969,4988,5870,5872,6112,6121,6128,6137,6160,6169,6470,6479,6608,6618,6784,6793,6800,6809,6992,7001,7088,7097,7232,7241,7248,7257,8304,8304,8308,8313,8320,8329,8528,8578,8581,8585,9312,9371,9450,9471,10102,10131,11517,11517,12295,12295,12321,12329,12344,12346,12690,12693,12832,12841,12872,12879,12881,12895,12928,12937,12977,12991,42528,42537,42726,42735,43056,43061,43216,43225,43264,43273,43472,43481,43504,43513,43600,43609,44016,44025,65296,65305,65799,65843,65856,65912,65930,65931,66273,66299,66336,66339,66369,66369,66378,66378,66513,66517,66720,66729,67672,67679,67705,67711,67751,67759,67835,67839,67862,67867,68028,68029,68032,68047,68050,68095,68160,68168,68221,68222,68253,68255,68331,68335,68440,68447,68472,68479,68521,68527,68858,68863,68912,68921,69216,69246,69405,69414,69457,69460,69573,69579,69714,69743,69872,69881,69942,69951,70096,70105,70113,70132,70384,70393,70736,70745,70864,70873,71248,71257,71360,71369,71472,71483,71904,71922,72016,72025,72784,72812,73040,73049,73120,73129,73552,73561,73664,73684,74752,74862,92768,92777,92864,92873,93008,93017,93019,93025,93824,93846,119488,119507,119520,119539,119648,119672,120782,120831,123200,123209,123632,123641,124144,124153,125127,125135,125264,125273,126065,126123,126125,126127,126129,126132,126209,126253,126255,126269,127232,127244,130032,130041]);function lo(e,t){let n=0,r=e.length>>1;for(;n<r;){let i=n+r>>1;if(t<e[2*i])r=i;else if(t>e[2*i+1])n=i+1;else return!0}return!1}const uo=e=>lo(co,e),fo=e=>e>=9&&e<=13||e===32||e===133||e===160||e===5760||e>=8192&&e<=8202||e===8232||e===8233||e===8239||e===8287||e===12288,po=e=>!fo(e)&&!lo(so,e)&&!uo(e);function mo(e){let t=e.length,n=[],r=n=>{if(uo(e[n])){let r=n;for(;r<t&&r-n<3&&uo(e[r]);)r++;return r}{let r=n+ +(e[n]===32),i=r;for(;i<t&&po(e[i]);)i++;if(i-r>=2){for(;i<t&&(e[i]===13||e[i]===10||e[i]===47);)i++;return i}}if(e[n]===32){let r=n;for(;r<t&&e[r]===32;)r++;if(r===t||fo(e[r]))return r;if(r-n>=2)return r-1}return n},i=0,a=0;for(;a<t;){let e=r(a);e===a?a++:(i<a&&n.push([i,a]),n.push([a,e]),a=i=e)}return i<t&&n.push([i,t]),n}const ho=(()=>{let e=[],t=0;for(let n=0;n<256;n++){let r=n>=33&&n<=126||n>=161&&n<=172||n>=174&&n<=255;e.push(String.fromCodePoint(r?n:256+t++))}return e})(),go=new TextEncoder;var _o=class{offset;bos;eos;vocab;ranks=/* @__PURE__ */ new Map;added;constructor(e,t=4,n=2,r=3){this.offset=t,this.bos=n,this.eos=r,this.vocab=new Map(Object.entries(e.model.vocab)),e.model.merges.forEach((e,t)=>{if(!Array.isArray(e)||e.length!==2)throw Error(`tokenizer: merges must be [a, b] arrays`);this.ranks.set(e[0]+` `+e[1],t)}),this.added=e.added_tokens.filter(e=>e.content.length>0).map(e=>({content:e.content,id:e.id}))}encode(e){let t=[this.bos],n=0;for(;n<e.length;){let r=-1,i=0,a=0;for(let t of this.added){let o=e.indexOf(t.content,n);o>=0&&(r<0||o<r||o===r&&t.content.length>i)&&(r=o,i=t.content.length,a=t.id)}if(r<0){this.segment(e.slice(n),t);break}this.segment(e.slice(n,r),t),t.push(a+this.offset),n=r+i}return t.push(this.eos),Int32Array.from(t)}segment(e,t){if(!e)return;let n=[],r=[];for(let t of e)n.push(t),r.push(t.codePointAt(0));for(let[e,i]of mo(r))this.bpe(n.slice(e,i).join(``),t)}bpe(e,t){let n=Array.from(go.encode(e),e=>ho[e]);for(;n.length>1;){let e=1/0,t=0;for(let r=0;r+1<n.length;r++){let i=this.ranks.get(n[r]+` `+n[r+1]);i!==void 0&&i<e&&(e=i,t=r)}if(e===1/0)break;n.splice(t,2,n[t]+n[t+1])}for(let e of n){let n=this.vocab.get(e);n!==void 0&&t.push(n+this.offset)}}bytesOf=null;tokenBytes(e){if(!this.bytesOf){let e=/* @__PURE__ */ new Map;for(let[t,n]of this.vocab)e.set(n+this.offset,Array.from(t).length);for(let t of this.added)e.set(t.id+this.offset,go.encode(t.content).length);this.bytesOf=e}return this.bytesOf.get(e)??0}};function vo(){return new _o(JSON.parse(oo))}const yo=(e,t=[])=>self.postMessage(e,t);let bo=null;const xo=/* @__PURE__ */ new Set;let So=Promise.resolve();async function Co(e,t){let n=await fetch(new URL(`companions/`+t,e).href);if(n.status===404)return null;if(!n.ok)throw Error(`failed to fetch companions/${t}: ${n.status}`);return n.arrayBuffer()}async function wo(e){let t=/* @__PURE__ */ new Map,n=await fetch(new URL(`laci/index.json`,e).href);if(n.status===404)return t;if(!n.ok)throw Error(`failed to fetch laci/index.json: ${n.status}`);let r=await n.json(),i=/* @__PURE__ */ new Map;for(let t of new Set(Object.values(r))){let n=await(await fetch(new URL(`laci/`+t,e).href)).text();i.set(t,zn.parse(n,t))}for(let[e,n]of Object.entries(r))t.set(e,i.get(n));return t}async function To(e,t){let n=await fetch(new URL(t+`/manifest.json`,e).href);if(n.status===404)return null;if(!n.ok)throw Error(`failed to fetch ${t}/manifest.json: ${n.status}`);return(await n.json()).meta}async function Eo(e,t,n,r,i){let[a,o]=await Promise.all([To(t,`edit`),To(t,`aligner`)]);if(!a||!o)return null;let s=w(a);if(s.spanEndId===null||s.textExtraTokens<1)return null;let c=null,l=null;return{hp:s,backbone(){return c??=Fi(t,[`edit`],i).then(r=>Ii(e,t,`edit`,r,n)).then(e=>r.withEdit(e)).catch(e=>{throw c=null,e})},async align(r,a){return(await(l??=Fi(t,[`aligner`],i).then(r=>Vi.load(e,t,r,n)).catch(e=>{throw l=null,e}))).align(r,a)}}}const Do=[{dir:`zac-full_mr`,checkpoint:`zac.gguf`}];function Oo(e,t){let n=e[`head.variant`];if(typeof n!=`string`||!n)throw Error(`${t}: no head.variant in its manifest; re-export with pnpm export`);return n}async function ko(e,t,n,r,i,a,o){let s=[{id:Oo(i,`zac`),checkpoint:`zac-keep2.gguf`,headroomDb:Number(i.headroom_db??3),codec:async()=>r}];for(let{dir:i,checkpoint:c}of Do){let l=await To(t,i);if(!l)continue;let u=Oo(l,i);if(s.some(e=>e.id===u))throw Error(`${i}: decoder ${u} is exported twice`);let d=null;s.push({id:u,checkpoint:c,headroomDb:Number(l.headroom_db??3),codec(){return d??=Fi(t,[i],o).then(r=>Ii(e,t,i,r,n)).then(t=>Aa.create(e,t,e=>new va(ga(a),e),r.gemmPlan)).then(async e=>(await Mo(e),e)).catch(e=>{throw d=null,e})}})}return s}async function Ao(e,t,n,r){let i=new Xr(await Gr(e=>yo({type:`fatal`,message:e}))),a=e=>yo({type:`progress`,...e}),o=new URL(`voices/`,e).href,s=await ji(o+`voices.json`),c=async e=>{let t=new URL(e,o).href,n=await fetch(t);if(!n.ok)throw Error(`failed to fetch ${t}: ${n.status}`);return n.arrayBuffer()},l=Promise.all(s.map(e=>Promise.all([c(e.codes),c(e.embedding)]))),u=await Fi(e,[`backbone`,`zac`],a),d=await Ii(i,e,`backbone`,u,t),f=await Ii(i,e,`zac`,u,t),p=w(d.meta),m=(await l).map(([e,t],r)=>{let i=s[r];return{id:i.id,label:i.label,file:i.file,pcm:n[i.id]??null,codes:Qa(e),embedding:p.speakerDim>0?Ge(new Uint8Array(t),p.speakerDim,i.embedding):null}}),h=await Co(e,`steer.gguf`),g=h?ae(j(h),{nEmbd:p.nEmbd,nLayer:p.nLayer,speakerDim:p.speakerDim}):null,_=await wo(e),v=new ia(i,d,g?g.sources:[]),y=await Aa.create(i,f,e=>new va(r,e)),b=vo();await jo(v,y,p);let x=await Eo(i,e,t,v,a),S=await ko(i,e,t,y,f.meta,r,a),C=null,T=null;bo=new jr({hp:p,modelFile:`backbone-ptq.gguf`,backbone:v,decoders:S,tokenizer:b,steer:g,controlsDoc:g?oe(g,p.speakerDim):null,laci:_,voices:m,async embedSpeaker(n){return(await(C??=Fi(e,[`spk`],a).then(n=>ao.load(i,e,n,t)).catch(e=>{throw C=null,e}))).embed(n)},async encodeReference(n){return(await(T??=Fi(e,[`encoder`,`teacher`],a).then(n=>Xa.load(i,e,n,t)).catch(e=>{throw T=null,e}))).encode(n)},edit:x})}async function jo(e,t,n){let r=vo(),i=T(r,`Hi.`,{buckets:[],silencePrefill:3},n),a=T(r,`Hi.`,{referenceCodes:/* @__PURE__ */ new Int32Array(3e3),buckets:[],silencePrefill:3},n);for(let t of[0,1])await e.prefill(t,i.ids,i.cond),await e.prefill(t,a.ids,a.cond);for(let t of[null,1.5])e.startSampling({sp:Tt(),minFrames:0,cfgScale:t}),await e.sampleFirst(0),await e.stepSample(1,null,null,null);await Mo(t)}async function Mo(e){await e.chunk(/* @__PURE__ */ new Int32Array(160),0,16),e.reset()}async function No(e){let t=e.id,n={start:(e,n)=>yo({type:`res`,id:t,status:e,headers:n}),chunk:e=>{let n=e.slice().buffer;yo({type:`chunk`,id:t,data:n},[n])},end:()=>yo({type:`end`,id:t})};try{if(!bo){n.start(503,{"content-type":`application/json`}),n.chunk(new TextEncoder().encode(JSON.stringify({detail:`engine not initialized`}))),n.end();return}await bo.handle({method:e.method,path:e.path,headers:e.headers,body:e.body,pcm:e.pcm,pcmSeconds:e.pcmSeconds},n,()=>xo.has(t))}finally{xo.delete(t)}}self.onmessage=e=>{let t=e.data;t.type===`init`?Ao(t.base,t.cache,t.voicesPcm,t.codecPort).then(()=>yo({type:`ready`}),e=>yo({type:`fatal`,message:e instanceof Error?e.message:String(e)})):t.type===`req`?So=So.then(()=>No(t)):t.type===`abort`&&xo.add(t.id)};
+}`;const x=new Uint32Array([65,90,97,122,170,170,181,181,186,186,192,214,216,246,248,705,710,721,736,740,748,748,750,750,880,884,886,887,890,893,895,895,902,902,904,906,908,908,910,929,931,1013,1015,1153,1162,1327,1329,1366,1369,1369,1376,1416,1488,1514,1519,1522,1568,1610,1646,1647,1649,1747,1749,1749,1765,1766,1774,1775,1786,1788,1791,1791,1808,1808,1810,1839,1869,1957,1969,1969,1994,2026,2036,2037,2042,2042,2048,2069,2074,2074,2084,2084,2088,2088,2112,2136,2144,2154,2160,2183,2185,2190,2208,2249,2308,2361,2365,2365,2384,2384,2392,2401,2417,2432,2437,2444,2447,2448,2451,2472,2474,2480,2482,2482,2486,2489,2493,2493,2510,2510,2524,2525,2527,2529,2544,2545,2556,2556,2565,2570,2575,2576,2579,2600,2602,2608,2610,2611,2613,2614,2616,2617,2649,2652,2654,2654,2674,2676,2693,2701,2703,2705,2707,2728,2730,2736,2738,2739,2741,2745,2749,2749,2768,2768,2784,2785,2809,2809,2821,2828,2831,2832,2835,2856,2858,2864,2866,2867,2869,2873,2877,2877,2908,2909,2911,2913,2929,2929,2947,2947,2949,2954,2958,2960,2962,2965,2969,2970,2972,2972,2974,2975,2979,2980,2984,2986,2990,3001,3024,3024,3077,3084,3086,3088,3090,3112,3114,3129,3133,3133,3160,3162,3165,3165,3168,3169,3200,3200,3205,3212,3214,3216,3218,3240,3242,3251,3253,3257,3261,3261,3293,3294,3296,3297,3313,3314,3332,3340,3342,3344,3346,3386,3389,3389,3406,3406,3412,3414,3423,3425,3450,3455,3461,3478,3482,3505,3507,3515,3517,3517,3520,3526,3585,3632,3634,3635,3648,3654,3713,3714,3716,3716,3718,3722,3724,3747,3749,3749,3751,3760,3762,3763,3773,3773,3776,3780,3782,3782,3804,3807,3840,3840,3904,3911,3913,3948,3976,3980,4096,4138,4159,4159,4176,4181,4186,4189,4193,4193,4197,4198,4206,4208,4213,4225,4238,4238,4256,4293,4295,4295,4301,4301,4304,4346,4348,4680,4682,4685,4688,4694,4696,4696,4698,4701,4704,4744,4746,4749,4752,4784,4786,4789,4792,4798,4800,4800,4802,4805,4808,4822,4824,4880,4882,4885,4888,4954,4992,5007,5024,5109,5112,5117,5121,5740,5743,5759,5761,5786,5792,5866,5873,5880,5888,5905,5919,5937,5952,5969,5984,5996,5998,6e3,6016,6067,6103,6103,6108,6108,6176,6264,6272,6276,6279,6312,6314,6314,6320,6389,6400,6430,6480,6509,6512,6516,6528,6571,6576,6601,6656,6678,6688,6740,6823,6823,6917,6963,6981,6988,7043,7072,7086,7087,7098,7141,7168,7203,7245,7247,7258,7293,7296,7304,7312,7354,7357,7359,7401,7404,7406,7411,7413,7414,7418,7418,7424,7615,7680,7957,7960,7965,7968,8005,8008,8013,8016,8023,8025,8025,8027,8027,8029,8029,8031,8061,8064,8116,8118,8124,8126,8126,8130,8132,8134,8140,8144,8147,8150,8155,8160,8172,8178,8180,8182,8188,8305,8305,8319,8319,8336,8348,8450,8450,8455,8455,8458,8467,8469,8469,8473,8477,8484,8484,8486,8486,8488,8488,8490,8493,8495,8505,8508,8511,8517,8521,8526,8526,8579,8580,11264,11492,11499,11502,11506,11507,11520,11557,11559,11559,11565,11565,11568,11623,11631,11631,11648,11670,11680,11686,11688,11694,11696,11702,11704,11710,11712,11718,11720,11726,11728,11734,11736,11742,11823,11823,12293,12294,12337,12341,12347,12348,12353,12438,12445,12447,12449,12538,12540,12543,12549,12591,12593,12686,12704,12735,12784,12799,13312,19903,19968,42124,42192,42237,42240,42508,42512,42527,42538,42539,42560,42606,42623,42653,42656,42725,42775,42783,42786,42888,42891,42954,42960,42961,42963,42963,42965,42969,42994,43009,43011,43013,43015,43018,43020,43042,43072,43123,43138,43187,43250,43255,43259,43259,43261,43262,43274,43301,43312,43334,43360,43388,43396,43442,43471,43471,43488,43492,43494,43503,43514,43518,43520,43560,43584,43586,43588,43595,43616,43638,43642,43642,43646,43695,43697,43697,43701,43702,43705,43709,43712,43712,43714,43714,43739,43741,43744,43754,43762,43764,43777,43782,43785,43790,43793,43798,43808,43814,43816,43822,43824,43866,43868,43881,43888,44002,44032,55203,55216,55238,55243,55291,63744,64109,64112,64217,64256,64262,64275,64279,64285,64285,64287,64296,64298,64310,64312,64316,64318,64318,64320,64321,64323,64324,64326,64433,64467,64829,64848,64911,64914,64967,65008,65019,65136,65140,65142,65276,65313,65338,65345,65370,65382,65470,65474,65479,65482,65487,65490,65495,65498,65500,65536,65547,65549,65574,65576,65594,65596,65597,65599,65613,65616,65629,65664,65786,66176,66204,66208,66256,66304,66335,66349,66368,66370,66377,66384,66421,66432,66461,66464,66499,66504,66511,66560,66717,66736,66771,66776,66811,66816,66855,66864,66915,66928,66938,66940,66954,66956,66962,66964,66965,66967,66977,66979,66993,66995,67001,67003,67004,67072,67382,67392,67413,67424,67431,67456,67461,67463,67504,67506,67514,67584,67589,67592,67592,67594,67637,67639,67640,67644,67644,67647,67669,67680,67702,67712,67742,67808,67826,67828,67829,67840,67861,67872,67897,67968,68023,68030,68031,68096,68096,68112,68115,68117,68119,68121,68149,68192,68220,68224,68252,68288,68295,68297,68324,68352,68405,68416,68437,68448,68466,68480,68497,68608,68680,68736,68786,68800,68850,68864,68899,69248,69289,69296,69297,69376,69404,69415,69415,69424,69445,69488,69505,69552,69572,69600,69622,69635,69687,69745,69746,69749,69749,69763,69807,69840,69864,69891,69926,69956,69956,69959,69959,69968,70002,70006,70006,70019,70066,70081,70084,70106,70106,70108,70108,70144,70161,70163,70187,70207,70208,70272,70278,70280,70280,70282,70285,70287,70301,70303,70312,70320,70366,70405,70412,70415,70416,70419,70440,70442,70448,70450,70451,70453,70457,70461,70461,70480,70480,70493,70497,70656,70708,70727,70730,70751,70753,70784,70831,70852,70853,70855,70855,71040,71086,71128,71131,71168,71215,71236,71236,71296,71338,71352,71352,71424,71450,71488,71494,71680,71723,71840,71903,71935,71942,71945,71945,71948,71955,71957,71958,71960,71983,71999,71999,72001,72001,72096,72103,72106,72144,72161,72161,72163,72163,72192,72192,72203,72242,72250,72250,72272,72272,72284,72329,72349,72349,72368,72440,72704,72712,72714,72750,72768,72768,72818,72847,72960,72966,72968,72969,72971,73008,73030,73030,73056,73061,73063,73064,73066,73097,73112,73112,73440,73458,73474,73474,73476,73488,73490,73523,73648,73648,73728,74649,74880,75075,77712,77808,77824,78895,78913,78918,82944,83526,92160,92728,92736,92766,92784,92862,92880,92909,92928,92975,92992,92995,93027,93047,93053,93071,93760,93823,93952,94026,94032,94032,94099,94111,94176,94177,94179,94179,94208,100343,100352,101589,101632,101640,110576,110579,110581,110587,110589,110590,110592,110882,110898,110898,110928,110930,110933,110933,110948,110951,110960,111355,113664,113770,113776,113788,113792,113800,113808,113817,119808,119892,119894,119964,119966,119967,119970,119970,119973,119974,119977,119980,119982,119993,119995,119995,119997,120003,120005,120069,120071,120074,120077,120084,120086,120092,120094,120121,120123,120126,120128,120132,120134,120134,120138,120144,120146,120485,120488,120512,120514,120538,120540,120570,120572,120596,120598,120628,120630,120654,120656,120686,120688,120712,120714,120744,120746,120770,120772,120779,122624,122654,122661,122666,122928,122989,123136,123180,123191,123197,123214,123214,123536,123565,123584,123627,124112,124139,124896,124902,124904,124907,124909,124910,124912,124926,124928,125124,125184,125251,125259,125259,126464,126467,126469,126495,126497,126498,126500,126500,126503,126503,126505,126514,126516,126519,126521,126521,126523,126523,126530,126530,126535,126535,126537,126537,126539,126539,126541,126543,126545,126546,126548,126548,126551,126551,126553,126553,126555,126555,126557,126557,126559,126559,126561,126562,126564,126564,126567,126570,126572,126578,126580,126583,126585,126588,126590,126590,126592,126601,126603,126619,126625,126627,126629,126633,126635,126651,131072,173791,173824,177977,177984,178205,178208,183969,183984,191456,194560,195101,196608,201546,201552,205743]),S=new Uint32Array([48,57,178,179,185,185,188,190,1632,1641,1776,1785,1984,1993,2406,2415,2534,2543,2548,2553,2662,2671,2790,2799,2918,2927,2930,2935,3046,3058,3174,3183,3192,3198,3302,3311,3416,3422,3430,3448,3558,3567,3664,3673,3792,3801,3872,3891,4160,4169,4240,4249,4969,4988,5870,5872,6112,6121,6128,6137,6160,6169,6470,6479,6608,6618,6784,6793,6800,6809,6992,7001,7088,7097,7232,7241,7248,7257,8304,8304,8308,8313,8320,8329,8528,8578,8581,8585,9312,9371,9450,9471,10102,10131,11517,11517,12295,12295,12321,12329,12344,12346,12690,12693,12832,12841,12872,12879,12881,12895,12928,12937,12977,12991,42528,42537,42726,42735,43056,43061,43216,43225,43264,43273,43472,43481,43504,43513,43600,43609,44016,44025,65296,65305,65799,65843,65856,65912,65930,65931,66273,66299,66336,66339,66369,66369,66378,66378,66513,66517,66720,66729,67672,67679,67705,67711,67751,67759,67835,67839,67862,67867,68028,68029,68032,68047,68050,68095,68160,68168,68221,68222,68253,68255,68331,68335,68440,68447,68472,68479,68521,68527,68858,68863,68912,68921,69216,69246,69405,69414,69457,69460,69573,69579,69714,69743,69872,69881,69942,69951,70096,70105,70113,70132,70384,70393,70736,70745,70864,70873,71248,71257,71360,71369,71472,71483,71904,71922,72016,72025,72784,72812,73040,73049,73120,73129,73552,73561,73664,73684,74752,74862,92768,92777,92864,92873,93008,93017,93019,93025,93824,93846,119488,119507,119520,119539,119648,119672,120782,120831,123200,123209,123632,123641,124144,124153,125127,125135,125264,125273,126065,126123,126125,126127,126129,126132,126209,126253,126255,126269,127232,127244,130032,130041]);function C(e,t){let n=0,r=e.length>>1;for(;n<r;){let i=n+r>>1;if(t<e[2*i])r=i;else if(t>e[2*i+1])n=i+1;else return!0}return!1}const w=e=>C(S,e),T=e=>e>=9&&e<=13||e===32||e===133||e===160||e===5760||e>=8192&&e<=8202||e===8232||e===8233||e===8239||e===8287||e===12288,E=e=>!T(e)&&!C(x,e)&&!w(e);function D(e){let t=e.length,n=[],r=n=>{if(w(e[n])){let r=n;for(;r<t&&r-n<3&&w(e[r]);)r++;return r}{let r=n+ +(e[n]===32),i=r;for(;i<t&&E(e[i]);)i++;if(i-r>=2){for(;i<t&&(e[i]===13||e[i]===10||e[i]===47);)i++;return i}}if(e[n]===32){let r=n;for(;r<t&&e[r]===32;)r++;if(r===t||T(e[r]))return r;if(r-n>=2)return r-1}return n},i=0,a=0;for(;a<t;){let e=r(a);e===a?a++:(i<a&&n.push([i,a]),n.push([a,e]),a=i=e)}return i<t&&n.push([i,t]),n}const O=(()=>{let e=[],t=0;for(let n=0;n<256;n++){let r=n>=33&&n<=126||n>=161&&n<=172||n>=174&&n<=255;e.push(String.fromCodePoint(r?n:256+t++))}return e})(),k=new TextEncoder,A=57347,ee=/[\uE003-\uE00A]/,te=`This checkpoint has no start token: remove the U+E002 start marker`,ne=`This checkpoint has no pause tokens: remove the U+E003-U+E00A pause markers`,re=`The start marker (U+E002) must be the first character of the text, once`,ie={phonemes:null,start:null,pauses:null};function ae(e){return(e.phonemes?2+e.phonemes.symbols.length:0)+ +!!e.start+(e.pauses?e.pauses.ids.length:0)}const j=e=>typeof e==`object`&&!!e&&!Array.isArray(e),M=e=>typeof e==`number`&&Number.isInteger(e);function oe(e,t,n){let r=JSON.parse(e),i=j(r)?r:{},a={phonemes:null,start:null,pauses:null};if(i.phonemes!=null){let e=i.phonemes;if(!j(e)||!M(e.open_id)||!M(e.close_id)||!Array.isArray(e.symbols)||typeof e.open_marker!=`string`||typeof e.close_marker!=`string`)throw Error(`Invalid phoneme symbols`);if(e.open_id<t+1||e.close_id!==e.open_id+1)throw Error(`Phoneme token IDs must follow the text padding row (and any edit marker rows)`);let n=e.symbols;if(n.some(e=>typeof e!=`string`||Array.from(e).length!==1)||new Set(n).size!==n.length||n.includes(e.open_marker)||n.includes(e.close_marker))throw Error(`Invalid phoneme symbols`);a.phonemes={openId:e.open_id,closeId:e.close_id,open:e.open_marker,close:e.close_marker,symbols:n}}let o=a.phonemes?a.phonemes.openId:j(i.start)&&M(i.start.id)?i.start.id:j(i.pauses)&&Array.isArray(i.pauses.ids)&&M(i.pauses.ids[0])?i.pauses.ids[0]:null,s=a.phonemes?2+a.phonemes.symbols.length:0;if(i.start!=null){let e=i.start;if(!j(e)||e.marker!==``)throw Error(`Invalid start marker`);if(o===null||o<t+1||e.id!==o+s)throw Error(`Start token ID must follow the phoneme rows`);a.start={id:e.id,marker:``}}if(i.pauses!=null){let e=i.pauses,n=j(e)&&Array.isArray(e.ids)?e.ids:[],r=j(e)&&Array.isArray(e.markers)?e.markers:[],c=j(e)&&Array.isArray(e.seconds)?e.seconds:[];if(n.length<1||n.length>8||r.length!==n.length||c.length!==n.length||r.some((e,t)=>e!==String.fromCharCode(A+t))||c.some(e=>typeof e!=`number`))throw Error(`Invalid pause markers`);let l=(o??0)+s+ +!!a.start;if(o===null||o<t+1||n.some((e,t)=>e!==l+t))throw Error(`Pause token IDs must follow the start row`);a.pauses={ids:n,markers:r,seconds:c}}if(o!==null&&o-t-1+ae(a)!==n)throw Error(`Phoneme / start / pause tokens do not match text_extra_tokens (they must be the last extra rows)`);return a}function se(e){let t=e.codePointAt(0),n=e;return t===92?n=`\\\\`:t===10?n=`\\n`:t===13?n=`\\r`:t===9?n=`\\t`:t<32||t>=127&&t<=160||t===173?n=`\\x`+t.toString(16).padStart(2,`0`):(t>=57344&&t<=63743||t>=8192&&t<=8207||t>=8232&&t<=8239||t>=8287&&t<=8303||t===5760||t===12288||t===65279)&&(n=`\\u`+t.toString(16).padStart(4,`0`)),t===39?`"'"`:`'${n}'`}function N(e,t,n,r){if(e.includes(``)){if(!t.start)throw Error(te);if(!e.startsWith(``)||e.includes(``,1))throw Error(re);r.push(t.start.id),N(e.slice(1),t,n,r);return}if(ee.test(e)){if(!t.pauses)throw Error(ne);let i=0;for(let a=0;a<e.length;a++){let o=e.charCodeAt(a)-A;if(!(o<0||o>7)){if(o>=t.pauses.ids.length)throw Error(`Pause marker U+${(A+o).toString(16).toUpperCase()} outside the ${t.pauses.ids.length} pause buckets`);a>i&&N(e.slice(i,a),t,n,r),r.push(t.pauses.ids[o]),i=a+1}}i<e.length&&N(e.slice(i),t,n,r);return}let i=t.phonemes;if(!i||!e.includes(i.open)&&!e.includes(i.close)){n(e,r);return}let a=new Map(i.symbols.map((e,t)=>[e,i.openId+2+t])),o=0;for(;o<e.length;){let t=e.indexOf(i.open,o),s=t<0?e.slice(o):e.slice(o,t);if(s.includes(i.close))throw Error(`Unbalanced phoneme group markers`);if(s&&n(s,r),t<0)break;let c=t+i.open.length,l=e.indexOf(i.close,c),u=l>=0?e.slice(c,l):``;if(l<0||!u||u.includes(i.open))throw Error(`Unbalanced or empty phoneme group`);let d=Array.from(u),f=[...new Set(d.filter(e=>!a.has(e)))].sort((e,t)=>e.codePointAt(0)-t.codePointAt(0));if(f.length)throw Error(`Phones outside the inventory: [${f.map(se).join(`, `)}]`);r.push(i.openId,...d.map(e=>a.get(e)),i.closeId),o=l+i.close.length}}function ce(e,t,n=!1){let r=t.includes(``),i=ee.test(t);if(n&&(r||i))return`Speech editing takes no start or pause markers: remove U+E002 / U+E003-U+E00A from target_text`;let a=e.phonemes?.open??``,o=e.phonemes?.close??``,s=t.includes(a)||t.includes(o);if(s&&!e.phonemes)return`This checkpoint has no phoneme tokens: remove the U+E000 / U+E001 pronunciation groups`;if(r&&!e.start)return te;if(i&&!e.pauses)return ne;if(r&&(!t.startsWith(``)||t.includes(``,1)))return re;if(i){let n=e.pauses.ids.length;for(let e=0;e<t.length;e++){let r=t.charCodeAt(e)-A;if(r>=n&&r<=7)return`Pause marker U+${(A+r).toString(16).toUpperCase()} outside the ${n} pause buckets`}}if(s)try{N(t,e,()=>{},[])}catch(e){return`Pronunciation groups: ${e instanceof Error?e.message:String(e)}`}return``}var le=class{offset;bos;eos;vocab;ranks=/* @__PURE__ */ new Map;added;constructor(e,t=4,n=2,r=3){this.offset=t,this.bos=n,this.eos=r,this.vocab=new Map(Object.entries(e.model.vocab)),e.model.merges.forEach((e,t)=>{if(!Array.isArray(e)||e.length!==2)throw Error(`tokenizer: merges must be [a, b] arrays`);this.ranks.set(e[0]+` `+e[1],t)}),this.added=e.added_tokens.filter(e=>e.content.length>0).map(e=>({content:e.content,id:e.id}))}encode(e,t=ie){let n=[this.bos];return N(e,t,(e,t)=>this.bpeText(e,t),n),n.push(this.eos),Int32Array.from(n)}charOffsets(e){let t=[],n=k.encode(e),r=Array.from(e).length,i=Array(n.length+1).fill(r);for(let e=0,t=0;e<n.length;e++)e>0&&(n[e]&192)!=128&&t++,i[e]=t;let a=[];this.bpeText(e,a);let o=0;for(let e of a){let n=this.tokenBytes(e);n!==0&&(t.push([i[o],i[o+n-1]+1]),o+=n)}return t}bpeText(e,t){let n=0;for(;n<e.length;){let r=-1,i=0,a=0;for(let t of this.added){let o=e.indexOf(t.content,n);o>=0&&(r<0||o<r||o===r&&t.content.length>i)&&(r=o,i=t.content.length,a=t.id)}if(r<0){this.segment(e.slice(n),t);break}this.segment(e.slice(n,r),t),t.push(a+this.offset),n=r+i}}segment(e,t){if(!e)return;let n=[],r=[];for(let t of e)n.push(t),r.push(t.codePointAt(0));for(let[e,i]of D(r))this.bpe(n.slice(e,i).join(``),t)}bpe(e,t){let n=Array.from(k.encode(e),e=>O[e]);for(;n.length>1;){let e=1/0,t=0;for(let r=0;r+1<n.length;r++){let i=this.ranks.get(n[r]+` `+n[r+1]);i!==void 0&&i<e&&(e=i,t=r)}if(e===1/0)break;n.splice(t,2,n[t]+n[t+1])}for(let e of n){let n=this.vocab.get(e);n!==void 0&&t.push(n+this.offset)}}bytesOf=null;tokenBytes(e){if(!this.bytesOf){let e=/* @__PURE__ */ new Map;for(let[t,n]of this.vocab)e.set(n+this.offset,Array.from(t).length);for(let t of this.added)e.set(t.id+this.offset,k.encode(t.content).length);this.bytesOf=e}return this.bytesOf.get(e)??0}};function ue(){return new le(JSON.parse(b))}const de=8196;function P(e,t){let n=e[t];if(typeof n!=`number`)throw Error(`backbone: missing meta ${t}`);return n}function fe(e,t){let n=e[t];if(!Array.isArray(n)||n.some(e=>typeof e!=`number`))throw Error(`backbone: missing meta ${t}`);return n.map(Number)}function pe(e){return Array.isArray(e[`condition.bucket_counts`])?fe(e,`condition.bucket_counts`):Array(P(e,`condition.count`)).fill(P(e,`condition.bucket_count`))}function me(e){let t=e[`condition.names`];if(!Array.isArray(t)||t.some(e=>typeof e!=`string`))throw Error(`backbone: missing meta condition.names`);let n=t.map(String),r=P(e,`audio_pad_id`),i=P(e,`audio_vocab`),a=e.span_end_id===void 0?null:P(e,`span_end_id`),o=e.text_extra_tokens===void 0?0:P(e,`text_extra_tokens`);if(i!==r+(a===null?1:2)||a!==null&&a!==r+1||!Number.isInteger(o)||o<0)throw Error(`backbone: unsupported vocabulary (audio_vocab ${i}, audio_pad_id ${r}, span_end_id ${a}, text_extra_tokens ${o})`);let s=P(e,`text_vocab`),c=typeof e.text_tokenizer_spec==`string`?e.text_tokenizer_spec:`{}`;return{nCodebooks:P(e,`n_codebooks`),audioPad:r,textVocab:s,audioVocab:i,spanEndId:a,textExtraTokens:o,nCond:P(e,`condition.count`),condBucketCounts:pe(e),condNames:n,condEdges:n.map(t=>fe(e,`condition.edges.${t}`)),silenceFrame:fe(e,`silence_frame`),speakerDim:P(e,`speaker.embedding_length`),contextLength:P(e,`context_length`),condUnits:Array.isArray(e[`condition.units`])?e[`condition.units`].map(String):[],textTokenizerSpec:c,textMarkers:oe(c,s,o),nEmbd:P(e,`embedding_length`),nLayer:P(e,`block_count`)}}function he(e,t,n,r){let i=r.nCodebooks,a=i+1,o=n.referenceCodes,s=o?Math.floor(o.length/i):0,l=n.speakerEmbedding;if(l&&o)throw Error(`a speaker embedding and a reference prefix are mutually exclusive`);if(s>u||o!==void 0&&s===0)throw Error(`invalid reference-code prefix`);let d=n.silencePrefill;if(!Number.isInteger(d)||d<0||d>c)throw Error(`silence prefill must be 0..${c} frames`);if(l){for(let e=0;e<r.speakerDim;e++)if(!Number.isFinite(l[e]))throw Error(`speaker embedding contains a non-finite value`)}let f=n.buckets.length?n.buckets.slice():r.condBucketCounts.slice();if(f.length!==r.nCond)throw Error(`expected ${r.nCond} condition buckets`);for(let e=0;e<r.nCond;e++){let t=r.condBucketCounts[e];if(f[e]<0||f[e]>t)throw Error(`condition bucket ${f[e]} for ${r.condNames[e]} outside 0..${t-1} (${t} = unknown)`)}let p=e.encode(t,r.textMarkers),m=s?s+i-1:0,h=l?1:m,g=h+r.nCond+p.length+d;if(g===0||g>r.contextLength)throw Error(`prompt exceeds the ${r.contextLength}-position context`);for(let e=0;e<s*i;e++)if(o[e]<0||o[e]>=4096)throw Error(`reference contains a nonordinary audio code`);let _=new Int32Array(g*a).fill(r.audioPad);for(let e=0;e<g;e++)_[e*a+i]=r.textVocab;for(let e=0;e<m;e++)for(let t=0;t<i;t++){let n=e-t;n>=0&&n<s&&(_[e*a+t]=o[n*i+t])}let v=h+r.nCond;for(let e=0;e<p.length;e++)_[(v+e)*a+i]=p[e];let y=v+p.length;for(let e=0;e<d;e++)for(let t=0;t<i;t++)e-t>=0&&(_[(y+e)*a+t]=r.silenceFrame[t]);return{ids:_,nRows:g,speakerRows:h,prefillFrames:d,cond:{speakerRow:l?0:-1,speaker:l?Float32Array.from(l.subarray(0,r.speakerDim)):null,conditionRow:h,buckets:f}}}function ge(e,t){if(e.speakerRows<=0)throw Error(`speaker CFG needs a speaker prompt (speaker embedding or reference)`);if(e.speakerRows>=e.nRows||e.ids.length!==e.nRows*11)throw Error(`inconsistent prompt for speaker CFG`);return{ids:e.ids.slice(e.speakerRows*11),nRows:e.nRows-e.speakerRows,speakerRows:0,prefillFrames:e.prefillFrames,cond:{speakerRow:-1,speaker:null,conditionRow:e.cond.conditionRow-e.speakerRows,buckets:t.slice()}}}function _e(e,t){if(!Number.isFinite(t))return-1;let n=0;for(;n<e.length&&e[n]<=t;)n++;return n}function ve(e){let t=new Int32Array(e.prefillFrames*10);for(let n=0;n<e.prefillFrames;n++){let r=(e.nRows-e.prefillFrames+n)*11;t.set(e.ids.subarray(r,r+10),n*10)}return t}const F={UINT8:0,INT8:1,UINT16:2,INT16:3,UINT32:4,INT32:5,FLOAT32:6,BOOL:7,STRING:8,ARRAY:9,UINT64:10,INT64:11,FLOAT64:12};var ye=class{off=0;dv;bytes;utf8=new TextDecoder(`utf-8`);constructor(e){this.dv=new DataView(e),this.bytes=new Uint8Array(e)}need(e){if(this.off+e>this.bytes.length)throw Error(`gguf: truncated file`)}u8(){return this.need(1),this.dv.getUint8(this.off++)}i8(){return this.need(1),this.dv.getInt8(this.off++)}u16(){this.need(2);let e=this.dv.getUint16(this.off,!0);return this.off+=2,e}i16(){this.need(2);let e=this.dv.getInt16(this.off,!0);return this.off+=2,e}u32(){this.need(4);let e=this.dv.getUint32(this.off,!0);return this.off+=4,e}i32(){this.need(4);let e=this.dv.getInt32(this.off,!0);return this.off+=4,e}f32(){this.need(4);let e=this.dv.getFloat32(this.off,!0);return this.off+=4,e}f64(){this.need(8);let e=this.dv.getFloat64(this.off,!0);return this.off+=8,e}u64(){this.need(8);let e=this.dv.getBigUint64(this.off,!0);return this.off+=8,Number(e)}i64(){this.need(8);let e=this.dv.getBigInt64(this.off,!0);return this.off+=8,Number(e)}str(){let e=this.u64();this.need(e);let t=this.utf8.decode(this.bytes.subarray(this.off,this.off+e));return this.off+=e,t}};function be(e,t){switch(t){case F.UINT8:return e.u8();case F.INT8:return e.i8();case F.UINT16:return e.u16();case F.INT16:return e.i16();case F.UINT32:return e.u32();case F.INT32:return e.i32();case F.FLOAT32:return e.f32();case F.BOOL:return e.u8()!==0;case F.STRING:return e.str();case F.UINT64:return e.u64();case F.INT64:return e.i64();case F.FLOAT64:return e.f64();case F.ARRAY:{let t=e.u32(),n=e.u64(),r=Array(n);for(let i=0;i<n;i++)r[i]=be(e,t);return r}default:throw Error(`gguf: unknown kv type ${t}`)}}function xe(e){let t=new ye(e);if(t.u32()!==1179993927)throw Error(`gguf: bad magic`);let n=t.u32();if(n!==3)throw Error(`gguf: unsupported version ${n}`);let r=t.u64(),i=t.u64(),a=/* @__PURE__ */ new Map,o=/* @__PURE__ */ new Map;for(let e=0;e<i;e++){let e=t.str(),n=t.u32(),r=null;if(n===F.ARRAY){let e=t.off;r=t.u32(),t.off=e}a.set(e,be(t,n)),o.set(e,{type:n,arrType:r})}let s=[];for(let e=0;e<r;e++){let e=t.str(),n=t.u32(),r=[];for(let e=0;e<n;e++)r.push(t.u64());let i=t.u32(),a=t.u64();s.push({name:e,ne:r,type:i,offset:a})}let c=a.get(`general.alignment`),l=typeof c==`number`&&c>0?c:32,u=Math.ceil(t.off/l)*l,d=/* @__PURE__ */ new Map,f=/* @__PURE__ */ new Map;for(let t of s){if(t.type!==0)throw Error(`gguf: only F32 companion tensors are supported`);let n=t.ne.reduce((e,t)=>e*t,1),r=u+t.offset;if(r+4*n>e.byteLength)throw Error(`gguf: truncated file`);d.set(t.name,new Float32Array(e.slice(r,r+4*n))),f.set(t.name,t.ne)}return{kv:a,types:o,tensors:d,shapes:f}}const Se=`This server has no steering bundle (place steer.gguf next to the backbone or pass --steer)`;var Ce=class e{bySpeaker=/* @__PURE__ */ new Map;defaults=/* @__PURE__ */ new Map;globalDefault=1;lookup(e,t){if(e){let n=this.bySpeaker.get(e)?.get(t);if(n!==void 0)return n}return this.defaults.get(t)}strength(e,t){return this.lookup(e,t)??this.globalDefault}disabled(e,t){let n=[];for(let r of t)this.strength(e,r)===0?n.push(r):this.lookup(e,r+`-`)===0&&n.push(r+`-`);return n}document(){let e={};for(let[t,n]of this.bySpeaker)e[t]=Object.fromEntries(n);return{default:Object.fromEntries(this.defaults),by_speaker:e,global_default:this.globalDefault}}static parse(t){let n=new e,r=e=>Oe(e)&&Object.values(e).every(e=>typeof e==`number`),i=JSON.parse(t);if(!Oe(i))throw Error(`calibration is not an object`);if(i.by_speaker!==void 0){if(!Oe(i.by_speaker))throw Error(`by_speaker is not an object`);for(let[e,t]of Object.entries(i.by_speaker)){if(!r(t))throw Error(`by_speaker.${e} is not a {name: dose} object`);n.bySpeaker.set(e,new Map(Object.entries(t)))}}if(i.default!==void 0){if(!r(i.default))throw Error(`default is not a {name: dose} object`);n.defaults=new Map(Object.entries(i.default))}if(i.global_default!==void 0){if(typeof i.global_default!=`number`)throw Error(`global_default is not a number`);n.globalDefault=i.global_default}return n}};const I=Math.fround,we=e=>(e instanceof Map?[...e.keys()]:Object.keys(e)).sort((e,t)=>e<t?-1:+(e>t));var Te=class{sources=[];hiddenSize=0;hidden=null;release=null;releaseFrames={onset:0,ramp:0,hold:1};spans=[];hiddenActive(){return this.hidden!==null||this.release!==null||this.spans.length>0}releaseWeight(e){let{onset:t,ramp:n,hold:r}=this.releaseFrames;return e<t?1:e>=t+n?r:1+(r-1)*(e-t)/n}baseAt(e){let t=this.release;if(!t)return this.hidden;let n=this.hidden?Float32Array.from(this.hidden):new Float32Array(t.length),r=this.releaseWeight(e);if(r===1)for(let e=0;e<n.length;e++)n[e]+=t[e];else{let e=I(r);for(let r=0;r<n.length;r++)n[r]+=I(e*t[r])}return n}deltaAt(e,t){if(!this.hiddenActive()){t.v=null;return}let n=this.sources.length*this.hiddenSize,r=this.release?this.baseAt(e):this.hidden?Float32Array.from(this.hidden):new Float32Array(n),i=this.hidden!==null||this.release!==null,a=I(e);for(let e of this.spans){let t=I(Math.max(e.ramp,1)),o=I(I(a-I(e.start-t))/t),s=I(I(I(e.end+t)-a)/t),c=Math.min(Math.max(Math.min(o,s),0),1);if(c>0){i=!0;for(let t=0;t<n;t++)r[t]+=I(c*e.delta[t])}}t.v=i?r:null}at(e){if(!this.release&&!this.spans.length)return this.hidden;let t={v:null};return this.deltaAt(e,t),t.v}};function Ee(e){e.index=/* @__PURE__ */ new Map,e.dirs.forEach((t,n)=>e.index.set(t.id,n));let t=/* @__PURE__ */ new Set;for(let n of e.dirs)n.hidden&&t.add(n.source);e.sources=[...t].sort((e,t)=>e-t)}function De(e,t){if(e.length===0)return 1;if(t<=e[0][0])return e[0][1];if(t>=e[e.length-1][0])return e[e.length-1][1];let n=1;for(;e[n][0]<t;)n++;let r=e[n-1],i=e[n];return i[0]===r[0]?i[1]:r[1]+(i[1]-r[1])*((t-r[0])/(i[0]-r[0]))}const Oe=e=>typeof e==`object`&&!!e&&!Array.isArray(e);function ke(e,t){if(!Array.isArray(e)||!e.every(e=>typeof e==`number`))throw Error(`${t} is not a number array`);return e}function Ae(e,t,n=`steer.gguf`){let r=e=>/* @__PURE__ */ Error(`'${n}' is not a valid zonos3 steering GGUF (${e}); reconvert with tools/convert_gguf.py steer`),i=t=>e.types.get(t),a=t=>i(t)?.type===F.STRING?e.kv.get(t):null,o=t=>i(t)?.type===F.UINT32?e.kv.get(t):null,s=t=>{let n=i(t);return n?.type===F.ARRAY&&n.arrType===F.STRING?e.kv.get(t):null};if(a(`general.architecture`)!==`zonos3_steer`)throw r(`general.architecture is not zonos3_steer`);let c=i(`zonos3_steer.set.sources`);if(c?.type!==F.ARRAY||c.arrType!==F.INT32)throw r(`missing zonos3_steer.set.sources`);let l=e.kv.get(`zonos3_steer.set.sources`),u=a(`zonos3_steer.name`),d=o(`zonos3_steer.speaker_dim`),f=o(`zonos3_steer.hidden_size`),p=s(`zonos3_steer.set.names`),m=s(`zonos3_steer.set.spaces`),h=s(`zonos3_steer.set.calibrations`),g=s(`zonos3_steer.direction.ids`),_=s(`zonos3_steer.direction.kinds`),v=a(`zonos3_steer.timing`),y=a(`zonos3_steer.ui`);if(u===null||d===null||f===null||!p||!m||!h||!g||!_||v===null||y===null)throw r(`missing or mistyped zonos3_steer.* metadata`);if(p.length===0||p.length!==m.length||p.length!==l.length||p.length!==h.length||g.length===0||g.length!==_.length||e.tensors.size!==g.length)throw r(`inconsistent metadata array sizes`);let b={name:u,speakerDim:d,hiddenSize:f,sets:[],dirs:[],timing:/* @__PURE__ */ new Map,timingJson:v,uiJson:y,index:/* @__PURE__ */ new Map,sources:[],rateExtension:null,steerRelease:null},x=/* @__PURE__ */ new Map,S=!1,C=!1;for(let e=0;e<p.length;e++){let t={name:p[e],hidden:!1,source:-1,calibration:null};if(t.name===``||t.name.includes(`.`)||x.has(t.name))throw r(`bad set name '${t.name}'`);if(m[e]===`attnres_source`){if(t.hidden=!0,t.source=l[e],t.source<0)throw r(`set '${t.name}' has a negative source`);C=!0}else if(m[e]===`raw`)S=!0;else throw r(`set '${t.name}' has unknown space '${m[e]}'`);if(h[e])try{t.calibration=Ce.parse(h[e])}catch(e){throw r(`set '${t.name}' has a bad calibration: ${e instanceof Error?e.message:String(e)}`)}x.set(t.name,b.sets.length),b.sets.push(t)}if(S&&d===0||C&&f===0)throw r(`a set space has no dimension`);for(let t=0;t<g.length;t++){let n=g[t],i=n.indexOf(`.`);if(i<0||i+1>=n.length)throw r(`bad direction id '${n}'`);let a=n.slice(0,i),o=n.slice(i+1),s=x.get(a);if(s===void 0)throw r(`direction '${n}' names an unknown set`);if(_[t]!==`named`&&_[t]!==`axis`)throw r(`direction '${n}' has unknown kind`);let c=b.sets[s].hidden,l=`steer.dir.${t}`,u=e.tensors.get(l),p=e.shapes.get(l),m=c?f:d;if(!u||!p||p.length!==1||p[0]!==m)throw r(`tensor ${l} is missing or is not F32 [${m}]`);for(let e of u)if(!Number.isFinite(e))throw r(`tensor ${l} has non-finite values`);b.dirs.push({id:n,set:a,name:o,axis:_[t]===`axis`,hidden:c,source:b.sets[s].source,vec:u})}if(Ee(b),b.index.size!==b.dirs.length)throw r(`duplicate direction ids`);try{let e=JSON.parse(v);if(!Oe(e))throw Error(`timing is not an object`);let t=/* @__PURE__ */ new Map;for(let[n,i]of Object.entries(e)){if(!b.index.has(n))throw r(`timing for unknown direction '${n}'`);if(!Array.isArray(i)||i.length===0)throw Error(`empty timing table`);let e=[];for(let t of i){if(!Array.isArray(t)||t.length!==2||typeof t[0]!=`number`||typeof t[1]!=`number`)throw Error(`bad timing pair`);e.push([t[0],t[1]])}e.sort((e,t)=>e[0]-t[0]),t.set(n,e)}for(let e of we(t))b.timing.set(e,t.get(e));if(!Oe(JSON.parse(y)))throw Error(`ui is not an object`)}catch(e){throw e instanceof Error&&e.message.startsWith(`'${n}' is not a valid`)?e:r(`bad timing/ui JSON: ${e instanceof Error?e.message:String(e)}`)}let w=a(`zonos3_steer.rate_extension`);if(w){let e=null;try{let t=JSON.parse(w);if(Oe(t)&&Object.keys(t).length>0){if(typeof t.direction!=`string`)throw Error(`direction is not a string`);let n=t.direction,i=b.index.get(n);if(i===void 0||!b.dirs[i].hidden)throw r(`rate_extension direction '${n}' is not a hidden direction of the bundle`);let a=/* @__PURE__ */ new Map;if(!Oe(t.languages))throw Error(`languages is not an object`);for(let[e,n]of Object.entries(t.languages)){if(!Oe(n))throw Error(`bad language doses`);let t=/* @__PURE__ */ new Map;for(let[e,r]of Object.entries(n)){if(typeof r!=`number`)throw Error(`bad dose`);t.set(parseInt(e,10),r)}a.set(e,t)}let o=t.reference_sides;e={direction:n,rowEdges:ke(t.row_edges,`row_edges`),below:ke(t.below,`below`),above:ke(t.above,`above`),doses:a,referenceSides:Array.isArray(o)?o.map(String):[`slower`,`faster`]}}}catch(e){throw e instanceof Error&&e.message.startsWith(`'${n}' is not a valid`)?e:r(`bad rate_extension JSON: ${e instanceof Error?e.message:String(e)}`)}b.rateExtension=e}let T=a(`zonos3_steer.steer_release`);if(T)try{let e=JSON.parse(T),t=Oe(e)?Object.keys(e):[];if(!Oe(e)||![`onset_seconds`,`ramp_seconds`,`hold`].every(e=>t.includes(e))||t.some(e=>!Me.includes(e)))throw Error(`expected {onset_seconds, ramp_seconds, hold, exempt?}`);let{onset_seconds:n,ramp_seconds:i,hold:a}=e;if(typeof n!=`number`||typeof i!=`number`||typeof a!=`number`)throw Error(`onset_seconds, ramp_seconds and hold must be numbers`);let o=e.exempt??[];if(!Array.isArray(o)||!o.every(e=>typeof e==`string`))throw Error(`exempt is not a string array`);Pe(n,i,a);for(let e of o){let t=b.index.get(e);if(t===void 0||!b.dirs[t].hidden)throw r(`steer_release exempts '${e}', which is not a hidden direction of the bundle`)}b.steerRelease={onsetSeconds:n,rampSeconds:i,hold:a,exempt:o}}catch(e){throw e instanceof Error&&e.message.startsWith(`'${n}' is not a valid`)?e:r(`bad steer_release JSON: ${e instanceof Error?e.message:String(e)}`)}if(b.hiddenSize&&b.hiddenSize!==t.nEmbd)throw Error(`steering hidden directions have ${b.hiddenSize} values; the backbone hidden size is ${t.nEmbd}`);if(b.speakerDim&&b.speakerDim!==t.speakerDim)throw Error(`steering speaker directions have ${b.speakerDim} values; the backbone speaker embedding has ${t.speakerDim}`);for(let e of b.sources)if(e>2*t.nLayer)throw Error(`steering source ${e} is outside the backbone's Full AttnRes bank (0..${2*t.nLayer})`);return b}function je(e,t){let n={};for(let t of e.sets){let e={space:t.hidden?`attnres_source`:`raw`,modes:t.hidden?[`embedding`,`reference`]:[`embedding`]};t.hidden&&(e.source_index=t.source),t.calibration&&(e.calibration=t.calibration.document()),n[t.name]=e}let r={};for(let t of e.dirs){let e=0;for(let n of t.vec)e+=n*n;let n={set:t.set,space:t.hidden?`attnres_source`:`raw`,kind:t.axis?`axis`:`named`,norm:Math.sqrt(e)};t.hidden||(n.vector=Array.from(t.vec)),r[t.id]=n}return{bundle:e.name,embedding_dim:t,sets:n,directions:r,timing:JSON.parse(e.timingJson),ui:JSON.parse(e.uiJson),steer_release:Fe(e)}}const Me=[`onset_seconds`,`ramp_seconds`,`hold`,`exempt`];function Ne(e){return Number.isNaN(e)?`nan`:Number.isFinite(e)?Number.isInteger(e)?e.toFixed(1):String(e):e>0?`inf`:`-inf`}function Pe(e,t,n){if(!(Number.isFinite(n)&&n>=0&&n<=1))throw Error(`steer_hold must be in [0, 1], got ${Ne(n)}.`);for(let[n,r]of[[`steer_onset_seconds`,e],[`steer_ramp_seconds`,t]])if(!(Number.isFinite(r)&&r>=0))throw Error(`${n} must be finite and >= 0, got ${Ne(r)}.`)}function Fe(e){let t=e?.steerRelease;return t?{onset_seconds:t.onsetSeconds,ramp_seconds:t.rampSeconds,hold:t.hold,exempt:t.exempt.slice()}:null}function Ie(e,t,n,r,i){let a=e?.steerRelease;if(!a){if(t===null||t===1)return null;throw Error(e?`steer_hold below 1 needs a steering bundle with steer_release; this server's bundle has none.`:`${Se}; steer_hold below 1 needs its steer_release.`)}let o=t??a.hold,s=n??a.onsetSeconds,c=r??a.rampSeconds;return Pe(s,c,o),o===1?null:{onset:Be(s*i),ramp:Be(c*i),hold:o}}function Le(e,t){if(!e)return[];let n=[];for(let r of e.sets){if(!r.calibration)continue;let i=e.dirs.filter(e=>e.set===r.name).map(e=>e.name);for(let e of r.calibration.disabled(t,i))n.push(`${r.name}.${e}`)}return n}function Re(e,t){let n=1;for(let[r,i]of e.timing){let e=t.get(r);e!==void 0&&e!==0&&(n*=De(i,e))}return n}function ze(e){let t=0;for(let n of e)t++;return t}function Be(e){let t=Math.round(e);return Math.abs(e%1)===.5&&t%2!=0?t-1:t}function Ve(e,t,n,r,i,a,o=null){let s=new Te;s.sources=e.sources.slice(),s.hiddenSize=e.hiddenSize;let c=/* @__PURE__ */ new Map;for(let e of we(t))t[e]!==0&&c.set(e,t[e]);let l=e=>/* @__PURE__ */ Error(`Unknown control '${e}'; see /v2/controls.`);for(let t of c.keys())if(!e.index.has(t))throw l(t);for(let t of n)for(let n of we(t.controls))if(!e.index.has(n))throw l(n);for(let[e,t]of c)if(!Number.isFinite(t))throw Error(`Control '${e}' must be finite.`);let u=e.sources.length,d=e.hiddenSize,f=t=>{let n=0;for(;n<u&&e.sources[n]<t;)n++;return n},p=t=>{let n=null;for(let[r,i]of t){if(i===0)continue;let t=e.dirs[e.index.get(r)];if(!t.hidden)continue;n??=new Float32Array(u*d);let a=f(t.source)*d,o=I(i);for(let e=0;e<d;e++)n[a+e]+=I(o*t.vec[e])}return n},m=[];for(let t of c.keys())e.dirs[e.index.get(t)].hidden||m.push(t);if(m.length){if(!a)throw Error(`Controls ${m.join(`, `)} move the speaker embedding and need speaker_mode=embedding.`);let t=a,n=new Float32Array(t.length);for(let r of m){let i=e.dirs[e.index.get(r)];if(i.vec.length!==t.length)throw Error(`Control '${r}' has dim ${i.vec.length}, the speaker embedding has ${t.length}.`);let a=I(c.get(r));for(let e=0;e<t.length;e++)n[e]+=I(a*i.vec[e])}let r=0,i=0;for(let e=0;e<t.length;e++)n[e]+=t[e],r+=t[e]*t[e],i+=n[e]*n[e];let o=I(Math.sqrt(r)/Math.max(Math.sqrt(i),1e-8));for(let e=0;e<t.length;e++)t[e]=n[e]*o}if(!o)s.hidden=p(c);else{let t=e.steerRelease?.exempt??[],n=/* @__PURE__ */ new Map,r=/* @__PURE__ */ new Map;for(let[e,i]of c)(t.includes(e)?n:r).set(e,i);s.hidden=p(n),s.release=p(r),s.release&&(s.releaseFrames={...o})}if(n.length===0)return s;let h=(i>0?i:1)*Re(e,c);if(!(h>0))throw Error(`control_span_rate must be positive.`);let g=[];for(let t of n){let n={start:t.start,end:t.end,doses:/* @__PURE__ */ new Map};for(let e of we(t.controls))t.controls[e]!==0&&n.doses.set(e,t.controls[e]);if(!(0<=t.start&&t.start<t.end&&t.end<=r))throw Error(`control span [${t.start}, ${t.end}) is outside the text (0..${r}).`);for(let[t,r]of n.doses){if(!Number.isFinite(r))throw Error(`Control '${t}' must be finite.`);if(!e.dirs[e.index.get(t)].hidden)throw Error(`Control '${t}' moves the speaker embedding and cannot vary inside a request; only hidden-space controls take spans.`)}g.push(n)}g.sort((e,t)=>e.start===t.start?e.end-t.end:e.start-t.start);for(let e=1;e<g.length;e++)if(g[e].start<g[e-1].end)throw Error(`control spans [${g[e-1].start}, ${g[e-1].end}) and [${g[e].start}, ...) overlap.`);let _=new Float64Array(r+1),v=new Float64Array(r).fill(h);for(let t of g){let n=h*Re(e,t.doses);for(let e=t.start;e<t.end;e++)v[e]=n}for(let e=0;e<r;e++)_[e+1]=_[e]+v[e];for(let e of g){let t=p(e.doses);t&&s.spans.push({start:Be(_[e.start]),end:Be(_[e.end]),ramp:3,delta:t,charStart:e.start,charEnd:e.end})}return s}function He(e,t){let n=e.length,r=new Uint8Array(44+n*2),i=new DataView(r.buffer),a=(e,t)=>{for(let n=0;n<t.length;n++)r[e+n]=t.charCodeAt(n)};a(0,`RIFF`),i.setUint32(4,36+n*2,!0),a(8,`WAVE`),a(12,`fmt `),i.setUint32(16,16,!0),i.setUint16(20,1,!0),i.setUint16(22,1,!0),i.setUint32(24,t,!0),i.setUint32(28,t*2,!0),i.setUint16(32,2,!0),i.setUint16(34,16,!0),a(36,`data`),i.setUint32(40,n*2,!0);for(let t=0;t<n;t++){let n=e[t];if(Number.isNaN(n))continue;let r=Math.fround(Math.min(1,Math.max(-1,n))*32767),a=Math.round(r);Math.abs(r%1)===.5&&a%2!=0&&--a,i.setInt16(44+t*2,a,!0)}return r}const Ue={openapi:`3.1.0`,info:{title:`ZONOS3 HTTP API`,version:`2.0.0`,description:'The HTTP API of both ZONOS3 servers: the CUDA server (`servers/sgl`, `python -m zonos3_sgl`) and the ggml server\n(`servers/ggml`, `zonos3-server`). The native API lives under `/v2/`; the OpenAI-compatible routes stay under\n`/v1/`. Every other path belongs to Zonos Voice Studio.\n\n**Studio serving rule.** It applies to requests whose path matches no API route (the servers register it after\nevery API route).\n- `GET|HEAD /` returns the studio\'s `index.html` (the page that offers the Voice Studio and the lite page) with\n  `Cache-Control: no-store, max-age=0`. A missing `index.html` is a 404\n  `{"detail": "The studio is not built (pnpm --dir studio build)."}`.\n- `GET|HEAD /<path>` returns the file `<studio dir>/<path>` when it resolves inside the studio dir and is a\n  file; else the page `<studio dir>/<path>.html` when that is a file (`/studio` is `studio.html`, the Voice\n  Studio; `/lite` is `lite.html`); otherwise a 404 `{"detail": "Not Found"}`. The file\'s path inside the studio dir\n  picks its cache header: under `assets/` (content-hashed) `Cache-Control: public, max-age=31536000, immutable`;\n  a page (`*.html`), `sw.js` or `manifest.webmanifest` `Cache-Control: no-store, max-age=0`; any other file\n  (icons, the in-browser engine, `theme-boot.js`) `Cache-Control: no-cache`.\n- Paths under `/v1/` and `/v2/` are never served from the studio dir. There is no SPA fallback (the studio routes\n  with the URL hash). Any other method on such a path is a 404 `{"detail": "Not Found"}`.\n\n**Status codes.** Anything expressible in a request schema (types, enums, ranges, required and unknown fields) is\na 422 `ValidationError`. State- or semantics-dependent errors (unknown voice, a feature this server or checkpoint\nlacks, a CFG combination, LACI without heads, `stream: true` with `format: "wav"`, ...) are a 400 `Error`.\nUnknown resources on resource paths are a 404. Project errors may add `missing`, `revision` or `sha256` to the\n`Error` body.\n\n**Sessions.** `X-TTS-Session-ID` scopes the speaker cache: `POST /v2/speakers` writes into the session, and\n`GET /v2/speakers` and every `speaker_*_id` field read the session\'s voices (default voices are always visible).\n\n**Keepalive.** `X-Keepalive: 1` on `POST /v2/edit`, `/v2/edit/transcribe`, `/v2/edit/align` and the POST paths a\nplugin lists answers 200 at once with `x-keepalive: 1`, sends a space byte every 10 s while the request runs, then\nthe JSON body (leading whitespace is valid JSON). An error arrives in that body as\n`{"detail": ..., "status_code": <status>}`.\n\n**Access.** When the server runs with `ZONOS3_ACCESS_TOKEN`, every request needs the token: `Authorization:\nBearer <token>`, the HttpOnly cookie `zonos3_access`, or once `GET /?access_token=<token>`, which answers 303 to\n`/` and sets that cookie. A failure is a 403 `text/plain` `Access denied`. Then `/v2/media/*` successes carry\n`Cache-Control: private, max-age=31536000, immutable`, every other response `Cache-Control: no-store`, and all\nresponses `Referrer-Policy: no-referrer`.\n\n**CORS.** Every origin is allowed (`*`); the exposed response headers are `X-Audio-Sample-Rate`,\n`X-Audio-Channels`, `X-Audio-Format`, `X-Control-Span-Follow`, `X-Seed` and `X-Decoder`.\n\n**Plugins.** A server started with `--plugins N...` mounts each plugin\'s routes (listed in\n`Capabilities.plugins`). Plugin `N` serves only `/v2/N/*` and `/N`, `/N/*` (ahead of the studio serving rule);\nthose paths are documented in the plugin\'s own repository, e.g. https://github.com/Zyphra/ZONOS3-dub.\n'},paths:/* @__PURE__ */ JSON.parse('{"/v2/health":{"get":{"operationId":"health","summary":"Liveness","responses":{"200":{"description":"The server is up.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Health"}}}}}}},"/v1/models":{"get":{"operationId":"listModels","summary":"OpenAI-compatible model list","responses":{"200":{"description":"The one served model.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ModelList"}}}}}}},"/v1/audio/speech":{"post":{"operationId":"createSpeech","summary":"OpenAI-compatible speech","description":"`pcm` streams raw float32 PCM; `wav` is buffered. A non-null `voice` must be a speaker id of\\n`GET /v2/speakers` and is used as `speaker_embedding_id` (unknown: 400 `unknown voice \'<v>\'`); it cannot be\\ncombined with any `speaker_*` input field (400).\\n","parameters":[{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeechRequest"}}}},"responses":{"200":{"$ref":"#/components/responses/Audio"},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/generate":{"post":{"operationId":"generate","summary":"Synthesize speech","description":"`format: \\"pcm\\"` returns float32 little-endian mono PCM at 44100 Hz, chunked when `stream` is true.\\n`format: \\"wav\\"` returns a buffered 16-bit PCM mono WAV (samples clipped to [-1, 1]) and needs\\n`stream: false` (else 400). `X-Seed` echoes the seed used (drawn uniformly in 0..2^31-1 when `seed` is null).\\n`X-Control-Span-Follow` says which schedule placed `control_spans` (`rate` or `reading`) and is sent when\\n`control_spans` is set.\\n","parameters":[{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/GenerateRequest"}}}},"responses":{"200":{"$ref":"#/components/responses/Audio"},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/capabilities":{"get":{"operationId":"capabilities","summary":"Feature flags of the loaded checkpoint and server","responses":{"200":{"description":"Capabilities.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Capabilities"}}}}}}},"/v2/controls":{"get":{"operationId":"controls","summary":"The steering bundle\'s controls document","responses":{"200":{"description":"Controls document.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ControlsDocument"}}}},"404":{"$ref":"#/components/responses/NotFound"}}}},"/v2/speakers":{"get":{"operationId":"listSpeakers","summary":"Default voices and the session\'s cached voices","parameters":[{"$ref":"#/components/parameters/SessionId"}],"responses":{"200":{"description":"Speakers.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeakerList"}}}}}},"post":{"operationId":"createSpeaker","summary":"Cache a voice in the session","description":"Exactly one of `speaker_audio_base64` (a clip) or `speaker_embedding_base64` (a `.npy`/`.npz` embedding) is\\nrequired (else 400). `X-TTS-Session-ID` is required (400 without it).\\n","parameters":[{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeakerCreateRequest"}}}},"responses":{"200":{"description":"The cached voice.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Speaker"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/speakers/{speaker_id}/preview":{"get":{"operationId":"speakerPreview","summary":"A voice\'s preview audio","parameters":[{"$ref":"#/components/parameters/SpeakerId"},{"$ref":"#/components/parameters/SessionId"}],"responses":{"200":{"description":"The voice\'s audio.","content":{"audio/*":{"schema":{"type":"string","format":"binary"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/speakers/{speaker_id}/embedding":{"get":{"operationId":"speakerEmbedding","summary":"A voice\'s speaker embedding","parameters":[{"$ref":"#/components/parameters/SpeakerId"},{"$ref":"#/components/parameters/SessionId"}],"responses":{"200":{"description":"The embedding (values rounded to 6 decimals).","content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeakerEmbedding"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/phonemize":{"post":{"operationId":"phonemize","summary":"Gold-lexicon IPA for the words of a text","description":"With `guess`, espeak-ng fills ambiguous and unknown words of the `phonemize_guess_languages`. On a\\nphoneme-token checkpoint, a pronunciation with a symbol outside its inventory is returned as `unsupported`\\nwith no `ipa`. 404 when the server has no lexicon.\\n","requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/PhonemizeRequest"}}}},"responses":{"200":{"description":"Segments whose texts concatenate to the input.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/PhonemizeResponse"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"422":{"$ref":"#/components/responses/Unprocessable"}}}},"/v2/edit/transcribe":{"post":{"operationId":"editTranscribe","summary":"Qwen3-ASR transcript of the audio to edit and its FuseAlign word timings","description":"Needs speech recognition (capabilities `edit_transcribe`). Without it the server answers 503 with the detail\\n\\"Speech recognition is not available on this server: send the transcript to /v2/edit/align instead\\".\\n","parameters":[{"$ref":"#/components/parameters/Keepalive"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditTranscribeRequest"}}}},"responses":{"200":{"description":"Transcript.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditTranscript"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"503":{"$ref":"#/components/responses/Unavailable"}}}},"/v2/edit/align":{"post":{"operationId":"editAlign","summary":"FuseAlign forced alignment of the audio to a text","parameters":[{"$ref":"#/components/parameters/Keepalive"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditAlignRequest"}}}},"responses":{"200":{"description":"Word timings.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditTranscript"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"503":{"$ref":"#/components/responses/Unavailable"}}}},"/v2/edit":{"post":{"operationId":"edit","summary":"Edit recorded speech so it says target_text","description":"Regions come from `spans` ([start, end] seconds) when given, otherwise from a word diff between\\n`original_text` (Qwen3-ASR recognition when omitted) and `target_text` over a FuseAlign alignment. Each region is one\\nspan-end-terminated generation; unedited codec frames are kept exactly. A server without speech recognition\\n(capabilities `edit_transcribe` false) needs `original_text` whenever the clip\'s words are read (no `spans`, or a\\nclip longer than `max_context_seconds`) and refuses `verify`: 503 \\"Speech recognition is not available on this\\nserver: ...\\" (the detail names the fix), before any generation.\\n","parameters":[{"$ref":"#/components/parameters/Keepalive"},{"$ref":"#/components/parameters/SessionId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditRequest"}}}},"responses":{"200":{"description":"The edit and its takes.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EditResponse"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"},"503":{"$ref":"#/components/responses/Unavailable"}}}},"/v2/projects":{"get":{"operationId":"listProjects","summary":"Studio projects stored on the server","description":"Sorted by `updated_at` descending, then `id`. 404 when server-side projects are disabled.","responses":{"200":{"description":"Project summaries.","content":{"application/json":{"schema":{"type":"array","items":{"$ref":"#/components/schemas/ProjectSummary"}}}}},"404":{"$ref":"#/components/responses/NotFound"}}}},"/v2/projects/gc":{"post":{"operationId":"gcProjects","summary":"Delete media no project references","parameters":[{"name":"min_age_seconds","in":"query","required":false,"description":"Only blobs whose last write is older than this are removed.","schema":{"type":"number","minimum":0,"default":3600}}],"responses":{"200":{"description":"GC result.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectGcResult"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"422":{"$ref":"#/components/responses/Unprocessable"},"500":{"$ref":"#/components/responses/ServerError"}}}},"/v2/projects/{project_id}":{"parameters":[{"$ref":"#/components/parameters/ProjectId"}],"get":{"operationId":"getProject","summary":"A stored project","responses":{"200":{"description":"The project.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Project"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"}}},"put":{"operationId":"putProject","summary":"Save a project","description":"`base_revision` must equal the stored revision (null for a new project), else 409 with the stored\\n`revision`. Every `data.media` key must be uploaded first (else 400 with `missing`).\\n","requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectPutRequest"}}}},"responses":{"200":{"description":"Saved.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectSaved"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"409":{"$ref":"#/components/responses/Conflict"},"413":{"$ref":"#/components/responses/TooLarge"},"422":{"$ref":"#/components/responses/Unprocessable"}}},"delete":{"operationId":"deleteProject","summary":"Delete a project","responses":{"200":{"description":"Deleted.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectDeleted"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"}}}},"/v2/media/{sha256}":{"parameters":[{"$ref":"#/components/parameters/Sha256"}],"get":{"operationId":"getMedia","summary":"A content-addressed media blob","description":"`ETag: \\"<sha256>\\"`; an `If-None-Match` naming the hash answers 304. `Cache-Control: public,\\nmax-age=31536000, immutable` (`private, ...` with an access token).\\n","responses":{"200":{"description":"The blob, with its stored media type.","content":{"*/*":{"schema":{"type":"string","format":"binary"}}}},"304":{"description":"Not modified."},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"}}},"head":{"operationId":"headMedia","summary":"Whether a media blob is stored","responses":{"200":{"description":"Stored."},"304":{"description":"Not modified."},"400":{"description":"Invalid hash."},"404":{"description":"Not stored."}}},"put":{"operationId":"putMedia","summary":"Upload a media blob addressed by its SHA-256","parameters":[{"name":"type","in":"query","required":false,"description":"Media type to store (default the request\'s Content-Type).","schema":{"type":"string","maxLength":200}}],"requestBody":{"required":true,"content":{"*/*":{"schema":{"type":"string","format":"binary"}}}},"responses":{"200":{"description":"Already stored (the body is not read).","content":{"application/json":{"schema":{"$ref":"#/components/schemas/MediaStored"}}}},"201":{"description":"Stored.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/MediaStored"}}}},"400":{"$ref":"#/components/responses/BadRequest"},"404":{"$ref":"#/components/responses/NotFound"},"413":{"$ref":"#/components/responses/TooLarge"}}}}}'),components:/* @__PURE__ */ JSON.parse('{"parameters":{"SessionId":{"name":"X-TTS-Session-ID","in":"header","required":false,"description":"Scopes speaker-cache writes and reads.","schema":{"type":"string"}},"Keepalive":{"name":"X-Keepalive","in":"header","required":false,"description":"`1`: answer 200 at once and send a space every 10 s until the JSON body (errors as `{detail, status_code}`).","schema":{"type":"string","enum":["1"]}},"SpeakerId":{"name":"speaker_id","in":"path","required":true,"schema":{"type":"string"}},"ProjectId":{"name":"project_id","in":"path","required":true,"schema":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}},"Sha256":{"name":"sha256","in":"path","required":true,"schema":{"type":"string","pattern":"^[0-9a-f]{64}$"}}},"headers":{"SampleRate":{"description":"44100","schema":{"type":"integer"}},"Channels":{"description":"1 (mono)","schema":{"type":"integer"}},"AudioFormat":{"description":"`float32` (pcm) or `pcm16` (wav).","schema":{"type":"string"}},"Seed":{"description":"The seed used.","schema":{"type":"integer"}},"Decoder":{"description":"The id of the decoder that made the audio (`Capabilities.decoders`).","schema":{"type":"string"}},"SpanFollow":{"description":"Which schedule placed `control_spans`.","schema":{"type":"string","enum":["rate","reading"]}}},"responses":{"Audio":{"description":"Audio.","headers":{"X-Audio-Sample-Rate":{"$ref":"#/components/headers/SampleRate"},"X-Audio-Channels":{"$ref":"#/components/headers/Channels"},"X-Audio-Format":{"$ref":"#/components/headers/AudioFormat"},"X-Seed":{"$ref":"#/components/headers/Seed"},"X-Decoder":{"$ref":"#/components/headers/Decoder"},"X-Control-Span-Follow":{"$ref":"#/components/headers/SpanFollow"}},"content":{"audio/pcm":{"schema":{"type":"string","format":"binary","description":"float32 little-endian mono at 44100 Hz"}},"audio/wav":{"schema":{"type":"string","format":"binary","description":"16-bit PCM mono WAV at 44100 Hz"}}}},"BadRequest":{"description":"A state- or semantics-dependent error.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"NotFound":{"description":"Unknown resource, or a feature this server does not serve.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"Conflict":{"description":"The stored revision differs from `base_revision`.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"TooLarge":{"description":"The upload exceeds the server\'s limit.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"Unprocessable":{"description":"The request does not match its schema.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ValidationError"}}}},"ServerError":{"description":"The request failed inside the server.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"Unavailable":{"description":"A helper worker (Qwen3-ASR, FuseAlign, a plugin\'s worker, the ggml server\'s Python host) is unavailable, or the\\nrequest needs speech recognition on a server without it (detail \\"Speech recognition is not available on this\\nserver: \\" followed by the fix, e.g. \\"send the clip\'s transcript as original_text\\").\\n","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}},"schemas":{"Error":{"type":"object","required":["detail"],"properties":{"detail":{"type":"string"},"missing":{"description":"PUT /v2/projects: media hashes not uploaded yet.","type":"array","items":{"type":"string"}},"revision":{"description":"409: the stored revision (null when the project does not exist).","type":["integer","null"]},"sha256":{"description":"PUT /v2/media: the hash of the content actually sent.","type":"string"}}},"ValidationError":{"type":"object","required":["detail"],"properties":{"detail":{"type":"array","items":{"type":"object","required":["loc","msg","type"],"properties":{"loc":{"type":"array","items":{"type":["string","integer"]}},"msg":{"type":"string"},"type":{"type":"string"}}}}}},"Health":{"type":"object","required":["status"],"properties":{"status":{"type":"string","enum":["ok"]}}},"ModelList":{"type":"object","required":["object","data"],"properties":{"object":{"type":"string","enum":["list"]},"data":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["id","object","created","owned_by","root"],"properties":{"id":{"type":"string","enum":["zonos3"]},"object":{"type":"string","enum":["model"]},"created":{"type":"integer","enum":[0]},"owned_by":{"type":"string","enum":["zyphra"]},"root":{"type":"string","description":"The served checkpoint\'s base name (its directory or GGUF file name)."}}}}}},"ControlSpan":{"type":"object","additionalProperties":false,"required":["start","end","controls"],"description":"Hidden-space controls over the characters [start, end) of the request\'s text.","properties":{"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":0},"controls":{"type":"object","additionalProperties":{"type":"number"}}}},"ConditionBuckets":{"description":"Condition-row bucket ids per name (`loudness`, `fmax`, `speaking_rate`: 0..n-1 with n =\\ncondition_tokens.bucket_counts[name], null = unknown) as an object, or a list in the checkpoint\'s order.\\nRefused (400) on checkpoints without condition rows.\\n","oneOf":[{"type":"object","additionalProperties":{"type":["integer","null"]}},{"type":"array","items":{"type":["integer","null"]}},{"type":"null"}]},"ConditionValues":{"description":"Raw condition values (LUFS / Hz / UTF-8 bytes per second) mapped through the checkpoint\'s edges; bucket ids\\nin `condition_buckets` win per name.\\n","oneOf":[{"type":"object","additionalProperties":{"type":["number","null"]}},{"type":"array","items":{"type":["number","null"]}},{"type":"null"}]},"GenerationOptions":{"description":"The generation fields shared by GenerateRequest and SpeechRequest.","type":"object","additionalProperties":false,"properties":{"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"silence_prefill_frames":{"description":"Codec-matched silence frames prefilled into the audio stream (null = the server default; 0 = off).","type":["integer","null"],"default":null},"start_immediately":{"description":"Put the checkpoint\'s start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).","type":"boolean","default":false},"decode_context":{"description":"Decode the generated frames behind the last decode_context_frames of the reference prompt.","type":"boolean","default":false},"decode_context_frames":{"type":"integer","default":30},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"max_tokens":{"description":"Frame budget (null = the checkpoint\'s limit).","type":["integer","null"],"default":null},"fade_out_ms":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"description":"Sampling seed (null = drawn by the server; echoed in X-Seed).","type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"stream_decode":{"description":"Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default).","enum":["prefix","whole",null],"default":null},"stream_codebooks":{"description":"Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry\'s `stream_codebooks.default`.","type":"integer","minimum":1,"default":1},"stream_codebooks_scope":{"description":"Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry\'s `stream_codebooks.scope`.","enum":["first","all"],"default":"first"},"speaker_mode":{"description":"Speaker path on checkpoints that carry both (null = the checkpoint default).","enum":["embedding","reference",null],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"headroom_db":{"description":"Output gain -headroom_db (null = the decoder\'s registry value), followed by the soft limiter above the generation registry\'s output_limit_dbfs (-1 dBFS).","type":["number","null"],"minimum":0,"maximum":24,"default":null},"decoder":{"description":"The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.","type":["string","null"],"default":null},"speaker_audio_base64":{"description":"A reference clip (any container ffmpeg reads; data URLs accepted).","type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_reference_codes":{"description":"Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.","type":["array","null"],"minItems":1,"items":{"type":"array","items":{"type":"integer","minimum":0}},"default":null},"speaker_embedding_base64":{"description":"A saved `.npy`/`.npz` speaker embedding.","type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null},"speaker_embedding_id":{"description":"A speaker id of GET /v2/speakers.","type":["string","null"],"default":null},"speaker_blend_embedding_id_a":{"type":["string","null"],"default":null},"speaker_blend_embedding_id_b":{"type":["string","null"],"default":null},"speaker_blend_t":{"description":"Slerp position between blend voices a (0) and b (1).","type":["number","null"],"minimum":0,"maximum":1,"default":null},"controls_cfg_scale":{"description":"Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).","type":"number","default":1.0},"speaker_cfg_scale":{"description":"Reference CFG: uncond + scale * (cond - uncond) (1 = off).","type":"number","minimum":0,"default":1.0},"accent":{"type":["string","null"],"default":null},"accent_strength":{"type":"number","default":1.0},"controls":{"description":"Steering-bundle controls \\"<set>.<direction>\\" -> dose (see GET /v2/controls).","type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"control_spans":{"type":["array","null"],"items":{"$ref":"#/components/schemas/ControlSpan"},"default":null},"control_span_rate":{"description":"Frames per character of the rate schedule (null = 1.0).","type":["number","null"],"exclusiveMinimum":0,"default":null},"control_span_follow":{"description":"`reading` makes the spans follow the alignment heads\' reading position.","type":"string","enum":["rate","reading"],"default":"rate"},"control_span_lead":{"type":["number","null"],"minimum":0,"maximum":8,"default":null},"control_span_lag":{"type":["number","null"],"minimum":-4,"maximum":8,"default":null},"steer_hold":{"description":"Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle\'s exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"description":"Steer then hold: seconds of generated speech at full dose (null = the server default).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"description":"Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"laci":{"description":"Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.","type":"boolean","default":false},"short_text":{"description":"A text of one or two words (few tokens next to its language\'s filler sentence) is generated with a 0.5 s pause marker and a filler sentence after it under LACI, on servers with the language\'s LACI heads and pause tokens, and cut at the first silent frame once the reading reaches the filler; nothing past the cut is sent. A take that runs into the filler is retaken (twice), then cut where the reading reached it. `auto` applies it to a text that qualifies (no start, pause or phoneme markers, no CFG, control spans or speech edit), `off` generates the text alone.","type":"string","enum":["auto","off"],"default":"auto"}}},"GenerateRequest":{"type":"object","additionalProperties":false,"required":["text"],"properties":{"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"silence_prefill_frames":{"description":"Codec-matched silence frames prefilled into the audio stream (null = the server default; 0 = off).","type":["integer","null"],"default":null},"start_immediately":{"description":"Put the checkpoint\'s start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).","type":"boolean","default":false},"decode_context":{"description":"Decode the generated frames behind the last decode_context_frames of the reference prompt.","type":"boolean","default":false},"decode_context_frames":{"type":"integer","default":30},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"max_tokens":{"description":"Frame budget (null = the checkpoint\'s limit).","type":["integer","null"],"default":null},"fade_out_ms":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"description":"Sampling seed (null = drawn by the server; echoed in X-Seed).","type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"stream_decode":{"description":"Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default).","enum":["prefix","whole",null],"default":null},"stream_codebooks":{"description":"Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry\'s `stream_codebooks.default`.","type":"integer","minimum":1,"default":1},"stream_codebooks_scope":{"description":"Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry\'s `stream_codebooks.scope`.","enum":["first","all"],"default":"first"},"speaker_mode":{"description":"Speaker path on checkpoints that carry both (null = the checkpoint default).","enum":["embedding","reference",null],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"headroom_db":{"description":"Output gain -headroom_db (null = the decoder\'s registry value), followed by the soft limiter above the generation registry\'s output_limit_dbfs (-1 dBFS).","type":["number","null"],"minimum":0,"maximum":24,"default":null},"decoder":{"description":"The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.","type":["string","null"],"default":null},"speaker_audio_base64":{"description":"A reference clip (any container ffmpeg reads; data URLs accepted).","type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_reference_codes":{"description":"Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.","type":["array","null"],"minItems":1,"items":{"type":"array","items":{"type":"integer","minimum":0}},"default":null},"speaker_embedding_base64":{"description":"A saved `.npy`/`.npz` speaker embedding.","type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null},"speaker_embedding_id":{"description":"A speaker id of GET /v2/speakers.","type":["string","null"],"default":null},"speaker_blend_embedding_id_a":{"type":["string","null"],"default":null},"speaker_blend_embedding_id_b":{"type":["string","null"],"default":null},"speaker_blend_t":{"description":"Slerp position between blend voices a (0) and b (1).","type":["number","null"],"minimum":0,"maximum":1,"default":null},"controls_cfg_scale":{"description":"Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).","type":"number","default":1.0},"speaker_cfg_scale":{"description":"Reference CFG: uncond + scale * (cond - uncond) (1 = off).","type":"number","minimum":0,"default":1.0},"accent":{"type":["string","null"],"default":null},"accent_strength":{"type":"number","default":1.0},"controls":{"description":"Steering-bundle controls \\"<set>.<direction>\\" -> dose (see GET /v2/controls).","type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"control_spans":{"type":["array","null"],"items":{"$ref":"#/components/schemas/ControlSpan"},"default":null},"control_span_rate":{"description":"Frames per character of the rate schedule (null = 1.0).","type":["number","null"],"exclusiveMinimum":0,"default":null},"control_span_follow":{"description":"`reading` makes the spans follow the alignment heads\' reading position.","type":"string","enum":["rate","reading"],"default":"rate"},"control_span_lead":{"type":["number","null"],"minimum":0,"maximum":8,"default":null},"control_span_lag":{"type":["number","null"],"minimum":-4,"maximum":8,"default":null},"steer_hold":{"description":"Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle\'s exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"description":"Steer then hold: seconds of generated speech at full dose (null = the server default).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"description":"Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"laci":{"description":"Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.","type":"boolean","default":false},"short_text":{"description":"A text of one or two words (few tokens next to its language\'s filler sentence) is generated with a 0.5 s pause marker and a filler sentence after it under LACI, on servers with the language\'s LACI heads and pause tokens, and cut at the first silent frame once the reading reaches the filler; nothing past the cut is sent. A take that runs into the filler is retaken (twice), then cut where the reading reached it. `auto` applies it to a text that qualifies (no start, pause or phoneme markers, no CFG, control spans or speech edit), `off` generates the text alone.","type":"string","enum":["auto","off"],"default":"auto"},"text":{"type":"string"},"stream":{"type":"boolean","default":true},"format":{"description":"`pcm`: float32 PCM; `wav`: buffered 16-bit WAV (needs stream=false).","type":"string","enum":["pcm","wav"],"default":"pcm"}}},"SpeechRequest":{"type":"object","additionalProperties":false,"required":["model","input"],"properties":{"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"silence_prefill_frames":{"description":"Codec-matched silence frames prefilled into the audio stream (null = the server default; 0 = off).","type":["integer","null"],"default":null},"start_immediately":{"description":"Put the checkpoint\'s start marker (U+E002) in front of the text: speech from the first generated frame. The silence prefill then defaults to 0 (an explicit silence_prefill_frames still applies). 400 on a checkpoint without a start token (Capabilities.start_token null).","type":"boolean","default":false},"decode_context":{"description":"Decode the generated frames behind the last decode_context_frames of the reference prompt.","type":"boolean","default":false},"decode_context_frames":{"type":"integer","default":30},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"max_tokens":{"description":"Frame budget (null = the checkpoint\'s limit).","type":["integer","null"],"default":null},"fade_out_ms":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"description":"Sampling seed (null = drawn by the server; echoed in X-Seed).","type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"stream_decode":{"description":"Streaming decode: `prefix` streams chunks of an incremental decode as frames arrive, `whole` sends one exact chunk at EOS (null = the server default).","enum":["prefix","whole",null],"default":null},"stream_codebooks":{"description":"Prefix decode: decode a frame once this many of its codebooks arrived (codebook j of frame f arrives with row f + j), the missing residual codebooks left out (a coarser RVQ decode, the frame never re-decoded); first audio comes up to n_codebooks - 1 rows earlier. n_codebooks = complete frames only; above it: 400. Default: the generation registry\'s `stream_codebooks.default`.","type":"integer","minimum":1,"default":1},"stream_codebooks_scope":{"description":"Which prefix chunks `stream_codebooks` applies to: the `first` only (later chunks wait for complete frames), or `all`. Default: the generation registry\'s `stream_codebooks.scope`.","enum":["first","all"],"default":"first"},"speaker_mode":{"description":"Speaker path on checkpoints that carry both (null = the checkpoint default).","enum":["embedding","reference",null],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"headroom_db":{"description":"Output gain -headroom_db (null = the decoder\'s registry value), followed by the soft limiter above the generation registry\'s output_limit_dbfs (-1 dBFS).","type":["number","null"],"minimum":0,"maximum":24,"default":null},"decoder":{"description":"The audio decoder, by id (`Capabilities.decoders`; null = the server default, `Capabilities.decoder`). An id the server does not serve is a 400.","type":["string","null"],"default":null},"speaker_audio_base64":{"description":"A reference clip (any container ffmpeg reads; data URLs accepted).","type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_reference_codes":{"description":"Pre-encoded reference prefix codes [[cb0..cbN], ...] for raw-reference checkpoints.","type":["array","null"],"minItems":1,"items":{"type":"array","items":{"type":"integer","minimum":0}},"default":null},"speaker_embedding_base64":{"description":"A saved `.npy`/`.npz` speaker embedding.","type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null},"speaker_embedding_id":{"description":"A speaker id of GET /v2/speakers.","type":["string","null"],"default":null},"speaker_blend_embedding_id_a":{"type":["string","null"],"default":null},"speaker_blend_embedding_id_b":{"type":["string","null"],"default":null},"speaker_blend_t":{"description":"Slerp position between blend voices a (0) and b (1).","type":["number","null"],"minimum":0,"maximum":1,"default":null},"controls_cfg_scale":{"description":"Guidance on the hidden-space delta of `controls` / `control_spans`: the twin is the same prompt without it, uncond + scale * (cond - uncond) (1 = off; needs speaker_mode=embedding).","type":"number","default":1.0},"speaker_cfg_scale":{"description":"Reference CFG: uncond + scale * (cond - uncond) (1 = off).","type":"number","minimum":0,"default":1.0},"accent":{"type":["string","null"],"default":null},"accent_strength":{"type":"number","default":1.0},"controls":{"description":"Steering-bundle controls \\"<set>.<direction>\\" -> dose (see GET /v2/controls).","type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"control_spans":{"type":["array","null"],"items":{"$ref":"#/components/schemas/ControlSpan"},"default":null},"control_span_rate":{"description":"Frames per character of the rate schedule (null = 1.0).","type":["number","null"],"exclusiveMinimum":0,"default":null},"control_span_follow":{"description":"`reading` makes the spans follow the alignment heads\' reading position.","type":"string","enum":["rate","reading"],"default":"rate"},"control_span_lead":{"type":["number","null"],"minimum":0,"maximum":8,"default":null},"control_span_lag":{"type":["number","null"],"minimum":-4,"maximum":8,"default":null},"steer_hold":{"description":"Steer then hold: the request-level hidden `controls` run at full dose for `steer_onset_seconds` of generated speech, ramp linearly to `steer_hold` x dose over `steer_ramp_seconds`, then stay there. Null = the server default (Capabilities `steer_release`); 1 = constant. control_spans, speaker-embedding (raw) controls and the bundle\'s exempt directions stay constant. Below 1 on a server whose steering bundle has no `steer_release`: 400.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"description":"Steer then hold: seconds of generated speech at full dose (null = the server default).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"description":"Steer then hold: seconds of the linear ramp from full dose to `steer_hold` (null = the server default; 0 = a step).","type":["number","null"],"minimum":0,"maximum":600,"default":null},"laci":{"description":"Guard against skips, hallucinations and truncation (servers with LACI heads). With the progressive decode (`stream_decode` prefix on a streamed response) rows reach the decoder once no rollback can change them, about one text bin behind generation (a rare deeper rollback restarts at the first row already sent). With the whole decode (`stream: false` or `stream_decode: whole`) the take is held until it is final and every rollback restarts at its own row.","type":"boolean","default":false},"short_text":{"description":"A text of one or two words (few tokens next to its language\'s filler sentence) is generated with a 0.5 s pause marker and a filler sentence after it under LACI, on servers with the language\'s LACI heads and pause tokens, and cut at the first silent frame once the reading reaches the filler; nothing past the cut is sent. A take that runs into the filler is retaken (twice), then cut where the reading reached it. `auto` applies it to a text that qualifies (no start, pause or phoneme markers, no CFG, control spans or speech edit), `off` generates the text alone.","type":"string","enum":["auto","off"],"default":"auto"},"model":{"type":"string","description":"Any value."},"input":{"type":"string"},"voice":{"description":"A speaker id of GET /v2/speakers (used as speaker_embedding_id).","type":["string","null"],"default":null},"response_format":{"type":"string","enum":["pcm","wav"],"default":"pcm"}}},"Speaker":{"type":"object","required":["id","label","source_type","scope","is_default","original_name","created_at","has_preview","speaker_modes","embedding_dim","transcript","disabled_controls"],"properties":{"id":{"type":"string"},"label":{"type":"string"},"source_type":{"type":"string","enum":["audio","embedding"]},"scope":{"type":"string","enum":["default","session"]},"is_default":{"type":"boolean"},"original_name":{"type":["string","null"]},"created_at":{"type":"number"},"has_preview":{"type":"boolean"},"speaker_modes":{"description":"The speaker modes this voice supports (an embedding voice supports `embedding` only).","type":"array","items":{"type":"string","enum":["embedding","reference"]}},"embedding_dim":{"type":["integer","null"]},"transcript":{"type":["string","null"]},"disabled_controls":{"description":"Control ids (`<set>.<direction>`, or `<set>.<direction>-` for the negative pole alone) whose set calibration gives this voice dose 0 (the UI greys them out).","type":"array","items":{"type":"string"}}}},"SpeakerList":{"type":"object","required":["speakers"],"properties":{"speakers":{"type":"array","items":{"$ref":"#/components/schemas/Speaker"}}}},"SpeakerCreateRequest":{"type":"object","additionalProperties":false,"properties":{"label":{"type":["string","null"],"default":null},"speaker_audio_base64":{"type":["string","null"],"default":null},"speaker_audio_name":{"type":["string","null"],"default":null},"speaker_embedding_base64":{"type":["string","null"],"default":null},"speaker_embedding_name":{"type":["string","null"],"default":null}}},"SpeakerEmbedding":{"type":"object","required":["id","embedding"],"properties":{"id":{"type":"string"},"embedding":{"type":"array","items":{"type":"number"}}}},"TextTokenizerSpec":{"description":"The checkpoint\'s text tokenizer (SuperBPE), with its extra rows when it has any.","type":"object","required":["kind"],"properties":{"kind":{"type":"string"},"vocab_size":{"type":"integer"},"offset":{"type":"integer"},"bos":{"type":"integer"},"eos":{"type":"integer"},"sha256":{"type":"string"},"phonemes":{"type":["object","null"],"properties":{"open_marker":{"type":"string"},"close_marker":{"type":"string"},"symbols":{"type":"array","items":{"type":"string"}}}},"start":{"description":"The start token (U+E002 first in the text) when the checkpoint has one.","type":["object","null"],"properties":{"id":{"type":"integer"},"marker":{"type":"string"}}},"pauses":{"description":"The pause tokens (U+E003 + bucket after a word) when the checkpoint has them.","type":["object","null"],"properties":{"ids":{"type":"array","items":{"type":"integer"}},"markers":{"type":"array","items":{"type":"string"}},"seconds":{"type":"array","items":{"type":"number"}}}}}},"SilencePrefill":{"oneOf":[{"type":"object","required":["available","default_frames","default_on","default_seconds","frame_seconds","codec","note"],"properties":{"available":{"type":"boolean","enum":[true]},"default_frames":{"type":"integer","minimum":0},"default_on":{"type":"boolean"},"default_seconds":{"type":"number"},"frame_seconds":{"type":"number"},"codec":{"type":"string"},"note":{"type":"string"}}},{"type":"object","required":["available","default_frames","codec"],"properties":{"available":{"type":"boolean","enum":[false]},"default_frames":{"type":"null"},"codec":{"type":"string"}}}]},"DecodeContext":{"type":"object","required":["available","default_frames","max_frames","note"],"properties":{"available":{"type":"boolean"},"default_frames":{"type":"integer"},"max_frames":{"type":"integer"},"note":{"type":"string"}}},"DecoderInfo":{"description":"An audio decoder of the matched codec. `id` is the decoder head (`keep2_plain`: the default, two layers per transformer stage; `full_mr`: the full-size head).","type":"object","required":["id","kind","label","checkpoint","expect_step","headroom_db","causal","codec"],"properties":{"id":{"type":"string"},"kind":{"type":"string"},"label":{"type":"string"},"checkpoint":{"type":"string"},"expect_step":{"type":["integer","null"]},"headroom_db":{"type":"number"},"causal":{"type":"boolean"},"codec":{"type":"string"}}},"Decoder":{"description":"The default audio decoder behind the matched codec (null when the codec has none).","oneOf":[{"$ref":"#/components/schemas/DecoderInfo"},{"type":"object","required":["codec","error"],"properties":{"codec":{"type":"string"},"error":{"type":"string"}}},{"type":"null"}]},"ConditionTokens":{"description":"The checkpoint\'s condition rows (null when it has none).","type":["object","null"],"required":["enabled","names","flags","count","bucket_counts","unknown_ids","edges","units","layout"],"properties":{"enabled":{"type":"boolean"},"names":{"type":"array","items":{"type":"string"}},"flags":{"type":"object","additionalProperties":{"type":"object"}},"count":{"type":"integer"},"bucket_counts":{"type":"object","additionalProperties":{"type":"integer"},"description":"Buckets per condition name (ids 0..n-1; n = unknown)"},"unknown_ids":{"type":"object","additionalProperties":{"type":"integer"},"description":"The unknown id per condition name (= its bucket count)"},"edges":{"type":"object","additionalProperties":{"type":"array","items":{"type":"number"}}},"units":{"type":"object","additionalProperties":{"type":"string"}},"layout":{"type":"string"}}},"PhonemeTokens":{"type":["object","null"],"required":["open_marker","close_marker","symbols"],"properties":{"open_marker":{"type":"string"},"close_marker":{"type":"string"},"symbols":{"type":"array","items":{"type":"string"}}}},"StartToken":{"description":"The checkpoint\'s start token (null without one): the marker as the first character of the text, once, asks for speech from the first generated frame (GenerationOptions.start_immediately adds it).","type":["object","null"],"required":["marker"],"properties":{"marker":{"type":"string"}}},"PauseTokens":{"description":"The checkpoint\'s pause tokens (null without them): marker j after a word and its glued punctuation asks for a pause of about seconds[j].","type":["object","null"],"required":["markers","seconds"],"properties":{"markers":{"type":"array","items":{"type":"string"}},"seconds":{"type":"array","items":{"type":"number"}}}},"ProjectsCapability":{"oneOf":[{"type":"object","required":["enabled","max_media_bytes","max_project_bytes"],"properties":{"enabled":{"type":"boolean","enum":[true]},"max_media_bytes":{"type":"integer"},"max_project_bytes":{"type":"integer"}}},{"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean","enum":[false]}}}]},"Capabilities":{"type":"object","required":["text_tokenizer_spec","text_normalization_enabled","text_norm_languages","accents","speaker_enabled","speaker_conditioning_type","speaker_embedding_dim","speaker_embedding_codec","n_codebooks","codebook_sizes","audio_codec","max_tokens","stream_decode_modes","stream_decode_default","silence_prefill","decode_context","speaker_modes","speaker_mode_default","decoder","decoders","condition_tokens","speaker_audio_upload","speaker_cfg_supported","speaker_cfg_modes","speaker_cfg_unconditional","speaker_cfg_formula","laci_languages","plugins","speaker_embedding_upload","speaker_embedding_cache","speaker_embedding_blend","default_voices_enabled","speech_editing","edit_transcribe","edit_max_spans","edit_frame_rate","edit_max_seconds","edit_align_max_seconds","phoneme_tokens","start_token","pause_tokens","phonemize_enabled","phonemize_languages","phonemize_guess_languages","projects","steer_release"],"properties":{"text_tokenizer_spec":{"oneOf":[{"$ref":"#/components/schemas/TextTokenizerSpec"},{"type":"null"}]},"text_normalization_enabled":{"type":"boolean"},"text_norm_languages":{"type":"array","items":{"type":"string"}},"accents":{"description":"Accent adapters a request can pick with `accent`.","type":"array","items":{"type":"string"}},"speaker_enabled":{"type":"boolean"},"speaker_conditioning_type":{"type":"string","enum":["raw_reference_prefix","embedding","none"]},"speaker_embedding_dim":{"type":["integer","null"]},"speaker_embedding_codec":{"type":["string","null"]},"n_codebooks":{"type":"integer"},"codebook_sizes":{"type":"array","items":{"type":"integer"}},"audio_codec":{"type":"string"},"max_tokens":{"type":"integer"},"stream_decode_modes":{"type":"array","items":{"type":"string","enum":["prefix","whole"]}},"stream_decode_default":{"enum":["prefix","whole",null]},"silence_prefill":{"$ref":"#/components/schemas/SilencePrefill"},"decode_context":{"$ref":"#/components/schemas/DecodeContext"},"speaker_modes":{"type":"array","items":{"type":"string","enum":["embedding","reference"]}},"speaker_mode_default":{"enum":["embedding","reference",null]},"decoder":{"$ref":"#/components/schemas/Decoder"},"decoders":{"description":"Every decoder a request may pick with `decoder`, the default (`decoder`) first; empty when the codec has none.","type":"array","items":{"$ref":"#/components/schemas/DecoderInfo"}},"condition_tokens":{"$ref":"#/components/schemas/ConditionTokens"},"speaker_audio_upload":{"type":"boolean"},"speaker_cfg_supported":{"type":"boolean"},"speaker_cfg_modes":{"type":"array","items":{"type":"string","enum":["embedding","reference"]}},"speaker_cfg_unconditional":{"type":"string"},"speaker_cfg_formula":{"type":"string"},"laci_languages":{"type":"array","items":{"type":"string"}},"plugins":{"type":"array","items":{"type":"string"},"description":"Server plugins mounted with --plugins; plugin N serves /v2/N/* and /N (its own spec)."},"speaker_embedding_upload":{"type":"boolean"},"speaker_embedding_cache":{"type":"boolean"},"speaker_embedding_blend":{"type":"boolean"},"default_voices_enabled":{"type":"boolean"},"speech_editing":{"type":"boolean","description":"The checkpoint edits speech (span-end and marker rows) and the server has FuseAlign and the reference encoder: /v2/edit/align and /v2/edit with the clip\'s transcript. Speech recognition is not required (edit_transcribe)."},"edit_transcribe":{"type":"boolean","description":"The server also has speech recognition (Qwen3-ASR): /v2/edit/transcribe, /v2/edit without original_text and verify. Always false when speech_editing is false; without it those answer 503."},"edit_max_spans":{"type":"integer"},"edit_frame_rate":{"type":["number","null"]},"edit_max_seconds":{"type":"number"},"edit_align_max_seconds":{"type":"number","description":"The longest clip /v2/edit/align and the alignment inside /v2/edit accept (seconds)."},"phoneme_tokens":{"$ref":"#/components/schemas/PhonemeTokens"},"start_token":{"$ref":"#/components/schemas/StartToken"},"pause_tokens":{"$ref":"#/components/schemas/PauseTokens"},"phonemize_enabled":{"type":"boolean"},"phonemize_languages":{"type":"array","items":{"type":"string"}},"phonemize_guess_languages":{"type":"array","items":{"type":"string"}},"projects":{"$ref":"#/components/schemas/ProjectsCapability"},"steer_release":{"description":"The server defaults of the request fields steer_hold / steer_onset_seconds / steer_ramp_seconds (the steering bundle\'s `steer_release`); null: the request-level controls are constant and steer_hold below 1 is refused.","oneOf":[{"$ref":"#/components/schemas/SteerRelease"},{"type":"null"}]}}},"SteerRelease":{"description":"Steer then hold: the request-level hidden controls at full dose for `onset_seconds`, a linear ramp to `hold` x dose over `ramp_seconds`, `hold` after; `exempt` directions stay constant.","type":"object","required":["onset_seconds","ramp_seconds","hold","exempt"],"properties":{"onset_seconds":{"type":"number","minimum":0},"ramp_seconds":{"type":"number","minimum":0},"hold":{"type":"number","minimum":0,"maximum":1},"exempt":{"description":"Hidden-space control ids that never release.","type":"array","items":{"type":"string"}}}},"ControlSet":{"type":"object","required":["space","modes"],"properties":{"space":{"type":"string"},"modes":{"type":"array","items":{"type":"string","enum":["embedding","reference"]}},"source_index":{"type":"integer","description":"The Full AttnRes bank source a hidden-space set steers."},"calibration":{"$ref":"#/components/schemas/ControlCalibration"}}},"ControlCalibration":{"description":"The set\'s calibration.json: per-direction doses chosen offline, keyed by direction name (a `<name>-` key: the negative pole\'s own dose). Controls stay raw doses; a client scales its sliders by these. Absent when the set has no calibration.","type":"object","required":["default","by_speaker","global_default"],"properties":{"default":{"type":"object","additionalProperties":{"type":"number"}},"by_speaker":{"description":"Per speaker id overrides of `default`; dose 0 disables the direction for that voice.","type":"object","additionalProperties":{"type":"object","additionalProperties":{"type":"number"}}},"global_default":{"type":"number","description":"The dose of a direction neither `by_speaker` nor `default` names."}}},"ControlDirection":{"type":"object","required":["set","space","kind","norm"],"properties":{"set":{"type":"string"},"space":{"type":"string"},"kind":{"type":"string","enum":["axis","named"]},"norm":{"type":"number"},"vector":{"description":"Raw-space directions only.","type":"array","items":{"type":"number"}}}},"ControlsDocument":{"type":"object","required":["bundle","embedding_dim","sets","directions","timing","ui","steer_release"],"properties":{"bundle":{"type":"string"},"embedding_dim":{"type":["integer","null"]},"sets":{"type":"object","additionalProperties":{"$ref":"#/components/schemas/ControlSet"}},"directions":{"type":"object","additionalProperties":{"$ref":"#/components/schemas/ControlDirection"}},"timing":{"type":"object","additionalProperties":{"type":"array","items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}}},"ui":{"description":"The bundle\'s studio UI metadata, passed through.","type":"object"},"steer_release":{"description":"The bundle\'s steer-then-hold defaults (as Capabilities `steer_release`); null without them.","oneOf":[{"$ref":"#/components/schemas/SteerRelease"},{"type":"null"}]}}},"PhonemizeRequest":{"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string","maxLength":5000},"language":{"type":"string","default":"en_us"},"guess":{"type":"boolean","default":true}}},"PhonemeSegment":{"type":"object","required":["text","ipa","status"],"properties":{"text":{"type":"string"},"ipa":{"type":["string","null"]},"status":{"description":"null: non-word text.","enum":["ok","ambiguous","unknown","guessed","skipped","unsupported",null]}}},"PhonemizeResponse":{"type":"object","required":["language","segments"],"properties":{"language":{"type":"string"},"segments":{"type":"array","items":{"$ref":"#/components/schemas/PhonemeSegment"}}}},"EditWordIn":{"description":"One word of the original with its timing (seconds), as /v2/edit/align returns it.","type":"object","additionalProperties":false,"required":["word","start","end"],"properties":{"word":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"},"tokens":{"type":["array","null"],"items":{"type":"string"},"default":null},"confidence":{"type":["number","null"],"default":null}}},"EditWord":{"description":"One aligned word: a whitespace word of the text (one character or Latin run in ja/cmn), its FuseAlign\\ninterval in seconds (a word FuseAlign did not place keeps its fallback interval; an overlap with the previous\\nword is split at its midpoint), `confidence` = FuseAlign\'s presence probability, and `tokens` = its edit\\ntokens (upper-cased; letters, digits and `\'` of any script kept, everything else a word break). Punctuation-only\\nwords are left out.\\n","type":"object","required":["word","start","end","confidence","tokens"],"properties":{"word":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"},"confidence":{"type":["number","null"]},"tokens":{"type":"array","items":{"type":"string"}}}},"EditTranscribeRequest":{"type":"object","additionalProperties":false,"required":["audio_base64"],"properties":{"audio_base64":{"type":"string"},"language":{"type":"string","default":"en_us","description":"The audio\'s language (server code): the Qwen3-ASR recognition language and FuseAlign\'s tokenization."}}},"EditAlignRequest":{"type":"object","additionalProperties":false,"required":["audio_base64","text"],"properties":{"audio_base64":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","default":"en_us"}}},"EditTranscript":{"type":"object","required":["text","duration","words"],"properties":{"text":{"type":"string"},"duration":{"type":"number"},"words":{"type":"array","items":{"$ref":"#/components/schemas/EditWord"}}}},"EditRequest":{"type":"object","additionalProperties":false,"required":["audio_base64","target_text"],"properties":{"audio_base64":{"type":"string"},"target_text":{"type":"string"},"original_text":{"description":"The clip\'s transcript. Omitted, it is recognized with Qwen3-ASR when the clip\'s words are needed; a server without speech recognition (edit_transcribe false) then answers 503.","type":["string","null"],"default":null},"original_words":{"description":"Checked word timings of original_text, used instead of the server\'s alignment.","type":["array","null"],"items":{"$ref":"#/components/schemas/EditWordIn"},"default":null},"spans":{"description":"Explicit regions [start, end] in seconds.","type":["array","null"],"items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}},"default":null},"margin_seconds":{"type":"number","minimum":0,"maximum":1,"default":0.08},"max_span_seconds":{"type":"number","exclusiveMinimum":0,"maximum":120,"default":30.0},"language":{"type":"string","default":"en_us"},"text_normalization":{"type":"boolean","default":true},"temperature":{"type":"number","default":0.75},"topk":{"type":"integer","default":80},"top_p":{"type":"number","default":0.69},"min_p":{"type":"number","default":0.0},"repetition_window":{"type":"integer","default":96},"repetition_penalty":{"type":"number","default":2.4},"repetition_codebooks":{"type":"integer","default":6},"seed":{"type":["integer","null"],"minimum":0,"maximum":4294967295,"default":null},"num_takes":{"type":"integer","minimum":1,"maximum":4,"default":1},"speaker_embedding":{"description":"Embed the original clip into the speaker row (null = on when the checkpoint has the row).","type":["boolean","null"],"default":null},"condition_buckets":{"$ref":"#/components/schemas/ConditionBuckets"},"condition_values":{"$ref":"#/components/schemas/ConditionValues"},"controls":{"type":["object","null"],"additionalProperties":{"type":"number"},"default":null},"region_controls":{"description":"One entry per `spans` entry; region k uses controls + region_controls[k].","type":["array","null"],"items":{"type":["object","null"],"additionalProperties":{"type":"number"}},"default":null},"steer_hold":{"description":"Steer then hold of every region\'s hidden controls, as GenerateRequest; a fill\'s frames count from its first one.","type":["number","null"],"minimum":0,"maximum":1,"default":null},"steer_onset_seconds":{"type":["number","null"],"minimum":0,"maximum":600,"default":null},"steer_ramp_seconds":{"type":["number","null"],"minimum":0,"maximum":600,"default":null},"max_context_seconds":{"type":"number","exclusiveMinimum":0,"maximum":20,"default":16.0},"context_seconds":{"type":"number","minimum":0,"maximum":10,"default":4.0},"min_fill_ratio":{"type":"number","minimum":0,"maximum":1,"default":0.7},"verify":{"description":"Transcribe each take with Qwen3-ASR and report WER/CER against target_text and the take\'s words. Needs edit_transcribe (else 503).","type":"boolean","default":false},"decoder":{"description":"The audio decoder of the edited clip, by id (`Capabilities.decoders`; null = the server default). An id the server does not serve is a 400.","type":["string","null"],"default":null}}},"EditVerify":{"type":["object","null"],"required":["asr_text","wer","cer"],"properties":{"asr_text":{"type":"string"},"wer":{"type":"number"},"cer":{"type":"number"},"groups":{"type":"array","description":"Per pronunciation group of the target, its IPA and the word heard in its place (present when the target has groups).","items":{"type":"object","required":["ipa","heard"],"properties":{"ipa":{"type":"string"},"heard":{"type":["string","null"]}}}}}},"EditTake":{"type":"object","required":["seed","audio_base64","duration","edited_regions","fill_seconds","stopped","verify","words"],"properties":{"seed":{"type":"integer"},"audio_base64":{"type":"string","description":"16-bit PCM mono WAV at 44100 Hz."},"duration":{"type":"number"},"edited_regions":{"type":"array","items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"fill_seconds":{"type":"array","items":{"type":"number"}},"stopped":{"description":"Per region, whether its fill ended on the span-end token.","type":"array","items":{"type":["boolean","null"]}},"verify":{"$ref":"#/components/schemas/EditVerify"},"words":{"type":["array","null"],"items":{"$ref":"#/components/schemas/EditWord"}}}},"EditResponse":{"type":"object","required":["sample_rate","original_text","target_text","words","spans","contexts","expected_seconds","takes"],"properties":{"sample_rate":{"type":"integer"},"original_text":{"type":["string","null"]},"target_text":{"type":"string"},"words":{"type":["array","null"],"items":{"$ref":"#/components/schemas/EditWord"}},"spans":{"type":"array","items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"contexts":{"description":"The audio the model saw per window (null when the clip was edited whole).","type":["array","null"],"items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"expected_seconds":{"type":["array","null"],"items":{"type":["number","null"]}},"takes":{"type":"array","items":{"$ref":"#/components/schemas/EditTake"}}}},"ProjectSummary":{"type":"object","required":["id","name","updated_at","revision","bytes","media_bytes","summary"],"properties":{"id":{"type":"string"},"name":{"type":["string","null"]},"updated_at":{"type":["integer","null"],"description":"Epoch milliseconds."},"revision":{"type":["integer","null"]},"bytes":{"type":"integer","description":"Size of the stored document."},"media_bytes":{"type":"integer"},"summary":{"description":"The project\'s `data.summary`, passed through."}}},"Project":{"type":"object","required":["id","name","revision","updated_at","media_bytes","data"],"properties":{"id":{"type":"string"},"name":{"type":"string"},"revision":{"type":"integer","minimum":1},"updated_at":{"type":"integer","description":"Epoch milliseconds."},"media_bytes":{"type":"integer"},"data":{"type":"object"}}},"ProjectPutRequest":{"type":"object","additionalProperties":false,"required":["name","data"],"properties":{"name":{"type":"string","minLength":1,"maxLength":200},"data":{"description":"The studio document, stored verbatim. `data.media` maps each referenced media hash to {type, size}.","type":"object","properties":{"media":{"type":"object","propertyNames":{"pattern":"^[0-9a-f]{64}$"}}}},"base_revision":{"description":"The revision this save is based on (null for a new project).","type":["integer","null"],"default":null}}},"ProjectSaved":{"type":"object","required":["id","revision","updated_at"],"properties":{"id":{"type":"string"},"revision":{"type":"integer"},"updated_at":{"type":"integer"}}},"ProjectDeleted":{"type":"object","required":["deleted"],"properties":{"deleted":{"type":"string"}}},"ProjectGcResult":{"type":"object","required":["removed","freed_bytes","kept"],"properties":{"removed":{"type":"integer"},"freed_bytes":{"type":"integer"},"kept":{"type":"integer"}}},"MediaStored":{"type":"object","required":["sha256","size","created"],"properties":{"sha256":{"type":"string"},"size":{"type":"integer"},"created":{"type":"boolean"}}}}}')}.components.schemas,We=/* @__PURE__ */ new Map;function Ge(e){for(;e.$ref;){if(!e.$ref.startsWith(`#/components/schemas/`))throw Error(`validate: unsupported $ref ${e.$ref}`);let t=Ue[e.$ref.slice(21)];if(!t)throw Error(`validate: unknown schema ${e.$ref}`);e=t}return e}function Ke(e){return e===null?`null`:Array.isArray(e)?`array`:typeof e==`number`?Number.isInteger(e)?`integer`:`number`:typeof e}function qe(e,t,n,r){let i=Ge(e),a=(e,t=n)=>r.push({loc:[`body`,...t],msg:e,type:`value_error`});if(i.type!==void 0){let e=Array.isArray(i.type)?i.type:[i.type],n=Ke(t);if(!e.some(e=>e===n||e===`number`&&n===`integer`)){a(`unexpected instance type`);return}}if(i.enum&&!i.enum.some(e=>JSON.stringify(e)===JSON.stringify(t))&&a(`instance not found in required enum`),i.oneOf){let e=0;for(let r of i.oneOf){let i=[];qe(r,t,n,i),i.length||e++}e!==1&&a(e?`more than one subschema has succeeded, but exactly one of them is required to validate`:`no subschema has succeeded, but one of them is required to validate`)}if(typeof t==`number`&&(i.minimum!==void 0&&t<i.minimum&&a(`instance is below minimum of ${i.minimum}`),i.maximum!==void 0&&t>i.maximum&&a(`instance exceeds maximum of ${i.maximum}`),i.exclusiveMinimum!==void 0&&t<=i.exclusiveMinimum&&a(`instance is below or equals minimum of ${i.exclusiveMinimum}`)),typeof t==`string`){let e=Array.from(t).length;if(i.minLength!==void 0&&e<i.minLength&&a(`instance is too short as per minLength:${i.minLength}`),i.maxLength!==void 0&&e>i.maxLength&&a(`instance is too long as per maxLength:${i.maxLength}`),i.pattern!==void 0){let e=We.get(i.pattern);e||(e=new RegExp(i.pattern,`u`),We.set(i.pattern,e)),e.test(t)||a(`instance does not match regex pattern: ${i.pattern}`)}}if(Array.isArray(t)&&(i.minItems!==void 0&&t.length<i.minItems&&a(`array has too few items`),i.maxItems!==void 0&&t.length>i.maxItems&&a(`array has too many items`),i.items&&t.forEach((e,t)=>qe(i.items,e,[...n,t],r))),typeof t==`object`&&t&&!Array.isArray(t)){let e=t;for(let t of i.required??[])t in e||a(`required property '${t}' not found in object`);for(let[t,o]of Object.entries(e)){i.propertyNames&&qe(i.propertyNames,t,[...n,t],r);let e=i.properties?.[t];e?qe(e,o,[...n,t],r):i.additionalProperties===!1?a(`validation failed for additional property '${t}': instance invalid as per false-schema`,[...n,t]):i.additionalProperties&&typeof i.additionalProperties==`object`&&qe(i.additionalProperties,o,[...n,t],r)}}}function Je(e,t){let n=Ue[e];if(!n)throw Error(`servers/api/openapi.json has no schema ${e}`);let r=[];return qe(n,t,[],r),r}var Ye=class extends Error{status;body;constructor(e,t){super(typeof t.detail==`string`?t.detail:`HTTP ${e}`),this.status=e,this.body=t}};function L(e,t){throw new Ye(e,{detail:t})}const Xe=new TextEncoder;function Ze(e,t,n=200){e.start(n,{"content-type":`application/json`}),e.chunk(Xe.encode(JSON.stringify(t))),e.end()}function Qe(e,t,n,r={}){e.start(200,{...r,"content-type":n}),e.chunk(t),e.end()}function $e(e){return e.headers[`x-tts-session-id`]?.trim()||null}function et(e,t){let n=e.body?new TextDecoder().decode(e.body):``,r;try{r=JSON.parse(n)}catch(e){let t=e instanceof SyntaxError?/position (\d+)/.exec(e.message):null;throw new Ye(422,{detail:[{loc:[`body`,t?Number(t[1]):0],msg:`JSON decode error`,type:`json_invalid`}]})}let i=Je(t,r);if(i.length)throw new Ye(422,{detail:i});return r}function R(e,t){return e[t]!==void 0&&e[t]!==null}function z(e,t,n){let r=e[t];return typeof r==`number`?r:n}function B(e,t){let n=e[t];return typeof n==`string`?n:null}function tt(e,t){let n=e[t];return typeof n==`boolean`?n:null}function nt(e,t){let n=e[t];return n==null?!1:Array.isArray(n)?n.length>0:typeof n==`object`?Object.keys(n).length>0:!!n}function rt(e){let t=e.includes(`'`)&&!e.includes(`"`)?`"`:`'`,n=t;for(let r of e)n+=r===`\\`?`\\\\`:r===t?`\\`+t:r===`
+`?`\\n`:r===`\r`?`\\r`:r===`	`?`\\t`:r;return n+t}function it(e){return`[`+e.map(rt).join(`, `)+`]`}const at=`Cached speaker operations require the X-TTS-Session-ID header.`;var ot=class{e;sessions=/* @__PURE__ */ new Map;defaults;constructor(e,t=0){this.e=e,this.defaults=e.voices.map(e=>({id:e.id,label:e.label,sourceType:`audio`,isDefault:!0,originalName:e.file.split(`/`).pop()??e.file,created:t,pcm:e.pcm,codes:e.codes,embedding:e.embedding}))}checkpointModes(){return this.e.hp.speakerDim>0?[`reference`,`embedding`]:[`reference`]}voiceModes(e){let t=[];for(let n of this.checkpointModes())e.sourceType===`embedding`?n===`embedding`&&t.push(n):t.push(n);return t}json(e){return{id:e.id,label:e.label,source_type:e.sourceType,scope:e.isDefault?`default`:`session`,is_default:e.isDefault,original_name:e.originalName,created_at:e.created,has_preview:e.isDefault?e.sourceType===`audio`&&e.pcm!==null:e.pcm!==null,speaker_modes:this.voiceModes(e),embedding_dim:this.e.hp.speakerDim>0?this.e.hp.speakerDim:null,transcript:null,disabled_controls:Le(this.e.steer,e.id)}}lookup(e,t){let n=this.defaults.find(e=>e.id===t);if(n)return n;e||L(400,at);let r=this.sessions.get(e)?.get(t);return r||L(400,`Unknown cached speaker id '${t}'.`),r}known(e,t){return this.defaults.some(e=>e.id===t)?!0:!!e&&!!this.sessions.get(e)?.has(t)}pcmOf(e){if(e.pcm)return e.pcm;e.isDefault&&L(400,`Failed to read default voice '${e.label}'.`),L(400,`Cached speaker '${e.label}' has no reference audio.`)}async voiceEmbedding(e,t){let n=this.lookup(e,t),r=this.e.hp.speakerDim;return n.embedding||=await this.embed(this.pcmOf(n)),n.embedding.length!==r&&L(400,`Cached speaker '${n.label}' has ${n.embedding.length} dimensions, but the current model expects ${r}.`),n.embedding}async voiceCodes(e,t){let n=this.lookup(e,t);return n.sourceType!==`audio`&&(n.isDefault&&L(400,`Default voice '${n.label}' is an embedding file; this checkpoint needs reference audio.`),L(400,`Cached speaker '${n.label}' has no reference audio.`)),n.codes||=await this.encode(this.pcmOf(n)),n.codes}async embed(e){let t=`speaker embedding computation failed (maximum ${_} seconds)`;(!e.length||e.length>_*a)&&L(400,t);let n;try{n=await this.e.embedSpeaker(e)}catch(e){let n=e instanceof Error?e.message:``;L(400,n.startsWith(`speaker embedding computation failed`)?n:t)}return n.length!==this.e.hp.speakerDim&&L(400,t),n.every(Number.isFinite)||L(400,`speaker embedding computation failed`),n}async encode(e){let t=`reference audio encoding failed (maximum ${_} seconds)`;(!e.length||e.length>_*a)&&L(400,t);let n;try{n=await this.e.encodeReference(e)}catch{L(400,t)}return(!n.length||n.length%10||n.length>u*10)&&L(400,t),n}async resolveRequest(e,t,n,r){let i={mode:``,codes:null,embedding:null},a=t=>(B(e,t)??``)!==``,o=a(`speaker_audio_base64`),s=a(`speaker_embedding_base64`),c=a(`speaker_embedding_id`),l=a(`speaker_blend_embedding_id_a`),d=a(`speaker_blend_embedding_id_b`),f=R(e,`speaker_reference_codes`),p=()=>dt(e,r);if(n===`reference`){if((s||l||d)&&L(400,`This checkpoint conditions on raw reference audio and does not accept speaker embedding files or embedding blends.`),f){(o||c)&&L(400,`Provide either speaker_reference_codes or a reference clip (audio or a speaker id), not both.`);let t=e.speaker_reference_codes,r=this.e.hp.nCodebooks;(!t.length||t.some(e=>e.length!==r))&&L(400,`speaker_reference_codes must be a non-empty [frames, codebooks] list`);let a=t.flat().map(Number);return a.some(e=>e<0)&&L(400,`speaker_reference_codes must be non-negative`),a.some(e=>e>=4096)&&L(400,`speaker_reference_codes must be codec ids in [0, 4095]`),i.codes=Int32Array.from(a.slice(0,u*r)),i.mode=n,i}if(c)o&&L(400,`Provide either a reference audio file or a cached speaker id, not both.`),i.codes=await this.voiceCodes(t,B(e,`speaker_embedding_id`));else if(o)i.codes=await this.encode(p());else return i;return i.mode=n,i}if(n!==`embedding`)return i;f&&L(400,`speaker_reference_codes need speaker_mode=reference.`),o&&s&&L(400,`Provide either a reference audio file or a saved embedding file, not both.`);let m=Number(o||s)+Number(c)+Number(l||d);if(m===0)return i;m>1&&L(400,`Provide speaker conditioning via upload, one cached speaker id, or two cached ids for blending.`);let h=this.e.hp.speakerDim;return l||d?(l&&d||L(400,`Provide both cached speaker ids to blend between two speakers.`),i.embedding=ft(await this.voiceEmbedding(t,B(e,`speaker_blend_embedding_id_a`)),await this.voiceEmbedding(t,B(e,`speaker_blend_embedding_id_b`)),typeof e.speaker_blend_t==`number`?e.speaker_blend_t:.5)):i.embedding=c?await this.voiceEmbedding(t,B(e,`speaker_embedding_id`)):s?gt(ut(e,`speaker_embedding_base64`),h,B(e,`speaker_embedding_name`)):await this.embed(p()),i.mode=n,i}create(e,t,n){let r=et(e,`SpeakerCreateRequest`),i=$e(e);i||L(400,at);let a={id:`spk_`+ct(12),label:``,sourceType:`audio`,isDefault:!1,originalName:null,created:n,pcm:null,codes:null,embedding:null},o=(B(r,`speaker_audio_base64`)??``)!==``;(B(r,`speaker_embedding_base64`)??``)===``?(o||L(400,`Provide an audio file to cache as the speaker reference.`),a.originalName=B(r,`speaker_audio_name`),a.pcm=dt(r,e.pcm),a.label=lt(B(r,`label`),a.originalName,`Speaker audio`)):(o&&L(400,`Provide either a reference audio file or a saved embedding file, not both.`),a.originalName=B(r,`speaker_embedding_name`),a.embedding=gt(ut(r,`speaker_embedding_base64`),this.e.hp.speakerDim,a.originalName),a.sourceType=`embedding`,a.label=lt(B(r,`label`),a.originalName,`Speaker embedding`));let s=this.sessions.get(i);s||(s=/* @__PURE__ */ new Map,this.sessions.set(i,s)),s.set(a.id,a),Ze(t,this.json(a))}list(e,t){let n=$e(e),r=[...this.defaults].sort((e,t)=>st(e.label.toLowerCase(),t.label.toLowerCase())).map(e=>this.json(e)),i=n?[...this.sessions.get(n)?.values()??[]]:[];i.sort((e,t)=>t.created-e.created);for(let e of i)r.push(this.json(e));Ze(t,{speakers:r})}preview(e,t,n){let r=this.lookup($e(e),n);r.isDefault&&r.sourceType!==`audio`&&L(400,`Default embedding speakers do not include preview audio.`),r.isDefault&&!r.pcm&&L(400,`Failed to read default voice '${r.label}'.`),r.pcm||L(404,`Cached speaker preview audio is not available.`),Qe(t,He(r.pcm,a),`audio/wav`)}async embedding(e,t,n){this.e.hp.speakerDim===0&&L(404,`No speaker embedding for ${rt(n)}.`);let r=await this.voiceEmbedding($e(e),n);Ze(t,{id:n,embedding:Array.from(r,e=>Math.round(e*1e6)/1e6)})}};function st(e,t){return e<t?-1:+(e>t)}function ct(e){let t=new Uint8Array(Math.ceil(e/2));return crypto.getRandomValues(t),Array.from(t,e=>e.toString(16).padStart(2,`0`)).join(``).slice(0,e)}function lt(e,t,n){if(e&&e.trim())return e.trim();if(t){let e=t.split(/[\\/]/).pop()??``,n=e.lastIndexOf(`.`),r=(n>0?e.slice(0,n):e).trim();if(r)return r}return n}function ut(e,t){let r=B(e,t)??``,i=r.trim();i.startsWith(`data:`)&&!i.includes(`,`)&&L(400,`Invalid data URL for ${t}.`);let a=n(r);return a||L(400,`${t} must be valid base64-encoded data.`),a}function dt(e,t){return ut(e,`speaker_audio_base64`),t&&t.length||L(400,`could not decode the reference audio (any container ffmpeg reads, at most ${_} seconds)`),t}function ft(e,t,n){let r=Math.fround;e.length!==t.length&&L(400,`Cannot blend speaker embeddings with different shapes (${e.length},) and (${t.length},).`),(n<0||n>1)&&L(400,`speaker_blend_t must be between 0.0 and 1.0.`);let i=r(n),a=0,o=0;for(let t of e)a=r(a+r(t*t));for(let e of t)o=r(o+r(e*e));a=r(r(Math.sqrt(a))+r(1e-8)),o=r(r(Math.sqrt(o))+r(1e-8));let s=0;for(let n=0;n<e.length;n++)s=r(s+r(r(e[n]/a)*r(t[n]/o)));let c=r(Math.acos(Math.min(1,Math.max(-1,s)))),l=new Float32Array(e.length);if(c<r(1e-6)){for(let n=0;n<l.length;n++)l[n]=r(r(r(1-i)*e[n])+r(i*t[n]));return l}let u=r(Math.sin(c)),d=r(r(Math.sin(r(r(1-i)*c)))/u),f=r(r(Math.sin(r(i*c)))/u);for(let n=0;n<l.length;n++)l[n]=r(r(d*e[n])+r(f*t[n]));return l}function pt(e){let t=e&32768?-1:1,n=e>>10&31,r=e&1023;return n===0?t*r*2**-24:n===31?r?NaN:t*(1/0):t*(1+r/1024)*2**(n-15)}function mt(e){let t=new DataView(e.buffer,e.byteOffset,e.byteLength);if(e.length<10||e[0]!==147||String.fromCharCode(...e.subarray(1,6))!==`NUMPY`)return`not an NPY payload`;let n=e[6],r,i;if(n===1)r=t.getUint16(8,!0),i=10;else if((n===2||n===3)&&e.length>=12)r=t.getUint32(8,!0),i=12;else return`unsupported NPY version`;if(i+r>e.length)return`truncated NPY header`;let a=String.fromCharCode(...e.subarray(i,i+r));i+=r;let o=e=>{let t=a.indexOf(`'${e}'`);return t<0?-1:a.indexOf(`:`,t)},s=o(`descr`),c=o(`fortran_order`),l=o(`shape`);if(s<0||c<0||l<0)return`invalid NPY header`;let u=a.slice(s+1).search(/[^ ]/)+s+1;if(u<=s||a[u]!==`'`&&a[u]!==`"`)return`structured NPY arrays are not supported`;let d=a.indexOf(a[u],u+1),f=a.slice(u+1,d),p=a.slice(c+1).search(/[^ ]/)+c+1,m=a.startsWith(`True`,p),h=a.indexOf(`(`,l),g=a.indexOf(`)`,l);if(h<0||g<0)return`invalid NPY shape`;let _=(a.slice(h+1,g).match(/\d+/g)??[]).map(Number),v=_.reduce((e,t)=>e*t,1);if(f.length<3||!`<|=`.includes(f[0]))return`big-endian NPY data`;let y=f[1],b=parseInt(f.slice(2),10);if(!(y===`f`&&[2,4,8].includes(b)||(y===`i`||y===`u`)&&[1,2,4,8].includes(b)||y===`b`&&b===1))return`unsupported NPY dtype `+f;if(i+v*b>e.length)return`truncated NPY data`;let x=new Float64Array(v);for(let e=0;e<v;e++){let n=i+e*b,r;r=y===`f`?b===2?pt(t.getUint16(n,!0)):b===4?t.getFloat32(n,!0):t.getFloat64(n,!0):y===`i`?b===1?t.getInt8(n):b===2?t.getInt16(n,!0):b===4?t.getInt32(n,!0):Number(t.getBigInt64(n,!0)):b===1?t.getUint8(n):b===2?t.getUint16(n,!0):b===4?t.getUint32(n,!0):Number(t.getBigUint64(n,!0)),x[e]=r}if(m&&_.length>1){let e=new Float64Array(v),t=Array(_.length).fill(0);for(let n=0;n<v;n++){let r=0,i=1;for(let e=0;e<_.length;e++)r+=t[e]*i,i*=_[e];e[n]=x[r];for(let e=_.length-1;e>=0&&!(++t[e]<_[e]);e--)t[e]=0}x=e}return{shape:_,data:x}}function ht(e){let t=new DataView(e.buffer,e.byteOffset,e.byteLength);if(e.length<22)return`not a zip archive`;let n=-1;for(let r=e.length-22;r>=0&&e.length-r<=65557;r--)if(t.getUint32(r,!0)===101010256){n=r;break}if(n<0)return`not a zip archive`;let r=t.getUint16(n+10,!0),i=t.getUint32(n+16,!0),a=[];for(let n=0;n<r;n++){if(i+46>e.length||t.getUint32(i,!0)!==33639248)return`corrupt zip directory`;let n=t.getUint16(i+10,!0),r=t.getUint32(i+20,!0),o=t.getUint16(i+28,!0),s=t.getUint16(i+30,!0),c=t.getUint16(i+32,!0),l=t.getUint32(i+42,!0),u=new TextDecoder().decode(e.subarray(i+46,i+46+o));if(i+=46+o+s+c,l+30>e.length||t.getUint32(l,!0)!==67324752)return`corrupt zip entry`;let d=l+30+t.getUint16(l+26,!0)+t.getUint16(l+28,!0);if(n!==0)return`compressed .npz archives (numpy.savez_compressed) are not supported; use numpy.savez or .npy`;if(d+r>e.length)return`truncated zip entry`;a.push([u,e.subarray(d,d+r)])}return a}function gt(e,t,n){let r=`${n||`Speaker embedding file`} must be a valid .npy or .npz file saved without pickle.`,i;if(e.length>=4&&e[0]===80&&e[1]===75){let t=ht(e);typeof t==`string`&&L(400,`${r} (${t})`);let n=t.find(([e])=>e===`emb.npy`)?.[1];!n&&t.length===1&&(n=t[0][1]),n||L(400,`Embedding archive must contain an 'emb' array or exactly one array.`),i=mt(n)}else i=mt(e);typeof i==`string`&&L(400,r);let a=i.shape.filter(e=>e!==1),o;if(a.length===1)o=Float32Array.from(i.data);else if(a.length===2){a[0]===0&&L(400,`Speaker embedding file is empty.`);let[e,t]=a;o=new Float32Array(t);for(let n=0;n<t;n++){let r=0;for(let a=0;a<e;a++)r=Math.fround(r+Math.fround(i.data[a*t+n]));o[n]=Math.fround(r/e)}}else L(400,`Unsupported embedding array shape (${a.join(`, `)}${a.length===1?`,`:``}). Expected (D,) or (N, D).`);return o.length!==t&&L(400,`Reference embedding dimension mismatch. Model expects ${t}, but loaded file has ${o.length}.`),o}const _t=/* @__PURE__ */ new Float32Array(1),vt=new Uint32Array(_t.buffer);function yt(e){return(e&2147483647)>2139095040?e:(e+32767+(e>>>16&1)&4294901760)>>>0}function bt(e){return _t[0]=e,vt[0]=yt(vt[0]),_t[0]}function xt(e){let t=new Uint32Array(e.buffer,e.byteOffset,e.length);for(let e=0;e<t.length;e++)t[e]=yt(t[e])}const St=16e3,V=Math.fround;function Ct(e,t){for(;t;)[e,t]=[t,e%t];return e}function wt(e,t){if(!(t>0)||!Number.isInteger(t))throw Error(`resampleTo16k: invalid sample rate ${t}`);if(t===16e3)return e.slice();let n=Ct(t,St),r=t/n,i=St/n,a=Math.min(r,i)*.99,o=Math.ceil(6*r/a),s=2*o+r,c=V(a),l=V(Math.PI),u=V(a/r),d=new Float32Array(i*s),f=new Int32Array(i),p=new Int32Array(i);for(let e=0;e<i;e++){let t=V(-e/i),n=s,a=0;for(let i=0;i<s;i++){let f=V((i-o)/r),p=V(V(t+f)*c);if(p<=-6||p>=6)continue;let m=V(Math.cos(V(V(V(p*l)/6)/2))),h=V(m*m);p=V(p*l);let g=p===0?1:V(V(Math.sin(p))/p);d[e*s+i]=V(g*V(h*u)),n=Math.min(n,i),a=i+1}f[e]=n,p[e]=Math.max(n,a)}let m=e.length,h=o+m+o+r,g=Math.floor((h-s)/r)+1,_=Math.min(Math.ceil(i*m/r),g*i),v=new Float32Array(_);for(let t=0;t<_;t++){let n=Math.floor(t/i),a=t-n*i,c=n*r-o,l=a*s,u=0;for(let t=f[a];t<p[a];t++){let n=c+t;n>=0&&n<m&&(u+=d[l+t]*e[n])}v[t]=u}return v}const Tt=new TextEncoder;function Et(e){return/[\p{L}\p{N}]/u.test(e)}function Dt(e){let t=Math.max(0,e.length-1);for(let n of e)t+=Tt.encode(n).length;return t}function Ot(e){let t=[1,32],n=new Uint32Array(2*e.length);return e.forEach((e,r)=>{r&&t.push(32),n[2*r]=t.length-2;for(let n of Tt.encode(e))t.push(n);n[2*r+1]=t.length-2}),{ids:Int32Array.from(t),spans:n}}function kt(e){let t=e.length,n=0;for(let r=0;r<t;r++)n+=e[r];let r=V(V(n)/t),i=new Float32Array(t),a=0;for(let n=0;n<t;n++){let t=V(e[n]-r);i[n]=t,a+=t*t}let o=V(V(Math.sqrt(V(V(a)/t)))+V(1e-5));for(let e=0;e<t;e++)i[e]=V(i[e]/o);return i}function At(e,t){return Float32Array.from({length:e/2},(n,r)=>V(t**+V(-(2*r)/e)))}function jt(e,t){return Float32Array.from({length:e/2},(n,r)=>V(1/V(t**+V(2*r/e))))}function Mt(e,t,n){let r=t.length,i=new Float32Array(e.length*r),a=new Float32Array(e.length*r);for(let o=0;o<e.length;o++)for(let s=0;s<r;s++){let c=V(e[o]*t[s]),l=Math.cos(c),u=Math.sin(c);i[o*r+s]=n?bt(l):l,a[o*r+s]=n?bt(u):u}return{cos:i,sin:a}}function Nt(e,t){let n=new Float32Array(e+t),r=V(e/Math.max(t-1,1));for(let t=0;t<e;t++)n[t]=t;for(let i=0;i<t;i++)n[e+i]=V(i*r);return n}function Pt(e,t){let n=e.slice(),r=0;for(;r<n.length;){if(n[r]!==null){r++;continue}let e=r;for(;r<n.length&&n[r]===null;)r++;let i=e?n[e-1][1]:0,a=r<n.length?n[r][0]:t,o=(a-i)/(r-e);for(let t=0;t<r-e;t++)n[e+t]=[i+t*o,e+t+1===r?a:i+(t+1)*o]}return n}function Ft(e,t,n,r,i){let a=Pt(n,i),o=a.length?a[0][0]:0,s=[],c=null,l=0;return e.forEach((e,i)=>{if(l<t.length&&t[l]===i)s.push({word:e,start:a[l][0],end:a[l][1],presence:r[l],placed:n[l]!==null}),c=a[l][1],l++;else{let t=c??o;s.push({word:e,start:t,end:t,presence:0,placed:!1}),c=t}}),s}var It={description:`The languages of every server and the studio (zonos3.languages). server: the TTS language codes requests use, in display order (label: the studio's name; nemo: the NeMo text-normalization package; lexicon: the pronunciation lexicon's ISO 639-3 code; speech: its row in spoken). spoken: the languages speech recognition, forced alignment and other references understand, by Whisper-style code (name: the Qwen3-ASR language name (Filipino for Tagalog; the English name of a language Qwen3-ASR does not recognize: speech editing aligns it but does not transcribe it); unspaced: written without spaces between words; tts: the server language that speaks it). espeak: lexicon code -> the espeak-ng voice that guesses its unknown words.`,server:[{code:`en_us`,label:`US English`,nemo:`en`,lexicon:`eng`,speech:`en`},{code:`en_gb`,label:`UK English`,nemo:`en`,lexicon:`eng`,speech:`en`},{code:`fr_fr`,label:`French`,nemo:`fr`,lexicon:`fra`,speech:`fr`},{code:`de`,label:`German`,nemo:`de`,lexicon:`deu`,speech:`de`},{code:`es`,label:`Spanish`,nemo:`es`,lexicon:`spa`,speech:`es`},{code:`it`,label:`Italian`,nemo:`it`,lexicon:`ita`,speech:`it`},{code:`pt_br`,label:`Portuguese`,nemo:`pt`,lexicon:`por`,speech:`pt`},{code:`ja`,label:`Japanese`,nemo:`ja`,lexicon:`jpn`,speech:`ja`},{code:`cmn`,label:`Mandarin`,nemo:`zh`,lexicon:`cmn`,speech:`zh`},{code:`ko`,label:`Korean`,nemo:`ko`,lexicon:`kor`,speech:`ko`},{code:`ar`,label:`Arabic`,nemo:`ar`,lexicon:`ara`,speech:`ar`},{code:`bn`,label:`Bengali`,nemo:`bn`,lexicon:`ben`,speech:`bn`},{code:`bg`,label:`Bulgarian`,nemo:`bg`,lexicon:`bul`,speech:`bg`},{code:`cs`,label:`Czech`,nemo:`cs`,lexicon:`ces`,speech:`cs`},{code:`da`,label:`Danish`,nemo:`da`,lexicon:`dan`,speech:`da`},{code:`nl`,label:`Dutch`,nemo:`nl`,lexicon:`nld`,speech:`nl`},{code:`fi`,label:`Finnish`,nemo:`fi`,lexicon:`fin`,speech:`fi`},{code:`ka`,label:`Georgian`,nemo:`ka`,lexicon:`kat`,speech:`ka`},{code:`el`,label:`Greek`,nemo:`el`,lexicon:`ell`,speech:`el`},{code:`gu`,label:`Gujarati`,nemo:`gu`,lexicon:`guj`,speech:`gu`},{code:`he`,label:`Hebrew`,nemo:`he`,lexicon:`heb`,speech:`he`},{code:`hi`,label:`Hindi`,nemo:`hi`,lexicon:`hin`,speech:`hi`},{code:`hu`,label:`Hungarian`,nemo:`hu`,lexicon:`hun`,speech:`hu`},{code:`id`,label:`Indonesian`,nemo:`id`,lexicon:`ind`,speech:`id`},{code:`kn`,label:`Kannada`,nemo:`kn`,lexicon:`kan`,speech:`kn`},{code:`ms`,label:`Malay`,nemo:`ms`,lexicon:`msa`,speech:`ms`},{code:`ml`,label:`Malayalam`,nemo:`ml`,lexicon:`mal`,speech:`ml`},{code:`mr`,label:`Marathi`,nemo:`mr`,lexicon:`mar`,speech:`mr`},{code:`no`,label:`Norwegian`,nemo:`nb`,lexicon:`nob`,speech:`no`},{code:`or`,label:`Odia`,nemo:`or`,lexicon:`ori`,speech:`or`},{code:`pl`,label:`Polish`,nemo:`pl`,lexicon:`pol`,speech:`pl`},{code:`pa`,label:`Punjabi`,nemo:`pa`,lexicon:`pan`,speech:`pa`},{code:`ro`,label:`Romanian`,nemo:`ro`,lexicon:`ron`,speech:`ro`},{code:`ru`,label:`Russian`,nemo:`ru`,lexicon:`rus`,speech:`ru`},{code:`sk`,label:`Slovak`,nemo:`sk`,lexicon:`slk`,speech:`sk`},{code:`sv`,label:`Swedish`,nemo:`sv`,lexicon:`swe`,speech:`sv`},{code:`tl`,label:`Tagalog`,nemo:`tl`,lexicon:`tgl`,speech:`tl`},{code:`ta`,label:`Tamil`,nemo:`ta`,lexicon:`tam`,speech:`ta`},{code:`te`,label:`Telugu`,nemo:`te`,lexicon:`tel`,speech:`te`},{code:`th`,label:`Thai`,nemo:`th`,lexicon:`tha`,speech:`th`},{code:`tr`,label:`Turkish`,nemo:`tr`,lexicon:`tur`,speech:`tr`},{code:`uk`,label:`Ukrainian`,nemo:`uk`,lexicon:`ukr`,speech:`uk`},{code:`ur`,label:`Urdu`,nemo:`ur`,lexicon:`urd`,speech:`ur`},{code:`vi`,label:`Vietnamese`,nemo:`vi`,lexicon:`vie`,speech:`vi`}],spoken:[{code:`en`,name:`English`,tts:`en_us`},{code:`fr`,name:`French`,tts:`fr_fr`},{code:`de`,name:`German`,tts:`de`},{code:`es`,name:`Spanish`,tts:`es`},{code:`it`,name:`Italian`,tts:`it`},{code:`pt`,name:`Portuguese`,tts:`pt_br`},{code:`ja`,name:`Japanese`,tts:`ja`,unspaced:!0},{code:`zh`,name:`Chinese`,tts:`cmn`,unspaced:!0},{code:`ko`,name:`Korean`,tts:`ko`},{code:`ru`,name:`Russian`,tts:`ru`},{code:`yue`,name:`Cantonese`,unspaced:!0},{code:`ar`,name:`Arabic`,tts:`ar`},{code:`bn`,name:`Bengali`,tts:`bn`},{code:`bg`,name:`Bulgarian`,tts:`bg`},{code:`cs`,name:`Czech`,tts:`cs`},{code:`da`,name:`Danish`,tts:`da`},{code:`nl`,name:`Dutch`,tts:`nl`},{code:`fi`,name:`Finnish`,tts:`fi`},{code:`ka`,name:`Georgian`,tts:`ka`},{code:`el`,name:`Greek`,tts:`el`},{code:`gu`,name:`Gujarati`,tts:`gu`},{code:`he`,name:`Hebrew`,tts:`he`},{code:`hi`,name:`Hindi`,tts:`hi`},{code:`hu`,name:`Hungarian`,tts:`hu`},{code:`id`,name:`Indonesian`,tts:`id`},{code:`kn`,name:`Kannada`,tts:`kn`},{code:`ms`,name:`Malay`,tts:`ms`},{code:`ml`,name:`Malayalam`,tts:`ml`},{code:`mr`,name:`Marathi`,tts:`mr`},{code:`no`,name:`Norwegian`,tts:`no`},{code:`or`,name:`Odia`,tts:`or`},{code:`pl`,name:`Polish`,tts:`pl`},{code:`pa`,name:`Punjabi`,tts:`pa`},{code:`ro`,name:`Romanian`,tts:`ro`},{code:`sk`,name:`Slovak`,tts:`sk`},{code:`sv`,name:`Swedish`,tts:`sv`},{code:`tl`,name:`Filipino`,tts:`tl`},{code:`ta`,name:`Tamil`,tts:`ta`},{code:`te`,name:`Telugu`,tts:`te`},{code:`th`,name:`Thai`,tts:`th`},{code:`tr`,name:`Turkish`,tts:`tr`},{code:`uk`,name:`Ukrainian`,tts:`uk`},{code:`ur`,name:`Urdu`,tts:`ur`},{code:`vi`,name:`Vietnamese`,tts:`vi`}],espeak:{eng:`en-us`,deu:`de`,fra:`fr`,spa:`es-419`,ita:`it`,por:`pt-br`,nld:`nl`,pol:`pl`,ces:`cs`,swe:`sv`,fin:`fi`,dan:`da`,nob:`nb`,isl:`is`,hun:`hu`,ron:`ro`,cat:`ca`,tur:`tr`,ind:`id`,msa:`ms`,rus:`ru`,ukr:`uk`,ell:`el`,heb:`he`,ara:`ar`,fas:`fa`,hin:`hi`}};const Lt=`opus_dual_3n_600k_sched600k_r4096_step600000`,Rt=It.server.map(e=>e.code);function zt(e){return{id:e.id,kind:`istft_mr`,label:`Multi-resolution iSTFT head (${e.checkpoint}); causal`,checkpoint:e.checkpoint,expect_step:null,headroom_db:e.headroomDb,causal:!0,codec:Lt}}function Bt(e){let t=Math.fround(e);for(let e=1;e<10;e++){let n=Number(t.toPrecision(e));if(Math.fround(n)===t)return n}return t}const Vt={frames:s,on:!0};function Ht(e){return[...e.laci.keys()].sort()}const Ut=[];function Wt(e){if(!e.edit)return 0;let t=e.edit.hp;return t.textExtraTokens-ae(t.textMarkers)}function Gt(e){let t=e.hp;if(t.nCond===0)return null;let n={},r={},i={},a=`[reference prefix | speaker row]`;return t.condNames.forEach((e,o)=>{n[e]=(t.condEdges[o]??[]).map(Bt),i[e]=t.condBucketCounts[o],o<t.condUnits.length&&(r[e]=t.condUnits[o]),a+=`[${e}]`}),{enabled:!0,names:t.condNames,flags:{},count:t.nCond,bucket_counts:i,unknown_ids:{...i},edges:n,units:r,layout:a+` BOS text EOS`}}function Kt(e,t){let n=e.hp,r=n.textMarkers,i=n.speakerDim>0,o=t.length>0,s=Vt.frames;return{text_tokenizer_spec:JSON.parse(n.textTokenizerSpec),text_normalization_enabled:!1,text_norm_languages:Rt,accents:Ut,speaker_enabled:t.length>0,speaker_conditioning_type:`raw_reference_prefix`,speaker_embedding_dim:i?n.speakerDim:null,speaker_embedding_codec:i?`ownmect_s2`:null,n_codebooks:n.nCodebooks,codebook_sizes:Array(n.nCodebooks).fill(4096),audio_codec:Lt,max_tokens:d,stream_decode_modes:[`prefix`,`whole`],stream_decode_default:`prefix`,silence_prefill:{available:!0,default_frames:s,default_on:Vt.on,default_seconds:Math.round(s*m/a*1e3)/1e3,frame_seconds:m/a,codec:Lt,note:`codec-matched silence frames open the audio stream before the model starts (their audio is not emitted); a request without silence_prefill_frames gets the server default, silence_prefill_frames=0 turns it off and silence_prefill_frames=N sets the length`},decode_context:{available:!0,default_frames:l,max_frames:450,note:`decode the generated frames behind the last decode_context_frames of the raw-reference prompt (their audio dropped), so the first generated frame is not the decoder's position 0; no-op without a reference prompt`},speaker_modes:t,speaker_mode_default:t.length?t[0]:null,decoder:zt(e.decoders[0]),decoders:e.decoders.map(zt),condition_tokens:Gt(e),speaker_audio_upload:t.length>0,speaker_cfg_supported:o,speaker_cfg_modes:o?t:[],speaker_cfg_unconditional:`remove_reference_prefix_or_speaker_row_condition_rows_unknown_keep_text_and_generated_history`,speaker_cfg_formula:`uncond + scale * (cond - uncond)`,laci_languages:Ht(e),plugins:[],speaker_embedding_upload:i,speaker_embedding_cache:t.length>0,speaker_embedding_blend:i,default_voices_enabled:!0,projects:{enabled:!1},steer_release:Fe(e.steer),speech_editing:e.edit!==null&&Wt(e)>0,edit_transcribe:!1,edit_max_spans:Wt(e),edit_frame_rate:e.edit?a/m:null,edit_max_seconds:v,edit_align_max_seconds:30,phoneme_tokens:r.phonemes?{open_marker:r.phonemes.open,close_marker:r.phonemes.close,symbols:r.phonemes.symbols}:null,start_token:r.start?{marker:r.start.marker}:null,pause_tokens:r.pauses?{markers:r.pauses.markers,seconds:r.pauses.seconds}:null,phonemize_enabled:!1,phonemize_languages:[],phonemize_guess_languages:[]}}function qt(e,t,n){if(t!==null){if(n===null)throw Error(`region_controls needs explicit spans (one entry per span).`);if(t.length!==n.length)throw Error(`region_controls has ${t.length} entries for ${n.length} spans; send one per span (null for none).`)}let r=[];for(let i=0;i<(n===null?1:n.length);i++){let n=new Map(Object.entries(e??{}));for(let[e,r]of Object.entries(t?.[i]??{}))n.set(e,(n.get(e)??0)+r);r.push(Object.fromEntries([...n].filter(([,e])=>e!==0)))}return r.some(e=>Object.keys(e).length>0)?r:null}var Jt=class{mt=/* @__PURE__ */ new Uint32Array(624);idx=625;constructor(e){this.mt[0]=e>>>0;for(let e=1;e<624;e++){let t=this.mt[e-1]^this.mt[e-1]>>>30;this.mt[e]=Math.imul(1812433253,t)+e>>>0}this.idx=624}next(){let e=this.mt;if(this.idx>=624){for(let t=0;t<624;t++){let n=e[t]&2147483648|e[(t+1)%624]&2147483647,r=e[(t+397)%624]^n>>>1;n&1&&(r^=2567483615),e[t]=r>>>0}this.idx=0}let t=e[this.idx++];return t^=t>>>11,t^=t<<7&2636928640,t^=t<<15&4022730752,t^=t>>>18,t>>>0}};function Yt(e){return(e.next()+e.next()*4294967296)/0x10000000000000000}function Xt(){return{temperature:o.temperature,top_k:o.topk,top_p:o.top_p,min_p:o.min_p,rep_penalty:o.repetition_penalty,rep_window:o.repetition_window,rep_codebooks:o.repetition_codebooks,seed:0,greedy:!1}}function Zt(e,t={}){let n=t.spanEnd===!0||t.spanEndStop===!0,r=e-(n?3:2);if(r<1)throw Error(`sampler: vocabulary of ${e} has no audio codes`);let i=n?r+2:-1;return{codebookSize:r,eoaId:r,padId:r+1,spanEndId:i,stopId:t.spanEndStop?i:r}}function Qt(e,t,n,r,i=/* @__PURE__ */ new Int32Array(160),a=!1){i.fill(0);for(let o=0;o<10;o++)for(let s=0;s<r;s++){let r=n+s+o;if(r>=t&&a&&o>0){i[o*16+s]=-1;continue}let c=r<t?e[r*10+o]:4097;i[o*16+s]=Math.min(Math.max(c,0),4095)}return i}function $t(e=0){return{prefill:e,step:0,eosFrame:-1,countdown:-1,done:!1,codes:[],nextIds:/* @__PURE__ */ new Int32Array(11)}}function en(e){return e.prefill+e.step}function tn(e,t,n,r){let i=en(e),a=Array.from({length:10},(e,n)=>t[n]);for(let t of a)e.codes.push(t);let o=-1;for(let e=0;e<10;e++)a[e]===n&&(o=e);e.eosFrame<0&&o>=0&&(e.eosFrame=Math.max(0,i-o),e.countdown=11);let s=e.countdown>0&&--e.countdown===0;for(let t=0;t<10;t++)e.nextIds[t]=a[t];return e.nextIds[10]=de,e.step+=1,(s||e.step>=r)&&(e.done=!0),a}const nn=Math.fround(10**(y/20)),rn=Math.fround(1-nn);function an(e,t){let n=new Float32Array(e.length);for(let r=0;r<e.length;r++){let i=t===1?e[r]:Math.fround(e[r]*t),a=Math.abs(i);n[r]=a>nn?Math.sign(i)*Math.fround(nn+rn*Math.tanh((a-nn)/rn)):i}return n}function on(e,t,n){if(!e.length||e.length>n)throw Error(`Edit requires between one and max_spans regions`);let r=-1;for(let[n,i]of e){if(n<0||i<1||n+i>t||n<=r)throw Error(`Edit spans must be ascending, separated and within the audio`);r=n+i}}function sn(e,t){if(e.length%t)throw Error(`Invalid codec frame shape`);return e.length/t}function cn(e,t,n){let r=t.nCodebooks,i=r+1,a=sn(e,r),o=a+(n===null?0:1)+r-1,s=new Int32Array(o*i).fill(t.audioPadId);for(let c=0;c<o;c++){s[c*i+r]=t.textVocab;for(let t=0;t<r;t++){let o=c-t;o>=0&&o<a?s[c*i+t]=e[o*r+t]:o===a&&n!==null&&(s[c*i+t]=n)}}return s}function ln(e){let t=new Int32Array(e.reduce((e,t)=>e+t.length,0)),n=0;for(let r of e)t.set(r,n),n+=r.length;return t}function un(e,t,n,r,i,a){let o=i.nCodebooks;if(a!==i.audioPadId+1)throw Error(`span_end_id must equal audio_pad_id + 1`);if(on(n,sn(t,o),n.length),r.length>=n.length)throw Error(`Prompt needs an ungenerated span`);let s=e=>{let t=new Int32Array(o+1).fill(i.audioPadId);return t[o]=i.textVocab+1+e,t},c=[e],l=0;return n.forEach(([e,n],r)=>{e>l&&c.push(cn(t.subarray(l*o,e*o),i,null)),c.push(s(r)),l=e+n}),c.push(cn(t.subarray(l*o),i,i.audioPadId-1)),r.forEach((e,t)=>c.push(s(t),cn(e,i,a))),c.push(s(r.length)),ln(c)}function dn(e,t,n,r){let i=r.length,a=sn(e,i),o=Math.min(a,Math.max(0,t??a-(i-1))),s=!1;for(let t=0;t<o&&!s;t++)for(let c=0;c<i;c++){let l=t+c<a?e[(t+c)*i+c]:n;if(l<0||l>=r[c]){s=!0,o=t;break}}let c=new Int32Array(o*i);for(let t=0;t<o;t++)for(let n=0;n<i;n++)c[t*i+n]=e[(t+n)*i+n];return{fill:c,ended:t!==null&&!s}}function fn(e,t,n,r){let i=r;if(on(t,sn(e,i),t.length),n.length!==t.length)throw Error(`One fill is required per span`);let a=[],o=0;return t.forEach(([t,r],s)=>{if(n[s].length%i)throw Error(`Invalid fill shape`);a.push(e.subarray(o*i,t*i),n[s]),o=t+r}),a.push(e.subarray(o*i)),ln(a)}function pn(e,t,n){if(t.spanEndId===null)throw Error(`the backbone has no span-end token`);let r=he(e,n.text,{speakerEmbedding:n.speakerEmbedding??void 0,buckets:n.buckets,silencePrefill:0},t),i=un(r.ids,n.windowCodes,n.spans,n.fills,{nCodebooks:t.nCodebooks,audioPadId:t.audioPad,textVocab:t.textVocab},t.spanEndId);return{...r,ids:i,nRows:i.length/(t.nCodebooks+1)}}async function mn(e,t,n,r,i){let a=Zt(t.audioVocab,{spanEndStop:!0}).stopId,o=$t(0);await e.prefill(0,n.ids,n.cond),e.startSampling({sp:r.sampling,vocab:{spanEndStop:!0},minFrames:r.minFrames,cfgScale:null});let s=await e.sampleFirst(en(o));for(;;){if(i())throw Error(`aborted`);if(tn(o,s,a,r.maxFrames),o.done)break;s=(await e.stepSample(en(o),r.steering?.at(o.step)??null,null,null)).frame}return dn(Int32Array.from(o.codes.slice(0,Math.max(0,o.codes.length-10))),o.eosFrame>=0?o.eosFrame:null,t.audioPad,Array(10).fill(4096))}async function hn(e,t,n){let r=t.length/10,i=r+10-1,a=new Int32Array(i*10).fill(n);for(let e=0;e<r;e++)for(let n=0;n<10;n++)a[(e+n)*10+n]=t[e*10+n];e.reset();let o=[];for(let t=0;t<r;t+=16){let n=Math.min(16,r-t);o.push(await e.chunk(Qt(a,i,t,n),t,n))}o.push(await e.flush());let s=new Float32Array(o.reduce((e,t)=>e+t.length,0)),c=0;for(let e of o)s.set(e,c),c+=e.length;return an(s,e.gain)}function gn(e){return e>=9&&e<=13||e>=28&&e<=32||e===133||e===160||e===5760||e>=8192&&e<=8202||e===8232||e===8233||e===8239||e===8287||e===12288}const _n=e=>gn(e.codePointAt(0));function vn(e){let t=[],n=``;for(let r of e)_n(r)?(n&&t.push(n),n=``):n+=r;return n&&t.push(n),t}function yn(e){let t=Array.from(e),n=0,r=t.length;for(;n<r&&_n(t[n]);)n++;for(;r>n&&_n(t[r-1]);)r--;return n===0&&r===t.length?e:t.slice(n,r).join(``)}function bn(e){let t=0;for(let n of e)t++;return t}function xn(e){let t=Math.floor(e),n=e-t;return n>.5?t+1:n<.5||t%2==0?t:t+1}function Sn(e,t){let n=e.toFixed(t);if(!Number.isFinite(e))return n;let r=Math.abs(e).toFixed(100),i=r.indexOf(`.`);if(!/^50*$/.test(r.slice(i+1+t)))return n;let a=r.slice(0,t?i+1+t:i);return Number(a.at(-1))%2==0?(e<0?`-`:``)+a:n}function Cn(e){let t=0,n=0,r=0,i=!1;for(let a of e){if(!i){if(a.int){t+=a.value;continue}n=t+a.value,i=!0;continue}if(a.int){n+=a.value;continue}let e=a.value,o=n+e;r+=Math.abs(n)>=Math.abs(e)?n-o+e:e-o+n,n=o}return i?r&&Number.isFinite(r)?n+r:n:t}function wn(e){return Cn((function*(){for(let t of e)yield{value:t,int:!1}})())}const Tn=/(\ue000[^\ue000\ue001]*\ue001)/u,En=/[\u2018\u2019\u201b\u02bc]/g,Dn=/[^\p{L}\p{N}']+/gu;function On(e){return e.replace(En,`'`).replaceAll(`_`,` `).toUpperCase().replace(Dn,` `).trim()}function kn(e){return vn(On(e)).flatMap(Ln)}const An=new Set(It.spoken.filter(e=>`unspaced`in e&&e.unspaced).map(e=>e.code)),jn=`\\u3005\\u3007\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff\\u31f0-\\u31ff\\uff66-\\uff9f`,Mn=RegExp(`[${jn}]+`,`gu`),Nn=RegExp(`^[${jn}]$`,`u`),Pn=new Intl.Segmenter(`und`,{granularity:`word`}),Fn=/^[\p{L}\p{N}']$/u;function In(e){return[...Pn.segment(e)].filter(e=>e.isWordLike).map(e=>[e.index,e.index+e.segment.length])}function Ln(e){let t=[],n=0;for(let r of e.matchAll(Mn)){r.index>n&&t.push(e.slice(n,r.index));for(let[e,n]of In(r[0]))t.push(r[0].slice(e,n));n=r.index+r[0].length}return n<e.length&&t.push(e.slice(n)),t}function Rn(e){let t=Array.from(e),n=/* @__PURE__ */ new Set,r=/* @__PURE__ */ new Set,i=/* @__PURE__ */ new Set;for(let e=0;e<t.length;){if(!Nn.test(t[e])){e++;continue}let a=e;for(;a<t.length&&Nn.test(t[a]);)n.add(a++);for(let[n,o]of In(t.slice(e,a).join(``))){r.add(e+n);for(let t=e+n;t<e+o;t++)i.add(t)}e=a}let a=[],o=null,s=-1,c=e=>{a.length?a[a.length-1][1]=e+1:o??=e};return t.forEach((e,t)=>{gn(e.codePointAt(0))||(n.has(t)?(s=-1,r.has(t)?a.push([t,t+1]):i.has(t)?a[a.length-1][1]=t+1:c(t)):Fn.test(e)?(s===t?a[a.length-1][1]=t+1:a.push([t,t+1]),s=t+1):c(t))}),a.length&&o!==null&&(a[0][0]=o),a.map(([e,n])=>t.slice(e,n).join(``))}function zn(e,t){return An.has(t)?Rn(e).map(e=>vn(e).join(``)).filter(Boolean):vn(e)}function Bn(e){return e.startsWith(``)&&e.endsWith(``)}function Vn(e){return Bn(e)?{value:1.4*(bn(e)-2),int:!1}:{value:bn(e),int:!0}}function Hn(e){let t=vn(e);if(!e.includes(``))return[kn(e),...t.map(kn)];let n=t.map(e=>e.split(Tn).filter(Boolean).flatMap(e=>Bn(e)?[e]:kn(e)));return[n.flat(),...n]}function Un(e,t){if(e.length!==t.length)throw Error(`One token list is needed per aligned word.`);let n=[];e.forEach((e,r)=>{t[r].length&&n.push({word:e.word,start:e.start,end:e.end,confidence:e.presence,tokens:[...t[r]]})});for(let e=1;e<n.length;e++){let t=n[e-1],r=n[e];r.start<t.end&&(t.end=r.start=(t.end+r.start)/2)}return n}function Wn(e,t,n,r){if(!e.length)throw Error(`original_words is empty.`);if(e[0].start<0)throw Error(`original_words[0] (${rt(e[0].word)}) starts before the clip.`);let i=0;e.forEach((e,t)=>{let{start:n,end:a}=e,o=`original_words[${t}] (${rt(e.word)})`;if(!Number.isFinite(n)||!Number.isFinite(a))throw Error(`${o} has a non-finite time.`);if(!(n<a))throw Error(`${o} must start before it ends (${Sn(n,3)} >= ${Sn(a,3)}).`);if(n<i-1e-6)throw Error(`${o} starts at ${Sn(n,3)} s, before the previous word ends (${Sn(i,3)} s).`);if(a>r+.001)throw Error(`${o} ends at ${Sn(a,3)} s, after the clip (${Sn(r,3)} s).`);i=a});let a=t.flat();if(!(a.length===n.length&&a.every((e,t)=>e===n[t]))){let e=Math.min(a.length,n.length),t=0;for(;t<e&&a[t]===n[t];)t++;let r=e=>e.slice(Math.max(0,t-2),t+3).join(` `)||`(nothing)`;throw Error(`original_words do not spell original_text: they read ${rt(r(a))} where the text reads ${rt(r(n))} (normalized).`)}return e.slice(0,t.length).map((e,n)=>({word:e.word,start:e.start,end:e.end,confidence:e.confidence??null,tokens:[...t[n]]}))}function Gn(e,t,n=15){return e.map(([e,r])=>{let i=Math.max(0,Math.floor(e*n+1e-6));return[i,Math.min(t,Math.ceil(r*n-1e-6))-i]})}function Kn(e,t){let n=/* @__PURE__ */ new Map;t.forEach((e,t)=>{let r=n.get(e);r?r.push(t):n.set(e,[t])});let r=(t,r,i,a)=>{let o=t,s=i,c=0,l=/* @__PURE__ */ new Map;for(let u=t;u<r;u++){let t=/* @__PURE__ */ new Map;for(let r of n.get(e[u])??[]){if(r<i)continue;if(r>=a)break;let e=(l.get(r-1)??0)+1;t.set(r,e),e>c&&([o,s,c]=[u-e+1,r-e+1,e])}l=t}return[o,s,c]},i=[],a=[[0,e.length,0,t.length]];for(;a.length;){let[e,t,n,o]=a.pop(),[s,c,l]=r(e,t,n,o);l&&(i.push([s,c,l]),e<s&&n<c&&a.push([e,s,n,c]),s+l<t&&c+l<o&&a.push([s+l,t,c+l,o]))}i.sort((e,t)=>e[0]-t[0]||e[1]-t[1]||e[2]-t[2]);let o=[],[s,c,l]=[0,0,0];for(let[e,t,n]of i)s+l===e&&c+l===t?l+=n:(l&&o.push([s,c,l]),[s,c,l]=[e,t,n]);l&&o.push([s,c,l]),o.push([e.length,t.length,0]);let u=[],d=0,f=0;for(let[e,t,n]of o){let r=d<e&&f<t?`replace`:d<e?`delete`:f<t?`insert`:null;r&&u.push([r,d,e,f,t]),d=e+n,f=t+n,n&&u.push([`equal`,e,d,t,f])}return u}function qn(e,t,n){let{totalFrames:r,frameRate:i=15,marginSeconds:a=.08,minGapFrames:o=5,maxSpans:s=3}=n,c=e.flatMap(e=>e.tokens.map(t=>({token:t,w:e}))),l=[],u=[];for(let[e,n,s,d,f]of Kn(c.map(e=>e.token),t)){if(e===`equal`)continue;let t,p;n===s?(t=n?c[n-1].w.end:0,p=n<c.length?c[n].w.start:r/i):(t=c[n].w.start,p=c[s-1].w.end);let m=Math.min(r-1,Math.max(0,Math.floor((t-a)*i))),h=Math.max(m+1,Math.min(r,Math.ceil((p+a)*i))),g=l.at(-1);g&&m-(g[0]+g[1])<o?g[1]=Math.max(h,g[0]+g[1])-g[0]:l.push([m,h-m]);for(let e=d;e<f;e++)u.push(e)}if(!l.length)throw Error(`target text equals the original transcript`);if(l.length>s)throw Error(`edit touches ${l.length} regions; at most ${s} are supported`);return{spans:l,newTargetTokens:u}}var Jn=class{words;origStart=[0];tgtStart=[0];ops;constructor(e,t,n){if(this.words=e,n.length!==t.length)throw Error(`One token list is needed per target word.`);for(let t of e)this.origStart.push(this.origStart.at(-1)+t.tokens.length);for(let e of n)this.tgtStart.push(this.tgtStart.at(-1)+e.length);this.ops=Kn(e.flatMap(e=>e.tokens),n.flat())}targetCut(e,t){let n=t?this.ops:[...this.ops].reverse();for(let[r,i,a,o,s]of n){if(i<e&&e<a)return r===`equal`?o+e-i:null;if((t?i:a)===e)return t?o:s}return e===0?0:this.tgtStart.at(-1)}targetWord(e,t){let n=this.targetCut(this.origStart[e],t);if(n===null)return null;let r=[];return this.tgtStart.forEach((e,t)=>{e===n&&r.push(t)}),r.length?t?r[0]:r.at(-1):null}clean(e,t){for(;e>0&&this.targetWord(e,!0)===null;)e--;for(;t<this.words.length&&this.targetWord(t,!1)===null;)t++;return[e,t]}targetRange(e,t){return[this.targetWord(e,!0),this.targetWord(t,!1)]}};function Yn(e,t,n){return e.slice(t??0,n??e.length)}function Xn(e,t,n){return{start:0,end:t,regions:e.map((e,t)=>t),text:n}}function Zn(e,t){return e.regions.map(n=>[t[n][0]-e.start,t[n][1]])}function Qn(e,t,n,r,i){let{totalFrames:a,frameRate:o=15,contextSeconds:s=4,targetText:c=null}=i,l=t.length;if(!l)throw Error(`The aligner found no words in the audio, so the edit cannot be windowed.`);let u=new Jn(t,n,r),d=e=>e===0?0:e===l?a:Math.min(a,xn((t[e-1].end+t[e].start)/2*o)),f=e.map(([e,n],r)=>{let i=e/o-s,a=(e+n)/o+s,c=t.findIndex(e=>e.end>i);c<0&&(c=l);let d=0;for(let e=l-1;e>=0;e--)if(t[e].start<a){d=e+1;break}return[...u.clean(c,Math.max(c,d)),[r]]}),p=([t,n,r])=>[Math.min(d(t),...r.map(t=>e[t][0])),Math.max(d(n),...r.map(t=>e[t][0]+e[t][1]))];f.sort((e,t)=>e[0]-t[0]||e[1]-t[1]);let m=[f[0]];for(let e of f.slice(1)){let t=m.at(-1);e[0]<t[1]||p(e)[0]<p(t)[1]?(t[0]=Math.min(t[0],e[0]),t[1]=Math.max(t[1],e[1]),t[2]=[...t[2],...e[2]].sort((e,t)=>e-t)):m.push(e)}return m.map(([e,t,r])=>{let[i,a]=p([e,t,r]);return{start:i,end:a,regions:r,text:e===0&&t===l&&c!==null?c:Yn(n,...u.targetRange(e,t)).join(` `)}})}function $n(e,t,n,r,i=15){let a=new Jn(t,n,r),o=e=>Cn(e.flatMap(e=>e.map(Vn))),s=wn(t.map(e=>e.end-e.start)),c=s>0?o(t.map(e=>e.tokens))/s:0,l=t.map(e=>(e.start+e.end)/2);return e.map(([e,n])=>{let s=e/i,u=(e+n)/i,d=l.flatMap((e,t)=>s<=e&&e<u?[t]:[]),f=d.length?d[0]:l.findIndex(e=>e>=s);f<0&&(f=t.length);let[p,m]=a.clean(f,d.length?d.at(-1)+1:f),h=o(t.slice(p,m).map(e=>e.tokens)),g=o(Yn(r,...a.targetRange(p,m)));return h?(u-s)*g/h:c>0?g/c:u-s})}function er(e,t){if(t<=0)return{argmax:-1,centroid:0};let n=0,r=0,i=0;for(let a=0;a<t;a++)e[a]>e[n]&&(n=a),r+=e[a],i+=e[a]*a;return{argmax:n,centroid:Math.fround(i/Math.max(r,1e-30))}}function tr(e,t=10,n=2,r=3){let i=t+1,a=i-1,o=Math.floor(e.length/i),s=-1;for(let t=0;t<o&&s<0;t++)e[t*i+a]===n&&(s=t);if(s<0)return null;for(let t=s+1;t<o;t++){let n=e[t*i+a];if(n===r)return{start:s,len:t-s+1};if(n<4)return null}return null}function nr(e,t,n){return e=Math.max(0,Math.min(e,n-1)),[e,Math.min(n-1,Math.max(t,e))]}var rr={description:`Short texts (zonos3.tts.short_text; the request field short_text, default auto): a text of a few words is generated under LACI as the text, the pause marker (0.5 s) and its language's filler sentence (fillers: per server language, with the space that joins it to the marker, none for the unspaced languages), and cut once the reading position reaches the filler, so only the text is kept. A text is short when it has at most max_words whitespace-separated words and its text tokens times max_ratio[1] are at most its filler's times max_ratio[0]. cut: the first frame the silence classifier calls silent, searched from lookback frames before the reading reached the filler, with at least min_voiced non-silent generated frames up to it; none within max_frames frames of the reading reaching the filler is a run-on (the take ran into the filler), regenerated as a fresh take at most max_retries times, then cut where the reading reached the filler. silence: a codes-only classifier of the codec's frames (lingua apps.zonos.start_token silence_frames_v1, int8-quantized): a frame is silent when the sum of weights[k][code_k] over its codebooks exceeds threshold; a frame with a code outside the codebook (EOA, pad) is not. weights: base64 int8 [n_codebooks][codebook_size], row-major.`,pause_marker:``,max_words:2,max_ratio:[2,5],cut:{lookback:2,min_voiced:3,max_frames:15,max_retries:2},silence:/* @__PURE__ */ JSON.parse(`{"codec":"opus_dual_3n_600k_sched600k_r4096_step600000","n_codebooks":10,"codebook_size":4096,"threshold":102,"weights":"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+QEABf8y+//9/AALAQEE/gMD/v7+DAP9AgL8BvsA+fz//vz7/v4DBP7/+/4B/gIA/P0DAv38+/sD/P7++wL8AQUAAfwA/QYACAAA/QP+PAL+/vwGAPr/APr//P79AfsC/vwA/wT7AQEABgD+AQb9AgX9/vgBAAABAf79//7/AQD/AAX+Af38/wUBBQEA/fz6/f0A+f8EAPsAAv78+v/+Av3+/f39/v3//gMB/v77/wb6AgAA/f0B/AH8/P0ACAL6Af39AQD8+gL8Bf78AQX9/wT9+wP++wX+/v4L//3+/gH+/v3+AgUA/P0B/v/9BP77+wwDA/4C/P/7AwADCv/8Bwz+/vr//vv8Bf39/gX//v0D/QEBB//+AgQC/AIEBwACAAIGBAICAv38/wIBAv//Bf3//QH8////BQYA/v/9/P0B+f0D/gD9Bv3+/wP9/gH//gECAfwA/v4I/f0C/QT//v78/f7+/AL6AgH8/gD+/f3+/QEF/v/+/AT7/wQA/vwB//4DAQH9/vz+/wD7/fsA+/76/gT7CPz++/8FAP8A/v78/fz8Af8EAQIC/wD+/P0C/AUB+gL///z9/gAA/QMAAAX+AAIDAf4CAPv9BgAA/gD6+wIAAQQA/QT6A/3//AEA+/3/Bf7+BwH+BfwC/v7+Afv9BwD9Bv79AP79AQH/AfkCBP/8/gP+/gL8+v8B/v0AAP77AAL8/f3+/gX6/f0DFf7+//r+AAX/AAT7/v76Afz9/wL9+//9/fsFAAD7CP7+B/77AQL7/Pv+AgD9/Qb9BAUEDAP6/f0C//8BMAEG/P4B/P7//QH9Av8FAAQA/f79AfsA/wMEBQUF+voH/v/7/Pr+//37Bv4AAv///AH8/v3++/z/BAABAwMC/v3//AMD/QMDAAT8/P4BAAf8/wME/P3+AAr//Qco+wH8+/39AgME/gT+A/4DAwH9AQAC//4A/v/8/f7/APwA+gUB//z9Cf/9/v4AAwr8AAH//P3/Av3/A/z+BP8A/gEI/P4BAQb7BAT9+wP/BAED/v0A/gUB/y/+AwIC//oCAwD+DP/7//3/////AQb+/gAB//z9BP7+AP79BP4A+gQE/QD//Ar7BPz+C/wA/f0GAf7+/f8A+QAD+wL7Af/8+P/6/fv//gX+AAD/CAID/fz7Avz//AL8APz9/wUD/wL++gH/+wUEAf4BAPz/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"}`),fillers:{en_us:` Seven birds flew over the quiet river.`,en_gb:` Seven birds flew over the quiet river.`,fr_fr:` Plusieurs oiseaux volaient au-dessus de la rivière tranquille.`,de:` Kleine Vögel flogen über den stillen Fluss.`,es:` Varios pájaros volaban sobre el río tranquilo.`,it:` Piccoli uccelli volavano sopra il fiume tranquillo.`,pt_br:` Vários pássaros voavam sobre o rio tranquilo.`,ja:`小さな鳥が静かな川の上を飛んでいった。`,cmn:`小鸟飞过了安静的小河。`,ko:` 작은 새들이 조용한 강 위를 날아갔다.`,ar:` طارت طيور صغيرة فوق النهر الهادئ.`,bn:` ছোট পাখিরা শান্ত নদীর ওপর দিয়ে উড়ে গেল।`,bg:` Малки птици прелетяха над тихата река.`,cs:` Malí ptáci přeletěli nad tichou řekou.`,da:` Små fugle fløj over den stille flod.`,nl:` Kleine vogels vlogen over de stille rivier.`,fi:` Pienet linnut lensivät hiljaisen joen yli.`,ka:` პატარა ჩიტები მშვიდ მდინარეს გადაუფრინდნენ.`,el:` Μικρά πουλιά πέταξαν πάνω από το ήσυχο ποτάμι.`,gu:` નાનાં પક્ષીઓ શાંત નદી પરથી ઊડી ગયાં.`,he:` ציפורים קטנות עפו מעל הנהר השקט.`,hi:` छोटी चिड़ियाँ शांत नदी के ऊपर से उड़ गईं।`,hu:` Kis madarak repültek át a csendes folyó felett.`,id:` Burung-burung kecil terbang di atas sungai yang tenang.`,kn:` ಸಣ್ಣ ಹಕ್ಕಿಗಳು ಶಾಂತ ನದಿಯ ಮೇಲೆ ಹಾರಿದವು.`,ms:` Burung-burung kecil terbang di atas sungai yang tenang.`,ml:` ചെറിയ പക്ഷികൾ ശാന്തമായ നദിക്കു മുകളിലൂടെ പറന്നു.`,mr:` लहान पक्षी शांत नदीवरून उडून गेले.`,no:` Små fugler fløy over den stille elven.`,or:` ଛୋଟ ଚଢ଼େଇମାନେ ଶାନ୍ତ ନଦୀ ଉପରେ ଉଡ଼ିଗଲେ।`,pl:` Małe ptaki przeleciały nad cichą rzeką.`,pa:` ਛੋਟੇ ਪੰਛੀ ਸ਼ਾਂਤ ਨਦੀ ਉੱਤੋਂ ਉੱਡ ਗਏ।`,ro:` Păsări mici au zburat peste râul liniștit.`,ru:` Маленькие птицы пролетели над тихой рекой.`,sk:` Malé vtáky preleteli nad tichou riekou.`,sv:` Små fåglar flög över den stilla floden.`,tl:` Maliliit na ibon ang lumipad sa ibabaw ng tahimik na ilog.`,ta:` சிறிய பறவைகள் அமைதியான ஆற்றின் மேல் பறந்தன.`,te:` చిన్న పక్షులు ప్రశాంతమైన నది మీదుగా ఎగిరిపోయాయి.`,th:` นกตัวเล็กบินข้ามแม่น้ำที่เงียบสงบ`,tr:` Küçük kuşlar sessiz nehrin üzerinden uçtu.`,uk:` Маленькі птахи пролетіли над тихою річкою.`,ur:` چھوٹے پرندے پرسکون دریا کے اوپر سے اڑ گئے۔`,vi:` Những chú chim nhỏ bay qua dòng sông yên tĩnh.`}};const ir=()=>({lead:1,lag:0,smooth:3,ramp:3});function ar(e){let t=e.slice().sort((e,t)=>e-t),n=t.length,r=n>>1;return n%2==1?t[r]:(t[r-1]+t[r])/2}function or(e,t){let n=/* @__PURE__ */ new Map;t.forEach((e,t)=>{let r=n.get(e);r?r.push(t):n.set(e,[t])});let r=(r,i,a,o)=>{let s=r,c=a,l=0,u=/* @__PURE__ */ new Map;for(let t=r;t<i;t++){let r=/* @__PURE__ */ new Map;for(let i of n.get(e[t])??[]){if(i<a)continue;if(i>=o)break;let e=(u.get(i-1)??0)+1;r.set(i,e),e>l&&(s=t-e+1,c=i-e+1,l=e)}u=r}for(;s>r&&c>a&&e[s-1]===t[c-1];)s--,c--,l++;for(;s+l<i&&c+l<o&&e[s+l]===t[c+l];)l++;return{i:s,j:c,k:l}},i=e.length,a=t.length,o=[[0,i,0,a]],s=[];for(;o.length;){let[e,t,n,i]=o.pop(),a=r(e,t,n,i);a.k&&(s.push(a),e<a.i&&n<a.j&&o.push([e,a.i,n,a.j]),a.i+a.k<t&&a.j+a.k<i&&o.push([a.i+a.k,t,a.j+a.k,i]))}s.sort((e,t)=>e.i-t.i||e.j-t.j||e.k-t.k);let c=0,l=0,u=0,d=[];for(let e of s)c+u===e.i&&l+u===e.j?u+=e.k:(u&&d.push({i:c,j:l,k:u}),c=e.i,l=e.j,u=e.k);return u&&d.push({i:c,j:l,k:u}),d.push({i,j:a,k:0}),d}const sr=e=>Array.from(e,e=>e.codePointAt(0));function cr(e,t){let n=0,r=0,i=[];for(let a of or(sr(e),sr(t))){let e=n<a.i&&r<a.j?`replace`:n<a.i?`delete`:r<a.j?`insert`:null;e&&i.push({tag:e,i1:n,i2:a.i,j1:r,j2:a.j}),n=a.i+a.k,r=a.j+a.k,a.k&&i.push({tag:`equal`,i1:a.i,i2:n,j1:a.j,j2:r})}return i}function lr(e,t,n,r=!1){if(e===t)return n.slice();let i=sr(e).length,a=sr(t).length,o=cr(e,t).filter(e=>e.i2>e.i1);return n.map(e=>{if(e>=i)return a;let t=0;for(;t<o.length&&o[t].i1<=e;)t++;let n=o[t-1];if(n.tag===`equal`)return n.j1+e-n.i1;let s=n.j1+(e-n.i1)*(n.j2-n.j1)/(n.i2-n.i1);return r?Math.ceil(s):Math.trunc(s)})}const ur=e=>e<128?1:e<2048?2:e<65536?3:4;function dr(e,t,n){let r=Array.from(e),i=r.length,a=[[0,0]];if(t){let e=(e,n)=>{if(e.length)for(let[r,i]of t(e.join(``)))a.push([n+r,n+i])},i=(e,t,n)=>{let r=Array.from(t);for(let t=n;t+r.length<=e.length;t++)if(r.every((n,r)=>e[t+r]===n))return t;return-1},o=e=>e>=``&&e<=``,s=(t,r)=>{if(n?.start&&t.includes(``)){a.push([r,r+1]),s(t.slice(1),r+1);return}if(n?.pauses&&t.some(o)){let e=0;t.forEach((n,i)=>{o(n)&&(i>e&&s(t.slice(e,i),r+e),a.push([r+i,r+i+1]),e=i+1)}),e<t.length&&s(t.slice(e),r+e);return}let c=n?.phonemes;if(!c||i(t,c.open,0)<0&&i(t,c.close,0)<0){e(t,r);return}let l=0;for(;l<t.length;){let n=i(t,c.open,l);if(e(t.slice(l,n<0?t.length:n),r+l),n<0)break;let o=i(t,c.close,n+1);for(let e=n;e<=o;e++)a.push([r+e,r+e+1]);l=o+1}};s(r,0)}else for(let e=0;e<i;e++)for(let t=0;t<ur(r[e].codePointAt(0));t++)a.push([e,e+1]);return a.push([i,i]),a}function fr(e,t,n,r){let i=sr(e),a=sr(t),o=r.map(([e,t])=>{let n=e,r=t;for(;n<r&&gn(a[n]);)n++;for(;r>n&&gn(a[r-1]);)r--;return[n,r]}),s=[];for(let[a,c]of n){for(;a<c&&gn(i[a]);)a++;for(;c>a&&gn(i[c-1]);)c--;let n=lr(e,t,[a])[0],l=lr(e,t,[c],!0)[0],u=[];if(o.forEach(([e,t],r)=>{e<t&&e<l&&n<t&&u.push(r)}),u.length)s.push([u[0],u[u.length-1]+1]);else{let e=r.length-1;for(let t=0;t<o.length;t++)if(o[t][0]<o[t][1]&&o[t][1]>n){e=t;break}s.push([e,e])}}return s}var pr=class{ranges;deltas;cfg;origin;frames=[];pos=[];best=0;enter;exit;decided=/* @__PURE__ */ new Map;constructor(e,t,n=ir(),r=0){if(this.ranges=e,this.deltas=t,this.cfg=n,this.origin=r,!t.every(e=>e.length===t[0].length)||t.length!==e.length)throw Error(`span follower: ${e.length} token ranges for deltas of shape (${t.length}, ${t.length?t[0].length:0})`);if(n.smooth<1||n.ramp<1)throw Error(`span follower: smooth and ramp must be >= 1`);this.enter=e.map(()=>null),this.exit=e.map(()=>null)}onStep(e,t){this.observe(this.origin+e,t)}observe(e,t){if(this.frames.length&&e<=this.frames[this.frames.length-1])throw Error(`span follower: frames must increase, got ${e} after ${this.frames[this.frames.length-1]}`);this.frames.push(e),this.pos.push(t),this.advance(this.pos.length)}position(){return this.best}advance(e){let t=ar(this.pos.slice(Math.max(0,e-this.cfg.smooth),e));this.best=Math.min(Math.max(this.best,t),this.best+1)}weights(e){let t=this.decided.get(e);if(t)return t;let n=this.best,r=this.cfg;this.ranges.forEach(([t,i],a)=>{t>=i||(!this.enter[a]&&n>=t-r.lead&&(this.enter[a]=[e,this.frames.length===0?e-r.ramp+1:e]),this.enter[a]&&!this.exit[a]&&n>=i+r.lag&&(this.exit[a]=[e,e]))});let i=this.ranges.map((t,n)=>{let i=this.enter[n],a=this.exit[n];if(!i)return 0;let o=(e-i[1]+1)/r.ramp,s=a?(a[1]+r.ramp-1-e)/r.ramp:1;return Math.min(1,Math.max(0,Math.min(o,s)))});return this.decided.set(e,i),i}delta(e){let t=this.weights(e);if(!t.some(e=>e>0))return null;let n=this.deltas.length?this.deltas[0].length:0,r=new Float32Array(n);return t.forEach((e,t)=>{let i=Math.fround(e);for(let e=0;e<n;e++)r[e]+=Math.fround(i*this.deltas[t][e])}),r}truncate(e){let t=0;for(;t<this.frames.length&&this.frames[t]<e;)t++;this.frames.length=t,this.pos.length=t,this.best=0;for(let e=1;e<=t;e++)this.advance(e);for(let t of[this.enter,this.exit])for(let n=0;n<t.length;n++)t[n]&&t[n][0]>=e&&(t[n]=null);for(let t of[...this.decided.keys()])t>=e&&this.decided.delete(t)}};let mr=null;function hr(){if(mr)return mr;let e=rr.silence,t=rr.cut,n=atob(e.weights),r=new Int8Array(n.length);for(let e=0;e<n.length;e++)r[e]=n.charCodeAt(e)<<24>>24;if(r.length!==e.n_codebooks*e.codebook_size)throw Error(`short_text.json: silence.weights is not n_codebooks x codebook_size int8`);return mr={pauseMarker:rr.pause_marker,maxWords:rr.max_words,maxRatio:[rr.max_ratio[0],rr.max_ratio[1]],lookback:t.lookback,minVoiced:t.min_voiced,maxFrames:t.max_frames,maxRetries:t.max_retries,nCodebooks:e.n_codebooks,codebookSize:e.codebook_size,threshold:e.threshold,weights:r,fillers:rr.fillers},mr}const gr=/[\uE000-\uE00A]/;function _r(e,t,n,r,i){let a=hr(),o=a.fillers[t];if(!n.pauses||!n.pauses.markers.includes(a.pauseMarker)||o===void 0||gr.test(e))return null;let s=0,c=!1;for(let t of e){let e=gn(t.codePointAt(0));!e&&!c&&s++,c=!e}if(s>a.maxWords)return null;let l=i(e);if(l===0||l*a.maxRatio[1]>i(o)*a.maxRatio[0])return null;let u=e+a.pauseMarker+o,d=Array.from(u),f=Array.from(e).length,p=dr(u,r,{phonemes:n.phonemes,start:n.start!==null,pauses:!0});for(let e=0;e<p.length;e++){let[t,n]=p[e];if(!(t<=f||t>=n)&&!d.slice(t,n).every(e=>gn(e.codePointAt(0))))return[u,e]}throw Error(`short text: the filler has no token`)}var vr=class{fillerToken;nCodebooks;enter=null;decided=null;reg=hr();rows=[];silent=[];constructor(e,t){this.fillerToken=e,this.nCodebooks=t}truncate(e){this.rows.length=Math.min(this.rows.length,e),this.silent.length=Math.min(this.silent.length,Math.max(0,e-this.nCodebooks+1)),this.enter!==null&&this.enter>=e&&(this.enter=null),this.decided=null,this.decide()}observeReading(e,t){this.enter===null&&t>=this.fillerToken&&(this.enter=e,this.decide())}observeRow(e){this.rows.push(e.slice(0,this.nCodebooks));let t=this.rows.length-this.nCodebooks;t>=0&&(this.silent.push(this.isSilent(t)),this.decide())}isSilent(e){let{codebookSize:t,weights:n,threshold:r}=this.reg,i=0;for(let r=0;r<this.nCodebooks;r++){let a=this.rows[e+r][r];if(a===void 0||a<0||a>=t)return!1;i+=n[r*t+a]}return i>r}decide(){if(this.decided||this.enter===null)return;let{lookback:e,maxFrames:t,minVoiced:n}=this.reg,r=0;for(let i=0;i<this.silent.length;i++)if(r+=+!this.silent[i],!(i<this.enter-e)){if(i+1-this.enter>t){this.decided=[`run_on`,this.enter];return}if(this.silent[i]&&r>=n){this.decided=[`cut`,i+1];return}}}};const yr=()=>({binTokens:8,coverFrac:.5,skipFrac:.15,stallFactor:3,minStallFrames:45,tailFrames:15,rollbackMarginFrames:8,maxRetries:8,paceWindowBins:16,warmupBins:2,stopBoost:3,stopBoostDelay:6}),br=2**53-1;function xr(e){let t=e.slice().sort((e,t)=>e-t),n=t.length,r=n>>1;return n%2==1?t[r]:(t[r-1]+t[r])/2}function Sr(e,t){let n=0;for(;n<e.length&&e[n]<t;)n++;return n}var Cr=class{textLen;prior;cfg;minRollbackRow;nb;obsRows=[];obsPos=[];bumps=[];countsArr=[];firstRow=[];frontierV=0;lastAdvance=null;done=null;readRow=null;constructor(e,t,n,r){if(this.textLen=e,this.prior=t,this.cfg=n,this.minRollbackRow=r,e<1)throw Error(`text_len must be >= 1, got ${e}`);this.nb=Math.floor((e+n.binTokens-1)/n.binTokens),this.reset()}frontier(){return this.frontierV}counts(){return this.countsArr}lastAdvanceRow(){return this.lastAdvance}doneRow(){return this.done}reset(){this.countsArr=Array(this.nb).fill(0),this.firstRow=Array(this.nb).fill(null),this.frontierV=0,this.lastAdvance=null,this.done=null,this.readRow=null}tokens(e){return Math.min(this.cfg.binTokens,this.textLen-e*this.cfg.binTokens)}paceTok(){let e=Math.max(0,this.frontierV-this.cfg.paceWindowBins),t=[];for(let n=e;n<this.frontierV;n++)t.push(this.countsArr[n]/this.tokens(n));return t.length<this.cfg.warmupBins?this.prior:xr(t)}share(e){return this.paceTok()*this.tokens(e)}lastPosBefore(e){let t=Sr(this.obsRows,e);return t?this.obsPos[t-1]:0}stopRow(){return this.done===null?null:this.done+this.cfg.tailFrames}commitRow(e){if(this.done!==null)return br;let t=Math.min(this.lastAdvance??e,e);for(let e=this.frontierV+2;e<this.nb;e++){let n=this.firstRow[e];n!==null&&(t=Math.min(t,n))}return this.rollback(t)}rollback(e){return Math.max(e-this.cfg.rollbackMarginFrames,this.minRollbackRow)}observe(e,t){if(!(0<=t&&t<this.textLen))throw Error(`pos ${t} outside text span [0, ${this.textLen})`);if(this.obsRows.length&&e<=this.obsRows[this.obsRows.length-1])throw Error(`rows must increase: got ${e} after ${this.obsRows[this.obsRows.length-1]}`);return this.obsRows.push(e),this.obsPos.push(t),this.step(e,t)}step(e,t){let n=this.cfg,r=Math.floor(t/n.binTokens);if(this.countsArr[r]+=1,this.firstRow[r]===null&&(this.firstRow[r]=e),this.lastAdvance===null&&(this.lastAdvance=e),r>this.frontierV&&this.countsArr[r]>=n.coverFrac*this.share(r)){for(let t=this.frontierV+1;t<r;t++)if(this.countsArr[t]<n.skipFrac*this.share(t)){let n=null;for(let e=t+1;e<this.nb;e++){let t=this.firstRow[e];t!==null&&(n===null||t<n)&&(n=t)}return{kind:`skip`,detectRow:e,onsetRow:n,rollbackRow:this.rollback(n),bin:t,frontier:r}}this.frontierV=r,this.lastAdvance=e}if(this.done===null){let t=Math.max(n.stallFactor*this.paceTok()*n.binTokens,n.minStallFrames);if(e-this.lastAdvance>t){let t=this.lastAdvance;return{kind:`hallucination`,detectRow:e,onsetRow:t,rollbackRow:this.rollback(t),bin:this.frontierV+1,frontier:this.frontierV}}}return this.readRow===null&&t>=this.textLen-1&&(this.readRow=e),this.done===null&&this.readRow!==null&&this.frontierV>=this.nb-2&&this.countsArr[this.nb-1]>=this.share(this.nb-1)&&(this.done=e),null}onEos(e){return this.frontierV<this.nb-2?{kind:`truncation`,detectRow:e,onsetRow:e,rollbackRow:this.rollback(e),bin:this.frontierV+1,frontier:this.frontierV}:null}truncate(e){let t=Sr(this.obsRows,e),n=this.obsRows.slice(0,t),r=this.obsPos.slice(0,t),i=this.bumps.filter(t=>t<e);this.obsRows=[],this.obsPos=[],this.reset();let a=0;for(let e=0;e<n.length;e++){let t=n[e];for(;a<i.length&&t>i[a];)this.lastAdvance!==null&&(this.lastAdvance=Math.max(this.lastAdvance,i[a])),a++;if(this.obsRows.push(t),this.obsPos.push(r[e]),this.step(t,r[e]))throw Error(`LACI detector: replay raised a failure`)}this.lastAdvance!==null&&(this.lastAdvance=Math.max(this.lastAdvance,e)),i.push(e),this.bumps=i}},wr=class{textLen;c0;center;d=[0];constructor(e,t){this.textLen=t,this.c0=Math.min(Math.max(e,0),t-1),this.center=this.c0}update(e){let t=this.d,n=this.c0;n+t.length<this.textLen&&t.push(1/0);for(let r=t.length-1;r>0;r--){let i=e-(n+r);t[r]=Math.min(t[r],t[r-1])+i*i}let r=e-n;t[0]+=r*r;let i=0;for(let e=1;e<t.length;e++)t[e]<t[i]&&(i=e);return this.center=Math.min(Math.max(n+i,this.center),this.center+1),this.center}};const Tr=(e,t)=>{if(typeof e!=`number`||!Number.isInteger(e))throw Error(`${t} must be an integer`);return e};var Er=class e{heads=[];radius=[];framesPerToken=0;static parse(t,n=`heads_json`){let r=typeof t==`string`?JSON.parse(t):t;if(typeof r!=`object`||!r)throw Error(`${n}: no alignment heads`);let i=r,a=i.heads;if(a==null||a===!1||Array.isArray(a)&&a.length===0)throw Error(`${n}: no alignment heads`);if(!Array.isArray(a))throw Error(`${n}: heads is not an array`);let o=new e;for(let e of a){let t={layer:Tr(e.layer,`layer`),head:Tr(e.head,`head`)};o.heads.push(t);let n=Tr(e.radius,`radius`),r=o.radius.find(([e])=>e.layer===t.layer&&e.head===t.head);r?r[1]=n:o.radius.push([t,n])}if(typeof i.frames_per_token!=`number`)throw Error(`${n}: frames_per_token must be a number`);return o.framesPerToken=i.frames_per_token,o}},Dr=class{index;edges;nBuckets;first;constructor(e,t,n,r=0){this.index=e,this.edges=t,this.nBuckets=n,this.first=r}last(){return this.first+this.edges.length}row(e){return e>=0&&e<this.nBuckets?e:this.nBuckets}},Or=class{attempts=0;capped=!1;end=``;textLen=0;nBins=0;finalRows=0;finalEosRow=null;generatedTotal=0;paceTok=null;heads=[];failures=[];paceRetries=0;rateBucket=null;toJson(){return{attempts:this.attempts,capped:this.capped,end:this.end,text_len:this.textLen,n_bins:this.nBins,final_rows:this.finalRows,final_eos_row:this.finalEosRow,generated_total:this.generatedTotal,pace_tok:this.paceTok,heads:this.heads.map(e=>[e.layer,e.head]),failures:this.failures.map(e=>({kind:e.kind,detect_row:e.detectRow,onset_row:e.onsetRow,rollback_row:e.rollbackRow,clamped:e.clamped,bin:e.bin,frontier:e.frontier,retry_seed:e.retrySeed,ignored:e.ignored,retry_bucket:e.retryBucket})),pace_retries:this.paceRetries,rate_bucket:this.rateBucket}}};function kr(e,t,n,r=null,i=null){let a=r??e.rollbackRow;return{kind:e.kind,detectRow:e.detectRow,onsetRow:e.onsetRow,rollbackRow:a,clamped:a!==e.rollbackRow,bin:e.bin,frontier:e.frontier,retrySeed:t,ignored:n,retryBucket:i}}var Ar=class{p;nPrefill;stream;attemptStart;emitted=0;attempts=0;textDone=!1;failures=[];end=null;detector=null;textLen=0;probation=null;pendingFailure=null;eosRow=null;generatedTotal=0;ignored=/* @__PURE__ */ new Set;conditionValues;bucket;short;shortRetries=0;constructor(e){if(this.p=e,this.nPrefill=e.prefillRows.length,this.stream=e.prefillRows.slice(),this.attemptStart=this.nPrefill,this.conditionValues=e.conditionValues?e.conditionValues.slice():null,this.bucket=e.bucket??null,this.bucket===null&&e.rates&&this.conditionValues&&(this.bucket=this.conditionValues[e.rates.index]),e.rateDeltas){let t=e.rates?e.rates.last()-e.rates.first+1:0;if(e.rateDeltas.length!==t)throw Error(`rate_deltas: ${e.rateDeltas.length} for ${t} buckets`)}this.short=e.shortText==null?null:new vr(e.shortText,e.nCodebooks)}rateBucket(){return!this.p.rates||!this.conditionValues?null:this.bucket}window(e){return this.p.heads.radius.map(([t,n])=>({head:t,lo:e-n+1,hi:e+n-1}))}probeMask(){return this.probation?this.window(this.probation[1].center):null}stopBoost(){let e=this.detector?.doneRow()??null;return e===null||this.stream.length<e+this.p.cfg.stopBoostDelay?0:this.p.cfg.stopBoost}onStep(e,t,n,r){let i=this.attemptStart+t;this.p.follower?.observe(i-this.nPrefill,n),this.detector||=(this.textLen=e.textLen,new Cr(e.textLen,this.p.heads.framesPerToken,this.p.cfg,this.nPrefill));let a=this.detector;if(this.probation){let[t,n]=this.probation;e.mask=this.window(n.update(r)),a.frontier()>t.frontier&&(this.probation=null,e.mask=null)}let o=a.observe(i,n);if(o){if(this.attempts<this.p.cfg.maxRetries){this.pendingFailure=o,e.stop=!0;return}this.ignore(o)}if(this.short&&(this.short.observeReading(i-this.nPrefill,n),this.short.decided)){e.stop=!0;return}let s=a.stopRow();s!==null&&i>=s+this.p.nCodebooks+2&&(this.textDone=!0,e.stop=!0)}ignore(e){let t=`${e.kind}\u0000${e.bin}\u0000${e.onsetRow}`;this.ignored.has(t)||(this.ignored.add(t),this.failures.push(kr(e,null,!0)))}append(e,t){this.stream.push(e),this.generatedTotal+=1,t!==null&&(this.eosRow=this.attemptStart+t),this.short?.observeRow(e)}commitRow(){let e=this.stream.length;if(this.end)return e;if(this.p.hold||this.short)return this.nPrefill;let t;if(this.attempts>=this.p.cfg.maxRetries)t=e;else{let n=this.eosRow??e-(this.p.nCodebooks-1);t=Math.max(n-this.p.cfg.rollbackMarginFrames,this.nPrefill),t=this.detector?Math.min(t,this.detector.commitRow(e)):this.nPrefill}return Math.max(this.nPrefill,Math.min(t,e-1))}drain(e=!1){let t=e?this.stream.length:this.commitRow(),n=this.nPrefill+this.emitted,r=Math.max(n,Math.min(t,this.stream.length));return this.emitted+=r-n,{begin:n,end:r}}finishAttempt(){let e=this.pendingFailure;!e&&this.eosRow!==null&&this.detector&&!this.short&&(e=this.detector.onEos(this.eosRow),e&&this.attempts>=this.p.cfg.maxRetries&&(this.ignore(e),e=null)),!e&&this.short&&(e=this.shortRunOn());let t=0;if(e&&(t=Math.max(e.rollbackRow,this.nPrefill+this.emitted)),e&&this.p.maxTokens-(t-this.nPrefill)<=0&&(this.ignore(e),e=null),!e)return this.end=this.short&&this.short.enter!==null?this.shortEnd():this.textDone?[`text_done`,this.detector.stopRow()]:this.eosRow===null?[`max_tokens`,null]:[`eos`,this.eosRow],null;this.attempts+=1;let n=this.p.seed===null?null:this.p.seed+1e3*this.attempts;this.failures.push(kr(e,n,!1,t,null)),this.stream.length=t,this.detector.truncate(t),this.p.follower?.truncate(t-this.nPrefill),this.short?.truncate(t-this.nPrefill),e.kind===`short_run_on`?(this.shortRetries+=1,this.probation=null):this.probation=[e,new wr(this.detector.lastPosBefore(t),this.textLen)],this.pendingFailure=null,this.textDone=!1,this.eosRow=null,this.attemptStart=t;let r=null;if(this.p.rateDeltas&&this.bucket!==null&&this.p.rates){let e=this.p.rateDeltas[this.bucket-this.p.rates.first];e&&e.length&&(r=e)}return{nRows:t,historyRows:t-this.nPrefill,seed:n,maxTokens:this.p.maxTokens-(t-this.nPrefill),conditionValues:this.conditionValues?this.conditionValues.slice():null,swapDelta:!!this.p.rateDeltas,steeringDelta:r}}shortRunOn(){let e=this.short.decided;if(!e||e[0]!==`run_on`)return null;let t=this.detector.frontier(),n={kind:`short_run_on`,detectRow:this.stream.length-1,onsetRow:this.nPrefill+e[1],rollbackRow:this.nPrefill,bin:t,frontier:t};return this.shortRetries<this.short.reg.maxRetries&&this.attempts<this.p.cfg.maxRetries?n:(this.ignore(n),null)}shortEnd(){let e=this.short;if(e.decided&&e.decided[0]===`cut`)return[`short_text`,this.nPrefill+e.decided[1]];let t=Math.min(e.enter,this.stream.length-this.nPrefill-(this.p.nCodebooks-1));return this.eosRow!==null&&(t=Math.min(t,this.eosRow-this.nPrefill)),[`short_text_forced`,this.nPrefill+Math.max(t,0)]}eosFrame(){return!this.end||this.end[1]===null?null:this.end[1]-this.nPrefill}record(){if(!this.end)throw Error(`LaciSession::record before the result is final`);let e=this.detector,t=new Or;return t.attempts=this.attempts,t.capped=this.attempts>=this.p.cfg.maxRetries,t.end=this.end[0],t.textLen=this.textLen,t.nBins=e?e.nb:0,t.finalRows=(this.end[1]??this.stream.length)-this.nPrefill,t.finalEosRow=this.end[1],t.generatedTotal=this.generatedTotal,e&&(t.paceTok=e.paceTok()),t.heads=this.p.heads.heads,t.failures=this.failures,t.paceRetries=0,t.rateBucket=this.rateBucket(),t}};function jr(e,t,n){if(t<=0||e.length===0)return;let r=Math.min(e.length,Math.floor(t*.001*n));for(let t=0;t<r;t++){let n=Math.fround(t/r),i=Math.fround(.5*(1+Math.fround(Math.cos(Math.fround(Math.PI*n)))));e[e.length-r+t]=Math.fround(e[e.length-r+t]*i)}}function Mr(e){try{return e()}catch(e){if(e instanceof Ye)throw e;L(400,e instanceof Error?e.message:String(e))}}function Nr(e,t){let n=e.hp,r=R(t,`condition_buckets`)?t.condition_buckets:null,i=R(t,`condition_values`)?t.condition_values:null,a=e=>e!==null&&(Array.isArray(e)?e.length>0:Object.keys(e).length>0);if(n.nCond===0)return(a(r)||a(i))&&L(400,`This checkpoint has no condition rows (loudness / fmax / speaking rate)`),[];let o=n.condNames,s=(e,t)=>{let n=/* @__PURE__ */ new Map;if(e===null)return n;if(!Array.isArray(e)){let r=[];for(let[t,i]of Object.entries(e))o.includes(t)?n.set(t,i):r.push(t);return r.length&&L(400,`${t}: unknown condition name(s) ${it(r)}; expected ${it(o)}`),n}return e.length!==o.length&&L(400,`${t}: expected ${o.length} entries in the order ${it(o)}`),o.forEach((t,r)=>n.set(t,e[r])),n},c=s(r,`condition_buckets`),l=s(i,`condition_values`);return o.map((e,t)=>{let r=c.get(e),i=l.get(e),a=n.condBucketCounts[t];if(r!=null){let t=Number(r);return(t<0||t>a)&&L(400,`condition_buckets[${e}] must be in [0, ${a-1}] or ${a} (= unknown)`),t}if(i!=null){let r=Number(i);Number.isFinite(r)||L(400,`condition_values[${e}] must be finite`);let a=n.condEdges[t]??[];return a.length||L(400,`the checkpoint carries no edges for ${e}; send condition_buckets[${e}] instead`),_e(a,r)}return a})}function Pr(e,t){if(!R(t,`decoder`))return e.decoders[0];let n=B(t,`decoder`),r=e.decoders.find(e=>e.id===n);return r||L(400,`Unknown decoder '${n}'; this server serves: ${e.decoders.map(e=>e.id).join(`, `)}.`),r}function Fr(e){let t=B(e,`language`)??`en_us`,n=t.trim().toLowerCase().replaceAll(`-`,`_`);return Rt.includes(n)||L(400,`Unsupported language code: ${rt(t)}. Supported: ${Rt.join(`, `)}.`),n}function Ir(e){return e.speakerMode===`embedding`&&e.speakerEmbedding?e.speakerEmbedding:null}function Lr(e){let t=B(e,`accent`);if(t!==null&&t!==``&&t!==`none`&&!Ut.includes(t)){let e=Ut.length?Ut.join(`, `):`none (load accent adapters)`;L(400,`Unknown accent ${rt(t)}; loaded accents: ${e}.`)}}function Rr(e,t){let n=e=>R(t,e)?Number(t[e]):null;return Mr(()=>Ie(e.steer,n(`steer_hold`),n(`steer_onset_seconds`),n(`steer_ramp_seconds`),a/m))}function zr(e,t,n){let r=Rr(e,t);if(!nt(t,`controls`)&&!nt(t,`control_spans`))return;e.steer||L(400,`${Se}; \`controls\` are unavailable.`);let i=R(t,`controls`)?t.controls:{},a=R(t,`control_spans`)?t.control_spans:[],o=z(t,`control_span_rate`,0),s=n.speakerMode===`embedding`?n.speakerEmbedding:null;n.steering=Mr(()=>Ve(e.steer,i,a,ze(n.rawText),o,s,r))}function Br(e,t,n){tt(t,`laci`)&&(e.laci.size||L(400,`LACI is not enabled on this server (start it with --laci-heads LANG=PATH)`),e.laci.has(n)||L(400,`No LACI alignment heads for language ${rt(n)} (configured: ${Ht(e).join(`, `)})`),(z(t,`speaker_cfg_scale`,1)!==1||z(t,`controls_cfg_scale`,1)!==1)&&L(400,`LACI needs speaker_cfg_scale = controls_cfg_scale = 1`))}function Vr(e,t){if(!t.follow)return;let n=e.hp.textMarkers,r=t.steering.spans.map(e=>[e.charStart,e.charEnd]),i=dr(t.text,t=>e.tokenizer.charOffsets(t),{phonemes:n.phonemes,start:n.start!==null,pauses:n.pauses!==null});t.followTokens=fr(t.rawText,t.text,r,i)}async function Hr(e,t,n,r,i){let a=B(n,`text`),s=Pr(e,n),u=z(n,`speaker_cfg_scale`,1),m=z(n,`controls_cfg_scale`,1),g=t.checkpointModes(),_=g.length?g[0]:``;R(n,`speaker_mode`)&&(_=B(n,`speaker_mode`),g.includes(_)||L(400,`speaker_mode=${rt(_)} is not available for this checkpoint (supported: ${it(g)})`));let v=Nr(e,n),y=await t.resolveRequest(n,r,_,i),b={text:a,rawText:a,language:`en_us`,sp:Xt(),maxFrames:d,speakerMode:y.mode,referenceCodes:y.codes,speakerEmbedding:y.embedding?Float32Array.from(y.embedding):null,conditionBuckets:v,silencePrefill:0,decodeContext:null,cfgScale:1,cfgKind:``,twinSteered:!0,decoder:s,headroomDb:-1,fadeOutMs:0,stream:!0,wav:!1,prefix:!1,streamCodebooks:f,streamFirstOnly:p===`first`,steering:new Te,spanFollow:``,laci:null,shortText:null,follow:null,followTokens:[],followLead:1,followLag:0,prompt:null,twin:null};if(b.language=Fr(n),R(n,`max_tokens`)){let e=Number(n.max_tokens);e<=0&&L(400,`max_tokens must be positive.`),b.maxFrames=Math.min(e,d)}let x=tt(n,`start_immediately`)===!0,S=x||a.startsWith(``);if(b.silencePrefill=S?0:Vt.on?Vt.frames:0,R(n,`silence_prefill_frames`)){let e=Number(n.silence_prefill_frames);(!Number.isInteger(e)||e<0||e>c)&&L(400,`silence_prefill_frames must be 0..${c}`),b.silencePrefill=e}if(Lr(n),zr(e,n,b),B(n,`control_span_follow`)===`reading`&&b.steering.spans.length){let t=e.laci.get(b.language);if(t){let e=ir();b.follow=t,b.followLead=z(n,`control_span_lead`,e.lead),b.followLag=z(n,`control_span_lag`,e.lag)}}nt(n,`control_spans`)&&(b.spanFollow=b.follow?`reading`:`rate`),b.stream=tt(n,`stream`)??!0,b.prefix=b.stream&&(!R(n,`stream_decode`)||B(n,`stream_decode`)===`prefix`),R(n,`stream_codebooks`)&&(b.streamCodebooks=Number(n.stream_codebooks),b.streamCodebooks>10&&L(400,`stream_codebooks must be 1..10`)),R(n,`stream_codebooks_scope`)&&(b.streamFirstOnly=B(n,`stream_codebooks_scope`)===`first`),u!==1&&(b.speakerMode===`reference`&&b.referenceCodes?.length||b.speakerMode===`embedding`&&b.speakerEmbedding?.length||L(400,`Speaker CFG needs a speaker prompt: speaker_mode=reference with reference audio or codes, or speaker_mode=embedding with a clip or an embedding`),m!==1&&L(400,`Speaker and controls CFG cannot be combined`),b.cfgScale=u,b.cfgKind=`speaker`),m!==1&&(b.steering.hidden||b.steering.release)&&Ir(b)&&(b.cfgScale=m,b.twinSteered=!1,b.cfgKind=`controls`);let C=ce(e.hp.textMarkers,a);C&&L(400,C),x&&!e.hp.textMarkers.start&&L(400,`start_immediately needs a checkpoint with a start token`),S&&!a.startsWith(``)&&(b.text=``+a),Br(e,n,b.language),tt(n,`laci`)&&(b.laci=e.laci.get(b.language));let w=B(n,`short_text`)??`auto`;w!==`auto`&&w!==`off`&&L(400,`short_text must be 'auto' or 'off'`);let T=w===`auto`&&e.laci.has(b.language)&&!nt(n,`control_spans`)&&u===1&&m===1,E=b.sp;if(E.temperature=z(n,`temperature`,o.temperature),E.top_k=z(n,`topk`,o.topk),E.top_p=z(n,`top_p`,o.top_p),E.min_p=z(n,`min_p`,o.min_p),E.rep_penalty=z(n,`repetition_penalty`,o.repetition_penalty),E.rep_window=z(n,`repetition_window`,o.repetition_window),E.rep_codebooks=z(n,`repetition_codebooks`,o.repetition_codebooks),E.rep_codebooks<0&&(E.rep_codebooks=e.hp.nCodebooks),E.seed=R(n,`seed`)?Number(n.seed)>>>0:crypto.getRandomValues(/* @__PURE__ */ new Uint32Array(1))[0]&2147483647,E.greedy=E.temperature<=0,b.fadeOutMs=z(n,`fade_out_ms`,0),b.headroomDb=z(n,`headroom_db`,-1),tt(n,`decode_context`)&&b.referenceCodes?.length){let e=z(n,`decode_context_frames`,0)||l,t=b.referenceCodes.length/10,r=Math.max(0,Math.min(e,t));b.decodeContext=b.referenceCodes.slice(b.referenceCodes.length-r*10)}if(T){let t=e.hp.textMarkers,n=Mr(()=>_r(b.text,b.language,t,t=>e.tokenizer.charOffsets(t),n=>e.tokenizer.encode(n,t).length-2));n&&([b.text,b.shortText]=n,b.laci=e.laci.get(b.language))}Vr(e,b);let D={referenceCodes:b.speakerMode===`reference`&&b.referenceCodes?.length?b.referenceCodes:void 0,speakerEmbedding:b.speakerMode===`embedding`&&b.speakerEmbedding?.length?b.speakerEmbedding:void 0,buckets:b.conditionBuckets,silencePrefill:b.silencePrefill};try{b.prompt=he(e.tokenizer,b.text,D,e.hp)}catch(e){L(400,`could not build the prompt: ${e instanceof Error?e.message:String(e)}`)}if(b.cfgKind===`speaker`)try{b.twin=ge(b.prompt,e.hp.condBucketCounts)}catch{L(400,`could not build the speaker-CFG twin prompt`)}else b.cfgKind===`controls`&&(b.twin={...b.prompt,cond:{...b.prompt.cond}});let O=Math.max(b.prompt.nRows,b.twin?.nRows??0);return O>=h&&L(400,`TTS input len ${O} exceeds ${h}`),b.maxFrames=Math.min(b.maxFrames,h-O),b}function Ur(e,t){let n=t.laci??t.follow;if(!n)return{probe:null,follower:null,laci:null};let r=tr(t.prompt.ids,10);r||L(400,`the prompt has no complete text span for the alignment probe`),r.len>2048&&L(400,`the text is too long for the alignment probe (${r.len} text rows; at most ${g})`);let i={textStart:r.start,textLen:r.len,heads:n.heads.map(e=>({...e})),windows:[]},a=null;if(t.follow&&t.steering.spans.length){let e={...ir(),lead:t.followLead,lag:t.followLag};a=new pr(t.followTokens.map(e=>[e[0],e[1]]),t.steering.spans.map(e=>e.delta),e)}if(!t.laci)return{probe:i,follower:a,laci:null};let o=t.prompt.prefillFrames,s=[];for(let e=t.prompt.nRows-o;e<t.prompt.nRows;e++)s.push(t.prompt.ids.slice(e*11,(e+1)*11));let c=null,l=e.hp;l.condNames.forEach((e,t)=>{e===`speaking_rate`&&l.condEdges[t]?.length&&(c=new Dr(t,l.condEdges[t].slice(),l.condBucketCounts[t]))});let u=Mr(()=>new Ar({heads:t.laci,cfg:yr(),prefillRows:s,seed:t.sp.seed,maxTokens:t.maxFrames,nCodebooks:10,hold:!t.prefix,rates:c,conditionValues:l.nCond>0?t.prompt.cond.buckets.slice():null,bucket:null,rateDeltas:null,follower:a,shortText:t.shortText}));return{probe:i,follower:a,laci:u}}function Wr(e,t,n,r){if(r===0)return e.slice(0,t*10);let i=Array((r+t)*10).fill(4097),a=n.length/10-r;for(let o=0;o<r+t;o++){if(o>=r)for(let t=0;t<10;t++)i[o*10+t]=e[(o-r)*10+t];for(let e=0;e<10;e++){let t=o-e;t>=0&&t<r&&(i[o*10+e]=n[(a+t)*10+e])}}return i}async function Gr(e,t,n,r){let{probe:i,follower:o,laci:s}=Ur(e,t),c=e.backbone,l=await t.decoder.codec(),u=t.decodeContext?t.decodeContext.length/10:0,d=(t.prompt.prefillFrames+u)*m,f=t.headroomDb<0?l.gain:Math.fround(10**(-t.headroomDb/20)),p=e=>{let t=e;if(d>0){let e=Math.min(t.length,d);t=t.subarray(e),d-=e}return an(t,f)},h=$t(t.prompt.prefillFrames),g=Zt(e.hp.audioVocab).stopId,_=Array.from(ve(t.prompt)),v=-1,y=t.maxFrames,b=0,x=t.twin,S=t.twinSteered,C=x?t.cfgScale:null,w=s?.probeMask()??[],T={textLen:i?.textLen??0,mask:null,stop:!1},E=t.steering;l.reset();let D=0,O=Promise.resolve(),k=null,A=(e,t,r,i=!1)=>{for(;D<r;){let a=Math.min(16,r-D),o=l.chunk(Qt(e,t,D,a,void 0,i),D,a);o.catch(()=>{}),D+=a,O=O.then(()=>o).then(e=>{let t=p(e);t.length&&n(t)}).catch(e=>{k??=e})}},ee=t.prompt.prefillFrames,te=l.partialFrames?t.streamCodebooks:10,ne=e.hp.audioPad,re=()=>{let e=_.length/10,n=e-9;v>=0&&(n=Math.min(n,v));let r=n;if(te<10&&!(t.streamFirstOnly&&ee>t.prompt.prefillFrames))for(r=e-(te-1),v>=0&&(r=Math.min(r,v));r>Math.max(n,ee)&&_[(r-1)*10]>=ne-1;)r--;let i=r-0,a=Math.min(15,1+ee-t.prompt.prefillFrames);i-ee<a||(A(Wr(_,e,t.decodeContext,u),e+u,i+u,i>n),ee=i)},ie=()=>i?{...i,windows:w}:null,ae=e=>{let t=b+e;if(o){let e=E.baseAt(t),n=o.delta(t);if(!n)return e;if(e)for(let t=0;t<e.length&&t<n.length;t++)n[t]+=e[t];return n}return E.at(t)},j=i===null,M=[],oe=0,se=()=>{let e=oe++,t=e===0?c.sampleFirst(h.prefill).then(e=>({frame:e,probe:null})):(()=>{let t=ae(e);return c.stepSample(h.prefill+e,t,S?t:null,ie(),s?.stopBoost()??0)})();t.catch(()=>{}),M.push(t)},N=async()=>{await Promise.allSettled(M),M.length=0};for(await Promise.all([c.prefill(0,t.prompt.ids,t.prompt.cond),x?c.prefill(1,x.ids,x.cond):null]),c.startSampling({sp:t.sp,minFrames:0,cfgScale:C});;){if(r()){await N(),await O;return}if(k)throw await N(),k;M.length||se(),j&&M.length<2&&oe<y&&se();let e=await M.shift();if(i&&e.probe){let t=er(e.probe,i.textLen);if(s){try{s.onStep(T,h.step,t.argmax,t.centroid)}catch(e){throw Error(`LACI: ${e instanceof Error?e.message:String(e)}`)}w=T.mask??[]}else o&&o.onStep(h.step,t.argmax)}if(s){tn(h,e.frame,g,y);let t=h.eosFrame>=0?Math.max(0,h.eosFrame-s.attemptStart):null;if(s.append(Int32Array.from(h.nextIds),t),T.stop&&(h.done=!0),!h.done){let e=s.drain();for(let t=e.begin;t<e.end;t++)for(let e=0;e<10;e++)_.push(s.stream[t][e])}}else{let t=tn(h,e.frame,g,y);for(let e of t)_.push(e);v=h.eosFrame}if(t.prefix&&re(),h.done){if(await N(),s){let e=s.finishAttempt();if(e){let n=t.prompt.nRows-t.prompt.prefillFrames,r=new Int32Array((n+e.nRows)*11);r.set(t.prompt.ids.subarray(0,n*11));for(let t=0;t<e.nRows;t++)r.set(s.stream[t].subarray(0,11),(n+t)*11);let i={...t.prompt.cond};e.conditionValues&&(i.buckets=e.conditionValues.slice()),e.swapDelta&&(E.hidden=e.steeringDelta),Object.assign(h,$t(e.nRows)),oe=0,w=s.probeMask()??[],T.mask=null,T.stop=!1,b=e.historyRows,y=e.maxTokens,await c.prefill(0,r,i),c.startSampling({sp:{...t.sp,seed:(e.seed??t.sp.seed)>>>0},minFrames:0,cfgScale:C,history:s.stream.slice(t.prompt.prefillFrames,e.nRows)});let a=s.drain();for(let e=a.begin;e<a.end;e++)for(let t=0;t<10;t++)_.push(s.stream[e][t]);t.prefix&&re();continue}let n=s.drain(!0);for(let e=n.begin;e<n.end;e++)for(let t=0;t<10;t++)_.push(s.stream[e][t]);v=s.end&&s.end[1]!==null?s.end[1]:-1}if(v>=0&&v<=t.prompt.prefillFrames)throw Error(`generation failed`);if(await O,k)throw k;let e=_.length/10,r=e+u,i=Math.min(v>=0?v+u:r,r-9);if(i>0){let o=Wr(_,e,t.decodeContext,u),s=[],c=e=>{e.length&&s.push(e)};for(;D<i;){let e=Math.min(16,i-D);c(p(await l.chunk(Qt(o,r,D,e),D,e))),D+=e}c(p(await l.flush()));let d=s.reduce((e,t)=>e+t.length,0),f=new Float32Array(d),m=0;for(let e of s)f.set(e,m),m+=e.length;jr(f,t.fadeOutMs,a),f.length&&n(f)}return}}}async function Kr(e,t,n,r,i,o){let s=B(n,`format`)===`wav`;(tt(n,`stream`)??!0)&&s&&L(400,`format=wav needs stream=false`);let c=await Hr(e,t,n,$e(r),r.pcm);c.wav=s;let l={"x-audio-sample-rate":String(a),"x-audio-channels":`1`,"x-audio-format":s?`pcm16`:`float32`,"x-seed":String(c.sp.seed),"x-decoder":c.decoder.id};if(c.spanFollow&&(l[`x-control-span-follow`]=c.spanFollow),c.stream){let t=!1,n=()=>{t||(t=!0,i.start(200,{...l,"content-type":`audio/pcm`}))};try{await Gr(e,c,e=>{n(),i.chunk(new Uint8Array(e.buffer,e.byteOffset,e.byteLength))},o)}catch(e){if(!t)throw e;console.error(`generate:`,e)}n(),i.end();return}let u=[];try{await Gr(e,c,e=>u.push(e.slice()),o)}catch(e){if(e instanceof Ye)throw e;console.error(`generate:`,e),L(500,`generation failed`)}let d=new Float32Array(u.reduce((e,t)=>e+t.length,0)),f=0;for(let e of u)d.set(e,f),f+=e.length;s?(i.start(200,{...l,"content-type":`audio/wav`}),i.chunk(He(d,a))):(i.start(200,{...l,"content-type":`audio/pcm`}),i.chunk(new Uint8Array(d.buffer))),i.end()}const qr=[`speaker_audio_base64`,`speaker_audio_name`,`speaker_reference_codes`,`speaker_embedding_base64`,`speaker_embedding_name`,`speaker_embedding_id`,`speaker_blend_embedding_id_a`,`speaker_blend_embedding_id_b`,`speaker_blend_t`];async function Jr(e,t,n,r,i){await Kr(e,t,et(n,`GenerateRequest`),n,r,i)}async function Yr(e,t,n,r,i){let a=et(n,`SpeechRequest`),o=$e(n),s=B(a,`response_format`)??`pcm`;if(R(a,`voice`)){for(let e of qr)R(a,e)&&L(400,`voice cannot be combined with speaker_* fields`);let e=B(a,`voice`);t.known(o,e)||L(400,`unknown voice '${e}'`),a.speaker_embedding_id=e}a.text=a.input,a.stream=s===`pcm`,a.format=s;for(let e of[`model`,`input`,`voice`,`response_format`])delete a[e];await Kr(e,t,a,n,r,i)}const Xr=`send the clip's transcript as original_text`,H=a/m,Zr=new Map(It.server.map(e=>[e.code,e.speech]));function Qr(e){L(503,`Speech recognition is not available on this server: `+e)}function $r(e){return(!e.edit||Wt(e)<=0)&&L(503,`Speech editing is not available on this server: the model export has no speech-edit adapter (edit) or FuseAlign aligner (aligner).`),e.edit}function ei(e,t){let r=B(e,`audio_base64`)??``;yn(r).startsWith(`data:`)&&!r.includes(`,`)&&L(400,`Invalid data URL for audio_base64.`),n(r)||L(400,`audio_base64 must be valid base64-encoded data.`);let i=t.pcm;i&&i.length||L(400,`could not decode the audio (any container this browser decodes)`);let o=t.pcmSeconds??i.length/a;return o>v&&L(400,`Audio is ${Sn(o,1)} s long; at most ${Sn(v,0)} s are supported here.`),{pcm:i,duration:i.length/a}}async function ti(e,t,n,r,i){let o=t.length/a;o>30&&L(400,`Audio is ${Sn(o,1)} s long; this server aligns at most 30 s (edit_align_max_seconds)${i}.`);let s=zn(n,r),c=s.length?await e.align(wt(t,a),s):[];return Mr(()=>Un(c,s.map(kn)))}function ni(e){return e.map(e=>({word:e.word,start:e.start,end:e.end,confidence:e.confidence,tokens:e.tokens}))}function ri(e,t){let n=et(t,`EditTranscribeRequest`);$r(e),Fr(n),Qr(`send the transcript to /v2/edit/align instead`)}async function ii(e,t,n){let r=et(t,`EditAlignRequest`),i=$r(e),a=yn(B(r,`text`));a||L(400,`text is empty.`);let o=Zr.get(Fr(r)),{pcm:s,duration:c}=ei(r,t);Ze(n,{text:a,duration:c,words:ni(await ti(i,s,a,o,``))})}function ai(e,t,n,r,i){let a=Rr(e,n),o=ce(t.hp.textMarkers,r,!0);o&&L(400,o);let s=/* @__PURE__ */ new Set;if(i){let t=e.steer;t||L(400,`${Se}; \`controls\` are unavailable.`);for(let n of i){Mr(()=>Ve(t,n,[],0,1,new Float32Array(e.hp.speakerDim)));for(let e of Object.keys(n))t.dirs[t.index.get(e)].hidden||s.add(e)}}return{release:a,buckets:Nr(e,n),raw:[...s].sort()}}function oi(e,t){let n=Xt();return n.temperature=z(t,`temperature`,o.temperature),n.top_k=z(t,`topk`,o.topk),n.top_p=z(t,`top_p`,o.top_p),n.min_p=z(t,`min_p`,o.min_p),n.rep_penalty=z(t,`repetition_penalty`,o.repetition_penalty),n.rep_window=z(t,`repetition_window`,o.repetition_window),n.rep_codebooks=z(t,`repetition_codebooks`,o.repetition_codebooks),n.rep_codebooks<0&&(n.rep_codebooks=e.hp.nCodebooks),n.greedy=n.temperature<=0,n}async function si(e,t,n,i){let o=et(t,`EditRequest`),s=$r(e),c=Wt(e),l=Pr(e,o),u=yn(B(o,`target_text`)),f=Zr.get(Fr(o));u||L(400,`target_text is empty.`);let p=R(o,`original_words`)?o.original_words:null,g=B(o,`original_text`);p&&!yn(g??``)&&L(400,`original_words needs the original_text they spell.`);let _=R(o,`spans`)?o.spans:null,y=p===null&&!g;tt(o,`verify`)&&Qr(`set verify to false`),y&&_===null&&Qr(Xr);let b=Mr(()=>qt(R(o,`controls`)?o.controls:null,R(o,`region_controls`)?o.region_controls:null,_)),x=e.hp.speakerDim>0,S=R(o,`speaker_embedding`)?tt(o,`speaker_embedding`):x;S&&!x&&L(400,`speaker_embedding needs a checkpoint with a speaker-embedding row.`);let{release:C,buckets:w,raw:T}=ai(e,s,o,u,b);T.length&&!S&&L(400,`Controls ${T.join(`, `)} move the speaker embedding and need the speaker row (speaker_embedding true or unset, on a speaker-embedding checkpoint).`);let{pcm:E,duration:D}=ei(o,t),O=z(o,`max_context_seconds`,16);y&&_!==null&&D>O&&Qr(Xr);let k=Math.ceil(E.length/m),A=k/H>O,ee=vn(u),te=Hn(u),ne=z(o,`min_fill_ratio`,.7),re=g,ie=null;if(p){let e=p.map(e=>e.tokens??kn(e.word));ie=Mr(()=>Wn(p,e,kn(re),D))}else(_===null||A||ne>0&&re)&&(re||Qr(Xr),ie=await ti(s,E,re,f,`; send original_words for a longer clip`));let ae=null;if(S){try{ae=await e.embedSpeaker(E)}catch{L(400,`speaker embedding computation failed`)}ae.length===e.hp.speakerDim&&ae.every(Number.isFinite)||L(400,`speaker embedding computation failed`)}let j;try{j=await e.encodeReference(E)}catch{L(400,`reference audio encoding failed (maximum ${v} seconds)`)}j.length!==k*10&&L(500,`reference audio encoding returned an unexpected frame count`);let M=Mr(()=>{let e=_===null?qn(ie,te[0],{totalFrames:k,frameRate:H,marginSeconds:z(o,`margin_seconds`,.08),maxSpans:c}).spans:Gn(_,k,H);return on(e,k,c),e}),oe=A?Mr(()=>Qn(M,ie,ee,te.slice(1),{totalFrames:k,frameRate:H,contextSeconds:z(o,`context_seconds`,4),targetText:u})):[Xn(M,k,u)],se=ie===null?M.map(([,e])=>e/H):Mr(()=>$n(M,ie,ee,te.slice(1),H)),N=z(o,`max_span_seconds`,30),ce=se.map(e=>Math.min(Math.trunc(ne*e*H),Math.trunc(N*H))),le=Math.min(Math.trunc(N*H)+10+1,d),ue=M.map((e,t)=>b===null?null:b[_===null?0:t]),de=R(o,`seed`)?Number(o.seed):crypto.getRandomValues(/* @__PURE__ */ new Uint32Array(1))[0]%(2**31-8),P=oi(e,o),fe=await s.backbone(),pe=await l.codec(),me=[];for(let t=0;t<z(o,`num_takes`,1);t++){let n=Array(M.length),o=Array(M.length).fill(null);for(let r of oe){let a=j.subarray(r.start*10,r.end*10),c=Zn(r,M),l=[];for(let d of r.regions){let f=ae?Float32Array.from(ae):null,p=ue[d],m=p&&Object.keys(p).length?Mr(()=>Ve(e.steer,p,[],ze(u),1,f,C)):null,g={text:r.text,sampling:{...P,seed:de+t>>>0},maxFrames:le,minFrames:ce[d],buckets:w,speakerEmbedding:f,steering:m,windowCodes:a,spans:c,fills:[...l]},_;try{_=pn(e.tokenizer,s.hp,g)}catch(e){L(400,`could not build the edit prompt: ${e instanceof Error?e.message:String(e)}`)}_.nRows>=h&&L(400,`TTS input len ${_.nRows} exceeds ${h}`),g.maxFrames=Math.min(g.maxFrames,h-_.nRows);let v;try{v=await mn(fe,s.hp,_,g,i)}catch(e){if(e instanceof Ye)throw e;console.error(`edit fill:`,e),L(500,`generation failed`)}l.push(v.fill),n[d]=v.fill,o[d]=v.ended}}let c=fn(j,M,n,10),l;try{l=await hn(pe,c,e.hp.audioPad)}catch(e){console.error(`edit decode:`,e),L(500,`decoding the edited codes failed`)}let d=[],f=0;M.forEach(([e,t],r)=>{let i=n[r].length/10;d.push([(e+f)/H,(e+f+i)/H]),f+=i-t}),me.push({seed:de+t,audio_base64:r(He(l,a)),duration:l.length/a,edited_regions:d,fill_seconds:n.map(e=>e.length/10/H),stopped:o,verify:null,words:null})}Ze(n,{sample_rate:a,original_text:re,target_text:u,words:ie===null?null:ni(ie),spans:M.map(([e,t])=>[e/H,(e+t)/H]),contexts:A?oe.map(e=>[e.start/H,e.end/H]):null,expected_seconds:se,takes:me})}var ci=class{e;speakers;constructor(e,t=Date.now()/1e3){this.e=e,this.speakers=new ot(e,t)}async handle(e,t,n=()=>!1){return di(e)?this.keepalive(e,t,n):this.serve(e,t,n)}async keepalive(e,t,n){let r=500,i=[],a={start:e=>{r=e},chunk:e=>{i.push(e.slice())},end:()=>{}};t.start(200,{"content-type":`application/json`,"cache-control":`no-store`,"x-keepalive":`1`});let o=new Uint8Array([32]);t.chunk(o);let s=setInterval(()=>t.chunk(o),li);try{await this.serve(e,a,n)}finally{clearInterval(s)}let c=new Uint8Array(i.reduce((e,t)=>e+t.length,0)),l=0;for(let e of i)c.set(e,l),l+=e.length;if(r>=400){let e=new TextDecoder().decode(c),t;try{let n=JSON.parse(e);t=n&&typeof n==`object`&&!Array.isArray(n)?n.detail??null:e}catch{t=e}c=new TextEncoder().encode(JSON.stringify({detail:t,status_code:r}))}t.chunk(c),t.end()}async serve(e,t,n){let r=!1,i={start:(e,n)=>{r=!0,t.start(e,n)},chunk:e=>t.chunk(e),end:()=>t.end()};try{await this.route(e,i,n)}catch(e){if(r){console.error(`engine api:`,e),t.end();return}e instanceof Ye?Ze(t,e.body,e.status):Ze(t,{detail:e instanceof Error?e.message:String(e)},500)}}async route(e,t,n){let r=this.e,i=this.speakers,a=e.path.split(`?`)[0],o=e.method.toUpperCase(),s=o===`GET`||o===`HEAD`;if(s&&a===`/v2/health`)return Ze(t,{status:`ok`});if(s&&a===`/v1/models`)return Ze(t,{object:`list`,data:[{id:`zonos3`,object:`model`,created:0,owned_by:`zyphra`,root:r.modelFile}]});if(s&&a===`/v2/capabilities`)return Ze(t,Kt(r,i.checkpointModes()));if(s&&a===`/v2/controls`)return r.steer||L(404,`${Se}.`),Ze(t,r.controlsDoc);if(a===`/v2/speakers`){if(s)return i.list(e,t);if(o===`POST`)return i.create(e,t,Date.now()/1e3)}let c=/^\/v2\/speakers\/([^/]+)\/(preview|embedding)$/.exec(a);if(c&&s){let n=decodeURIComponent(c[1]);return c[2]===`preview`?i.preview(e,t,n):i.embedding(e,t,n)}if(o===`POST`&&a===`/v2/generate`)return Jr(r,i,e,t,n);if(o===`POST`&&a===`/v1/audio/speech`)return Yr(r,i,e,t,n);if(o===`POST`&&a===`/v2/edit/align`)return ii(r,e,t);if(o===`POST`&&a===`/v2/edit`)return si(r,e,t,n);o===`POST`&&a===`/v2/edit/transcribe`&&ri(r,e),o===`POST`&&a===`/v2/phonemize`&&(et(e,`PhonemizeRequest`),L(404,`This server has no pronunciation lexicon.`)),L(404,`Not Found`)}};const li=1e4,ui=[`/v2/edit`];function di(e){if(e.method.toUpperCase()!==`POST`||e.headers[`x-keepalive`]!==`1`)return!1;let t=e.path.split(`?`)[0];return ui.some(e=>t===e||t.startsWith(e+`/`))}var fi=`// Per row i (input row r = row0 + i): if has_x, res[r] += x[r] (in place);
+// out[i] = res[r] * rsqrt(mean(res[r]^2) + eps) * (has_w ? w : 1).
+struct P { N: u32, eps: f32, has_x: u32, has_w: u32, row0: u32 }
+@group(0) @binding(0) var<storage, read_write> res: array<f32>;
+@group(0) @binding(1) var<storage, read> x: array<f32>;
+@group(0) @binding(2) var<storage, read> w: array<f32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let i = wid.x;
+  let rb = (p.row0 + i) * p.N;
+  var ss = 0.0;
+  for (var c = lid; c < p.N; c += 256u) {
+    var v = res[rb + c];
+    if (p.has_x != 0u) { v += x[rb + c]; res[rb + c] = v; }
+    ss += v * v;
+  }
+  red[lid] = ss;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  let scale = inverseSqrt(red[0] / f32(p.N) + p.eps);
+  let ob = i * p.N;
+  for (var c = lid; c < p.N; c += 256u) {
+    var v = res[rb + c] * scale;
+    if (p.has_w != 0u) { v *= w[c]; }
+    outp[ob + c] = v;
+  }
+}
+`,pi=`// Attentive statistics pooling over time, one workgroup per column k < N: alpha = softmax_t(att[:, k]),
+// pooled[k] = mean = sum_t alpha*x, pooled[N + k] = sqrt(clamp(sum_t alpha*x*x - mean^2, var_floor, 3e38)).
+struct P { T: u32, N: u32, var_floor: f32 }
+@group(0) @binding(0) var<storage, read> att: array<f32>;
+@group(0) @binding(1) var<storage, read> x: array<f32>;
+@group(0) @binding(2) var<storage, read_write> pooled: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<f32, 256>;
+var<workgroup> red2: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let k = wid.x + wid.y * nwg.x;
+  if (k >= p.N) { return; }
+  var m = -3.0e38;
+  for (var t = lid; t < p.T; t += 256u) { m = max(m, att[t * p.N + k]); }
+  red[lid] = m;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] = max(red[lid], red[lid + st]); }
+    workgroupBarrier();
+  }
+  let M = red[0];
+  workgroupBarrier();
+  var s = 0.0;
+  for (var t = lid; t < p.T; t += 256u) { s += exp(att[t * p.N + k] - M); }
+  red[lid] = s;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  let inv = 1.0 / red[0];
+  workgroupBarrier();
+  var s1 = 0.0;
+  var s2 = 0.0;
+  for (var t = lid; t < p.T; t += 256u) {
+    let a = exp(att[t * p.N + k] - M) * inv;
+    let v = x[t * p.N + k];
+    s1 += a * v;
+    s2 += a * (v * v);
+  }
+  red[lid] = s1;
+  red2[lid] = s2;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] += red[lid + st]; red2[lid] += red2[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lid == 0u) {
+    let mean = red[0];
+    pooled[k] = mean;
+    pooled[p.N + k] = sqrt(clamp(red2[0] - mean * mean, p.var_floor, 3.0e38));
+  }
+}
+`,mi=`// Causal/windowed attention over a (ring) KV store; 32 threads per (row, head), online softmax + merge.
+// Head dim hd <= 64. Dynamic mode: pos = dyn.a + i.
+struct P {
+  n: u32, nh: u32, nkv: u32, pos_dyn: u32, pos0: u32, window: u32, ring: u32, scale: f32,
+  has_gate: u32, gate_stride: u32, gate_off: u32, hd: u32,
+}
+@group(0) @binding(0) var<storage, read> q: array<f32>;
+@group(0) @binding(1) var<storage, read> kc: array<f32>;
+@group(0) @binding(2) var<storage, read> vc: array<f32>;
+@group(0) @binding(3) var<storage, read> gate: array<f32>;
+@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> qs: array<f32, 64>;
+var<workgroup> ms: array<f32, 32>;
+var<workgroup> ls: array<f32, 32>;
+var<workgroup> accs: array<f32, 2048>;
+
+@compute @workgroup_size(32)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) s: u32) {
+  let id = wid.x + wid.y * nwg.x;
+  if (id >= p.n * p.nh) { return; }
+  let hd = p.hd;
+  let i = id / p.nh;
+  let h = id - i * p.nh;
+  let pos = select(p.pos0, dyn.a, p.pos_dyn != 0u) + i;
+  let kvh = h / (p.nh / p.nkv);
+  let qb = (i * p.nh + h) * hd;
+  for (var d = s; d < hd; d += 32u) { qs[d] = q[qb + d]; }
+  workgroupBarrier();
+  var jlo = 0u;
+  if (pos + 1u > p.window) { jlo = pos + 1u - p.window; }
+  var m = -3.0e38;
+  var l = 0.0;
+  var acc: array<f32, 64>;
+  for (var d = 0u; d < hd; d++) { acc[d] = 0.0; }
+  for (var j = jlo + s; j <= pos; j += 32u) {
+    let base = ((j % p.ring) * p.nkv + kvh) * hd;
+    var qk = 0.0;
+    for (var d = 0u; d < hd; d++) { qk += qs[d] * kc[base + d]; }
+    let sc = qk * p.scale;
+    let mn = max(m, sc);
+    let corr = exp(m - mn);
+    let pe = exp(sc - mn);
+    l = l * corr + pe;
+    for (var d = 0u; d < hd; d++) { acc[d] = acc[d] * corr + pe * vc[base + d]; }
+    m = mn;
+  }
+  ms[s] = m;
+  ls[s] = l;
+  for (var d = 0u; d < hd; d++) { accs[s * 64u + d] = acc[d]; }
+  workgroupBarrier();
+  var M = -3.0e38;
+  for (var t = 0u; t < 32u; t++) { M = max(M, ms[t]); }
+  var L = 0.0;
+  for (var t = 0u; t < 32u; t++) { L += ls[t] * exp(ms[t] - M); }
+  var g = 1.0;
+  if (p.has_gate != 0u) { g = sigmoid(gate[p.gate_off + i * p.gate_stride + h]); }
+  for (var hh = 0u; hh < 2u; hh++) {
+    let d = s + hh * 32u;
+    if (d < hd) {
+      var o = 0.0;
+      for (var t = 0u; t < 32u; t++) { o += accs[t * 64u + d] * exp(ms[t] - M); }
+      outp[qb + d] = o / L * g;
+    }
+  }
+}
+`,hi=`// attention.wgsl specialised to head dim 32 (the backbone's): constant-trip loops keep q, the accumulator and the
+// merge in registers. Same params (\`hd\` is unused) and bindings as attention.wgsl.
+struct P {
+  n: u32, nh: u32, nkv: u32, pos_dyn: u32, pos0: u32, window: u32, ring: u32, scale: f32,
+  has_gate: u32, gate_stride: u32, gate_off: u32, hd: u32,
+}
+@group(0) @binding(0) var<storage, read> q: array<f32>;
+@group(0) @binding(1) var<storage, read> kc: array<f32>;
+@group(0) @binding(2) var<storage, read> vc: array<f32>;
+@group(0) @binding(3) var<storage, read> gate: array<f32>;
+@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+const HD = 32u;
+
+var<workgroup> qs: array<f32, 32>;
+var<workgroup> ms: array<f32, 32>;
+var<workgroup> ls: array<f32, 32>;
+var<workgroup> accs: array<f32, 1024>;
+
+@compute @workgroup_size(32)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) s: u32) {
+  let id = wid.x + wid.y * nwg.x;
+  if (id >= p.n * p.nh) { return; }
+  let i = id / p.nh;
+  let h = id - i * p.nh;
+  let pos = select(p.pos0, dyn.a, p.pos_dyn != 0u) + i;
+  let kvh = h / (p.nh / p.nkv);
+  let qb = (i * p.nh + h) * HD;
+  for (var d = s; d < HD; d += 32u) { qs[d] = q[qb + d]; }
+  workgroupBarrier();
+  var jlo = 0u;
+  if (pos + 1u > p.window) { jlo = pos + 1u - p.window; }
+  var m = -3.0e38;
+  var l = 0.0;
+  var acc: array<f32, 32>;
+  for (var d = 0u; d < HD; d++) { acc[d] = 0.0; }
+  for (var j = jlo + s; j <= pos; j += 32u) {
+    let base = ((j % p.ring) * p.nkv + kvh) * HD;
+    var qk = 0.0;
+    for (var d = 0u; d < HD; d++) { qk += qs[d] * kc[base + d]; }
+    let sc = qk * p.scale;
+    let mn = max(m, sc);
+    let corr = exp(m - mn);
+    let pe = exp(sc - mn);
+    l = l * corr + pe;
+    for (var d = 0u; d < HD; d++) { acc[d] = acc[d] * corr + pe * vc[base + d]; }
+    m = mn;
+  }
+  ms[s] = m;
+  ls[s] = l;
+  for (var d = 0u; d < HD; d++) { accs[s * HD + d] = acc[d]; }
+  workgroupBarrier();
+  var M = -3.0e38;
+  for (var t = 0u; t < 32u; t++) { M = max(M, ms[t]); }
+  var L = 0.0;
+  for (var t = 0u; t < 32u; t++) { L += ls[t] * exp(ms[t] - M); }
+  var g = 1.0;
+  if (p.has_gate != 0u) { g = sigmoid(gate[p.gate_off + i * p.gate_stride + h]); }
+  for (var d = s; d < HD; d += 32u) {
+    var o = 0.0;
+    for (var t = 0u; t < 32u; t++) { o += accs[t * HD + d] * exp(ms[t] - M); }
+    outp[qb + d] = o / L * g;
+  }
+}
+`,gi=`// Masked probe heads (zonos3-graph.cpp build_probe): decode-row attention of head h over keys 0..dyn.a with the text
+// keys (cache rows text_start + j, j < text_len) outside the head's window [lo, hi] blocked; overwrites the head's row of
+// outp with o * sigmoid(gate). Only heads with flag != 0 of probe layer \`layer\` (pin layout: probe.wgsl) write.
+// 32 threads per head, online softmax + merge (attention.wgsl).
+struct P { layer: u32, nh: u32, nkv: u32, hd: u32, ring: u32, scale: f32, gate_off: u32 }
+@group(0) @binding(0) var<storage, read> q: array<f32>;
+@group(0) @binding(1) var<storage, read> kc: array<f32>;
+@group(0) @binding(2) var<storage, read> vc: array<f32>;
+@group(0) @binding(3) var<storage, read> gate: array<f32>;
+@group(0) @binding(4) var<storage, read> pin: array<u32>;
+@group(0) @binding(5) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> qs: array<f32, 64>;
+var<workgroup> ms: array<f32, 32>;
+var<workgroup> ls: array<f32, 32>;
+var<workgroup> accs: array<f32, 2048>;
+
+@compute @workgroup_size(32)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) s: u32) {
+  let h = wid.x;
+  let hd = p.hd;
+  let e = 4u + (p.layer * p.nh + h) * 4u;
+  let ts = i32(pin[0]);
+  let tl = i32(pin[1]);
+  let on = tl != 0 && pin[e + 3u] != 0u;
+  let lo = i32(pin[e + 1u]);
+  let hi = i32(pin[e + 2u]);
+  let nkeys = select(0u, dyn.a + 1u, on);
+  let kvh = h / (p.nh / p.nkv);
+  let qb = h * hd;
+  for (var d = s; d < hd; d += 32u) { qs[d] = q[qb + d]; }
+  workgroupBarrier();
+  var m = -3.0e38;
+  var l = 0.0;
+  var acc: array<f32, 64>;
+  for (var d = 0u; d < hd; d++) { acc[d] = 0.0; }
+  for (var j = s; j < nkeys; j += 32u) {
+    let t = i32(j) - ts;
+    if (t < 0 || t >= tl || (t >= lo && t <= hi)) {
+      let base = ((j % p.ring) * p.nkv + kvh) * hd;
+      var qk = 0.0;
+      for (var d = 0u; d < hd; d++) { qk += qs[d] * kc[base + d]; }
+      let sc = qk * p.scale;
+      let mn = max(m, sc);
+      let corr = exp(m - mn);
+      let pe = exp(sc - mn);
+      l = l * corr + pe;
+      for (var d = 0u; d < hd; d++) { acc[d] = acc[d] * corr + pe * vc[base + d]; }
+      m = mn;
+    }
+  }
+  ms[s] = m;
+  ls[s] = l;
+  for (var d = 0u; d < hd; d++) { accs[s * 64u + d] = acc[d]; }
+  workgroupBarrier();
+  if (!on) { return; }
+  var M = -3.0e38;
+  for (var t = 0u; t < 32u; t++) { M = max(M, ms[t]); }
+  var L = 0.0;
+  for (var t = 0u; t < 32u; t++) { L += ls[t] * exp(ms[t] - M); }
+  let g = sigmoid(gate[p.gate_off + h]);
+  for (var hh = 0u; hh < 2u; hh++) {
+    let d = s + hh * 32u;
+    if (d < hd) {
+      var o = 0.0;
+      for (var t = 0u; t < 32u; t++) { o += accs[t * 64u + d] * exp(ms[t] - M); }
+      outp[qb + d] = o / L * g;
+    }
+  }
+}
+`,_i=`// Windowed causal self-attention for the codec stages (head dim 64, nkv == nh, no gate) over a ring KV
+// store. One workgroup per (16 query rows, head): K/V tiles of 16 keys are staged in workgroup memory and
+// each row keeps an online softmax. pos = dyn.a * pos_mul + i; tiles starting at or past the
+// dyn.b * pos_mul valid rows exit (padded rows never feed valid rows).
+struct P { n: u32, nh: u32, window: u32, ring: u32, scale: f32, pos_mul: u32 }
+@group(0) @binding(0) var<storage, read> q: array<f32>;
+@group(0) @binding(1) var<storage, read> kc: array<f32>;
+@group(0) @binding(2) var<storage, read> vc: array<f32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+const BQ = 16u;
+const BK = 16u;
+const HD = 64u;
+var<workgroup> Qs: array<f32, 1024>;   // [BQ][HD]
+var<workgroup> Ks: array<f32, 1040>;   // [BK][HD + 1], padded against bank conflicts
+var<workgroup> Vs: array<f32, 1024>;   // [BK][HD]
+var<workgroup> Ss: array<f32, 272>;    // [BQ][BK + 1]
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let h = wid.y;
+  let i0 = wid.x * BQ;
+  if (i0 >= dyn.b * p.pos_mul) { return; }
+  let pos0 = dyn.a * p.pos_mul;
+  for (var e = lid; e < BQ * HD; e += 256u) {
+    let i = i0 + e / HD;
+    Qs[e] = select(0.0, q[(i * p.nh + h) * HD + e % HD], i < p.n);
+  }
+  let r = lid >> 4u;      // query row within the tile (scores and outputs)
+  let c = lid & 15u;      // key column within the tile (scores)
+  let od = c * 4u;        // output dims od..od+3
+  let qpos = pos0 + i0 + r;
+  let first = pos0 + i0;
+  let last = first + BQ - 1u;
+  var jlo = 0u;
+  if (first + 1u > p.window) { jlo = first + 1u - p.window; }
+  var o = vec4f(0.0);
+  var m = -3.0e38;
+  var l = 0.0;
+  workgroupBarrier();
+  for (var j0 = jlo; j0 <= last; j0 += BK) {
+    for (var e = lid; e < BK * HD; e += 256u) {
+      let kk = e / HD;
+      let d = e % HD;
+      let slot = (((j0 + kk) % p.ring) * p.nh + h) * HD + d;
+      Ks[kk * (HD + 1u) + d] = kc[slot];
+      Vs[e] = vc[slot];
+    }
+    workgroupBarrier();
+    let j = j0 + c;
+    var s = -3.0e38;
+    if (j <= qpos && qpos - j < p.window) {
+      var acc = 0.0;
+      for (var d = 0u; d < HD; d++) { acc += Qs[r * HD + d] * Ks[c * (HD + 1u) + d]; }
+      s = acc * p.scale;
+    }
+    Ss[r * (BK + 1u) + c] = s;
+    workgroupBarrier();
+    var mt = m;
+    for (var k = 0u; k < BK; k++) { mt = max(mt, Ss[r * (BK + 1u) + k]); }
+    let cr = exp(m - mt);
+    var ls = 0.0;
+    var acc4 = vec4f(0.0);
+    for (var k = 0u; k < BK; k++) {
+      let sv = Ss[r * (BK + 1u) + k];
+      let pe = select(0.0, exp(sv - mt), sv > -1.0e38);
+      ls += pe;
+      acc4 += pe * vec4f(Vs[k * HD + od], Vs[k * HD + od + 1u], Vs[k * HD + od + 2u], Vs[k * HD + od + 3u]);
+    }
+    o = o * cr + acc4;
+    l = l * cr + ls;
+    m = mt;
+    workgroupBarrier();
+  }
+  let i = i0 + r;
+  if (i < p.n) {
+    let ob = (i * p.nh + h) * HD + od;
+    let inv = 1.0 / l;
+    outp[ob] = o.x * inv; outp[ob + 1u] = o.y * inv; outp[ob + 2u] = o.z * inv; outp[ob + 3u] = o.w * inv;
+  }
+}
+`,vi=`// Full AttnRes route fused with the following weighted RMSNorm. One 256-thread workgroup per output
+// row i (source row r = row0 + i), D <= 1024. Sources s < ns are bank[s] ([ns][n][D]).
+// Logit l_s = q[qi] . rmsnorm(src_s); mix = softmax(l) . src; out[i] = rmsnorm(mix) * w.
+struct P { D: u32, n: u32, ns: u32, qi: u32, row0: u32, eps: f32 }
+@group(0) @binding(0) var<storage, read> bank: array<f32>;
+@group(0) @binding(1) var<storage, read> q: array<u32>;
+@group(0) @binding(2) var<storage, read> w: array<f32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<vec2f, 256>;
+var<workgroup> lg: array<f32, 32>;
+
+fn reduce2(lid: u32, v: vec2f) -> vec2f {
+  red[lid] = v;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  let r = red[0];
+  workgroupBarrier();
+  return r;
+}
+
+fn src_at(s: u32, r: u32, c: u32) -> f32 { return bank[(s * p.n + r) * p.D + c]; }
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let i = wid.x;
+  let r = p.row0 + i;
+  let D = p.D;
+  for (var s = 0u; s < p.ns; s++) {
+    var acc = vec2f(0.0);
+    for (var k = 0u; k < 4u; k++) {
+      let c = lid + 256u * k;
+      if (c < D) {
+        let v = src_at(s, r, c);
+        let qp = unpack2x16float(q[(p.qi * D + c) >> 1u]);
+        let qv = select(qp.y, qp.x, (c & 1u) == 0u);
+        acc += vec2f(v * v, qv * v);
+      }
+    }
+    let t = reduce2(lid, acc);
+    if (lid == 0u) { lg[s] = t.y * inverseSqrt(t.x / f32(D) + p.eps); }
+  }
+  workgroupBarrier();
+  var mx = -3.0e38;
+  for (var s = 0u; s < p.ns; s++) { mx = max(mx, lg[s]); }
+  var sum = 0.0;
+  for (var s = 0u; s < p.ns; s++) { sum += exp(lg[s] - mx); }
+  var mixv: array<f32, 4>;
+  for (var k = 0u; k < 4u; k++) { mixv[k] = 0.0; }
+  for (var s = 0u; s < p.ns; s++) {
+    let wt = exp(lg[s] - mx) / sum;
+    for (var k = 0u; k < 4u; k++) {
+      let c = lid + 256u * k;
+      if (c < D) { mixv[k] += wt * src_at(s, r, c); }
+    }
+  }
+  var ss = 0.0;
+  for (var k = 0u; k < 4u; k++) { ss += mixv[k] * mixv[k]; }
+  let scale = inverseSqrt(reduce2(lid, vec2f(ss, 0.0)).x / f32(D) + p.eps);
+  for (var k = 0u; k < 4u; k++) {
+    let c = lid + 256u * k;
+    if (c < D) { outp[i * D + c] = mixv[k] * scale * w[c]; }
+  }
+}
+`,yi=`// Shared helpers, prepended to every kernel.
+struct Dyn { a: u32, b: u32, c: u32, d: u32 }
+
+fn erf_as(x: f32) -> f32 {
+  // Abramowitz & Stegun 7.1.26
+  let a = abs(x);
+  let t = 1.0 / (1.0 + 0.3275911 * a);
+  let y = 1.0 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t) * exp(-a * a);
+  return select(y, -y, x < 0.0);
+}
+
+fn tanh_c(x: f32) -> f32 {
+  let c = clamp(x, -15.0, 15.0);
+  let e = exp(-2.0 * abs(c));
+  let t = (1.0 - e) / (1.0 + e);
+  return select(t, -t, c < 0.0);
+}
+
+fn silu(x: f32) -> f32 { return x / (1.0 + exp(-x)); }
+fn sigmoid(x: f32) -> f32 { return 1.0 / (1.0 + exp(-x)); }
+fn gelu_erf(x: f32) -> f32 { return 0.5 * x * (1.0 + erf_as(x * 0.70710678118654752)); }
+fn new_gelu(x: f32) -> f32 { return 0.5 * x * (1.0 + tanh_c(0.7978845608028654 * (x + 0.044715 * (x * x * x)))); }
+
+fn act(x: f32, code: u32, cap: f32) -> f32 {
+  switch code {
+    case 1u: { return silu(x); }
+    case 2u: { return gelu_erf(x); }
+    case 3u: { return max(x, 0.0); }
+    case 4u: { return tanh_c(x); }
+    case 5u: { return cap * tanh_c(x / cap); }
+    case 6u: { return new_gelu(x); }
+    default: { return x; }
+  }
+}
+
+// Round to the nearest BF16 value (ties to even), returned as f32: ggml_compute_fp32_to_bf16 for finite x.
+fn bf16r(x: f32) -> f32 {
+  let u = bitcast<u32>(x);
+  return bitcast<f32>((u + 0x7fffu + ((u >> 16u) & 1u)) & 0xffff0000u);
+}
+
+fn unpack_i8(w: u32) -> vec4<f32> {
+  return vec4<f32>(
+    f32(bitcast<i32>(w << 24u) >> 24u),
+    f32(bitcast<i32>(w << 16u) >> 24u),
+    f32(bitcast<i32>(w << 8u) >> 24u),
+    f32(bitcast<i32>(w) >> 24u));
+}
+
+// q4_0: u32 word w of a 16-byte block holds elements 4w..4w+3 (low nibbles) and 16+4w..16+4w+3 (high nibbles).
+fn unpack_q4_lo(w: u32) -> vec4<f32> {
+  return vec4<f32>(f32(w & 15u), f32((w >> 8u) & 15u), f32((w >> 16u) & 15u), f32((w >> 24u) & 15u)) - vec4<f32>(8.0);
+}
+fn unpack_q4_hi(w: u32) -> vec4<f32> {
+  return vec4<f32>(f32((w >> 4u) & 15u), f32((w >> 12u) & 15u), f32((w >> 20u) & 15u), f32(w >> 28u)) - vec4<f32>(8.0);
+}
+`;const bi=/* #__PURE__ */ Object.assign({"./kernels/add_rmsnorm.wgsl":fi,"./kernels/astp_pool.wgsl":pi,"./kernels/attention.wgsl":mi,"./kernels/attention_hd32.wgsl":hi,"./kernels/attention_masked.wgsl":gi,"./kernels/attention_win.wgsl":_i,"./kernels/attnres.wgsl":vi,"./kernels/common.wgsl":yi,"./kernels/cond_rows.wgsl":`// Conditioning rows (zonos3-graph.cpp build_graph): the summed embedding of the row at absolute position dyn.a + t is
+// replaced by the projected speaker row (pos == speaker_row) or cond_embd.i[bucket_i] (pos == condition_row + i).
+// cond (u32 words): speaker_row i32, condition_row i32, n_cond, bucket[3], 0, 0, then the projected speaker row f32[1024].
+// Tables are f16 [count_i + 1][1024] packed in u32 (the JS side checks bucket_i <= count_i). One thread per column, grid [4, n].
+struct P { n: u32 }
+@group(0) @binding(0) var<storage, read_write> emb: array<f32>;
+@group(0) @binding(1) var<storage, read> cond: array<u32>;
+@group(0) @binding(2) var<storage, read> t0: array<u32>;
+@group(0) @binding(3) var<storage, read> t1: array<u32>;
+@group(0) @binding(4) var<storage, read> t2: array<u32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.y;
+  if (t >= p.n) { return; }
+  let c = wid.x * 256u + lid;
+  let pos = i32(dyn.a + t);
+  let sr = bitcast<i32>(cond[0]);
+  let cr = bitcast<i32>(cond[1]);
+  let nc = i32(cond[2]);
+  if (sr >= 0 && pos == sr) {
+    emb[t * 1024u + c] = bitcast<f32>(cond[8u + c]);
+    return;
+  }
+  if (cr < 0 || pos < cr || pos >= cr + nc) { return; }
+  let i = u32(pos - cr);
+  let word = cond[3u + i] * 512u + c / 2u;
+  var v: vec2f;
+  if (i == 0u) { v = unpack2x16float(t0[word]); }
+  else if (i == 1u) { v = unpack2x16float(t1[word]); }
+  else { v = unpack2x16float(t2[word]); }
+  emb[t * 1024u + c] = select(v.x, v.y, (c & 1u) != 0u);
+}
+`,"./kernels/dense_fuse.wgsl":`// Dense stage fusion: acc[t][k] = (S == 0 ? 0 : acc[t][k]) + feat[t][k] * w[S*N + k], n = T * N.
+struct P { n: u32, N: u32, S: u32 }
+@group(0) @binding(0) var<storage, read> feat: array<f32>;
+@group(0) @binding(1) var<storage, read> w: array<f32>;
+@group(0) @binding(2) var<storage, read_write> acc: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  let v = feat[i] * w[p.S * p.N + i % p.N];
+  acc[i] = select(acc[i] + v, v, p.S == 0u);
+}
+`,"./kernels/dwconv.wgsl":`// Causal depthwise conv over a history-prefixed input: y[t][c] = act(sum_k w[k][c] * Xf[t + k][c] (+ b[c])).
+// rnd bits round to bf16: 1 each input as loaded, 2 the tap sum (before bias), 4 the output.
+// rows_dyn != 0: rows at or past dyn.b * rows_dyn valid rows exit.
+struct P { T: u32, C: u32, K: u32, has_bias: u32, act: u32, rnd: u32, rows_dyn: u32 }
+@group(0) @binding(0) var<storage, read> Xf: array<f32>;
+@group(0) @binding(1) var<storage, read> w: array<f32>;
+@group(0) @binding(2) var<storage, read> b: array<f32>;
+@group(0) @binding(3) var<storage, read_write> y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.T * p.C) { return; }
+  let t = i / p.C;
+  if (p.rows_dyn != 0u && t >= dyn.b * p.rows_dyn) { return; }
+  let ch = i - t * p.C;
+  var s = 0.0;
+  let rin = (p.rnd & 1u) != 0u;
+  for (var k = 0u; k < p.K; k++) {
+    let xv = Xf[(t + k) * p.C + ch];
+    s += w[k * p.C + ch] * select(xv, bf16r(xv), rin);
+  }
+  if ((p.rnd & 2u) != 0u) { s = bf16r(s); }
+  if (p.has_bias != 0u) { s += b[ch]; }
+  var o = act(s, p.act, 0.0);
+  if ((p.rnd & 4u) != 0u) { o = bf16r(o); }
+  y[i] = o;
+}
+`,"./kernels/edit_logits.wgsl":`// Logits head of the speech-edit vocabulary over the release head: per codebook block cb of VE = V + AX rows,
+// row j < V is the release head's row cb*V + j (base) and row j >= V the grown row cb*AX + j - V (extra); the adapter
+// adds U[r] . t (U f16 [NCB*VE][K], t = down . h), then the softcap: logits[r] = cap * tanh((head + U[r] . t) / cap).
+struct P { n: u32, V: u32, AX: u32, K: u32, cap: f32 }
+@group(0) @binding(0) var<storage, read> base: array<f32>;
+@group(0) @binding(1) var<storage, read> extra: array<f32>;
+@group(0) @binding(2) var<storage, read> t: array<f32>;
+@group(0) @binding(3) var<storage, read> U: array<vec4<u32>>;
+@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> ts: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  if (lid < p.K) { ts[lid] = t[lid]; }
+  workgroupBarrier();
+  let r = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (r >= p.n) { return; }
+  let ve = p.V + p.AX;
+  let cb = r / ve;
+  let j = r - cb * ve;
+  var s = 0.0;
+  if (j < p.V) { s = base[cb * p.V + j]; } else { s = extra[cb * p.AX + j - p.V]; }
+  let k8 = p.K / 8u;
+  for (var i = 0u; i < k8; i++) {
+    let w = U[r * k8 + i];
+    let b = i * 8u;
+    s += dot(vec4f(unpack2x16float(w.x), unpack2x16float(w.y)), vec4f(ts[b], ts[b + 1u], ts[b + 2u], ts[b + 3u])) +
+         dot(vec4f(unpack2x16float(w.z), unpack2x16float(w.w)), vec4f(ts[b + 4u], ts[b + 5u], ts[b + 6u], ts[b + 7u]));
+  }
+  outp[r] = act(s, 5u, p.cap);
+}
+`,"./kernels/elementwise.wgsl":`// op 0 silu_mul: y = a * silu(b); 1 glu_split: y[r][c] = a[r][c] * sigmoid(a[r][C + c]);
+// op 2 add: y = a + b; 3 snake: y = a + c[ch] * sin2(b[ch] * a)  (b = alpha, c = inv_alpha);
+// op 4 glu_split_bf16: glu_split rounded to bf16 (nn.GLU under BF16 autocast).
+struct P { op: u32, n: u32, C: u32, a_off: u32, y_off: u32 }
+@group(0) @binding(0) var<storage, read> a: array<f32>;
+@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(2) var<storage, read> c: array<f32>;
+@group(0) @binding(3) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+// Port of sin2_f32 (zac.cpp): Cody-Waite reduction + Cephes sinf/cosf polynomials.
+fn sin2(v: f32) -> f32 {
+  let q = round(v * 0.63661977236758134);
+  var r = v - q * 1.5703125;
+  r -= q * 4.837512969970703125e-4;
+  r -= q * 7.54978995489188216e-8;
+  let r2 = r * r;
+  let s = r + r * r2 * ((-1.9515295891e-4 * r2 + 8.3321608736e-3) * r2 - 1.6666654611e-1);
+  let cc = 1.0 - 0.5 * r2 + r2 * r2 * ((2.443315711809948e-5 * r2 - 1.388731625493765e-3) * r2 + 4.166664568298827e-2);
+  let t = select(s, cc, (i32(q) & 1) != 0);
+  return t * t;
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  var v = 0.0;
+  switch p.op {
+    case 0u: { v = a[p.a_off + i] * silu(b[i]); }
+    case 1u, 4u: {
+      let r = i / p.C; let ch = i - r * p.C;
+      let base = p.a_off + r * 2u * p.C;
+      v = a[base + ch] * sigmoid(a[base + p.C + ch]);
+      if (p.op == 4u) { v = bf16r(v); }
+    }
+    case 2u: { v = a[p.a_off + i] + b[i]; }
+    default: {
+      let ch = i % p.C;
+      let xv = a[p.a_off + i];
+      v = xv + sin2(b[ch] * xv) * c[ch];
+    }
+  }
+  y[p.y_off + i] = v;
+}
+`,"./kernels/embed.wgsl":`// out[t][c] = sum_{k<11} embd_all[k*V + ids[t*11+k]][c], V = audio vocabulary (4098, 4099 with span-end): the ten audio
+// tables of V rows each, then the text table at row 10*V.
+struct P { n: u32, V: u32 }
+@group(0) @binding(0) var<storage, read> ids: array<i32>;
+@group(0) @binding(1) var<storage, read> E: array<u32>;
+@group(0) @binding(2) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.y;
+  if (t >= p.n) { return; }
+  let pr = wid.x * 256u + lid;
+  var s = vec2f(0.0);
+  for (var k = 0u; k < 11u; k++) {
+    let row = k * p.V + u32(ids[t * 11u + k]);
+    s += unpack2x16float(E[row * 512u + pr]);
+  }
+  outp[t * 1024u + 2u * pr] = s.x;
+  outp[t * 1024u + 2u * pr + 1u] = s.y;
+}
+`,"./kernels/embed_edit.wgsl":`// embed.wgsl over the speech-edit vocabulary: the release table E (ten audio tables of V rows, then TV text rows at
+// row 10*V) plus the grown rows X (AX per audio table, then the text marker rows at row 10*AX). Audio id j >= V reads
+// X[k*AX + j - V]; text id j >= TV reads X[10*AX + j - TV].
+struct P { n: u32, V: u32, AX: u32, TV: u32 }
+@group(0) @binding(0) var<storage, read> ids: array<i32>;
+@group(0) @binding(1) var<storage, read> E: array<u32>;
+@group(0) @binding(2) var<storage, read> X: array<u32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.y;
+  if (t >= p.n) { return; }
+  let pr = wid.x * 256u + lid;
+  var s = vec2f(0.0);
+  for (var k = 0u; k < 11u; k++) {
+    let id = u32(ids[t * 11u + k]);
+    let lim = select(p.V, p.TV, k == 10u);
+    if (id < lim) {
+      s += unpack2x16float(E[(k * p.V + id) * 512u + pr]);
+    } else {
+      s += unpack2x16float(X[(k * p.AX + id - lim) * 512u + pr]);
+    }
+  }
+  outp[t * 1024u + 2u * pr] = s.x;
+  outp[t * 1024u + 2u * pr + 1u] = s.y;
+}
+`,"./kernels/fa_argmax.wgsl":`// Per row w of lg [rows][F]: out[out_off + w] = the first index of the row's maximum (torch.argmax), as f32.
+// One workgroup per row.
+struct P { F: u32, out_off: u32 }
+@group(0) @binding(0) var<storage, read> lg: array<f32>;
+@group(0) @binding(1) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> bv: array<f32, 256>;
+var<workgroup> bi: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let w = wid.x;
+  var best = -3.4e38;
+  var idx = 0xffffffffu;
+  for (var f = lid; f < p.F; f += 256u) {
+    let v = lg[w * p.F + f];
+    if (v > best || idx == 0xffffffffu) { best = v; idx = f; }
+  }
+  bv[lid] = best;
+  bi[lid] = idx;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) {
+      let ov = bv[lid + st];
+      let oi = bi[lid + st];
+      if (oi != 0xffffffffu && (bi[lid] == 0xffffffffu || ov > bv[lid] || (ov == bv[lid] && oi < bi[lid]))) {
+        bv[lid] = ov;
+        bi[lid] = oi;
+      }
+    }
+    workgroupBarrier();
+  }
+  if (lid == 0u) { outp[p.out_off + w] = f32(bi[0]); }
+}
+`,"./kernels/fa_attention.wgsl":`// Full (non-causal) softmax attention for FuseAlign (head dim 64) and Dia (head dim 128) over n rows of a fused qkv
+// buffer: q, k, v at q_off, k_off, v_off of each \`stride\`-float row, each [nh][hd]; out rows of out_stride floats.
+// One workgroup per (bq query rows, head). Each row is split over cpr = hd / 16 threads holding 16 query dims and 16
+// output dims in registers; tiles of bk = 512 / hd keys/values are staged in workgroup memory, the score partials
+// reduced through it, and every row keeps an online softmax (F32 throughout).
+struct P { n: u32, nh: u32, hd: u32, stride: u32, q_off: u32, k_off: u32, v_off: u32, out_stride: u32, scale: f32 }
+@group(0) @binding(0) var<storage, read> qkv: array<f32>;
+@group(0) @binding(1) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+const DPT = 16u;
+var<workgroup> Ks: array<f32, 512>;    // [bk][hd]
+var<workgroup> Vs: array<f32, 512>;    // [bk][hd]
+var<workgroup> Ps: array<f32, 2048>;   // [bq][cpr][bk] score partials
+var<workgroup> Ss: array<f32, 512>;    // [bq][bk] scores
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let cpr = p.hd / DPT;
+  let bq = 256u / cpr;
+  let bk = 512u / p.hd;
+  let h = wid.y;
+  let r = lid / cpr;
+  let c = lid - r * cpr;
+  let i = wid.x * bq + r;
+  let valid = i < p.n;
+  var qr: array<f32, 16>;
+  var o: array<f32, 16>;
+  for (var d = 0u; d < DPT; d++) { qr[d] = 0.0; o[d] = 0.0; }
+  if (valid) {
+    let qb = i * p.stride + p.q_off + h * p.hd + c * DPT;
+    for (var d = 0u; d < DPT; d++) { qr[d] = qkv[qb + d]; }
+  }
+  var m = -3.0e38;
+  var l = 0.0;
+  for (var j0 = 0u; j0 < p.n; j0 += bk) {
+    for (var e = lid; e < 512u; e += 256u) {
+      let jj = e / p.hd;
+      let d = e - jj * p.hd;
+      let j = j0 + jj;
+      var kv = 0.0;
+      var vv = 0.0;
+      if (j < p.n) {
+        let base = j * p.stride + h * p.hd + d;
+        kv = qkv[base + p.k_off];
+        vv = qkv[base + p.v_off];
+      }
+      Ks[e] = kv;
+      Vs[e] = vv;
+    }
+    workgroupBarrier();
+    for (var jj = 0u; jj < bk; jj++) {
+      let kb = jj * p.hd + c * DPT;
+      var acc = 0.0;
+      for (var d = 0u; d < DPT; d++) { acc += qr[d] * Ks[kb + d]; }
+      Ps[(r * cpr + c) * bk + jj] = acc;
+    }
+    workgroupBarrier();
+    for (var jj = c; jj < bk; jj += cpr) {
+      var s = 0.0;
+      for (var cc = 0u; cc < cpr; cc++) { s += Ps[(r * cpr + cc) * bk + jj]; }
+      Ss[r * bk + jj] = select(-3.0e38, s * p.scale, j0 + jj < p.n);
+    }
+    workgroupBarrier();
+    var mt = m;
+    for (var jj = 0u; jj < bk; jj++) { mt = max(mt, Ss[r * bk + jj]); }
+    let corr = exp(m - mt);
+    l *= corr;
+    for (var d = 0u; d < DPT; d++) { o[d] *= corr; }
+    for (var jj = 0u; jj < bk; jj++) {
+      let sv = Ss[r * bk + jj];
+      if (sv > -1.0e38) {
+        let pe = exp(sv - mt);
+        l += pe;
+        let vb = jj * p.hd + c * DPT;
+        for (var d = 0u; d < DPT; d++) { o[d] += pe * Vs[vb + d]; }
+      }
+    }
+    m = mt;
+    workgroupBarrier();
+  }
+  if (valid) {
+    let inv = 1.0 / l;
+    let ob = i * p.out_stride + h * p.hd + c * DPT;
+    for (var d = 0u; d < DPT; d++) { outp[ob + d] = o[d] * inv; }
+  }
+}
+`,"./kernels/fa_ew.wgsl":`// FuseAlign elementwise ops over n outputs. op 0 swiglu: y[r][c] = silu(x[r][c]) * x[r][C + c] (x rows of 2C: gate,
+// then up); op 1 bf16: y = x rounded to bf16 (the Dia encoder's bf16 output).
+struct P { op: u32, n: u32, C: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  if (p.op == 0u) {
+    let r = i / p.C;
+    let c = i - r * p.C;
+    let base = r * 2u * p.C + c;
+    y[i] = silu(x[base]) * x[base + p.C];
+  } else {
+    y[i] = bf16r(x[i]);
+  }
+}
+`,"./kernels/fa_pool.wgsl":`// FuseAlign word mean pooling: y[w][c] = sum over the word's byte rows j in [spans[2w], spans[2w+1]) of
+// x[(row0 + j) * dim + c] / count (each term scaled, as the pooling matmul does). One workgroup per word.
+struct P { dim: u32, row0: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> spans: array<u32>;
+@group(0) @binding(2) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let w = wid.x;
+  let a = spans[2u * w];
+  let b = spans[2u * w + 1u];
+  let inv = 1.0 / f32(max(b - a, 1u));
+  for (var c = lid; c < p.dim; c += 256u) {
+    var s = 0.0;
+    for (var j = a; j < b; j++) { s += x[(p.row0 + j) * p.dim + c] * inv; }
+    y[w * p.dim + c] = s;
+  }
+}
+`,"./kernels/fa_rope.wgsl":`// FuseAlign / Dia RoPE, in place on the q and k parts of a fused qkv buffer (rows of \`stride\` floats; q at q_off, k at
+// k_off, each [nh][hd]). rotate_half: (x1, x2) -> (x1 c - x2 s, x2 c + x1 s) with per-row tables cs/sn [n][hd / 2]
+// (cos/sin of position * inv_freq; both halves share them).
+struct P { n: u32, nh: u32, hd: u32, stride: u32, q_off: u32, k_off: u32 }
+@group(0) @binding(0) var<storage, read_write> qkv: array<f32>;
+@group(0) @binding(1) var<storage, read> cs: array<f32>;
+@group(0) @binding(2) var<storage, read> sn: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let hh = p.hd / 2u;
+  let per_row = p.nh * hh;
+  let id = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (id >= p.n * per_row) { return; }
+  let row = id / per_row;
+  let rem = id - row * per_row;
+  let h = rem / hh;
+  let i = rem - h * hh;
+  let c = cs[row * hh + i];
+  let s = sn[row * hh + i];
+  for (var part = 0u; part < 2u; part++) {
+    let base = row * p.stride + select(p.q_off, p.k_off, part == 1u) + h * p.hd + i;
+    let x1 = qkv[base];
+    let x2 = qkv[base + hh];
+    qkv[base] = x1 * c - x2 * s;
+    qkv[base + hh] = x2 * c + x1 * s;
+  }
+}
+`,"./kernels/gconv3x3.wgsl":`// Grouped 3x3 conv, pad 1, channel-last x [T_in][F_in][IC] -> y [T_out][F_out][OC]; w [OC][a][3][3] (kh along F, kw along T):
+// y[t][f][oc] = sum_j (sum_kh sum_kw w[oc][j][kh][kw] * x[t*s_t+kw-1][f*s_f+kh-1][(oc/bg)*a + j]), zero outside.
+// flags: 1 +bias, 2 *scl, 4 +shf, then act.
+struct P {
+  T_in: u32, F_in: u32, IC: u32, OC: u32, a: u32, bg: u32, s_f: u32, s_t: u32,
+  T_out: u32, F_out: u32, flags: u32, act: u32,
+}
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> w: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.T_out * p.F_out * p.OC) { return; }
+  let oc = i % p.OC;
+  let r = i / p.OC;
+  let f = r % p.F_out;
+  let t = r / p.F_out;
+  let c0 = (oc / p.bg) * p.a;
+  var s = 0.0;
+  for (var j = 0u; j < p.a; j++) {
+    var term = 0.0;
+    for (var kh = 0u; kh < 3u; kh++) {
+      let fi = i32(f * p.s_f + kh) - 1;
+      if (fi < 0 || fi >= i32(p.F_in)) { continue; }
+      for (var kw = 0u; kw < 3u; kw++) {
+        let ti = i32(t * p.s_t + kw) - 1;
+        if (ti < 0 || ti >= i32(p.T_in)) { continue; }
+        term += w[((oc * p.a + j) * 3u + kh) * 3u + kw] * x[(u32(ti) * p.F_in + u32(fi)) * p.IC + c0 + j];
+      }
+    }
+    s += term;
+  }
+  if ((p.flags & 1u) != 0u) { s += bias[oc]; }
+  if ((p.flags & 2u) != 0u) { s *= scl[oc]; }
+  if ((p.flags & 4u) != 0u) { s += shf[oc]; }
+  y[i] = act(s, p.act, 0.0);
+}
+`,"./kernels/gdn_conv.wgsl":`// GDN causal depthwise conv (kernel 4) over the raw q|k|v channels of \`mixed\` with a 3-row history:
+// outp[t][c] = silu(h0*w[c][0] + h1*w[c][1] + h2*w[c][2] + x_t*w[c][3]), tap 0 oldest. One thread per
+// channel walks the rows; hist[c*3 + r] (r = 0 oldest) ends as the last 3 raw rows (exact for n < 3).
+struct P { n: u32, stride: u32 }
+@group(0) @binding(0) var<storage, read> mixed: array<f32>;
+@group(0) @binding(1) var<storage, read> w: array<f32>;
+@group(0) @binding(2) var<storage, read_write> hist: array<f32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+const C = 1536u;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let c = wid.x * 256u + lid;
+  if (c >= C) { return; }
+  var h0 = hist[c * 3u];
+  var h1 = hist[c * 3u + 1u];
+  var h2 = hist[c * 3u + 2u];
+  let w0 = w[c * 4u]; let w1 = w[c * 4u + 1u]; let w2 = w[c * 4u + 2u]; let w3 = w[c * 4u + 3u];
+  for (var t = 0u; t < p.n; t++) {
+    let x = mixed[t * p.stride + c];
+    outp[t * C + c] = silu(h0 * w0 + h1 * w1 + h2 * w2 + x * w3);
+    h0 = h1; h1 = h2; h2 = x;
+  }
+  hist[c * 3u] = h0;
+  hist[c * 3u + 1u] = h1;
+  hist[c * 3u + 2u] = h2;
+}
+`,"./kernels/gdn_out.wgsl":`// GDN output gate: outp[t][h][d] = rmsnorm_h(o)[d] * nw[d] * silu(z[t][h][d]), eps 1e-5, z = mixed[1536..2048).
+// One 128-thread workgroup per (t, h).
+struct P { n: u32 }
+@group(0) @binding(0) var<storage, read> o: array<f32>;
+@group(0) @binding(1) var<storage, read> mixed: array<f32>;
+@group(0) @binding(2) var<storage, read> nw: array<f32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<f32, 128>;
+
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) d: u32) {
+  let id = wid.x + wid.y * nwg.x;
+  if (id >= p.n * 4u) { return; }
+  let t = id / 4u;
+  let h = id % 4u;
+  let idx = t * 512u + h * 128u + d;
+  let v = o[idx];
+  red[d] = v * v;
+  workgroupBarrier();
+  for (var st = 64u; st > 0u; st >>= 1u) {
+    if (d < st) { red[d] += red[d + st]; }
+    workgroupBarrier();
+  }
+  let rs = inverseSqrt(red[0] / 128.0 + 1e-5);
+  outp[idx] = v * rs * nw[d] * silu(mixed[t * 2056u + 1536u + h * 128u + d]);
+}
+`,"./kernels/gdn_prep.wgsl":`// GDN per-(token, head) prep: q/k l2-normalized as x / sqrt(sum x^2 + 1e-6) (FLA convention);
+// decay = exp(-softplus(a + dt_bias) * exp(A_log)), beta = sigmoid(b). One 128-thread workgroup per (t, h).
+struct P { n: u32 }
+@group(0) @binding(0) var<storage, read> conv: array<f32>;
+@group(0) @binding(1) var<storage, read> mixed: array<f32>;
+@group(0) @binding(2) var<storage, read> dt_bias: array<f32>;
+@group(0) @binding(3) var<storage, read> a_log: array<f32>;
+@group(0) @binding(4) var<storage, read_write> qn: array<f32>;
+@group(0) @binding(5) var<storage, read_write> kn: array<f32>;
+@group(0) @binding(6) var<storage, read_write> decay: array<f32>;
+@group(0) @binding(7) var<storage, read_write> beta: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<vec2f, 128>;
+
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) d: u32) {
+  let id = wid.x + wid.y * nwg.x;
+  if (id >= p.n * 4u) { return; }
+  let t = id / 4u;
+  let h = id % 4u;
+  let q = conv[t * 1536u + h * 128u + d];
+  let k = conv[t * 1536u + 512u + h * 128u + d];
+  red[d] = vec2f(q * q, k * k);
+  workgroupBarrier();
+  for (var st = 64u; st > 0u; st >>= 1u) {
+    if (d < st) { red[d] += red[d + st]; }
+    workgroupBarrier();
+  }
+  let s = red[0];
+  qn[t * 512u + h * 128u + d] = q / sqrt(s.x + 1e-6);
+  kn[t * 512u + h * 128u + d] = k / sqrt(s.y + 1e-6);
+  if (d == 0u) {
+    let a = mixed[t * 2056u + 2048u + h] + dt_bias[h];
+    let b = mixed[t * 2056u + 2052u + h];
+    let sp = select(log(1.0 + exp(a)), a, a > 20.0);
+    decay[t * 4u + h] = exp(-sp * exp(a_log[h]));
+    beta[t * 4u + h] = sigmoid(b);
+  }
+}
+`,"./kernels/gdn_scan.wgsl":`// Gated delta rule recurrence (ggml_gated_delta_net, scalar gate). State M[h][j][i] (row j = v index)
+// lives in state[(h*128 + j)*128 + i]; one thread owns one row. Per token:
+//   M *= decay;  dl[j] = (v[j] - M[j].k) * beta;  M[j] += dl[j] * k;  o[j] = (M[j].q) / sqrt(128).
+// 64-thread workgroups never straddle a head, so k and q for the token are staged in workgroup memory.
+struct P { n: u32 }
+@group(0) @binding(0) var<storage, read> qn: array<f32>;
+@group(0) @binding(1) var<storage, read> kn: array<f32>;
+@group(0) @binding(2) var<storage, read> conv: array<f32>;
+@group(0) @binding(3) var<storage, read> decay: array<f32>;
+@group(0) @binding(4) var<storage, read> beta: array<f32>;
+@group(0) @binding(5) var<storage, read_write> state: array<f32>;
+@group(0) @binding(6) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> ks: array<f32, 128>;
+var<workgroup> qs: array<f32, 128>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let g = wid.x * 64u + lid;
+  let h = g / 128u;
+  let j = g % 128u;
+  let sb = (h * 128u + j) * 128u;
+  var row: array<f32, 128>;
+  for (var i = 0u; i < 128u; i++) { row[i] = state[sb + i]; }
+  for (var t = 0u; t < p.n; t++) {
+    let hb = t * 512u + h * 128u;
+    workgroupBarrier();
+    ks[lid] = kn[hb + lid];
+    ks[lid + 64u] = kn[hb + lid + 64u];
+    qs[lid] = qn[hb + lid];
+    qs[lid + 64u] = qn[hb + lid + 64u];
+    workgroupBarrier();
+    let dc = decay[t * 4u + h];
+    var sk = 0.0;
+    for (var i = 0u; i < 128u; i++) { row[i] *= dc; sk += row[i] * ks[i]; }
+    let dl = (conv[t * 1536u + 1024u + h * 128u + j] - sk) * beta[t * 4u + h];
+    var o = 0.0;
+    for (var i = 0u; i < 128u; i++) { row[i] += dl * ks[i]; o += row[i] * qs[i]; }
+    outp[hb + j] = o * 0.08838834764831845;
+  }
+  for (var i = 0u; i < 128u; i++) { state[sb + i] = row[i]; }
+}
+`,"./kernels/gemm.wgsl":`// Implicit-GEMM causal conv / linear: 64x64 output tile, 16x16 threads x 4x4 outputs, K-step 16.
+// acc[t][o] = sum_k sum_i X[x_off + (t + k*d)*x_stride + i] * W[(k*O + o)*IC + i]   (IC % 16 == 0)
+// rows_dyn != 0: row tiles at or past dyn.b * rows_dyn valid rows exit.
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<f32>;
+@group(0) @binding(1) var<storage, read> Wt: array<u32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> Xs: array<array<f32, 64>, 16>;
+var<workgroup> Ws: array<array<f32, 64>, 16>;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let o0 = wid.x * 64u;
+  let t0 = wid.y * 64u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  let tx = l3.x;
+  let ty = l3.y;
+  var acc: array<array<f32, 4>, 4>;
+  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
+  let RR = p.K * p.IC;
+  let xt = lid >> 2u;
+  let xr = (lid & 3u) * 4u;
+  let wo = lid >> 3u;
+  let wr = (lid & 7u) * 2u;
+  for (var r0 = 0u; r0 < RR; r0 += 16u) {
+    let k = r0 / p.IC;
+    let i0 = r0 - k * p.IC;
+    let t = t0 + xt;
+    if (t < p.T) {
+      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
+      Xs[xr][xt] = X[base];
+      Xs[xr + 1u][xt] = X[base + 1u];
+      Xs[xr + 2u][xt] = X[base + 2u];
+      Xs[xr + 3u][xt] = X[base + 3u];
+    } else {
+      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
+    }
+    for (var h = 0u; h < 2u; h++) {
+      let oo = wo + h * 32u;
+      let o = o0 + oo;
+      var v = vec2f(0.0);
+      if (o < p.O) { v = unpack2x16float(Wt[((k * p.O + o) * p.IC + i0 + wr) >> 1u]); }
+      Ws[wr][oo] = v.x;
+      Ws[wr + 1u][oo] = v.y;
+    }
+    workgroupBarrier();
+    for (var r = 0u; r < 16u; r++) {
+      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
+      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
+      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
+      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
+      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
+      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
+    }
+    workgroupBarrier();
+  }
+  for (var a = 0u; a < 4u; a++) {
+    let t = t0 + ty + 16u * a;
+    if (t >= p.T) { continue; }
+    for (var b = 0u; b < 4u; b++) {
+      let o = o0 + tx + 16u * b;
+      if (o >= p.O) { continue; }
+      var y = acc[a][b];
+      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+      y = act(y, p.act, p.cap);
+      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+      if ((p.flags & 4u) != 0u) { y += shf[o]; }
+      y *= p.alpha;
+      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+      Y[p.y_off + t * p.y_stride + o] = y;
+    }
+  }
+}
+`,"./kernels/gemm_bf16.wgsl":`// gemm.wgsl with bf16 weights (two per u32, element 2i in the low half) for the native BF16 autocast recipe
+// (reference encoder + SSL teacher): the X operand is rounded to bf16 as it is loaded (ggml converts src1 to the
+// BF16 vec_dot type), products accumulate in f32, and \`rnd\` rounds the epilogue to bf16 at the requested points:
+// 1 after the accumulation, 2 after +bias, 4 after act, 8 after *alpha, 16 after +res.
+// Same tile and params as gemm.wgsl (64x64 output tile, 16x16 threads x 4x4 outputs, K-step 16, IC % 16 == 0).
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32, rnd: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<f32>;
+@group(0) @binding(1) var<storage, read> Wt: array<u32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> Xs: array<array<f32, 64>, 16>;
+var<workgroup> Ws: array<array<f32, 64>, 16>;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let o0 = wid.x * 64u;
+  let t0 = wid.y * 64u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  let tx = l3.x;
+  let ty = l3.y;
+  var acc: array<array<f32, 4>, 4>;
+  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
+  let RR = p.K * p.IC;
+  let xt = lid >> 2u;
+  let xr = (lid & 3u) * 4u;
+  let wo = lid >> 3u;
+  let wr = (lid & 7u) * 2u;
+  for (var r0 = 0u; r0 < RR; r0 += 16u) {
+    let k = r0 / p.IC;
+    let i0 = r0 - k * p.IC;
+    let t = t0 + xt;
+    if (t < p.T) {
+      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
+      Xs[xr][xt] = bf16r(X[base]);
+      Xs[xr + 1u][xt] = bf16r(X[base + 1u]);
+      Xs[xr + 2u][xt] = bf16r(X[base + 2u]);
+      Xs[xr + 3u][xt] = bf16r(X[base + 3u]);
+    } else {
+      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
+    }
+    for (var h = 0u; h < 2u; h++) {
+      let oo = wo + h * 32u;
+      let o = o0 + oo;
+      var v = vec2f(0.0);
+      if (o < p.O) {
+        let w = Wt[((k * p.O + o) * p.IC + i0 + wr) >> 1u];
+        v = vec2f(bitcast<f32>(w << 16u), bitcast<f32>(w & 0xffff0000u));
+      }
+      Ws[wr][oo] = v.x;
+      Ws[wr + 1u][oo] = v.y;
+    }
+    workgroupBarrier();
+    for (var r = 0u; r < 16u; r++) {
+      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
+      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
+      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
+      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
+      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
+      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
+    }
+    workgroupBarrier();
+  }
+  for (var a = 0u; a < 4u; a++) {
+    let t = t0 + ty + 16u * a;
+    if (t >= p.T) { continue; }
+    for (var b = 0u; b < 4u; b++) {
+      let o = o0 + tx + 16u * b;
+      if (o >= p.O) { continue; }
+      var y = acc[a][b];
+      if ((p.rnd & 1u) != 0u) { y = bf16r(y); }
+      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+      if ((p.rnd & 2u) != 0u) { y = bf16r(y); }
+      y = act(y, p.act, p.cap);
+      if ((p.rnd & 4u) != 0u) { y = bf16r(y); }
+      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+      if ((p.flags & 4u) != 0u) { y += shf[o]; }
+      y *= p.alpha;
+      if ((p.rnd & 8u) != 0u) { y = bf16r(y); }
+      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+      if ((p.rnd & 16u) != 0u) { y = bf16r(y); }
+      Y[p.y_off + t * p.y_stride + o] = y;
+    }
+  }
+}
+`,"./kernels/gemm_f32.wgsl":`// gemm.wgsl with f32 weights: 64x64 output tile, 16x16 threads x 4x4 outputs, K-step 16.
+// acc[t][o] = sum_k sum_i X[x_off + (t + k*d)*x_stride + i] * W[(k*O + o)*IC + i]   (IC % 16 == 0)
+// rows_dyn != 0: row tiles at or past dyn.b * rows_dyn valid rows exit. flags bit 16: act after scale/shift.
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<f32>;
+@group(0) @binding(1) var<storage, read> Wt: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> Xs: array<array<f32, 64>, 16>;
+var<workgroup> Ws: array<array<f32, 64>, 16>;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let o0 = wid.x * 64u;
+  let t0 = wid.y * 64u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  let tx = l3.x;
+  let ty = l3.y;
+  var acc: array<array<f32, 4>, 4>;
+  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
+  let RR = p.K * p.IC;
+  let xt = lid >> 2u;
+  let xr = (lid & 3u) * 4u;
+  let wo = lid >> 3u;
+  let wr = (lid & 7u) * 2u;
+  for (var r0 = 0u; r0 < RR; r0 += 16u) {
+    let k = r0 / p.IC;
+    let i0 = r0 - k * p.IC;
+    let t = t0 + xt;
+    if (t < p.T) {
+      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
+      Xs[xr][xt] = X[base];
+      Xs[xr + 1u][xt] = X[base + 1u];
+      Xs[xr + 2u][xt] = X[base + 2u];
+      Xs[xr + 3u][xt] = X[base + 3u];
+    } else {
+      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
+    }
+    for (var h = 0u; h < 2u; h++) {
+      let oo = wo + h * 32u;
+      let o = o0 + oo;
+      var v = vec2f(0.0);
+      if (o < p.O) {
+        let wi = (k * p.O + o) * p.IC + i0 + wr;
+        v = vec2f(Wt[wi], Wt[wi + 1u]);
+      }
+      Ws[wr][oo] = v.x;
+      Ws[wr + 1u][oo] = v.y;
+    }
+    workgroupBarrier();
+    for (var r = 0u; r < 16u; r++) {
+      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
+      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
+      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
+      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
+      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
+      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
+    }
+    workgroupBarrier();
+  }
+  for (var a = 0u; a < 4u; a++) {
+    let t = t0 + ty + 16u * a;
+    if (t >= p.T) { continue; }
+    for (var b = 0u; b < 4u; b++) {
+      let o = o0 + tx + 16u * b;
+      if (o >= p.O) { continue; }
+      var y = acc[a][b];
+      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+      let late = (p.flags & 16u) != 0u;
+      if (!late) { y = act(y, p.act, p.cap); }
+      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+      if ((p.flags & 4u) != 0u) { y += shf[o]; }
+      if (late) { y = act(y, p.act, p.cap); }
+      y *= p.alpha;
+      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+      Y[p.y_off + t * p.y_stride + o] = y;
+    }
+  }
+}
+`,"./kernels/gemm_h8.wgsl":`// Register-tiled implicit GEMM over k-major half weights (repack_h8 layout W[K][IC][Op], Op = ceil32(O); one
+// vec4<u32> = 8 halves): adjacent threads (consecutive og) read adjacent half8 chunks; no workgroup memory
+// (native/cl/kernels/gemm_h8.cl GEMM_H8, f32 accumulation). R, LX, LY are module constants injected by Gpu.kernel
+// (name gemm_h8_r<R>_<LX>x<LY>). Thread (og, tg): rows tg*R .. +R-1 x outputs og*8 .. +7.
+// acc[t][o] = sum_k sum_i X[x_off + (min(t,T-1) + k*d)*x_stride + i] * W[k][i][o]; IC % 16 == 0, x_off and x_stride
+// multiples of 4. rows_dyn != 0: row groups at or past dyn.b * rows_dyn valid rows exit. Epilogue as gemm_q8.wgsl.
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> W: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+fn lo8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.x), unpack2x16float(w.y)); }
+fn hi8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.z), unpack2x16float(w.w)); }
+
+fn store1(v: f32, t: u32, o: u32) {
+  if (o >= p.O) { return; }
+  var y = v;
+  if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+  y = act(y, p.act, p.cap);
+  if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+  if ((p.flags & 4u) != 0u) { y += shf[o]; }
+  y *= p.alpha;
+  if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+  Y[p.y_off + t * p.y_stride + o] = y;
+}
+
+fn store8(a: vec4f, b: vec4f, t: u32, o: u32) {
+  store1(a.x, t, o); store1(a.y, t, o + 1u); store1(a.z, t, o + 2u); store1(a.w, t, o + 3u);
+  store1(b.x, t, o + 4u); store1(b.y, t, o + 5u); store1(b.z, t, o + 6u); store1(b.w, t, o + 7u);
+}
+
+@compute @workgroup_size(LX, LY)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let og = gid.x;
+  let t0 = gid.y * R;
+  let OG = (p.O + 7u) / 8u;
+  let OP8 = ((p.O + 31u) / 32u) * 4u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (og >= OG || t0 >= nv) { return; }
+  var acc: array<vec4f, 2u * R>;
+  for (var r = 0u; r < 2u * R; r++) { acc[r] = vec4f(0.0); }
+  var xb: array<u32, R>;
+  for (var k = 0u; k < p.K; k++) {
+    let wb = k * p.IC * OP8 + og;
+    for (var r = 0u; r < R; r++) { xb[r] = (p.x_off + (min(t0 + r, p.T - 1u) + k * p.d) * p.x_stride) >> 2u; }
+    for (var i = 0u; i < p.IC; i += 4u) {
+      let wi = wb + i * OP8;
+      let w0 = W[wi]; let w1 = W[wi + OP8]; let w2 = W[wi + 2u * OP8]; let w3 = W[wi + 3u * OP8];
+      let a0 = lo8(w0); let a1 = lo8(w1); let a2 = lo8(w2); let a3 = lo8(w3);
+      let b0 = hi8(w0); let b1 = hi8(w1); let b2 = hi8(w2); let b3 = hi8(w3);
+      let xi = i >> 2u;
+      for (var r = 0u; r < R; r++) {
+        let xv = X[xb[r] + xi];
+        acc[2u * r] += xv.x * a0 + xv.y * a1 + xv.z * a2 + xv.w * a3;
+        acc[2u * r + 1u] += xv.x * b0 + xv.y * b1 + xv.z * b2 + xv.w * b3;
+      }
+    }
+  }
+  for (var r = 0u; r < R; r++) {
+    let t = t0 + r;
+    if (t < p.T) { store8(acc[2u * r], acc[2u * r + 1u], t, og * 8u); }
+  }
+}
+`,"./kernels/gemm_h8_ks.wgsl":`// Split-K gemm_h8 for few rows (T <= 32; native/cl/kernels/gemm_h8.cl GEMM_H8_KS, f32 accumulation). S is a module
+// constant injected by Gpu.kernel (name gemm_h8_ks<S>). Workgroup = 8 channel groups (64 outputs) x S K-slices over
+// 4 rows: slice s covers input channels [s*IC/S, (s+1)*IC/S) of every tap (IC % (4*S) == 0); partials reduce in
+// workgroup memory and the 32 (row, output) results of each channel group are finished by the S slice threads.
+// Weights, params, bindings and epilogue as gemm_h8.wgsl.
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> W: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+/** [slice][channel group][row][half] partial sums of 8 outputs (two vec4f per row). */
+var<workgroup> red: array<vec4f, 8u * S * 4u * 2u>;
+
+fn lo8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.x), unpack2x16float(w.y)); }
+fn hi8(w: vec4<u32>) -> vec4f { return vec4f(unpack2x16float(w.z), unpack2x16float(w.w)); }
+
+@compute @workgroup_size(8, S)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u) {
+  let lx = l3.x;
+  let s = l3.y;
+  let og = wid.x * 8u + lx;
+  let t0 = wid.z * 4u;
+  let OG = (p.O + 7u) / 8u;
+  let OP8 = ((p.O + 31u) / 32u) * 4u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  var acc: array<vec4f, 8>;
+  for (var r = 0u; r < 8u; r++) { acc[r] = vec4f(0.0); }
+  if (og < OG) {
+    let len = p.IC / S;
+    let lo = s * len;
+    let hi = lo + len;
+    var xb: array<u32, 4>;
+    for (var k = 0u; k < p.K; k++) {
+      let wb = k * p.IC * OP8 + og;
+      for (var r = 0u; r < 4u; r++) { xb[r] = (p.x_off + (min(t0 + r, p.T - 1u) + k * p.d) * p.x_stride) >> 2u; }
+      for (var i = lo; i < hi; i += 4u) {
+        let wi = wb + i * OP8;
+        let w0 = W[wi]; let w1 = W[wi + OP8]; let w2 = W[wi + 2u * OP8]; let w3 = W[wi + 3u * OP8];
+        let a0 = lo8(w0); let a1 = lo8(w1); let a2 = lo8(w2); let a3 = lo8(w3);
+        let b0 = hi8(w0); let b1 = hi8(w1); let b2 = hi8(w2); let b3 = hi8(w3);
+        let xi = i >> 2u;
+        for (var r = 0u; r < 4u; r++) {
+          let xv = X[xb[r] + xi];
+          acc[2u * r] += xv.x * a0 + xv.y * a1 + xv.z * a2 + xv.w * a3;
+          acc[2u * r + 1u] += xv.x * b0 + xv.y * b1 + xv.z * b2 + xv.w * b3;
+        }
+      }
+    }
+  }
+  let rb = (s * 8u + lx) * 8u;
+  for (var r = 0u; r < 8u; r++) { red[rb + r] = acc[r]; }
+  workgroupBarrier();
+  if (og >= OG) { return; }
+  for (var e = s; e < 32u; e += S) {
+    let r = e >> 3u;
+    let j = e & 7u;
+    let t = t0 + r;
+    let o = og * 8u + j;
+    if (t >= p.T || o >= p.O) { continue; }
+    var y = 0.0;
+    for (var q = 0u; q < S; q++) { y += red[(q * 8u + lx) * 8u + 2u * r + (j >> 2u)][j & 3u]; }
+    if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+    y = act(y, p.act, p.cap);
+    if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+    if ((p.flags & 4u) != 0u) { y += shf[o]; }
+    y *= p.alpha;
+    if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+    Y[p.y_off + t * p.y_stride + o] = y;
+  }
+}
+`,"./kernels/gemm_q8.wgsl":`// gemm.wgsl with q8_0 weights: int8 W[(k*O + o)*IC + i] packed 4 per u32, one f32 scale per 32-weight
+// block (Wsc[e / 32]). Same tile, params and epilogue as gemm.wgsl; requires IC % 32 == 0.
+// rows_dyn != 0: row tiles at or past dyn.b * rows_dyn valid rows exit.
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<f32>;
+@group(0) @binding(1) var<storage, read> Wq: array<u32>;
+@group(0) @binding(7) var<storage, read> Wsc: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> Xs: array<array<f32, 64>, 16>;
+var<workgroup> Ws: array<array<f32, 64>, 16>;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) l3: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let o0 = wid.x * 64u;
+  let t0 = wid.y * 64u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  let tx = l3.x;
+  let ty = l3.y;
+  var acc: array<array<f32, 4>, 4>;
+  for (var a = 0u; a < 4u; a++) { for (var b = 0u; b < 4u; b++) { acc[a][b] = 0.0; } }
+  let RR = p.K * p.IC;
+  let xt = lid >> 2u;
+  let xr = (lid & 3u) * 4u;
+  let wo = lid >> 2u;
+  let wr = (lid & 3u) * 4u;
+  for (var r0 = 0u; r0 < RR; r0 += 16u) {
+    let k = r0 / p.IC;
+    let i0 = r0 - k * p.IC;
+    let t = t0 + xt;
+    if (t < p.T) {
+      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
+      Xs[xr][xt] = X[base];
+      Xs[xr + 1u][xt] = X[base + 1u];
+      Xs[xr + 2u][xt] = X[base + 2u];
+      Xs[xr + 3u][xt] = X[base + 3u];
+    } else {
+      Xs[xr][xt] = 0.0; Xs[xr + 1u][xt] = 0.0; Xs[xr + 2u][xt] = 0.0; Xs[xr + 3u][xt] = 0.0;
+    }
+    let o = o0 + wo;
+    var v = vec4f(0.0);
+    if (o < p.O) {
+      let e = (k * p.O + o) * p.IC + i0 + wr;
+      v = unpack_i8(Wq[e >> 2u]) * Wsc[e >> 5u];
+    }
+    Ws[wr][wo] = v.x; Ws[wr + 1u][wo] = v.y; Ws[wr + 2u][wo] = v.z; Ws[wr + 3u][wo] = v.w;
+    workgroupBarrier();
+    for (var r = 0u; r < 16u; r++) {
+      let x0 = Xs[r][ty]; let x1 = Xs[r][ty + 16u]; let x2 = Xs[r][ty + 32u]; let x3 = Xs[r][ty + 48u];
+      let w0 = Ws[r][tx]; let w1 = Ws[r][tx + 16u]; let w2 = Ws[r][tx + 32u]; let w3 = Ws[r][tx + 48u];
+      acc[0][0] += x0 * w0; acc[0][1] += x0 * w1; acc[0][2] += x0 * w2; acc[0][3] += x0 * w3;
+      acc[1][0] += x1 * w0; acc[1][1] += x1 * w1; acc[1][2] += x1 * w2; acc[1][3] += x1 * w3;
+      acc[2][0] += x2 * w0; acc[2][1] += x2 * w1; acc[2][2] += x2 * w2; acc[2][3] += x2 * w3;
+      acc[3][0] += x3 * w0; acc[3][1] += x3 * w1; acc[3][2] += x3 * w2; acc[3][3] += x3 * w3;
+    }
+    workgroupBarrier();
+  }
+  for (var a = 0u; a < 4u; a++) {
+    let t = t0 + ty + 16u * a;
+    if (t >= p.T) { continue; }
+    for (var b = 0u; b < 4u; b++) {
+      let o = o0 + tx + 16u * b;
+      if (o >= p.O) { continue; }
+      var y = acc[a][b];
+      if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+      y = act(y, p.act, p.cap);
+      if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+      if ((p.flags & 4u) != 0u) { y += shf[o]; }
+      y *= p.alpha;
+      if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+      Y[p.y_off + t * p.y_stride + o] = y;
+    }
+  }
+}
+`,"./kernels/gemm_skinny.wgsl":`// Skinny implicit-GEMM causal conv / linear for small T: 16(T) x 64(O) output tile, 256 threads x 4 outputs,
+// K-step 32. Same math, params and bindings as gemm.wgsl; weights are read 8 f16 per vec4<u32> (IC % 32 == 0).
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<f32>;
+@group(0) @binding(1) var<storage, read> Wt: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> Xs: array<array<f32, 16>, 32>;   // [r][t]
+var<workgroup> Ws: array<array<f32, 65>, 32>;   // [r][o], padded
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let o0 = wid.x * 64u;
+  let t0 = wid.y * 16u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  let tx = lid & 15u;
+  let ty = lid >> 4u;
+  var acc: array<f32, 4>;
+  for (var b = 0u; b < 4u; b++) { acc[b] = 0.0; }
+  let RR = p.K * p.IC;
+  for (var r0 = 0u; r0 < RR; r0 += 32u) {
+    let k = r0 / p.IC;
+    let i0 = r0 - k * p.IC;
+    let t = t0 + ty;
+    let xr = tx * 2u;
+    if (t < p.T) {
+      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
+      Xs[xr][ty] = X[base];
+      Xs[xr + 1u][ty] = X[base + 1u];
+    } else {
+      Xs[xr][ty] = 0.0;
+      Xs[xr + 1u][ty] = 0.0;
+    }
+    let col = lid >> 2u;
+    let part = (lid & 3u) * 8u;
+    let o = o0 + col;
+    var w = vec4<u32>(0u);
+    if (o < p.O) { w = Wt[((k * p.O + o) * p.IC + i0 + part) >> 3u]; }
+    let a = unpack2x16float(w.x); let b2 = unpack2x16float(w.y);
+    let c = unpack2x16float(w.z); let d = unpack2x16float(w.w);
+    Ws[part][col] = a.x; Ws[part + 1u][col] = a.y; Ws[part + 2u][col] = b2.x; Ws[part + 3u][col] = b2.y;
+    Ws[part + 4u][col] = c.x; Ws[part + 5u][col] = c.y; Ws[part + 6u][col] = d.x; Ws[part + 7u][col] = d.y;
+    workgroupBarrier();
+    for (var r = 0u; r < 32u; r++) {
+      let x = Xs[r][ty];
+      acc[0] += x * Ws[r][tx]; acc[1] += x * Ws[r][tx + 16u];
+      acc[2] += x * Ws[r][tx + 32u]; acc[3] += x * Ws[r][tx + 48u];
+    }
+    workgroupBarrier();
+  }
+  let t = t0 + ty;
+  if (t >= p.T) { return; }
+  for (var b = 0u; b < 4u; b++) {
+    let o = o0 + tx + 16u * b;
+    if (o >= p.O) { continue; }
+    var y = acc[b];
+    if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+    y = act(y, p.act, p.cap);
+    if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+    if ((p.flags & 4u) != 0u) { y += shf[o]; }
+    y *= p.alpha;
+    if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+    Y[p.y_off + t * p.y_stride + o] = y;
+  }
+}
+`,"./kernels/gemm_skinny_q8.wgsl":`// gemm_skinny.wgsl with q8_0 weights: int8 W packed 4 per u32 (8 per vec2<u32>), one f32 scale per
+// 32-weight block. Same tile, params and epilogue as gemm_skinny.wgsl; requires IC % 32 == 0.
+struct P {
+  T: u32, O: u32, IC: u32, K: u32, d: u32,
+  x_stride: u32, x_off: u32, y_stride: u32, y_off: u32, r_stride: u32, r_off: u32,
+  nb_bias: u32, flags: u32, act: u32, alpha: f32, cap: f32, rows_dyn: u32,
+}
+@group(0) @binding(0) var<storage, read> X: array<f32>;
+@group(0) @binding(1) var<storage, read> Wq: array<vec2<u32>>;
+@group(0) @binding(7) var<storage, read> Wsc: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> scl: array<f32>;
+@group(0) @binding(4) var<storage, read> shf: array<f32>;
+@group(0) @binding(5) var<storage, read> res: array<f32>;
+@group(0) @binding(6) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> Xs: array<array<f32, 16>, 32>;   // [r][t]
+var<workgroup> Ws: array<array<f32, 65>, 32>;   // [r][o], padded
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let o0 = wid.x * 64u;
+  let t0 = wid.y * 16u;
+  let nv = select(p.T, min(p.T, dyn.b * p.rows_dyn), p.rows_dyn != 0u);
+  if (t0 >= nv) { return; }
+  let tx = lid & 15u;
+  let ty = lid >> 4u;
+  var acc: array<f32, 4>;
+  for (var b = 0u; b < 4u; b++) { acc[b] = 0.0; }
+  let RR = p.K * p.IC;
+  for (var r0 = 0u; r0 < RR; r0 += 32u) {
+    let k = r0 / p.IC;
+    let i0 = r0 - k * p.IC;
+    let t = t0 + ty;
+    let xr = tx * 2u;
+    if (t < p.T) {
+      let base = p.x_off + (t + k * p.d) * p.x_stride + i0 + xr;
+      Xs[xr][ty] = X[base];
+      Xs[xr + 1u][ty] = X[base + 1u];
+    } else {
+      Xs[xr][ty] = 0.0;
+      Xs[xr + 1u][ty] = 0.0;
+    }
+    let col = lid >> 2u;
+    let part = (lid & 3u) * 8u;
+    let o = o0 + col;
+    var lo = vec4f(0.0);
+    var hi = vec4f(0.0);
+    if (o < p.O) {
+      let e = (k * p.O + o) * p.IC + i0 + part;
+      let w = Wq[e >> 3u];
+      let s = Wsc[e >> 5u];
+      lo = unpack_i8(w.x) * s;
+      hi = unpack_i8(w.y) * s;
+    }
+    Ws[part][col] = lo.x; Ws[part + 1u][col] = lo.y; Ws[part + 2u][col] = lo.z; Ws[part + 3u][col] = lo.w;
+    Ws[part + 4u][col] = hi.x; Ws[part + 5u][col] = hi.y; Ws[part + 6u][col] = hi.z; Ws[part + 7u][col] = hi.w;
+    workgroupBarrier();
+    for (var r = 0u; r < 32u; r++) {
+      let x = Xs[r][ty];
+      acc[0] += x * Ws[r][tx]; acc[1] += x * Ws[r][tx + 16u];
+      acc[2] += x * Ws[r][tx + 32u]; acc[3] += x * Ws[r][tx + 48u];
+    }
+    workgroupBarrier();
+  }
+  let t = t0 + ty;
+  if (t >= p.T) { return; }
+  for (var b = 0u; b < 4u; b++) {
+    let o = o0 + tx + 16u * b;
+    if (o >= p.O) { continue; }
+    var y = acc[b];
+    if ((p.flags & 1u) != 0u) { y += bias[o % p.nb_bias]; }
+    y = act(y, p.act, p.cap);
+    if ((p.flags & 2u) != 0u) { y *= scl[o]; }
+    if ((p.flags & 4u) != 0u) { y += shf[o]; }
+    y *= p.alpha;
+    if ((p.flags & 8u) != 0u) { y += res[p.r_off + t * p.r_stride + o]; }
+    Y[p.y_off + t * p.y_stride + o] = y;
+  }
+}
+`,"./kernels/layernorm.wgsl":`// y = act((x - mean) / sqrt(var + eps) * w + b), biased variance (ggml_norm), one row per workgroup.
+// rows_dyn != 0: rows at or past dyn.b * rows_dyn valid rows exit.
+struct P { N: u32, eps: f32, act: u32, rows_dyn: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> w: array<f32>;
+@group(0) @binding(2) var<storage, read> b: array<f32>;
+@group(0) @binding(3) var<storage, read_write> y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<f32, 256>;
+
+fn reduce(v: f32, lid: u32) -> f32 {
+  red[lid] = v;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  let r = red[0];
+  workgroupBarrier();
+  return r;
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let row = wid.x + wid.y * nwg.x;
+  if (p.rows_dyn != 0u && row >= dyn.b * p.rows_dyn) { return; }
+  let rb = row * p.N;
+  var s = 0.0;
+  for (var c = lid; c < p.N; c += 256u) { s += x[rb + c]; }
+  let mean = reduce(s, lid) / f32(p.N);
+  var s2 = 0.0;
+  for (var c = lid; c < p.N; c += 256u) { let d = x[rb + c] - mean; s2 += d * d; }
+  let scale = inverseSqrt(reduce(s2, lid) / f32(p.N) + p.eps);
+  for (var c = lid; c < p.N; c += 256u) {
+    y[rb + c] = act((x[rb + c] - mean) * scale * w[c] + b[c], p.act, 0.0);
+  }
+}
+`,"./kernels/lora_up.wgsl":`// LoRA up-projection added into a linear's output: Y[y_off + r*O + o] += U[o] . t[r*K .. r*K + K), r < n.
+// U f16 [O][K] (K % 8 == 0, K <= 256); t [n][K] = down . x (the adapter's down-projection, gemm / matvec).
+struct P { O: u32, K: u32, y_off: u32 }
+@group(0) @binding(0) var<storage, read> t: array<f32>;
+@group(0) @binding(1) var<storage, read> U: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read_write> Y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> ts: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let r = wid.y;
+  if (lid < p.K) { ts[lid] = t[r * p.K + lid]; }
+  workgroupBarrier();
+  let o = wid.x * 256u + lid;
+  if (o >= p.O) { return; }
+  let k8 = p.K / 8u;
+  var s = 0.0;
+  for (var j = 0u; j < k8; j++) {
+    let w = U[o * k8 + j];
+    let b = j * 8u;
+    s += dot(vec4f(unpack2x16float(w.x), unpack2x16float(w.y)), vec4f(ts[b], ts[b + 1u], ts[b + 2u], ts[b + 3u])) +
+         dot(vec4f(unpack2x16float(w.z), unpack2x16float(w.w)), vec4f(ts[b + 4u], ts[b + 5u], ts[b + 6u], ts[b + 7u]));
+  }
+  Y[p.y_off + r * p.O + o] += s;
+}
+`,"./kernels/lora_vec.wgsl":`// Decode-row LoRA side path in one dispatch: y[y_off + o] += U[o] . (D . x), D f16 [K][I], U f16 [O][K].
+// Every workgroup recomputes t = D . x (K x I MACs, 256 / K lanes per rank row) before its 256 outputs.
+// K a power of two in 8..256; I even, I <= 2048.
+struct P { O: u32, I: u32, K: u32, y_off: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> D: array<u32>;
+@group(0) @binding(2) var<storage, read> U: array<vec4<u32>>;
+@group(0) @binding(3) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> xs: array<f32, 2048>;
+var<workgroup> red: array<f32, 256>;
+var<workgroup> ts: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  for (var i = lid; i < p.I; i += 256u) { xs[i] = x[i]; }
+  workgroupBarrier();
+  let lanes = 256u / p.K;
+  let k = lid / lanes;
+  let lane = lid - k * lanes;
+  let i2 = p.I / 2u;
+  var s = 0.0;
+  for (var i = lane; i < i2; i += lanes) {
+    let w = unpack2x16float(D[k * i2 + i]);
+    s += w.x * xs[2u * i] + w.y * xs[2u * i + 1u];
+  }
+  red[lid] = s;
+  workgroupBarrier();
+  for (var st = lanes >> 1u; st > 0u; st >>= 1u) {
+    if (lane < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) { ts[k] = red[lid]; }
+  workgroupBarrier();
+  let o = wid.x * 256u + lid;
+  if (o >= p.O) { return; }
+  let k8 = p.K / 8u;
+  var acc = 0.0;
+  for (var j = 0u; j < k8; j++) {
+    let w = U[o * k8 + j];
+    let b = j * 8u;
+    acc += dot(vec4f(unpack2x16float(w.x), unpack2x16float(w.y)), vec4f(ts[b], ts[b + 1u], ts[b + 2u], ts[b + 3u])) +
+           dot(vec4f(unpack2x16float(w.z), unpack2x16float(w.w)), vec4f(ts[b + 4u], ts[b + 5u], ts[b + 6u], ts[b + 7u]));
+  }
+  y[p.y_off + o] += acc;
+}
+`,"./kernels/matvec.wgsl":`// y[y_off + o] = act(W[o] . x[x_off:] + bias[o % nb_bias]) + res[o]; W f16 [O][I] (I % 8 == 0), x_off % 4 == 0.
+// 16 rows per 64-thread workgroup: 4 row-groups x 16 lanes, each row-group computing 4 rows that share every x load
+// (native/cl/kernels/matvec.cl).
+struct P { O: u32, I: u32, x_off: u32, y_off: u32, nb_bias: u32, flags: u32, act: u32, cap: f32 }
+@group(0) @binding(0) var<storage, read> x: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> Wt: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> res: array<f32>;
+@group(0) @binding(4) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<vec4f, 64>;
+
+fn dot8(w: vec4<u32>, xa: vec4f, xb: vec4f) -> f32 {
+  let a = unpack2x16float(w.x); let b = unpack2x16float(w.y);
+  let c = unpack2x16float(w.z); let d = unpack2x16float(w.w);
+  return dot(vec4f(a, b), xa) + dot(vec4f(c, d), xb);
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let lane = lid & 15u;
+  let rg = lid >> 4u;
+  let o0 = (wid.x + wid.y * nwg.x) * 16u + rg * 4u;
+  let n8 = p.I / 8u;
+  let last = p.O - 1u;
+  let w0 = min(o0, last) * n8;
+  let w1 = min(o0 + 1u, last) * n8;
+  let w2 = min(o0 + 2u, last) * n8;
+  let w3 = min(o0 + 3u, last) * n8;
+  let xb = p.x_off >> 2u;
+  var s = vec4f(0.0);
+  for (var j = lane; j < n8; j += 16u) {
+    let xa = x[xb + 2u * j];
+    let xc = x[xb + 2u * j + 1u];
+    s.x += dot8(Wt[w0 + j], xa, xc);
+    s.y += dot8(Wt[w1 + j], xa, xc);
+    s.z += dot8(Wt[w2 + j], xa, xc);
+    s.w += dot8(Wt[w3 + j], xa, xc);
+  }
+  red[lid] = s;
+  workgroupBarrier();
+  for (var st = 8u; st > 0u; st >>= 1u) {
+    if (lane < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) {
+    let r = red[lid];
+    var v = array<f32, 4>(r.x, r.y, r.z, r.w);
+    for (var k = 0u; k < 4u; k++) {
+      let o = o0 + k;
+      if (o >= p.O) { break; }
+      var t = v[k];
+      if ((p.flags & 1u) != 0u) { t += bias[o % p.nb_bias]; }
+      t = act(t, p.act, p.cap);
+      if ((p.flags & 8u) != 0u) { t += res[o]; }
+      y[p.y_off + o] = t;
+    }
+  }
+}
+`,"./kernels/matvec_glu.wgsl":`// y[o] = (Wu[o] . x) * silu(Wg[o] . x)
+struct P { O: u32, I: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> Wu: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read> Wg: array<vec4<u32>>;
+@group(0) @binding(3) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> ru: array<f32, 256>;
+var<workgroup> rg: array<f32, 256>;
+
+fn dot8(w: vec4<u32>, xb: u32) -> f32 {
+  let a = unpack2x16float(w.x); let b = unpack2x16float(w.y);
+  let c = unpack2x16float(w.z); let d = unpack2x16float(w.w);
+  return a.x * x[xb] + a.y * x[xb + 1u] + b.x * x[xb + 2u] + b.y * x[xb + 3u]
+       + c.x * x[xb + 4u] + c.y * x[xb + 5u] + d.x * x[xb + 6u] + d.y * x[xb + 7u];
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let lane = lid & 31u;
+  let o = (wid.x + wid.y * nwg.x) * 8u + (lid >> 5u);
+  var su = 0.0;
+  var sg = 0.0;
+  if (o < p.O) {
+    let n8 = p.I / 8u;
+    for (var j = lane; j < n8; j += 32u) {
+      su += dot8(Wu[o * n8 + j], j * 8u);
+      sg += dot8(Wg[o * n8 + j], j * 8u);
+    }
+  }
+  ru[lid] = su;
+  rg[lid] = sg;
+  workgroupBarrier();
+  for (var st = 16u; st > 0u; st >>= 1u) {
+    if (lane < st) { ru[lid] += ru[lid + st]; rg[lid] += rg[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u && o < p.O) { y[o] = ru[lid] * silu(rg[lid]); }
+}
+`,"./kernels/matvec_q8.wgsl":`// matvec.wgsl with q8_0 weights: int8 W[o][i] (2 vec4<u32> per 32-weight block), f32 scale Wsc[o*I/32 + j];
+// I % 32 == 0, x_off % 4 == 0. y[y_off + o] = act(W[o] . x[x_off:] + bias[o % nb_bias]) + res[o].
+// 16 rows per 64-thread workgroup: 4 row-groups x 16 lanes, each row-group computing 4 rows that share every x load;
+// lane = quant block (native/cl/kernels/matvec_q8.cl).
+struct P { O: u32, I: u32, x_off: u32, y_off: u32, nb_bias: u32, flags: u32, act: u32, cap: f32 }
+@group(0) @binding(0) var<storage, read> x: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> Wq: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read> res: array<f32>;
+@group(0) @binding(4) var<storage, read_write> y: array<f32>;
+@group(0) @binding(7) var<storage, read> Wsc: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> red: array<vec4f, 64>;
+
+/** One 32-weight block of row r (quants qa | qb) against x0..x7. */
+fn blk32(qa: vec4<u32>, qb: vec4<u32>, x0: vec4f, x1: vec4f, x2: vec4f, x3: vec4f,
+         x4: vec4f, x5: vec4f, x6: vec4f, x7: vec4f) -> f32 {
+  return dot(unpack_i8(qa.x), x0) + dot(unpack_i8(qa.y), x1) + dot(unpack_i8(qa.z), x2) + dot(unpack_i8(qa.w), x3)
+       + dot(unpack_i8(qb.x), x4) + dot(unpack_i8(qb.y), x5) + dot(unpack_i8(qb.z), x6) + dot(unpack_i8(qb.w), x7);
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let lane = lid & 15u;
+  let rg = lid >> 4u;
+  let o0 = (wid.x + wid.y * nwg.x) * 16u + rg * 4u;
+  let nb = p.I / 32u;
+  let last = p.O - 1u;
+  let r0 = min(o0, last) * nb;
+  let r1 = min(o0 + 1u, last) * nb;
+  let r2 = min(o0 + 2u, last) * nb;
+  let r3 = min(o0 + 3u, last) * nb;
+  let xb = p.x_off >> 2u;
+  var s = vec4f(0.0);
+  for (var j = lane; j < nb; j += 16u) {
+    let xo = xb + j * 8u;
+    let x0 = x[xo]; let x1 = x[xo + 1u]; let x2 = x[xo + 2u]; let x3 = x[xo + 3u];
+    let x4 = x[xo + 4u]; let x5 = x[xo + 5u]; let x6 = x[xo + 6u]; let x7 = x[xo + 7u];
+    s.x += Wsc[r0 + j] * blk32(Wq[(r0 + j) * 2u], Wq[(r0 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
+    s.y += Wsc[r1 + j] * blk32(Wq[(r1 + j) * 2u], Wq[(r1 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
+    s.z += Wsc[r2 + j] * blk32(Wq[(r2 + j) * 2u], Wq[(r2 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
+    s.w += Wsc[r3 + j] * blk32(Wq[(r3 + j) * 2u], Wq[(r3 + j) * 2u + 1u], x0, x1, x2, x3, x4, x5, x6, x7);
+  }
+  red[lid] = s;
+  workgroupBarrier();
+  for (var st = 8u; st > 0u; st >>= 1u) {
+    if (lane < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) {
+    let r = red[lid];
+    var v = array<f32, 4>(r.x, r.y, r.z, r.w);
+    for (var k = 0u; k < 4u; k++) {
+      let o = o0 + k;
+      if (o >= p.O) { break; }
+      var t = v[k];
+      if ((p.flags & 1u) != 0u) { t += bias[o % p.nb_bias]; }
+      t = act(t, p.act, p.cap);
+      if ((p.flags & 8u) != 0u) { t += res[o]; }
+      y[p.y_off + o] = t;
+    }
+  }
+}
+`,"./kernels/moe_dense_mix.wgsl":`// Dense 4-expert MoE mix (speaker encoder): y[t][k] = newgelu(sum_i softmax(lg[t])[i] * e[t][64i + k]), k < 64.
+struct P { T: u32 }
+@group(0) @binding(0) var<storage, read> lg: array<f32>;
+@group(0) @binding(1) var<storage, read> e: array<f32>;
+@group(0) @binding(2) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.T * 64u) { return; }
+  let t = i / 64u;
+  let k = i - t * 64u;
+  let l = vec4f(lg[t * 4u], lg[t * 4u + 1u], lg[t * 4u + 2u], lg[t * 4u + 3u]);
+  let m = max(max(l.x, l.y), max(l.z, l.w));
+  let ex = exp(l - vec4f(m));
+  let r = ex * (1.0 / (ex.x + ex.y + ex.z + ex.w));
+  let eb = t * 256u + k;
+  var v = e[eb] * r.x;
+  v += e[eb + 64u] * r.y;
+  v += e[eb + 128u] * r.z;
+  v += e[eb + 192u] * r.w;
+  y[i] = act(v, 6u, 0.0);
+}
+`,"./kernels/moe_down.wgsl":`// out[t][o] = sum_j wts[t][j] * (Wd[sel[t][j]][o] . hbuf[t][j]); q4_0 Wd [64][256][1536] (48 blocks = 192 u32 per row).
+@group(0) @binding(0) var<storage, read> hbuf: array<f32>;
+@group(0) @binding(1) var<storage, read> sel: array<u32>;
+@group(0) @binding(2) var<storage, read> wts: array<f32>;
+@group(0) @binding(3) var<storage, read> dq: array<u32>;
+@group(0) @binding(4) var<storage, read> ds: array<f32>;
+@group(0) @binding(5) var<storage, read_write> outp: array<f32>;
+
+var<workgroup> hs: array<f32, 3072>;
+var<workgroup> red: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.z;
+  for (var m = 0u; m < 12u; m++) { hs[lid + 256u * m] = hbuf[t * 3072u + lid + 256u * m]; }
+  workgroupBarrier();
+  let r = wid.x * 8u + (lid >> 5u);
+  let lane = lid & 31u;
+  var total = 0.0;
+  for (var j = 0u; j < 2u; j++) {
+    let row = sel[t * 2u + j] * 256u + r;
+    var s = 0.0;
+    for (var u = lane; u < 192u; u += 32u) {
+      let hb = j * 1536u + (u >> 2u) * 32u + (u & 3u) * 4u;
+      let lo = vec4f(hs[hb], hs[hb + 1u], hs[hb + 2u], hs[hb + 3u]);
+      let hi = vec4f(hs[hb + 16u], hs[hb + 17u], hs[hb + 18u], hs[hb + 19u]);
+      let q = dq[row * 192u + u];
+      s += ds[row * 48u + (u >> 2u)] * (dot(unpack_q4_lo(q), lo) + dot(unpack_q4_hi(q), hi));
+    }
+    red[lid] = s;
+    workgroupBarrier();
+    for (var st = 16u; st > 0u; st >>= 1u) {
+      if (lane < st) { red[lid] += red[lid + st]; }
+      workgroupBarrier();
+    }
+    if (lane == 0u) { total += red[lid] * wts[t * 2u + j]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) { outp[t * 256u + r] = total; }
+}
+`,"./kernels/moe_down_lora.wgsl":`// moe_down.wgsl plus the speech-edit adapter's expert output shift:
+// out[t][o] = sum_j wts[t][j] * (Wd[e][o] . hbuf[t][j] + Ud[e][o] . td[t][j]), e = sel[t][j]; td [n][2][16] the
+// down-projections of hbuf (moe_lora_t, R = 16), Ud f16 [64][256][16]. Lanes 0..7 of a row add f16 pair \`lane\`.
+@group(0) @binding(0) var<storage, read> hbuf: array<f32>;
+@group(0) @binding(1) var<storage, read> sel: array<u32>;
+@group(0) @binding(2) var<storage, read> wts: array<f32>;
+@group(0) @binding(3) var<storage, read> dq: array<u32>;
+@group(0) @binding(4) var<storage, read> ds: array<f32>;
+@group(0) @binding(5) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(6) var<storage, read> td: array<f32>;
+@group(0) @binding(7) var<storage, read> U: array<u32>;
+
+var<workgroup> hs: array<f32, 3072>;
+var<workgroup> red: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.z;
+  for (var m = 0u; m < 12u; m++) { hs[lid + 256u * m] = hbuf[t * 3072u + lid + 256u * m]; }
+  workgroupBarrier();
+  let r = wid.x * 8u + (lid >> 5u);
+  let lane = lid & 31u;
+  var total = 0.0;
+  for (var j = 0u; j < 2u; j++) {
+    let e = sel[t * 2u + j];
+    let row = e * 256u + r;
+    var s = 0.0;
+    for (var u = lane; u < 192u; u += 32u) {
+      let hb = j * 1536u + (u >> 2u) * 32u + (u & 3u) * 4u;
+      let lo = vec4f(hs[hb], hs[hb + 1u], hs[hb + 2u], hs[hb + 3u]);
+      let hi = vec4f(hs[hb + 16u], hs[hb + 17u], hs[hb + 18u], hs[hb + 19u]);
+      let q = dq[row * 192u + u];
+      s += ds[row * 48u + (u >> 2u)] * (dot(unpack_q4_lo(q), lo) + dot(unpack_q4_hi(q), hi));
+    }
+    if (lane < 8u) {
+      let f = unpack2x16float(U[row * 8u + lane]);
+      let tb = (t * 2u + j) * 16u + 2u * lane;
+      s += f.x * td[tb] + f.y * td[tb + 1u];
+    }
+    red[lid] = s;
+    workgroupBarrier();
+    for (var st = 16u; st > 0u; st >>= 1u) {
+      if (lane < st) { red[lid] += red[lid + st]; }
+      workgroupBarrier();
+    }
+    if (lane == 0u) { total += red[lid] * wts[t * 2u + j]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) { outp[t * 256u + r] = total; }
+}
+`,"./kernels/moe_lora_t.wgsl":`// LoRA down-projection of the routed experts: tout[t_off + (t*2 + j)*R + o] = D[e][o] . x[t*x_t + j*x_j ..+I),
+// e = sel[t][j], o < R. D f16 [64][R][I] (R <= 32, I % 2 == 0, I <= 1536). One workgroup per (token, pick): 8 lanes
+// per output row.
+struct P { R: u32, I: u32, x_t: u32, x_j: u32, t_off: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> sel: array<u32>;
+@group(0) @binding(2) var<storage, read> D: array<u32>;
+@group(0) @binding(3) var<storage, read_write> tout: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> xs: array<f32, 1536>;
+var<workgroup> red: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.x;
+  let j = wid.y;
+  let x0 = t * p.x_t + j * p.x_j;
+  for (var i = lid; i < p.I; i += 256u) { xs[i] = x[x0 + i]; }
+  workgroupBarrier();
+  let o = lid >> 3u;
+  let lane = lid & 7u;
+  let e = sel[t * 2u + j];
+  var s = 0.0;
+  if (o < p.R) {
+    let i2 = p.I / 2u;
+    let row = (e * p.R + o) * i2;
+    for (var i = lane; i < i2; i += 8u) {
+      let w = unpack2x16float(D[row + i]);
+      s += w.x * xs[2u * i] + w.y * xs[2u * i + 1u];
+    }
+  }
+  red[lid] = s;
+  workgroupBarrier();
+  for (var st = 4u; st > 0u; st >>= 1u) {
+    if (lane < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u && o < p.R) { tout[p.t_off + (t * 2u + j) * p.R + o] = red[lid]; }
+}
+`,"./kernels/moe_topk.wgsl":`// Linear-router top-2 of 64 experts, one 64-thread workgroup per token. Selection on lg - rbias (strict >,
+// lowest index wins ties): each thread ranks its expert against all 64 in parallel; ranks 0..1 are picked
+// (native/cl/kernels/moe_topk.cl). Weights = softmax over the two selected raw logits.
+@group(0) @binding(0) var<storage, read> lg: array<f32>;
+@group(0) @binding(1) var<storage, read> rbias: array<f32>;
+@group(0) @binding(2) var<storage, read_write> sel: array<u32>;
+@group(0) @binding(3) var<storage, read_write> wts: array<f32>;
+
+var<workgroup> lgs: array<f32, 64>;
+var<workgroup> scs: array<f32, 64>;
+var<workgroup> picked: array<u32, 2>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) j: u32) {
+  let t = wid.x;
+  let v = lg[t * 64u + j];
+  lgs[j] = v;
+  scs[j] = v - rbias[j];
+  workgroupBarrier();
+  let sj = scs[j];
+  var rank = 0u;
+  for (var e = 0u; e < 64u; e++) {
+    let se = scs[e];
+    rank += select(0u, 1u, se > sj || (se == sj && e < j));
+  }
+  if (rank < 2u) { picked[rank] = j; }
+  workgroupBarrier();
+  if (j == 0u) {
+    let p0 = picked[0];
+    let p1 = picked[1];
+    let l0 = lgs[p0];
+    let l1 = lgs[p1];
+    let mx = max(l0, l1);
+    let e0 = exp(l0 - mx);
+    let e1 = exp(l1 - mx);
+    sel[t * 2u] = p0;
+    sel[t * 2u + 1u] = p1;
+    wts[t * 2u] = e0 / (e0 + e1);
+    wts[t * 2u + 1u] = e1 / (e0 + e1);
+  }
+}
+`,"./kernels/moe_up.wgsl":`// hbuf[t][j][f] = silu(Wg[e] . z_t) * (Wu[e] . z_t), e = sel[t][j]; q4_0 weights [64][1536][256] (4 u32 per block, ggml nibble order).
+// Workgroup = 32 rows x 8 lanes; lane l handles quant block l (32 nibbles = 4 u32) of the row.
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> sel: array<u32>;
+@group(0) @binding(2) var<storage, read> gq: array<u32>;
+@group(0) @binding(3) var<storage, read> gs: array<f32>;
+@group(0) @binding(4) var<storage, read> uq: array<u32>;
+@group(0) @binding(5) var<storage, read> us: array<f32>;
+@group(0) @binding(6) var<storage, read_write> hbuf: array<f32>;
+
+var<workgroup> xs: array<f32, 256>;
+var<workgroup> rg: array<f32, 256>;
+var<workgroup> ru: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.z;
+  let j = wid.y;
+  xs[lid] = x[t * 256u + lid];
+  workgroupBarrier();
+  let e = sel[t * 2u + j];
+  let r = wid.x * 32u + (lid >> 3u);
+  let lane = lid & 7u;
+  let row = e * 1536u + r;
+  let qb = row * 32u + lane * 4u;
+  var sg = 0.0;
+  var su = 0.0;
+  for (var w = 0u; w < 4u; w++) {
+    let xl = lane * 32u + w * 4u;
+    let xlo = vec4f(xs[xl], xs[xl + 1u], xs[xl + 2u], xs[xl + 3u]);
+    let xhi = vec4f(xs[xl + 16u], xs[xl + 17u], xs[xl + 18u], xs[xl + 19u]);
+    let g = gq[qb + w]; let u = uq[qb + w];
+    sg += dot(unpack_q4_lo(g), xlo) + dot(unpack_q4_hi(g), xhi);
+    su += dot(unpack_q4_lo(u), xlo) + dot(unpack_q4_hi(u), xhi);
+  }
+  rg[lid] = sg * gs[row * 8u + lane];
+  ru[lid] = su * us[row * 8u + lane];
+  workgroupBarrier();
+  for (var st = 4u; st > 0u; st >>= 1u) {
+    if (lane < st) { rg[lid] += rg[lid + st]; ru[lid] += ru[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) { hbuf[(t * 2u + j) * 1536u + r] = ru[lid] * silu(rg[lid]); }
+}
+`,"./kernels/moe_up_lora.wgsl":`// moe_up.wgsl plus the speech-edit adapter's expert shifts on the gate/up pre-activations:
+// hbuf[t][j][f] = silu(Wg[e] . z_t + Ug[e][f] . tl[t][j][0..16)) * (Wu[e] . z_t + Uu[e][f] . tl[t][j][16..32)),
+// e = sel[t][j]; tl = the stacked down-projections (moe_lora_t, R = 32: gate rows then up rows), read from hbuf at
+// float tl_off (past the n x 2 x 1536 outputs: eight storage bindings at most); U f16 [64][2][1536][16] (gate, up).
+// Lane l of a row adds f16 pair l of each factor row.
+struct P { tl_off: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read> sel: array<u32>;
+@group(0) @binding(2) var<storage, read> gq: array<u32>;
+@group(0) @binding(3) var<storage, read> gs: array<f32>;
+@group(0) @binding(4) var<storage, read> uq: array<u32>;
+@group(0) @binding(5) var<storage, read> us: array<f32>;
+@group(0) @binding(6) var<storage, read_write> hbuf: array<f32>;
+@group(0) @binding(7) var<storage, read> U: array<u32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> xs: array<f32, 256>;
+var<workgroup> rg: array<f32, 256>;
+var<workgroup> ru: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.z;
+  let j = wid.y;
+  xs[lid] = x[t * 256u + lid];
+  workgroupBarrier();
+  let e = sel[t * 2u + j];
+  let r = wid.x * 32u + (lid >> 3u);
+  let lane = lid & 7u;
+  let row = e * 1536u + r;
+  let qb = row * 32u + lane * 4u;
+  var sg = 0.0;
+  var su = 0.0;
+  for (var w = 0u; w < 4u; w++) {
+    let xl = lane * 32u + w * 4u;
+    let xlo = vec4f(xs[xl], xs[xl + 1u], xs[xl + 2u], xs[xl + 3u]);
+    let xhi = vec4f(xs[xl + 16u], xs[xl + 17u], xs[xl + 18u], xs[xl + 19u]);
+    let g = gq[qb + w]; let u = uq[qb + w];
+    sg += dot(unpack_q4_lo(g), xlo) + dot(unpack_q4_hi(g), xhi);
+    su += dot(unpack_q4_lo(u), xlo) + dot(unpack_q4_hi(u), xhi);
+  }
+  let tb = (t * 2u + j) * 32u + 2u * lane;
+  let fg = unpack2x16float(U[((e * 2u) * 1536u + r) * 8u + lane]);
+  let fu = unpack2x16float(U[((e * 2u + 1u) * 1536u + r) * 8u + lane]);
+  let tg = hbuf[p.tl_off + tb]; let tg1 = hbuf[p.tl_off + tb + 1u];
+  let tu = hbuf[p.tl_off + tb + 16u]; let tu1 = hbuf[p.tl_off + tb + 17u];
+  rg[lid] = sg * gs[row * 8u + lane] + fg.x * tg + fg.y * tg1;
+  ru[lid] = su * us[row * 8u + lane] + fu.x * tu + fu.y * tu1;
+  workgroupBarrier();
+  for (var st = 4u; st > 0u; st >>= 1u) {
+    if (lane < st) { rg[lid] += rg[lid + st]; ru[lid] += ru[lid + st]; }
+    workgroupBarrier();
+  }
+  if (lane == 0u) { hbuf[(t * 2u + j) * 1536u + r] = ru[lid] * silu(rg[lid]); }
+}
+`,"./kernels/patch_down.wgsl":`// Patch down (time-major rows): y[t][ch*h + j] = x[t*h + j][ch]; n = T*C*h outputs, C input channels.
+struct P { n: u32, C: u32, h: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  let row = p.C * p.h;
+  let t = i / row;
+  let k = i - t * row;
+  let ch = k / p.h;
+  let j = k - ch * p.h;
+  y[i] = x[(t * p.h + j) * p.C + ch];
+}
+`,"./kernels/patch_up.wgsl":`// Patch up (time-major rows): y[t*h + j][ch] = x[t][ch*h + j]; n = T*h*C outputs, C output channels.
+// rows_dyn != 0: output rows at or past dyn.b * rows_dyn valid rows exit.
+struct P { n: u32, C: u32, h: u32, rows_dyn: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read_write> y: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  let r = i / p.C;
+  if (p.rows_dyn != 0u && r >= dyn.b * p.rows_dyn) { return; }
+  let ch = i % p.C;
+  let t = r / p.h;
+  let j = r % p.h;
+  y[i] = x[t * p.C * p.h + ch * p.h + j];
+}
+`,"./kernels/probe.wgsl":`// Decode-step alignment-probe readout (zonos3-graph.cpp build_probe). pin (u32 words) = [text_start, text_len, 0, 0],
+// then per probe layer l and head h at 4 + (l*nh + h)*4: weight f32, lo, hi, flag (window clipped into [0, text_len)).
+// text_len 0 = probe off.
+// mode 0, one workgroup per head of probe layer \`layer\`:
+//   sc[layer][h][j] = softmax_{j in [lo, hi]}(q_h . kc[text_start + j][h / (nh/nkv)] * scale), heads with weight != 0.
+// mode 1, one thread per text index j < lmax: acc[j] = sum_l (sum_h w * sc[l][h][j]) over weighted heads with
+//   j in [lo, hi] (0 elsewhere).
+struct P { mode: u32, layer: u32, nl: u32, nh: u32, nkv: u32, hd: u32, ring: u32, scale: f32, lmax: u32 }
+@group(0) @binding(0) var<storage, read> q: array<f32>;
+@group(0) @binding(1) var<storage, read> kc: array<f32>;
+@group(0) @binding(2) var<storage, read> pin: array<u32>;
+@group(0) @binding(3) var<storage, read_write> sc: array<f32>;
+@group(0) @binding(4) var<storage, read_write> acc: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> qs: array<f32, 64>;
+var<workgroup> red: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let tl = pin[1];
+  if (p.mode == 1u) {
+    let j = wid.x * 256u + lid;
+    if (tl != 0u && j < p.lmax) {
+      var total = 0.0;
+      for (var l = 0u; l < p.nl; l++) {
+        var s = 0.0;
+        for (var h = 0u; h < p.nh; h++) {
+          let e = 4u + (l * p.nh + h) * 4u;
+          let w = bitcast<f32>(pin[e]);
+          if (w != 0.0 && j >= pin[e + 1u] && j <= pin[e + 2u]) { s += sc[(l * p.nh + h) * p.lmax + j] * w; }
+        }
+        total += s;
+      }
+      acc[j] = total;
+    }
+    return;
+  }
+  let h = wid.x;
+  let e = 4u + (p.layer * p.nh + h) * 4u;
+  let on = tl != 0u && bitcast<f32>(pin[e]) != 0.0;
+  let lo = select(1u, pin[e + 1u], on);
+  let hi = select(0u, pin[e + 2u], on);
+  let kvh = h / (p.nh / p.nkv);
+  if (lid < p.hd) { qs[lid] = q[h * p.hd + lid]; }
+  workgroupBarrier();
+  let ts = pin[0];
+  let base = (p.layer * p.nh + h) * p.lmax;
+  var m = -3.0e38;
+  for (var j = lo + lid; j <= hi; j += 256u) {
+    let kb = (((ts + j) % p.ring) * p.nkv + kvh) * p.hd;
+    var s = 0.0;
+    for (var d = 0u; d < p.hd; d++) { s += qs[d] * kc[kb + d]; }
+    let v = s * p.scale;
+    sc[base + j] = v;
+    m = max(m, v);
+  }
+  red[lid] = m;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] = max(red[lid], red[lid + st]); }
+    workgroupBarrier();
+  }
+  let M = red[0];
+  workgroupBarrier();
+  var sum = 0.0;
+  for (var j = lo + lid; j <= hi; j += 256u) {
+    let ev = exp(sc[base + j] - M);
+    sc[base + j] = ev;
+    sum += ev;
+  }
+  red[lid] = sum;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { red[lid] += red[lid + st]; }
+    workgroupBarrier();
+  }
+  let inv = 1.0 / red[0];
+  for (var j = lo + lid; j <= hi; j += 256u) { sc[base + j] *= inv; }
+}
+`,"./kernels/repack_h8.wgsl":`// Repack a q8_0 [K][O][IC] matrix (int8 quants packed 4 per u32, f32 scale per 32-weight block) into the gemm_h8
+// layout: f16 [K][IC][Op], Op = ceil32(O), output channels contiguous per input channel, columns o >= O zero
+// (native/cl/kernels/repack_h8.cl). One thread per output u32 (two adjacent outputs).
+struct P { O: u32, IC: u32, K: u32, words: u32 }
+@group(0) @binding(0) var<storage, read> Wq: array<u32>;
+@group(0) @binding(1) var<storage, read> Wsc: array<f32>;
+@group(0) @binding(2) var<storage, read_write> outp: array<u32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+fn q8(e: u32) -> f32 {
+  return f32(bitcast<i32>(Wq[e >> 2u] << (24u - 8u * (e & 3u))) >> 24u) * Wsc[e >> 5u];
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.words) { return; }
+  let half_op = ((p.O + 31u) / 32u) * 16u;
+  let o = (i % half_op) * 2u;
+  let r = i / half_op;
+  let ic = r % p.IC;
+  let k = r / p.IC;
+  var v0 = 0.0;
+  var v1 = 0.0;
+  if (o < p.O) { v0 = q8((k * p.O + o) * p.IC + ic); }
+  if (o + 1u < p.O) { v1 = q8((k * p.O + o + 1u) * p.IC + ic); }
+  outp[i] = pack2x16float(vec2f(v0, v1));
+}
+`,"./kernels/rope_kv.wgsl":`// Split a fused qkv row into heads; optional per-head RMS norm (+ temp on q); interleaved RoPE from a
+// [pos][hd] (cos, sin) table on q and k; q -> q buffer, k/v -> KV store row (pos % ring).
+// One 64-thread workgroup per (row, head slot); slots = nh q heads, nkv k heads, nkv v heads.
+// hd <= 64: threads d >= hd read 0, join every barrier and never write.
+// Dynamic mode: pos = dyn.a * pos_mul + i, valid rows = dyn.b * pos_mul. rnd != 0: roped q/k rounded to bf16.
+struct P {
+  n: u32, nh: u32, nkv: u32, in_stride: u32, qk_norm: u32, has_temp: u32, eps: f32, ring: u32,
+  pos_dyn: u32, pos0: u32, n_dyn: u32, hd: u32, pos_mul: u32, rnd: u32,
+}
+@group(0) @binding(0) var<storage, read> qkv: array<f32>;
+@group(0) @binding(1) var<storage, read> temp: array<f32>;
+@group(0) @binding(2) var<storage, read> rope: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qo: array<f32>;
+@group(0) @binding(4) var<storage, read_write> kc: array<f32>;
+@group(0) @binding(5) var<storage, read_write> vc: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> xs: array<f32, 64>;
+var<workgroup> red: array<f32, 64>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) d: u32) {
+  let slots = p.nh + 2u * p.nkv;
+  let id = wid.x + wid.y * nwg.x;
+  if (id >= p.n * slots) { return; }
+  let i = id / slots;
+  let sl = id - i * slots;
+  let nvalid = select(p.n, dyn.b * p.pos_mul, p.n_dyn != 0u);
+  if (i >= nvalid) { return; }
+  let hd = p.hd;
+  let live = d < hd;
+  let pos = select(p.pos0, dyn.a * p.pos_mul, p.pos_dyn != 0u) + i;
+  let row = pos % p.ring;
+  let base = i * p.in_stride + sl * hd;
+  var x = select(0.0, qkv[base + min(d, hd - 1u)], live);
+  if (sl >= p.nh + p.nkv) {
+    if (live) { vc[(row * p.nkv + (sl - p.nh - p.nkv)) * hd + d] = x; }
+    return;
+  }
+  if (p.qk_norm != 0u) {
+    red[d] = x * x;
+    workgroupBarrier();
+    for (var st = 32u; st > 0u; st >>= 1u) {
+      if (d < st) { red[d] += red[d + st]; }
+      workgroupBarrier();
+    }
+    x = x * inverseSqrt(red[0] / f32(hd) + p.eps);
+  }
+  if (sl < p.nh && p.has_temp != 0u) { x *= temp[sl]; }
+  xs[d] = x;
+  workgroupBarrier();
+  if (!live) { return; }
+  let pr = d >> 1u;
+  let c = rope[pos * hd + 2u * pr];
+  let sn = rope[pos * hd + 2u * pr + 1u];
+  let x0 = xs[2u * pr];
+  let x1 = xs[2u * pr + 1u];
+  var o = select(x1 * c + x0 * sn, x0 * c - x1 * sn, (d & 1u) == 0u);
+  if (p.rnd != 0u) { o = bf16r(o); }
+  if (sl < p.nh) {
+    qo[(i * p.nh + sl) * hd + d] = o;
+  } else {
+    kc[(row * p.nkv + (sl - p.nh)) * hd + d] = o;
+  }
+}
+`,"./kernels/sample.wgsl":`// Sampler.sample (src/sampler.ts) plus a frame's cold start on the GPU (src/gpu/sampler.ts GpuSampler): one 256-thread
+// workgroup per codebook cb samples logits[cb*V .. +V) (CFG: twin + cfg_scale * (logits - twin)). Order as the host
+// sampler: the audio pad and the special ids other than stop_id masked (stop_id until generated >= min_frames + cb), the
+// stop id's logit raised by stop_bias (LACI's stop boost),
+// repetition penalty on every id among the ring's last rep_window entries, greedy argmax (lowest index on ties),
+// temperature, top-k (ties at the threshold kept), softmax, top-p on the mass before each token (equal probabilities in
+// index order), min-p, then the first kept id in index order whose inclusive prefix mass reaches u[cb] * kept mass
+// (no kept mass: the most probable candidate). Codebooks past the stream row get the audio pad (cold start). Writes
+// ids[cb] (and ids[ncb] = text_pad: the next decode row) and appends the id to the codebook's ring hist[cb][W]
+// (cnt[cb] ids so far). Thread t holds ids [t*C, t*C + C) in registers, C = ceil(V / 256) <= MAXC. Sums run in f32 in
+// GPU order, so draws near a boundary may differ from the host sampler's.
+struct Smp {
+  V: u32, codebook_size: u32, pad_id: u32, stop_id: u32,
+  min_frames: u32, generated: u32, row: u32, text_pad: u32,
+  greedy: u32, temperature: f32, top_k: u32, top_p: f32,
+  min_p: f32, rep_penalty: f32, rep_window: u32, rep_codebooks: u32,
+  cfg: u32, cfg_scale: f32, W: u32, neg_inf: u32,
+  u: array<vec4<f32>, 3>,
+  stop_bias: f32,
+}
+@group(0) @binding(0) var<storage, read> logits: array<f32>;
+@group(0) @binding(1) var<storage, read> twin: array<f32>;
+@group(0) @binding(2) var<storage, read_write> hist: array<u32>;
+@group(0) @binding(3) var<storage, read_write> cnt: array<u32>;
+@group(0) @binding(4) var<storage, read_write> ids: array<i32>;
+@group(0) @binding(5) var<uniform> smp: Smp;
+
+const MAXC = 20u;
+const NONE = 0xffffffffu;
+
+var<workgroup> redf: array<f32, 256>;
+var<workgroup> redu: array<u32, 256>;
+var<workgroup> seen: array<atomic<u32>, 160>;   // repetition penalty bitmap, MAXC * 256 / 32 words
+var<workgroup> wg_pick: atomic<u32>;
+var<workgroup> wg_last: atomic<u32>;
+
+struct Best { v: f32, i: u32 }
+
+// Order-preserving u32 key of a float (NaN-free).
+fn okey(x: f32) -> u32 {
+  let b = bitcast<u32>(x);
+  return select(b | 0x80000000u, ~b, (b >> 31u) == 1u);
+}
+fn ounkey(k: u32) -> f32 { return bitcast<f32>(select(~k, k & 0x7fffffffu, (k >> 31u) == 1u)); }
+
+fn sum_f(lid: u32, v: f32) -> f32 {
+  redf[lid] = v;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { redf[lid] += redf[lid + st]; }
+    workgroupBarrier();
+  }
+  let r = redf[0];
+  workgroupBarrier();
+  return r;
+}
+
+fn max_f(lid: u32, v: f32) -> f32 {
+  redf[lid] = v;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { redf[lid] = max(redf[lid], redf[lid + st]); }
+    workgroupBarrier();
+  }
+  let r = redf[0];
+  workgroupBarrier();
+  return r;
+}
+
+fn sum_u(lid: u32, v: u32) -> u32 {
+  redu[lid] = v;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { redu[lid] += redu[lid + st]; }
+    workgroupBarrier();
+  }
+  let r = redu[0];
+  workgroupBarrier();
+  return r;
+}
+
+fn min_u(lid: u32, v: u32) -> u32 {
+  redu[lid] = v;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) { redu[lid] = min(redu[lid], redu[lid + st]); }
+    workgroupBarrier();
+  }
+  let r = redu[0];
+  workgroupBarrier();
+  return r;
+}
+
+// Largest v, lowest i on ties.
+fn best(lid: u32, v: f32, i: u32) -> Best {
+  redf[lid] = v;
+  redu[lid] = i;
+  workgroupBarrier();
+  for (var st = 128u; st > 0u; st >>= 1u) {
+    if (lid < st) {
+      let ov = redf[lid + st];
+      let oi = redu[lid + st];
+      if (ov > redf[lid] || (ov == redf[lid] && oi < redu[lid])) {
+        redf[lid] = ov;
+        redu[lid] = oi;
+      }
+    }
+    workgroupBarrier();
+  }
+  let r = Best(redf[0], redu[0]);
+  workgroupBarrier();
+  return r;
+}
+
+// Exclusive prefix sum over threads.
+fn scan_u(lid: u32, v: u32) -> u32 {
+  redu[lid] = v;
+  workgroupBarrier();
+  for (var st = 1u; st < 256u; st <<= 1u) {
+    var t = 0u;
+    if (lid >= st) { t = redu[lid - st]; }
+    workgroupBarrier();
+    redu[lid] += t;
+    workgroupBarrier();
+  }
+  var ex = 0u;
+  if (lid > 0u) { ex = redu[lid - 1u]; }
+  workgroupBarrier();
+  return ex;
+}
+
+// Exclusive prefix sum over threads and the total.
+fn scan_f(lid: u32, v: f32) -> vec2<f32> {
+  redf[lid] = v;
+  workgroupBarrier();
+  for (var st = 1u; st < 256u; st <<= 1u) {
+    var t = 0.0;
+    if (lid >= st) { t = redf[lid - st]; }
+    workgroupBarrier();
+    redf[lid] += t;
+    workgroupBarrier();
+  }
+  var ex = 0.0;
+  if (lid > 0u) { ex = redf[lid - 1u]; }
+  let total = redf[255];
+  workgroupBarrier();
+  return vec2<f32>(ex, total);
+}
+
+// Cold start, the next decode row and the repetition ring (one thread per codebook).
+fn emit(cb: u32, ncb: u32, sampled: u32) {
+  var id = sampled;
+  if (cb > smp.row) { id = smp.pad_id; }
+  ids[cb] = i32(id);
+  if (cb == 0u) { ids[ncb] = i32(smp.text_pad); }
+  let c = cnt[cb];
+  hist[cb * smp.W + c % smp.W] = id;
+  cnt[cb] = c + 1u;
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let cb = wid.x;
+  let V = smp.V;
+  let C = (V + 255u) / 256u;
+  let base = lid * C;
+  var n = 0u;
+  if (base < V) { n = min(C, V - base); }
+  let NEG = bitcast<f32>(smp.neg_inf);
+  let off = cb * V;
+  let gate = smp.generated < smp.min_frames + cb;
+  var l: array<f32, MAXC>;
+  for (var j = 0u; j < n; j++) {
+    let i = base + j;
+    var v = logits[off + i];
+    if (smp.cfg != 0u) {
+      let t = twin[off + i];
+      v = t + smp.cfg_scale * (v - t);
+    }
+    if (i >= smp.codebook_size && (i == smp.pad_id || i != smp.stop_id || gate)) { v = NEG; }
+    if (i == smp.stop_id && smp.stop_bias != 0.0 && !gate) { v = v + smp.stop_bias; }
+    l[j] = v;
+  }
+
+  // repetition penalty, once per id among the ring's last rep_window entries
+  let words = (V + 31u) / 32u;
+  for (var w = lid; w < words; w += 256u) { atomicStore(&seen[w], 0u); }
+  if (lid == 0u) {
+    atomicStore(&wg_pick, NONE);
+    atomicStore(&wg_last, 0u);
+  }
+  workgroupBarrier();
+  let penal = smp.rep_penalty != 1.0 && cb < smp.rep_codebooks;
+  if (penal) {
+    let c = cnt[cb];
+    let m = min(c, smp.rep_window);
+    for (var k = lid; k < m; k += 256u) {
+      let t = hist[cb * smp.W + (c - m + k) % smp.W];
+      if (t < smp.codebook_size) { atomicOr(&seen[t >> 5u], 1u << (t & 31u)); }
+    }
+  }
+  workgroupBarrier();
+  if (penal) {
+    for (var j = 0u; j < n; j++) {
+      let i = base + j;
+      if (((atomicLoad(&seen[i >> 5u]) >> (i & 31u)) & 1u) != 0u) {
+        l[j] = select(l[j] * smp.rep_penalty, l[j] / smp.rep_penalty, l[j] > 0.0);
+      }
+    }
+  }
+
+  if (smp.greedy != 0u) {
+    var bv = NEG;
+    var bi = NONE;
+    for (var j = 0u; j < n; j++) {
+      if (bi == NONE || l[j] > bv) { bv = l[j]; bi = base + j; }
+    }
+    let b = best(lid, bv, bi);
+    if (lid == 0u) { emit(cb, nwg.x, b.i); }
+    return;
+  }
+
+  if (smp.temperature > 0.0) {
+    for (var j = 0u; j < n; j++) { l[j] = l[j] / smp.temperature; }
+  }
+
+  // top-k: the k-th largest value (largest key with at least k keys >= it), built bit by bit
+  var kth = NEG;
+  if (smp.top_k > 0u && smp.top_k < V) {
+    var T = 0u;
+    for (var b = 0u; b < 32u; b++) {
+      let probe = T | (0x80000000u >> b);
+      var c = 0u;
+      for (var j = 0u; j < n; j++) { c += select(0u, 1u, okey(l[j]) >= probe); }
+      if (sum_u(lid, c) >= smp.top_k) { T = probe; }
+    }
+    kth = ounkey(T);
+  }
+  var cand = 0u;
+  var mx = NEG;
+  for (var j = 0u; j < n; j++) {
+    if (l[j] >= kth) {
+      cand |= 1u << j;
+      mx = max(mx, l[j]);
+    }
+  }
+
+  // softmax over the candidates; l becomes p (0 outside them)
+  mx = max_f(lid, mx);
+  var e = 0.0;
+  for (var j = 0u; j < n; j++) {
+    var v = 0.0;
+    if (((cand >> j) & 1u) != 0u) { v = exp(l[j] - mx); }
+    l[j] = v;
+    e += v;
+  }
+  let total = sum_f(lid, e);
+  var bv = -1.0;
+  var bi = NONE;
+  for (var j = 0u; j < n; j++) {
+    l[j] = l[j] / total;
+    if (((cand >> j) & 1u) != 0u && l[j] > bv) { bv = l[j]; bi = base + j; }
+  }
+  let top = best(lid, bv, bi);
+
+  var keep = cand;
+  // top-p (a token is dropped when the mass ranked before it exceeds top_p): T = the largest key with mass(p > T) >
+  // top_p; every candidate with p > T is kept except, at the smallest such probability v, the ties (in index order)
+  // ranked past mass(p > v) + rank * v > top_p. Larger levels keep all their ties (their mass is part of mass(p > v)).
+  if (smp.top_p > 0.0 && smp.top_p < 1.0) {
+    let tp = smp.top_p;
+    var T = 0u;
+    for (var b = 0u; b < 32u; b++) {
+      let probe = T | (0x80000000u >> b);
+      var s = 0.0;
+      for (var j = 0u; j < n; j++) { if (bitcast<u32>(l[j]) > probe) { s += l[j]; } }
+      if (sum_f(lid, s) > tp) { T = probe; }
+    }
+    var vmin = NONE;
+    for (var j = 0u; j < n; j++) {
+      let k = bitcast<u32>(l[j]);
+      if (k > T && ((cand >> j) & 1u) != 0u) { vmin = min(vmin, k); }
+    }
+    let vk = min_u(lid, vmin);
+    let vs = bitcast<f32>(vk);
+    var above = 0.0;
+    var ties = 0u;
+    for (var j = 0u; j < n; j++) {
+      let k = bitcast<u32>(l[j]);
+      if (k > vk) { above += l[j]; } else if (k == vk && ((cand >> j) & 1u) != 0u) { ties++; }
+    }
+    let mv = sum_f(lid, above);
+    var rank = scan_u(lid, ties);
+    for (var j = 0u; j < n; j++) {
+      if (((cand >> j) & 1u) == 0u) { continue; }
+      let k = bitcast<u32>(l[j]);
+      if (k == vk) {
+        if (mv + f32(rank) * vs > tp) { keep &= ~(1u << j); }
+        rank++;
+      } else if (k < vk) {
+        keep &= ~(1u << j);
+      }
+    }
+  }
+  if (smp.min_p > 0.0) {
+    let thr = smp.min_p * top.v;
+    for (var j = 0u; j < n; j++) { if (l[j] < thr) { keep &= ~(1u << j); } }
+  }
+
+  // multinomial: the first kept id whose inclusive prefix mass reaches u * (kept mass)
+  var own = 0.0;
+  var lastk = NONE;
+  for (var j = 0u; j < n; j++) {
+    if (((keep >> j) & 1u) != 0u) { own += l[j]; lastk = base + j; }
+  }
+  if (lastk != NONE) { atomicMax(&wg_last, lastk); }
+  let sc = scan_f(lid, own);
+  let r = sc.y * smp.u[cb / 4u][cb % 4u];
+  var acc = sc.x;
+  for (var j = 0u; j < n; j++) {
+    if (((keep >> j) & 1u) == 0u) { continue; }
+    acc += l[j];
+    if (acc >= r) {
+      atomicMin(&wg_pick, base + j);
+      break;
+    }
+  }
+  workgroupBarrier();
+  if (lid == 0u) {
+    var id = top.i;
+    if (sc.y > 0.0) {
+      id = atomicLoad(&wg_pick);
+      if (id == NONE) { id = atomicLoad(&wg_last); }
+    }
+    emit(cb, nwg.x, id);
+  }
+}
+`,"./kernels/ssl_attention_bf16.wgsl":`// SSL teacher self-attention (16 heads x 64, Shaw relative bias) at the native BF16 autocast boundaries
+// (ssl-encoder.cpp build_graph): content = bf16(q.k), score = bf16(bf16(content) * scale), rel = bf16(bf16(dist.q) *
+// scale), score = bf16(score + rel[clamp(j - i, -64, 8) + 64]); F32 softmax over all T keys; the probabilities are
+// rounded to bf16 as the BF16 value matmul reads them and out = bf16(sum_j p_j * v_j). q, k, v and dist hold bf16
+// values. One 64-thread workgroup per (query row, head); T <= 1024.
+struct P { T: u32, scale: f32 }
+@group(0) @binding(0) var<storage, read> qb: array<f32>;
+@group(0) @binding(1) var<storage, read> kb: array<f32>;
+@group(0) @binding(2) var<storage, read> vb: array<f32>;
+@group(0) @binding(3) var<storage, read> dist: array<f32>;
+@group(0) @binding(4) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+var<workgroup> qs: array<f32, 64>;
+var<workgroup> rb: array<f32, 73>;
+var<workgroup> sc: array<f32, 1024>;
+var<workgroup> red: array<f32, 64>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) s: u32) {
+  let id = wid.x + wid.y * nwg.x;
+  if (id >= p.T * 16u) { return; }
+  let qi = id / 16u;
+  let h = id - qi * 16u;
+  let qo = qi * 1024u + h * 64u;
+  qs[s] = qb[qo + s];
+  workgroupBarrier();
+  for (var r = s; r < 73u; r += 64u) {
+    var d = 0.0;
+    for (var c = 0u; c < 64u; c++) { d += dist[r * 64u + c] * qs[c]; }
+    rb[r] = bf16r(bf16r(d) * p.scale);
+  }
+  workgroupBarrier();
+  var mx = -3.0e38;
+  for (var j = s; j < p.T; j += 64u) {
+    let base = j * 1024u + h * 64u;
+    var qk = 0.0;
+    for (var d = 0u; d < 64u; d++) { qk += qs[d] * kb[base + d]; }
+    let ri = u32(clamp(i32(j) - i32(qi), -64, 8) + 64);
+    let v = bf16r(bf16r(bf16r(qk) * p.scale) + rb[ri]);
+    sc[j] = v;
+    mx = max(mx, v);
+  }
+  red[s] = mx;
+  workgroupBarrier();
+  for (var st = 32u; st > 0u; st >>= 1u) {
+    if (s < st) { red[s] = max(red[s], red[s + st]); }
+    workgroupBarrier();
+  }
+  let M = red[0];
+  workgroupBarrier();
+  var sum = 0.0;
+  for (var j = s; j < p.T; j += 64u) {
+    let e = exp(sc[j] - M);
+    sc[j] = e;
+    sum += e;
+  }
+  red[s] = sum;
+  workgroupBarrier();
+  for (var st = 32u; st > 0u; st >>= 1u) {
+    if (s < st) { red[s] += red[s + st]; }
+    workgroupBarrier();
+  }
+  let inv = 1.0 / red[0];
+  for (var j = s; j < p.T; j += 64u) { sc[j] = bf16r(sc[j] * inv); }
+  workgroupBarrier();
+  var o = 0.0;
+  for (var j = 0u; j < p.T; j++) { o += sc[j] * vb[j * 1024u + h * 64u + s]; }
+  outp[qo + s] = bf16r(o);
+}
+`,"./kernels/steer_add.wgsl":`// Hidden-space steering (zonos3-graph.cpp route): x[x_off + i] += d[d_off + i], i < n, when dyn.b != 0 (per-step gate).
+struct P { n: u32, x_off: u32, d_off: u32 }
+@group(0) @binding(0) var<storage, read_write> x: array<f32>;
+@group(0) @binding(1) var<storage, read> d: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let i = wid.x * 256u + lid;
+  if (dyn.b == 0u || i >= p.n) { return; }
+  x[p.x_off + i] += d[p.d_off + i];
+}
+`,"./kernels/subsample_rows.wgsl":`// Time subsampling of [T][row] rows: y[t][c] = x[t*s][c], n = T_out * row.
+struct P { n: u32, row: u32, s: u32 }
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  let t = i / p.row;
+  y[i] = x[t * p.s * p.row + (i - t * p.row)];
+}
+`,"./kernels/upsample_add.wgsl":`// Repeat-upsample along time and add: y[t][k] = e[t / s][k] + xf[t][k], n = T * N.
+struct P { n: u32, N: u32, s: u32 }
+@group(0) @binding(0) var<storage, read> e: array<f32>;
+@group(0) @binding(1) var<storage, read> xf: array<f32>;
+@group(0) @binding(2) var<storage, read_write> y: array<f32>;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u,
+        @builtin(local_invocation_index) lid: u32) {
+  let i = (wid.x + wid.y * nwg.x) * 256u + lid;
+  if (i >= p.n) { return; }
+  let t = i / p.N;
+  y[i] = e[(t / p.s) * p.N + (i - t * p.N)] + xf[i];
+}
+`,"./kernels/zac_embed.wgsl":`// Codec RVQ lookup; idx i32 [10][F], tables f16 pairs (row stride C/2), t < n.
+// mode 0 (semantic): outp[y_off + t*C + c] = tables[idx[0][t]][c] + bias[c]
+// mode 1 (residual, in place): outp[y_off + t*C + c] += sum_{cb=1..9} tables[(cb-1)*4096 + idx[cb][t]][c] + bias[c]
+//   (bias = the sum of the 9 out_proj biases). A missing residual code (idx -1, early partial-frame decode) leaves its
+//   codebook's term out: no table row, and its own bias biases[(cb-1)*C + c] comes off the sum. Complete codes take
+//   the same operations as without the branch (bit-identical).
+// rows_dyn != 0: rows at or past dyn.b * rows_dyn valid rows exit.
+struct P { n: u32, C: u32, F: u32, y_off: u32, mode: u32, rows_dyn: u32 }
+@group(0) @binding(0) var<storage, read> idx: array<i32>;
+@group(0) @binding(1) var<storage, read> tables: array<u32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read_write> outp: array<f32>;
+@group(0) @binding(4) var<storage, read> biases: array<f32>;
+@group(0) @binding(14) var<uniform> dyn: Dyn;
+@group(0) @binding(15) var<uniform> p: P;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
+  let t = wid.y;
+  let pr = wid.x * 256u + lid;
+  let hw = p.C >> 1u;
+  if (t >= p.n || pr >= hw || (p.rows_dyn != 0u && t >= dyn.b * p.rows_dyn)) { return; }
+  let o = p.y_off + t * p.C + 2u * pr;
+  var s = vec2f(bias[2u * pr], bias[2u * pr + 1u]);
+  if (p.mode == 0u) {
+    s += unpack2x16float(tables[u32(idx[t]) * hw + pr]);
+  } else {
+    var acc = vec2f(0.0);
+    for (var cb = 1u; cb < 10u; cb++) {
+      let code = idx[cb * p.F + t];
+      if (code >= 0) {
+        let row = (cb - 1u) * 4096u + u32(code);
+        acc += unpack2x16float(tables[row * hw + pr]);
+      } else {
+        let b = (cb - 1u) * p.C + 2u * pr;
+        s -= vec2f(biases[b], biases[b + 1u]);
+      }
+    }
+    s += acc + vec2f(outp[o], outp[o + 1u]);
+  }
+  outp[o] = s.x;
+  outp[o + 1u] = s.y;
+}
+`}),xi=GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST;async function Si(e){if(typeof navigator>`u`||!navigator.gpu)throw Error(`WebGPU is not available in this browser`);let t=await navigator.gpu.requestAdapter({powerPreference:`high-performance`});if(!t)throw Error(`No WebGPU adapter found`);let n=await t.requestDevice({requiredLimits:{maxStorageBufferBindingSize:t.limits.maxStorageBufferBindingSize,maxBufferSize:t.limits.maxBufferSize}});return n.lost.then(t=>{t.reason!==`destroyed`&&e?.(`GPU device lost: `+t.message+`; reload the page`)}),n.addEventListener(`uncapturederror`,e=>console.error(`WebGPU error:`,e.error.message)),n}const Ci=/^gemm_h8_r(\d+)_(\d+)x(\d+)$/,wi=/^gemm_h8_ks(\d+)$/;function Ti(e){let t=Ci.exec(e);return t?{base:`gemm_h8`,header:`const R = ${t[1]}u;\nconst LX = ${t[2]}u;\nconst LY = ${t[3]}u;\n`}:(t=wi.exec(e),t?{base:`gemm_h8_ks`,header:`const S = ${t[1]}u;\n`}:{base:e,header:``})}function Ei(e,t,n){let r=Math.ceil(n/8),i=Ci.exec(e);if(i){let[e,n,a]=[Number(i[1]),Number(i[2]),Number(i[3])];return[Math.ceil(r/n),Math.ceil(Math.ceil(t/e)/a),1]}if(i=wi.exec(e),i)return[Math.ceil(r/8),1,Math.ceil(t/4)];throw Error(`h8Grid: ${e} is not a gemm_h8 kernel`)}var Di=class{device;kernels=/* @__PURE__ */ new Map;dummies=/* @__PURE__ */ new Map;staging=/* @__PURE__ */ new Map;constructor(e){this.device=e}kernel(e){let t=this.kernels.get(e);if(t)return t;let{base:n,header:r}=Ti(e),i=bi[`./kernels/${n}.wgsl`];if(i===void 0)throw Error(`unknown kernel ${e}`);let a=yi+`
+`+r+i,o=this.device.createShaderModule({code:a,label:e}),s=this.device.createComputePipeline({layout:`auto`,compute:{module:o,entryPoint:`main`},label:e}),c=[];for(let e of i.matchAll(/@binding\((\d+)\)\s+var(<[^>]+>)?\s+(\w+)/g)){let t=e[2]??``;c.push({binding:Number(e[1]),name:e[3],writable:t.includes(`read_write`),uniform:t.includes(`uniform`)})}let l=[],u=/struct P\s*\{([^}]*)\}/.exec(i);if(u)for(let e of u[1].matchAll(/(\w+)\s*:\s*(u32|f32|i32)/g))l.push({name:e[1],type:e[2]});return t={name:e,pipeline:s,bindings:c,fields:l},this.kernels.set(e,t),t}dummy(e){let t=this.dummies.get(e);return t||(t=this.device.createBuffer({size:256,usage:xi,label:`dummy${e}`}),this.dummies.set(e,t)),t}dummyU=null;dummyUniform(){return this.dummyU||=this.uniform(16,`dyn0`),this.dummyU}buffer(e,t){return this.device.createBuffer({size:Math.max(16,Math.ceil(e/16)*16),usage:xi,label:t})}uniform(e=16,t){return this.device.createBuffer({size:Math.max(16,Math.ceil(e/16)*16),usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST,label:t})}write(e,t,n){this.device.queue.writeBuffer(e,t,n.buffer,n.byteOffset,Math.ceil(n.byteLength/4)*4)}upload(e,t){let n=this.buffer(e.byteLength,t);return this.write(n,0,e),n}takeStaging(e){let t=this.staging.get(e);return t&&t.length?t.pop():this.device.createBuffer({size:e,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST})}async submitRead(e,t=[]){let n=this.device.createCommandEncoder();e(n);let r=t.map(e=>{let t=Math.ceil(e.bytes/4)*4,r=this.takeStaging(Math.max(16,Math.ceil(t/16)*16));return n.copyBufferToBuffer(e.buf,e.offset,r,0,t),r});if(this.device.queue.submit([n.finish()]),!r.length)return await this.device.queue.onSubmittedWorkDone(),[];await Promise.all(r.map(e=>e.mapAsync(GPUMapMode.READ)));let i=[];for(let e=0;e<r.length;e++){i.push(new Float32Array(r[e].getMappedRange(0,Math.ceil(t[e].bytes/4)*4).slice(0))),r[e].unmap();let n=this.staging.get(r[e].size)??[];n.push(r[e]),this.staging.set(r[e].size,n)}return i}async read(e,t=0,n=e.size){return(await this.submitRead(()=>{},[{buf:e,offset:t,bytes:n}]))[0]}};function Oi(e,t){let n=null;for(let r of t)r.k===`d`?(n||=e.beginComputePass(),n.setPipeline(r.pipeline),n.setBindGroup(0,r.bindGroup),n.dispatchWorkgroups(r.wg[0],r.wg[1],r.wg[2])):(n&&=(n.end(),null),r.k===`c`?e.copyBufferToBuffer(r.src,r.srcOff,r.dst,r.dstOff,r.size):r.k===`clear`&&e.clearBuffer(r.buf,r.off,r.size));n&&n.end()}var ki=class{steps;owned;segments=null;constructor(e,t){this.steps=e,this.owned=t}encode(e){Oi(e,this.steps)}run(e,t=[],n){if(!this.segments){this.segments=[[]];for(let e of this.steps)e.k===`split`?this.segments.push([]):this.segments[this.segments.length-1].push(e)}let r=this.segments;for(let t=0;t<r.length-1;t++){let i=e.device.createCommandEncoder();t===0&&n?.(i),Oi(i,r[t]),e.device.queue.submit([i.finish()])}return e.submitRead(e=>{r.length===1&&n?.(e),Oi(e,r[r.length-1])},t)}destroy(){for(let e of this.owned)e.destroy();this.owned=[]}};const Ai=65535;function U(e){return e<=Ai?[Math.max(1,e),1,1]:[Ai,Math.ceil(e/Ai),1]}var ji=class{gpu;steps=[];uniforms=[];constructor(e){this.gpu=e}dispatch(e,t,n,r){let i=this.gpu.kernel(e),a=this.gpu.device,o=[],s=/* @__PURE__ */ new Set,c=/* @__PURE__ */ new Set;for(let r of i.bindings){if(r.name===`p`){let t=new ArrayBuffer(Math.max(16,Math.ceil(i.fields.length*4/16)*16)),s=new DataView(t);for(let t of Object.keys(n))if(!i.fields.some(e=>e.name===t))throw Error(`${e}: unknown param ${t}`);i.fields.forEach((e,t)=>{let r=n[e.name]??0;e.type===`f32`?s.setFloat32(t*4,r,!0):e.type===`i32`?s.setInt32(t*4,r,!0):s.setUint32(t*4,r>>>0,!0)});let c=a.createBuffer({size:t.byteLength,usage:GPUBufferUsage.UNIFORM,mappedAtCreation:!0,label:e+`.p`});new Uint8Array(c.getMappedRange()).set(new Uint8Array(t)),c.unmap(),this.uniforms.push(c),o.push({binding:r.binding,resource:{buffer:c}});continue}let l=t[r.name];if(r.uniform){if(!l)throw Error(`${e}: missing uniform ${r.name}`)}else if(!l)l=this.gpu.dummy(r.binding);else{if(r.writable&&c.has(l)||s.has(l))throw Error(`${e}: buffer bound twice with a writable alias (${r.name})`);(r.writable?s:c).add(l)}o.push({binding:r.binding,resource:{buffer:l}})}for(let n of Object.keys(t))if(!i.bindings.some(e=>e.name===n))throw Error(`${e}: unknown binding ${n}`);let l=a.createBindGroup({layout:i.pipeline.getBindGroupLayout(0),entries:o,label:e});this.steps.push({k:`d`,pipeline:i.pipeline,bindGroup:l,wg:r,label:e})}freeBySize=/* @__PURE__ */ new Map;buf(e,t){let n=this.gpu.buffer(e,t);return this.uniforms.push(n),n}tmp(e,t){let n=Math.max(16,Math.ceil(e/16)*16);return this.freeBySize.get(n)?.pop()??this.buf(n,t)}release(e){let t=this.freeBySize.get(e.size)??[];t.push(e),this.freeBySize.set(e.size,t)}copy(e,t,n,r,i){i>0&&this.steps.push({k:`c`,src:e,srcOff:t,dst:n,dstOff:r,size:i})}clear(e,t,n){n>0&&this.steps.push({k:`clear`,buf:e,off:t,size:n})}split(){this.steps.push({k:`split`})}finish(){let e=new ki(this.steps,this.uniforms);return this.steps=[],this.uniforms=[],e}};const W={none:0,silu:1,gelu:2,relu:3,tanh:4,softcap:5,newgelu:6},G={acc:1,bias:2,act:4,alpha:8,out:16};function K(e,t,n,r,i,a={}){if(i.IC%16)throw Error(`gemm: IC=${i.IC} must be a multiple of 16`);if(i.rowsDyn&&!a.dyn)throw Error(`gemm: rowsDyn requires ex.dyn`);let o=n.dtype===`q8`,s=n.dtype===`bf16`;if(n.dtype===`h8`){let e=i.x_stride??i.IC,t=i.x_off??0;if(!i.kernel||e%4||t%4)throw Error(`gemm: h8 needs a kernel and x_stride, x_off multiples of 4 (x_stride=${e}, x_off=${t})`);let n=/^gemm_h8_ks(\d+)$/.exec(i.kernel);if(n&&(i.T>32||i.IC%(4*Number(n[1]))))throw Error(`gemm: h8 needs T <= 32 and IC % ${4*Number(n[1])} == 0 for ${i.kernel} (T=${i.T}, IC=${i.IC})`)}else if(i.kernel)throw Error(`gemm: kernel needs h8 weights`);if(o&&(i.IC%32||!n.scales))throw Error(`gemm: q8 weights need IC % 32 == 0 (IC=${i.IC}) and scales`);if(!o&&!s&&n.dtype!==`f16`&&n.dtype!==`h8`)throw Error(`gemm: unsupported weight dtype ${n.dtype}`);if(i.rnd&&!s)throw Error(`gemm: rnd needs bf16 weights`);let c=+!!a.bias|(a.scale?2:0)|(a.shift?4:0)|(a.res?8:0),l=!s&&i.T<=32&&i.IC%32==0,u={X:t,bias:a.bias,scl:a.scale,shf:a.shift,res:a.res,Y:r,dyn:a.dyn??e.gpu.dummyUniform()},d={T:i.T,O:i.O,IC:i.IC,K:i.K??1,d:i.d??1,x_stride:i.x_stride??i.IC,x_off:i.x_off??0,y_stride:i.y_stride??i.O,y_off:i.y_off??0,r_stride:i.r_stride??i.O,r_off:i.r_off??0,nb_bias:i.nb_bias??i.O,flags:c,act:i.act??0,alpha:i.alpha??1,cap:i.cap??0,rows_dyn:i.rowsDyn??0};s?e.dispatch(`gemm_bf16`,{...u,Wt:n.buf},{...d,rnd:i.rnd??0},[Math.ceil(i.O/64),Math.ceil(i.T/64),1]):n.dtype===`h8`?e.dispatch(i.kernel,{...u,W:n.buf},d,Ei(i.kernel,i.T,i.O)):e.dispatch((l?`gemm_skinny`:`gemm`)+(o?`_q8`:``),o?{...u,Wq:n.buf,Wsc:n.scales}:{...u,Wt:n.buf},d,l?[Math.ceil(i.O/64),Math.ceil(i.T/16),1]:[Math.ceil(i.O/64),Math.ceil(i.T/64),1])}function Mi(e,t,n,r,i,a={}){let o=n.dtype===`q8`;if(o){if(i.I%32!=0||!n.scales)throw Error(`matvec: q8 weights need I % 32 == 0 (I=${i.I}) and scales`)}else if(n.dtype!==`f16`)throw Error(`matvec: unsupported weight dtype ${n.dtype}`);else if(i.I%8)throw Error(`matvec: I=${i.I} must be a multiple of 8`);if((i.x_off??0)%4)throw Error(`matvec: x_off must be a multiple of 4`);let s=o?{x:t,Wq:n.buf,Wsc:n.scales,bias:a.bias,res:a.res,y:r}:{x:t,Wt:n.buf,bias:a.bias,res:a.res,y:r};e.dispatch(o?`matvec_q8`:`matvec`,s,{O:i.O,I:i.I,x_off:i.x_off??0,y_off:i.y_off??0,nb_bias:i.nb_bias??i.O,flags:+!!a.bias|(a.res?8:0),act:i.act??0,cap:i.cap??0},U(Math.ceil(i.O/16)))}function Ni(e,t,n,r,i,a,o){e.dispatch(`matvec_glu`,{x:t,Wu:n,Wg:r,y:i},{O:a,I:o},U(Math.ceil(a/8)))}function Pi(e,t,n,r,i={}){e.dispatch(`add_rmsnorm`,{res:t,x:i.x,w:i.w,outp:n},{N:r.N,eps:r.eps,has_x:+!!i.x,has_w:+!!i.w,row0:r.row0??0},[r.rows,1,1])}function Fi(e,t,n,r,i,a){if(a.D>1024||a.ns>32||a.ns<1)throw Error(`attnres: D=${a.D} ns=${a.ns} out of range`);e.dispatch(`attnres`,{bank:t,q:n,w:r,outp:i},{D:a.D,n:a.n,ns:a.ns,qi:a.qi,row0:a.row0??0,eps:a.eps},[a.rows,1,1])}function Ii(e,t,n,r,i,a,o,s){let c=s;e.dispatch(`gdn_conv`,{mixed:t,w:r.conv,hist:a,outp:c.conv},{n,stride:2056},U(6)),e.dispatch(`gdn_prep`,{conv:c.conv,mixed:t,dt_bias:r.dtBias,a_log:r.aLog,qn:c.qn,kn:c.kn,decay:c.decay,beta:c.beta},{n},U(n*4)),e.dispatch(`gdn_scan`,{qn:c.qn,kn:c.kn,conv:c.conv,decay:c.decay,beta:c.beta,state:i,outp:c.o},{n},[8,1,1]),e.dispatch(`gdn_out`,{o:c.o,mixed:t,nw:r.norm,outp:o},{n},U(n*4))}function Li(e,t,n,r,i,a,o,s,c,l){if(i.dtype!==`q4`||a.dtype!==`q4`||o.dtype!==`q4`)throw Error(`moe: experts must be q4; re-export with npm run export`);let{sel:u,wts:d,hbuf:f}=l;e.dispatch(`moe_topk`,{lg:t,rbias:n,sel:u,wts:d},{},[c,1,1]),e.dispatch(`moe_up`,{x:r,sel:u,gq:a.buf,gs:a.scales,uq:i.buf,us:i.scales,hbuf:f},{},[48,2,c]),e.dispatch(`moe_down`,{hbuf:f,sel:u,wts:d,dq:o.buf,ds:o.scales,outp:s},{},[32,1,c])}function Ri(e,t,n,r,i,a,o,s,c,l,u){if(i.dtype!==`q4`||a.dtype!==`q4`||o.dtype!==`q4`)throw Error(`moe: experts must be q4; re-export with npm run export`);let d=(e,t)=>e.dtype===`f16`&&e.shape.length===t.length&&e.shape.every((e,n)=>e===t[n]);if(!d(u.gateUpDown,[256,32,64])||!d(u.gateUpUp,[16,1536,2,64])||!d(u.downDown,[1536,16,64])||!d(u.downUp,[16,256,64]))throw Error(`moe: the speech-edit expert factors must be rank-16 f16; re-export with pnpm export`);let{sel:f,wts:p,hbuf:m,td:h}=l,g=c*2*1536;if(m.size<(g+c*2*32)*4)throw Error(`moe: hbuf too small for the adapter`);e.dispatch(`moe_topk`,{lg:t,rbias:n,sel:f,wts:p},{},[c,1,1]),e.dispatch(`moe_lora_t`,{x:r,sel:f,D:u.gateUpDown.buf,tout:m},{R:32,I:256,x_t:256,x_j:0,t_off:g},[c,2,1]),e.dispatch(`moe_up_lora`,{x:r,sel:f,gq:a.buf,gs:a.scales,uq:i.buf,us:i.scales,hbuf:m,U:u.gateUpUp.buf},{tl_off:g},[48,2,c]),e.dispatch(`moe_lora_t`,{x:m,sel:f,D:u.downDown.buf,tout:h},{R:16,I:1536,x_t:3072,x_j:1536},[c,2,1]),e.dispatch(`moe_down_lora`,{hbuf:m,sel:f,wts:p,dq:o.buf,ds:o.scales,outp:s,td:h,U:u.downUp.buf},{},[32,1,c])}function zi(e,t,n,r,i,a,o={}){let s=r*a*i;e.dispatch(`patch_up`,{x:t,y:n,dyn:o.dyn??e.gpu.dummyUniform()},{n:s,C:i,h:a,rows_dyn:o.rowsDyn??0},U(Math.ceil(s/256)))}function Bi(e,t,n,r,i,a){let o=r*a*i;e.dispatch(`patch_down`,{x:t,y:n},{n:o,C:i,h:a},U(Math.ceil(o/256)))}function Vi(e,t,n,r,i,a,o,s,c=0,l={}){e.dispatch(`layernorm`,{x:t,w:n,b:r,y:i,dyn:l.dyn??e.gpu.dummyUniform()},{N:o,eps:s,act:c,rows_dyn:l.rowsDyn??0},U(a))}const Hi={siluMul:0,gluSplit:1,add:2,snake:3,gluSplitBf16:4};function Ui(e,t,n,r,i,a={},o,s){e.dispatch(`elementwise`,{a:r,b:o,c:s,y:i},{op:t,n,C:a.C??1,a_off:a.a_off??0,y_off:a.y_off??0},U(Math.ceil(n/256)))}function Wi(e,t,n,r,i,a,o,s=0){Ui(e,Hi.snake,a*o,t,i,{C:o,y_off:s},n,r)}function Gi(e,t,n,r,i,a,o,s,c=0,l=0,u={}){e.dispatch(`dwconv`,{Xf:t,w:n,b:s,y:r,dyn:u.dyn??e.gpu.dummyUniform()},{T:i,C:a,K:o,has_bias:+!!s,act:c,rnd:l,rows_dyn:u.rowsDyn??0},U(Math.ceil(i*a/256)))}function Ki(e,t,n,r,i,a,o={}){if(a.hd>64)throw Error(`attention: hd=${a.hd} > 64`);e.dispatch(a.hd===32?`attention_hd32`:`attention`,{q:t,kc:n,vc:r,gate:o.gate,outp:i,dyn:o.dyn??e.gpu.dummyUniform()},{n:a.n,nh:a.nh,nkv:a.nkv,pos_dyn:+!!a.posDyn,pos0:a.pos0??0,window:a.window,ring:a.ring,scale:a.scale,has_gate:+!!o.gate,gate_stride:a.gate_stride??0,gate_off:a.gate_off??0,hd:a.hd},U(a.n*a.nh))}function qi(e,t,n,r,i,a,o){e.dispatch(`attention_win`,{q:t,kc:n,vc:r,outp:i,dyn:o},{n:a.n,nh:a.nh,window:a.window,ring:a.ring,scale:a.scale,pos_mul:a.posMul},[Math.ceil(a.n/16),a.nh,1])}function Ji(e,t,n,r,i,a,o,s={}){if(o.hd>64||o.hd%2)throw Error(`ropeKv: hd=${o.hd} must be even and <= 64`);e.dispatch(`rope_kv`,{qkv:t,temp:s.temp,rope:n,qo:r,kc:i,vc:a,dyn:s.dyn??e.gpu.dummyUniform()},{n:o.n,nh:o.nh,nkv:o.nkv,in_stride:o.in_stride,qk_norm:+!!o.qkNorm,has_temp:+!!s.temp,eps:o.eps??0,ring:o.ring,pos_dyn:+!!o.posDyn,pos0:o.pos0??0,n_dyn:+!!o.nDyn,hd:o.hd,pos_mul:o.posMul??1,rnd:+!!o.bf16},U(o.n*(o.nh+2*o.nkv)))}function Yi(e,t,n,r,i,a){e.dispatch(`cond_rows`,{emb:t,cond:n,t0:r[0],t1:r[1],t2:r[2],dyn:a},{n:i},[4,i,1])}function Xi(e,t,n,r,i,a,o){e.dispatch(`steer_add`,{x:t,d:n,dyn:o},{n:r,x_off:i,d_off:a},U(Math.ceil(r/256)))}function Zi(e,t,n,r,i,a,o){if(o.hd>64)throw Error(`probeReadout: hd=${o.hd} > 64`);e.dispatch(`probe`,{q:t,kc:n,pin:r,sc:i,acc:null},{mode:0,layer:a,...o},[o.nh,1,1])}function Qi(e,t,n,r,i){e.dispatch(`probe`,{pin:t,sc:n,acc:r},{mode:1,...i},[Math.ceil(i.lmax/256),1,1])}function $i(e,t,n,r,i,a,o,s,c,l){if(c.hd>64)throw Error(`attentionMasked: hd=${c.hd} > 64`);e.dispatch(`attention_masked`,{q:t,kc:n,vc:r,gate:i,pin:a,outp:o,dyn:l},{layer:s,...c},[c.nh,1,1])}function q(e,t,n,r,i,a={}){if(i.IC%16)throw Error(`gemmF32: IC=${i.IC} must be a multiple of 16`);if(n.dtype!==`f32`)throw Error(`gemmF32: unsupported weight dtype ${n.dtype}`);if(i.rowsDyn&&!a.dyn)throw Error(`gemmF32: rowsDyn requires ex.dyn`);let o=+!!a.bias|(a.scale?2:0)|(a.shift?4:0)|(a.res?8:0)|(i.actAfterShift?16:0);e.dispatch(`gemm_f32`,{X:t,Wt:n.buf,bias:a.bias,scl:a.scale,shf:a.shift,res:a.res,Y:r,dyn:a.dyn??e.gpu.dummyUniform()},{T:i.T,O:i.O,IC:i.IC,K:i.K??1,d:i.d??1,x_stride:i.x_stride??i.IC,x_off:i.x_off??0,y_stride:i.y_stride??i.O,y_off:i.y_off??0,r_stride:i.r_stride??i.O,r_off:i.r_off??0,nb_bias:i.nb_bias??i.O,flags:o,act:i.act??0,alpha:i.alpha??1,cap:i.cap??0,rows_dyn:i.rowsDyn??0},[Math.ceil(i.O/64),Math.ceil(i.T/64),1])}function ea(e,t,n,r,i,a={}){if(i.IC%i.a||i.OC%(i.IC/i.a))throw Error(`gconv3x3: IC=${i.IC} a=${i.a} OC=${i.OC} do not form groups`);let o=Math.floor((i.T_in-1)/i.s_t)+1,s=Math.floor((i.F_in-1)/i.s_f)+1;return e.dispatch(`gconv3x3`,{x:t,w:n,bias:a.bias,scl:a.scale,shf:a.shift,y:r},{T_in:i.T_in,F_in:i.F_in,IC:i.IC,OC:i.OC,a:i.a,bg:i.OC/(i.IC/i.a),s_f:i.s_f,s_t:i.s_t,T_out:o,F_out:s,flags:+!!a.bias|(a.scale?2:0)|(a.shift?4:0),act:i.act??0},U(Math.ceil(o*s*i.OC/256))),[o,s]}function ta(e,t,n,r,i,a){let o=r*i;e.dispatch(`subsample_rows`,{x:t,y:n},{n:o,row:i,s:a},U(Math.ceil(o/256)))}function na(e,t,n,r,i){e.dispatch(`moe_dense_mix`,{lg:t,e:n,y:r},{T:i},U(Math.ceil(i*64/256)))}function ra(e,t,n,r,i,a,o){let s=i*a;e.dispatch(`upsample_add`,{e:t,xf:n,y:r},{n:s,N:a,s:o},U(Math.ceil(s/256)))}function ia(e,t,n,r,i,a,o){let s=i*a;e.dispatch(`dense_fuse`,{feat:t,w:n,acc:r},{n:s,N:a,S:o},U(Math.ceil(s/256)))}function aa(e,t,n,r,i,a,o){e.dispatch(`astp_pool`,{att:t,x:n,pooled:r},{T:i,N:a,var_floor:o},U(a))}let oa=null;async function sa(e,t,n=!0){n&&typeof caches<`u`&&await(oa??=caches.keys().then(e=>Promise.all(e.filter(e=>(e.startsWith(`zonos3-web-models-`)||e.startsWith(`zonos3-models-`))&&e!==`zonos3-web-models-v6`).map(e=>caches.delete(e)))).then(()=>{}));let r=n&&typeof caches<`u`?await caches.open(`zonos3-web-models-v6`):null,i=r?await r.match(e):void 0;if(i){let e=await i.arrayBuffer();return t(e.byteLength,!1),e}let a=await fetch(e);if(!a.ok||!a.body)throw Error(`failed to fetch ${e}: ${a.status}`);let o=Number(a.headers.get(`content-length`)??0),s=a.body.getReader(),c=[],l=0;for(;;){let{done:e,value:n}=await s.read();if(e)break;c.push(n),l+=n.byteLength,t(n.byteLength,!0)}if(o&&l!==o)throw Error(`failed to fetch ${e}: truncated (${l}/${o})`);let u=new Uint8Array(l),d=0;for(let e of c)u.set(e,d),d+=e.byteLength;if(r)try{await r.put(e,new Response(u.slice().buffer,{headers:{"content-type":`application/octet-stream`}}))}catch(t){console.warn(`zonos3-web: not caching ${e}:`,t)}return u.buffer}async function ca(e){let t=await fetch(e);if(!t.ok)throw Error(`failed to fetch ${e}: ${t.status}`);return t.json()}function la(e){let t=0;for(let n of Object.values(e.tensors))t+=n.nbytes+(n.scales_nbytes??0);return t}const ua=/* @__PURE__ */ new Map;function da(e,t){let n=ua.get(e);return n||(n=ca(e+`manifest.json`).then(e=>{if(e.format!==`zonos3-web-v1`)throw Error(`bad manifest format for ${t}`);return e}),n.catch(()=>ua.delete(e)),ua.set(e,n)),n}async function fa(e,t,n){if(!n)return;let r=(await Promise.all(t.map(t=>da(new URL(t+`/`,e).href,t).then(la)))).reduce((e,t)=>e+t,0),i=/* @__PURE__ */ new Map,a=/* @__PURE__ */ new Map,o=-1/0;return e=>{i.set(e.model,e.loaded),a.set(e.model,e.fetched);let s=0,c=0;for(let e of i.values())s+=e;for(let e of a.values())c+=e;let l=performance.now();s<r&&l-o<100||(o=l,n({models:t,loaded:s,total:r,fetched:c}))}}async function pa(e,t,n,r,i=!0){let a=new URL(n+`/`,t).href,o=await da(a,n),s=o.shards.map(()=>[]);for(let[e,t]of Object.entries(o.tensors))s[t.shard].push([e,t]);let c=la(o),l=0,u=0,d=0,f=0,p=()=>r?.({model:n,loaded:Math.min(l+Math.min(d,u),c),total:c,fetched:f});p();let m=/* @__PURE__ */ new Map,h=/* @__PURE__ */ new Map,g=e.device,_=(e,t,n,r)=>{let i=g.createBuffer({size:Math.max(16,Math.ceil(n/16)*16),usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC,label:r});return g.queue.writeBuffer(i,0,e,t,Math.ceil(n/4)*4),i};for(let e=0;e<o.shards.length;e++){u=s[e].reduce((e,[,t])=>e+t.nbytes+(t.scales_nbytes??0),0),d=0;let t=await sa(a+o.shards[e],(e,t)=>{d+=e,t&&(f+=e),p()},i);l+=u,d=0;for(let[n,r]of s[e]){if(r.host){h.set(n,new Float32Array(t.slice(r.offset,r.offset+r.nbytes)));continue}let e={buf:_(t,r.offset,r.nbytes,n),dtype:r.dtype,shape:r.shape};(r.dtype===`q8`||r.dtype===`q4`)&&(e.scales=_(t,r.scales_offset,r.scales_nbytes,n+`.scales`)),m.set(n,e)}p()}return await g.queue.onSubmittedWorkDone(),{meta:o.meta,t:m,host:h,get(e){let t=m.get(e);if(!t)throw Error(`${n}: missing tensor '${e}'`);return t},has(e){return m.has(e)}}}function ma(e){let t=t=>{let n=e[t];if(typeof n!=`number`||!Number.isFinite(n))throw Error(`aligner: missing or invalid metadata ${t}`);return n};if(e[`general.architecture`]!==`fusealign`||e.format!==`fusealign-gguf/1`)throw Error(`aligner: not a FuseAlign export (scripts/export_web_aligner.py)`);let n={dim:t(`dim`),nl:t(`n_layers`),nh:t(`n_heads`),ffn:t(`ffn_dim`),feat:t(`feat_dim`),win:t(`patch_window`),hop:t(`patch_hop`),nup:t(`n_upsample`),ropeTheta:t(`rope_theta`),eps:t(`norm_eps`),threshold:t(`presence_threshold`),D:t(`dia_hidden`),dl:t(`dia_layers`),dnh:t(`dia_heads`),dhd:t(`dia_head_dim`),inter:t(`dia_intermediate`),diaEps:t(`dia_norm_eps`),diaTheta:t(`dia_rope_theta`)},r=n.dim/n.nh;if(n.win!==2*n.hop||n.hop%16||n.feat%16||r!==64&&r!==128||n.dhd!==64&&n.dhd!==128||t(`max_text_bytes`)<1022||t(`max_seconds`)<30)throw Error(`aligner: unsupported FuseAlign hyperparameters`);return n}function ha(e,t,n,r,i){e.dispatch(`fa_rope`,{qkv:t,cs:n,sn:r},{n:i.n,nh:i.nh,hd:i.hd,stride:i.stride,q_off:0,k_off:i.kOff},U(Math.ceil(i.n*i.nh*(i.hd/2)/256)))}function ga(e,t,n,r){let i=r.nh*r.hd;e.dispatch(`fa_attention`,{qkv:t,outp:n},{n:r.n,nh:r.nh,hd:r.hd,stride:3*i,q_off:0,k_off:i,v_off:2*i,out_stride:i,scale:r.scale},[Math.ceil(r.n/(256/(r.hd/16))),r.nh,1])}function _a(e,t,n,r,i,a=1){e.dispatch(`fa_ew`,{x:n,y:r},{op:t,n:i,C:a},U(Math.ceil(i/256)))}var va=class e{gpu;w;hp;queue=Promise.resolve();faInv;diaInv;embedding;constructor(e,t,n){this.gpu=e,this.w=t,this.hp=n,this.faInv=At(n.dim/n.nh,n.ropeTheta),this.diaInv=jt(n.dhd,n.diaTheta);let r=t.host.get(`dia.embedding`);if(!r||r.length!==256*n.D)throw Error(`aligner: missing dia.embedding`);this.embedding=r}static async load(t,n,r,i=!0){let a=await pa(t,n,`aligner`,r,i);return new e(t,a,ma(a.meta))}async align(e,t){for(let e of t)(typeof e!=`string`||!e||/\s/u.test(e))&&L(400,`Alignment tokens must be non-empty strings without whitespace`);let n=e.length/St;n>30&&L(400,`Clip is ${n.toFixed(2)} s; in-browser alignment covers at most 30 s of audio`);let r=[];t.forEach((e,t)=>{Et(e)&&r.push(t)});let i=r.map(e=>t[e]),a=Dt(i);a>1022&&L(400,`Transcript is ${a} UTF-8 bytes; in-browser alignment covers at most 1022 bytes`);let o=this.queue.then(async()=>{let a=i.map(()=>null),o=i.map(()=>0);return i.length&&e.length>=this.hp.win&&({intervals:a,presence:o}=await this.forward(e,i)),Ft(t,r,a,o,n)});return this.queue=o.catch(()=>void 0),o}async forward(e,t){let{gpu:n,w:r,hp:i}=this,{ids:a,spans:o}=Ot(t),s=a.length-2,c=s+2,l=t.length,u=Math.floor((e.length-i.win)/i.hop)+1,d=u+s,{dim:f,nh:p,feat:m,D:h,dnh:g,dhd:_}=i,v=f/p,y=g*_,b=new ji(n),x=e=>e*4,S=e=>{let t=b.buf(e.byteLength);return n.write(t,0,e),t},C=new Float32Array(c*h);for(let e=0;e<c;e++)C.set(this.embedding.subarray(a[e]*h,(a[e]+1)*h),e*h);let w=S(C),T=Mt(Float32Array.from({length:c},(e,t)=>t),this.diaInv,!0),E=S(T.cos),D=S(T.sin),O=b.buf(x(c*h)),k=b.buf(x(c*3*y)),A=b.buf(x(c*y)),ee=b.buf(x(c*2*i.inter)),te=b.buf(x(c*i.inter)),ne=b.buf(x(c*h));for(let e=0;e<i.dl;e++)Pi(b,w,O,{N:h,rows:c,eps:i.diaEps},{x:e?ne:void 0,w:r.get(`dia.${e}.pre_norm`).buf}),K(b,O,r.get(`dia.${e}.qkv`),k,{T:c,O:3*y,IC:h}),ha(b,k,E,D,{n:c,nh:g,hd:_,stride:3*y,kOff:y}),ga(b,k,A,{n:c,nh:g,hd:_,scale:1}),K(b,A,r.get(`dia.${e}.o`),ne,{T:c,O:h,IC:y}),Pi(b,w,O,{N:h,rows:c,eps:i.diaEps},{x:ne,w:r.get(`dia.${e}.post_norm`).buf}),K(b,O,r.get(`dia.${e}.gate_up`),ee,{T:c,O:2*i.inter,IC:h}),_a(b,0,ee,te,c*i.inter,i.inter),K(b,te,r.get(`dia.${e}.down`),ne,{T:c,O:h,IC:i.inter}),b.split();Pi(b,w,O,{N:h,rows:c,eps:i.diaEps},{x:ne,w:r.get(`dia.norm`).buf});let re=k;_a(b,1,O,re,c*h);let ie=kt(e),ae=b.buf(x(d*f));q(b,S(ie.subarray(0,(u+1)*i.hop)),r.get(`fa.audio_patch`),ae,{T:u,O:f,IC:i.hop,K:2},{bias:r.get(`fa.audio_bias`).buf}),K(b,re,r.get(`fa.text_proj`),ae,{T:s,O:f,IC:h,x_off:2*h,y_off:u*f},{bias:r.get(`fa.text_bias`).buf});let j=Mt(Nt(u,s),this.faInv,!1),M=S(j.cos),oe=S(j.sin),se=b.buf(x(d*f)),N=b.buf(x(d*3*f)),ce=b.buf(x(d*f)),le=b.buf(x(d*2*i.ffn)),ue=b.buf(x(d*i.ffn)),de=b.buf(x(d*f));for(let e=0;e<i.nl;e++)Pi(b,ae,se,{N:f,rows:d,eps:i.eps},{x:e?de:void 0,w:r.get(`fa.${e}.attn_norm`).buf}),K(b,se,r.get(`fa.${e}.qkv`),N,{T:d,O:3*f,IC:f}),ha(b,N,M,oe,{n:d,nh:p,hd:v,stride:3*f,kOff:f}),ga(b,N,ce,{n:d,nh:p,hd:v,scale:1/Math.sqrt(v)}),K(b,ce,r.get(`fa.${e}.out`),de,{T:d,O:f,IC:f}),Pi(b,ae,se,{N:f,rows:d,eps:i.eps},{x:de,w:r.get(`fa.${e}.ffn_norm`).buf}),K(b,se,r.get(`fa.${e}.w13`),le,{T:d,O:2*i.ffn,IC:f}),_a(b,0,le,ue,d*i.ffn,i.ffn),K(b,ue,r.get(`fa.${e}.w2`),de,{T:d,O:f,IC:i.ffn}),b.split();let P=se;Pi(b,ae,P,{N:f,rows:d,eps:i.eps},{x:de,w:r.get(`fa.final_norm`).buf});let fe=b.buf(x(l*f));b.dispatch(`fa_pool`,{x:P,spans:S(o),y:fe},{dim:f,row0:u},[l,1,1]);let pe=b.buf(x(l*3*f));q(b,fe,r.get(`fa.mlp0`),pe,{T:l,O:3*f,IC:f,act:W.gelu},{bias:r.get(`fa.mlp0_b`).buf});let me=b.buf(x(l*m)),he=b.buf(x(l*m)),ge=b.buf(x(3*l));q(b,pe,r.get(`fa.start_mlp2`),me,{T:l,O:m,IC:f,x_stride:3*f},{bias:r.get(`fa.start_mlp2_b`).buf}),q(b,pe,r.get(`fa.end_mlp2`),he,{T:l,O:m,IC:f,x_stride:3*f,x_off:f},{bias:r.get(`fa.end_mlp2_b`).buf}),q(b,pe,r.get(`fa.presence_mlp2`),ge,{T:l,O:1,IC:f,x_stride:3*f,x_off:2*f,y_off:2*l},{bias:r.get(`fa.presence_mlp2_b`).buf});let _e=u<<i.nup,ve=b.buf(x((_e+4)*m)),F=b.buf(x((_e+4)*m)),ye=b.buf(x(_e*m)),be=b.buf(x(_e*m)),xe=b.buf(x(l*_e));b.split();for(let[e,t,n]of[[`start`,me,0],[`end`,he,l]]){let a=u,o=ve,s=F;b.clear(o,0,x(m)),b.clear(o,x((a+1)*m),x(m)),q(b,P,r.get(`fa.${e}.in`),o,{T:u,O:m,IC:f,y_off:m},{bias:r.get(`fa.${e}.in_b`).buf});for(let t=0;t<i.nup;t++){let n=t===i.nup-1?2:1;b.clear(s,0,x(n*m)),b.clear(s,x((2*a+n)*m),x(n*m));let c=r.get(`fa.${e}.up${t}.b`).buf,l={T:a,O:m,IC:m,K:2,y_stride:2*m,act:W.gelu};q(b,o,r.get(`fa.${e}.up${t}.even`),s,{...l,y_off:n*m},{bias:c}),q(b,o,r.get(`fa.${e}.up${t}.odd`),s,{...l,x_off:m,y_off:(n+1)*m},{bias:c}),a*=2,[o,s]=[s,o]}q(b,o,r.get(`fa.${e}.smooth`),ye,{T:_e,O:m,IC:m,K:5,act:W.gelu},{bias:r.get(`fa.${e}.smooth_b`).buf}),q(b,ye,r.get(`fa.${e}.out`),be,{T:_e,O:m,IC:m},{bias:r.get(`fa.${e}.out_b`).buf}),q(b,t,{buf:be,dtype:`f32`},xe,{T:l,O:_e,IC:m}),b.dispatch(`fa_argmax`,{lg:xe,outp:ge},{F:_e,out_off:n},[l,1,1]),b.split()}let Se=b.finish();try{let[e]=await Se.run(n,[{buf:ge,offset:0,bytes:x(3*l)}]),t=[],r=[];for(let n=0;n<l;n++){let a=1/(1+Math.exp(-e[2*l+n]));Number.isNaN(a)&&(a=0),r.push(a);let o=e[n],s=Math.max(e[l+n],o);t.push(a>=i.threshold?[o/1e3,s/1e3]:null)}return{intervals:t,presence:r}}finally{Se.destroy()}}};function ya(e,t,n){let r=Math.fround,i=new Float32Array(e*n),a=r(t**(-2/n));for(let t=0;t<e;t++){let e=r(t);for(let o=0;o<n/2;o++)i[t*n+2*o]=Math.cos(e),i[t*n+2*o+1]=Math.sin(e),e=r(e*a)}return i}const ba=Math.fround;var xa=class{gpu;vocab;ncb;logits;twin;ids;uni;words=/* @__PURE__ */ new Uint32Array(36);floats=new Float32Array(this.words.buffer);cnt;hist=null;W=0;progs=[null,null];rng=null;greedy=!1;generated=0;guided=!1;constructor(e,t,n,r,i,a){if(this.gpu=e,this.vocab=t,this.ncb=n,this.logits=r,this.twin=i,this.ids=a,t>5120)throw Error(`sampler: the GPU sampler holds at most 5120 ids per codebook`);if(n>12)throw Error(`sampler: the GPU sampler holds at most 12 codebooks`);this.uni=e.uniform(144,`smp`),this.cnt=e.buffer(n*4,`smp.cnt`)}start(e){let t=e.sp,n=Zt(this.vocab,e.vocab),r=this.ncb,i=Math.min(Math.max(0,Math.floor(t.rep_window)),h),a=Math.max(1,i);if(a!==this.W){this.hist?.destroy();for(let e of this.progs)e?.destroy();this.progs=[null,null],this.hist=this.gpu.buffer(r*a*4,`smp.hist`),this.W=a}let o=e.history??[],s=Math.min(i,o.length),c=new Uint32Array(r*a);for(let e=0;e<s;e++){let t=o[o.length-s+e];for(let n=0;n<r;n++)c[n*a+e]=t[n]}this.gpu.write(this.hist,0,c),this.gpu.write(this.cnt,0,new Uint32Array(r).fill(s));let l=this.words,u=this.floats;l.fill(0),l[0]=this.vocab,l[1]=n.codebookSize,l[2]=n.padId,l[3]=n.stopId,l[4]=Math.max(0,e.minFrames),l[7]=de,l[8]=+!!t.greedy,u[9]=ba(t.temperature),l[10]=t.top_k>0?Math.min(Math.floor(t.top_k),this.vocab):0,u[11]=ba(t.top_p),u[12]=ba(t.min_p),u[13]=ba(t.rep_penalty),l[14]=i,l[15]=Math.max(0,t.rep_codebooks),l[16]=e.cfgScale===null?0:1,u[17]=ba(e.cfgScale??0),l[18]=a,l[19]=4286578688,this.rng=new Jt(t.seed>>>0),this.greedy=t.greedy,this.guided=e.cfgScale!==null,this.generated=0}next(e,t=0){if(!this.rng)throw Error(`backbone: startSampling must run before sampling`);let n=this.words;if(n[5]=this.generated++,n[6]=e,this.floats[32]=ba(t),!this.greedy)for(let e=0;e<this.ncb;e++)this.floats[20+e]=Yt(this.rng);this.gpu.write(this.uni,0,n);let r=+!!this.guided,i=this.progs[r];if(!i){let e=new ji(this.gpu);e.dispatch(`sample`,{logits:this.logits,twin:this.guided?this.twin:null,hist:this.hist,cnt:this.cnt,ids:this.ids,smp:this.uni},{},[this.ncb,1,1]),i=this.progs[r]=e.finish()}return i}};const J=1024,Sa=2056,Ca=1536,wa=2048,Ta=[3,7],Ea=4+Ta.length*16*4,Da=1/Math.sqrt(32),Oa=1e-5,ka=h*4*32*4,Aa=e=>(e+1)%4==0;function ja(e,t,n){for(let r=0;r<10;r++)if(e[t*11+r]!==n.audioPad)return!1;return e[t*11+10]===n.textVocab}function Ma(e,t,n,r){let i=r.condBucketCounts,a=r.condNames,o=n=>{if(n<0||n>=t||!ja(e,n,r))throw Error(`zonos3: conditioning row ${n} is not an all-pad row`)};if(n.speakerRow>=0){if(!n.speaker||n.speaker.length!==192)throw Error(`zonos3: expected a 192-value speaker embedding`);for(let e of n.speaker)if(!Number.isFinite(e))throw Error(`zonos3: speaker embedding contains a non-finite value`);o(n.speakerRow)}if(n.conditionRow>=0){if(n.buckets.length!==3)throw Error(`zonos3: expected 3 condition buckets`);for(let e=0;e<3;e++){let t=i[e];if(!Number.isInteger(n.buckets[e])||n.buckets[e]<0||n.buckets[e]>t)throw Error(`zonos3: condition bucket ${n.buckets[e]} for ${a[e]} outside 0..${t-1} (${t} = unknown)`);o(n.conditionRow+e)}}for(let i=0;i<t;i++){if(!ja(e,i,r))continue;let t=n.speakerRow>=0&&i===n.speakerRow,a=n.conditionRow>=0&&i>=n.conditionRow&&i<n.conditionRow+3;if(!t&&!a)throw Error(`zonos3: all-pad row ${i} has no speaker/condition embedding`)}}function Na(e){let t=null;try{t=me(e)}catch{}if(!t||e[`general.architecture`]!==`zonos3`||e[`residual.type`]!==`full_attnres`||e[`attention.pattern`]!==`gdn3_global1`||t.speakerDim!==192||t.nCodebooks!==10||t.nCond!==3||t.condBucketCounts.length!==3||t.condBucketCounts.some(e=>!Number.isInteger(e)||e<2))throw Error(`backbone: unsupported model; re-export with pnpm export`);return t}function Pa(e,t,n){let r=Na(t.meta),i=r.audioVocab-n.audioVocab,a=t.meta[`adapter.rank`];if(t.meta[`adapter.base`]!==e.meta[`general.name`]||r.spanEndId===null||i<1||r.textExtraTokens<1||r.textVocab!==n.textVocab||r.audioPad!==n.audioPad||typeof a!=`number`||t.get(`embd_extra`).shape[1]!==10*i+r.textExtraTokens||t.get(`output_extra`).shape[1]!==10*i)throw Error(`backbone: the speech-edit adapter does not fit this backbone; re-export with pnpm export`);return r}var Fa=class e{gpu;w;edit;steerSources;hp;logitsLen;baseHp;rope;slots;ids;chunkIds;dyn;dynData=/* @__PURE__ */ new Uint32Array(4);condBuf;spkIn;spkProg;steerBuf;probeBuf;probeSc;probeAcc;decodeProg;decodeLogits;chunkProg;chunkLogits;sampler;nPast=[0,0];constructor(e,t,n,r=null){this.gpu=e,this.w=t,this.edit=r,this.baseHp=Na(t.meta),this.hp=r?Pa(t,r,this.baseHp):this.baseHp,this.logitsLen=this.hp.audioVocab*10;for(let e=0;e<n.length;e++){let t=n[e];if(!Number.isInteger(t)||t<0||t>22||e>0&&t<=n[e-1])throw Error(`zonos3: steering sources must be ascending Full AttnRes bank indices in 0..22`)}this.steerSources=n.slice(),this.rope=e.upload(ya(h,Number(t.meta[`rope.freq_base`]??1e4),32),`bb.rope`);let i=t=>{let n={kc:/* @__PURE__ */ new Map,vc:/* @__PURE__ */ new Map,gdnState:/* @__PURE__ */ new Map,gdnHist:/* @__PURE__ */ new Map};for(let r=0;r<11;r++)Aa(r)?(n.kc.set(r,e.buffer(ka,`s${t}.kc${r}`)),n.vc.set(r,e.buffer(ka,`s${t}.vc${r}`))):(n.gdnState.set(r,e.buffer(262144,`s${t}.gdnState${r}`)),n.gdnHist.set(r,e.buffer(18432,`s${t}.gdnHist${r}`)));return n};this.slots=[i(0),i(1)],this.ids=e.buffer(44,`bb.ids`),this.chunkIds=e.buffer(11264,`bb.chunkIds`),this.dyn=[e.uniform(16,`bb.dyn0`),e.uniform(16,`bb.dyn1`)],this.condBuf=e.buffer(4128,`bb.cond`),this.spkIn=e.buffer(768,`bb.spkIn`),this.steerBuf=e.buffer(Math.max(1,this.steerSources.length)*J*4,`bb.steer`),this.probeBuf=e.buffer(Ea*4,`bb.probe`),this.probeSc=e.buffer(Ta.length*16*g*4,`bb.probeSc`),this.probeAcc=e.buffer(g*4,`bb.probeAcc`);let a=new ji(e);Mi(a,this.spkIn,t.get(`speaker_proj.weight`),this.condBuf,{O:J,I:192,y_off:8},{bias:t.get(`speaker_proj.bias`).buf}),this.spkProg=a.finish();let o=[],s=[],c=[],l=[];for(let t of[0,1])a=new ji(e),o.push(this.record(a,1,!0,this.ids,null,t)),s.push(a.finish()),a=new ji(e),c.push(this.record(a,256,!1,this.chunkIds,null,t)),l.push(a.finish());this.decodeLogits=[o[0],o[1]],this.decodeProg=[s[0],s[1]],this.chunkLogits=[c[0],c[1]],this.chunkProg=[l[0],l[1]],this.sampler=new xa(e,this.hp.audioVocab,10,this.decodeLogits[0],this.decodeLogits[1],this.ids)}record(e,t,n,r,i,a){let o=this.w,s=this.edit,c=e=>o.get(e).buf,l=this.dyn[a],u=this.slots[a],d=n&&a===0,f=(t,n,r,a=0)=>{if(!i)return;let o=e.buf(r*4,t);e.copy(n,a*4,o,0,r*4),i.push({name:t,buf:o,off:0,floats:r})},p=s?e.buf(t*256*4,`loraT`):null,m=e=>s!==null&&s.has(e+`.lora_down`),_=(r,i,a,o,c,l)=>{let u=s.get(i+`.lora_down`),d=s.get(i+`.lora_up`),f=u.shape[1];if(u.shape[0]!==c||d.shape[0]!==f||d.shape[1]!==o||f<8||f>256||f&f-1||c>2048)throw Error(`backbone: adapter factors of ${i} do not fit [${o}, ${c}]`);n?e.dispatch(`lora_vec`,{x:r,D:u.buf,U:d.buf,y:a},{O:o,I:c,K:f,y_off:l},[Math.ceil(o/256),1,1]):(K(e,r,u,p,{T:t,O:f,IC:c}),e.dispatch(`lora_up`,{t:p,U:d.buf,Y:a},{O:o,K:f,y_off:l},[Math.ceil(o/256),t,1]))},v=(r,i,a,s,c,l=0)=>{n?Mi(e,r,o.get(i),a,{O:s,I:c,y_off:l}):K(e,r,o.get(i),a,{T:t,O:s,IC:c,y_off:l});let u=i.slice(0,-7);m(u)&&_(r,u,a,s,c,l)},y=e=>e*t*J,b=t=>{let r=this.steerSources.indexOf(t);n&&r>=0&&Xi(e,C,this.steerBuf,J,y(t),r*J,l)},x={nl:Ta.length,nh:16,nkv:4,hd:32,ring:h,scale:Da,lmax:g},S=e.buf(t*J*4,`emb`);s?e.dispatch(`embed_edit`,{ids:r,E:c(`embd_all`),X:s.get(`embd_extra`).buf,outp:S},{n:t,V:this.baseHp.audioVocab,AX:this.hp.audioVocab-this.baseHp.audioVocab,TV:this.baseHp.textVocab+1},[2,t,1]):e.dispatch(`embed`,{ids:r,E:c(`embd_all`),outp:S},{n:t,V:this.hp.audioVocab},[2,t,1]),f(`emb_sum`,S,t*J),n||(Yi(e,S,this.condBuf,[c(`cond_embd.0.weight`),c(`cond_embd.1.weight`),c(`cond_embd.2.weight`)],t,l),f(`emb_cond`,S,t*J));let C=e.buf(23*t*J*4,`bank`);Pi(e,S,C,{N:J,rows:t,eps:Oa}),b(0),f(`emb_norm`,C,t*J);let w=c(`attnres_q.weight`),T=e.buf(t*J*4,`cur`),E=e.buf(t*784*4,`qkvg`),D=e.buf(t*16*32*4,`q`),O=e.buf(t*16*32*4,`attnH`),k=e.buf(t*Sa*4,`gdnMixed`),A={conv:e.buf(t*Ca*4,`gdnConv`),qn:e.buf(t*512*4,`gdnQ`),kn:e.buf(t*512*4,`gdnK`),decay:e.buf(t*4*4,`gdnDecay`),beta:e.buf(t*4*4,`gdnBeta`),o:e.buf(t*512*4,`gdnO`)},ee=e.buf(t*512*4,`gdnGated`),te=!n||s!==null,ne=te?e.buf(t*wa*4,`ffA`):null,re=te?e.buf(t*wa*4,`ffG`):null,ie=e.buf(t*wa*4,`ffH`),ae=e.buf(t*J*4,`routerIn`),j=e.buf(t*64*4,`routerLogits`),M={sel:e.buf(t*2*4,`sel`),wts:e.buf(t*2*4,`wts`),hbuf:e.buf(t*2*(1536+(s?32:0))*4,`hbuf`)},oe=s?e.buf(t*2*16*4,`moeLoraDown`):null,se=e.buf(t*256*4,`z`),N=e.buf(t*256*4,`moeLat`);for(let n=0;n<11;n++){let r=`blk.${n}.`;if(Fi(e,C,w,c(r+`attn_norm.weight`),T,{D:J,n:t,ns:2*n+1,qi:2*n,rows:t,eps:Oa}),f(`attn_in_${n}`,T,t*J),Aa(n)){let i=u.kc.get(n),a=u.vc.get(n);v(T,r+`attn_qkvg.weight`,E,784,J),Ji(e,E,this.rope,D,i,a,{n:t,nh:16,nkv:4,hd:32,in_stride:784,qkNorm:!0,eps:1e-6,ring:h,posDyn:!0},{temp:c(r+`attn_temp`),dyn:l}),Ki(e,D,i,a,O,{n:t,nh:16,nkv:4,hd:32,window:4294967295,ring:h,scale:Da,posDyn:!0,gate_stride:784,gate_off:768},{gate:E,dyn:l});let o=Ta.indexOf(n);d&&o>=0&&(Zi(e,D,i,this.probeBuf,this.probeSc,o,x),$i(e,D,i,a,E,this.probeBuf,O,o,{nh:16,nkv:4,hd:32,ring:h,scale:Da,gate_off:768},l)),v(O,r+`attn_output.weight`,C,J,512,y(2*n+1))}else{let a=u.gdnState.get(n),o=u.gdnHist.get(n);v(T,r+`gdn_in.weight`,k,Sa,J),Ii(e,k,t,{conv:c(r+`gdn_conv.weight`),dtBias:c(r+`gdn_dt_bias`),aLog:c(r+`gdn_A_log`),norm:c(r+`gdn_norm.weight`)},a,o,ee,A),i&&(f(`gdn_conv_${n}`,A.conv,t*Ca),f(`gdn_q_${n}`,A.qn,t*512),f(`gdn_k_${n}`,A.kn,t*512),f(`gdn_decay_${n}`,A.decay,t*4),f(`gdn_beta_${n}`,A.beta,t*4),f(`gdn_recurrent_${n}`,A.o,t*512),f(`gdn_gated_${n}`,ee,t*512),f(`gdn_state_${n}`,a,65536),f(`gdn_conv_state_${n}`,o,Ca*3)),v(ee,r+`attn_output.weight`,C,J,512,y(2*n+1))}if(b(2*n+1),f(`attn_out_${n}`,C,t*J,y(2*n+1)),Fi(e,C,w,c(r+`ffn_norm.weight`),T,{D:J,n:t,ns:2*n+2,qi:2*n+1,rows:t,eps:Oa}),f(`ffn_in_${n}`,T,t*J),!o.has(r+`router.weight`))te?(v(T,r+`ffn_up.weight`,ne,wa,J),v(T,r+`ffn_gate.weight`,re,wa,J),Ui(e,Hi.siluMul,t*wa,ne,ie,{},re)):Ni(e,T,c(r+`ffn_up.weight`),c(r+`ffn_gate.weight`),ie,wa,J),v(ie,r+`ffn_down.weight`,C,J,wa,y(2*n+2));else{Pi(e,T,ae,{N:J,rows:t,eps:Oa},{w:c(r+`router_norm.weight`)}),v(ae,r+`router.weight`,j,64,J),f(`router_logits_${n}`,j,t*64),v(T,r+`ffn_latent_down.weight`,se,256,J);let i=s?.has(r+`router_bias`)?s.get(r+`router_bias`).buf:c(r+`router_bias`),a=o.get(r+`ffn_up_exps.weight`),l=o.get(r+`ffn_gate_exps.weight`),u=o.get(r+`ffn_down_exps.weight`);if(m(r+`ffn_gate_up_exps`)&&m(r+`ffn_down_exps`))Ri(e,j,i,se,a,l,u,N,t,{...M,td:oe},{gateUpDown:s.get(r+`ffn_gate_up_exps.lora_down`),gateUpUp:s.get(r+`ffn_gate_up_exps.lora_up`),downDown:s.get(r+`ffn_down_exps.lora_down`),downUp:s.get(r+`ffn_down_exps.lora_up`)});else if(m(r+`ffn_gate_up_exps`)||m(r+`ffn_down_exps`))throw Error(`backbone: the speech-edit adapter must shape every expert stack of layer ${n}`);else Li(e,j,i,se,a,l,u,N,t,M);v(N,r+`ffn_latent_up.weight`,C,J,256,y(2*n+2))}b(2*n+2),f(`ffn_out_${n}`,C,t*J,y(2*n+2))}d&&Qi(e,this.probeBuf,this.probeSc,this.probeAcc,x);let ce=e.buf(J*4,`hLast`);Fi(e,C,w,c(`output_norm.weight`),ce,{D:J,n:t,ns:23,qi:22,rows:1,row0:t-1,eps:Oa});let le=e.buf(this.logitsLen*4,`logits`);if(!s)return Mi(e,ce,o.get(`output.weight`),le,{O:this.logitsLen,I:J,act:W.softcap,cap:15}),le;let ue=this.baseHp.audioVocab,de=this.hp.audioVocab-ue,P=e.buf(ue*10*4,`headBase`),fe=e.buf(de*10*4,`headExtra`);Mi(e,ce,o.get(`output.weight`),P,{O:ue*10,I:J}),Mi(e,ce,s.get(`output_extra`),fe,{O:de*10,I:J});let pe=s.get(`output.lora_down`),me=s.get(`output.lora_up`),he=pe.shape[1];if(pe.shape[0]!==1024||me.shape[0]!==he||me.shape[1]!==this.logitsLen||he%8||he>256)throw Error(`backbone: the head adapter does not fit the edit vocabulary`);return Mi(e,ce,pe,p,{O:he,I:J}),e.dispatch(`edit_logits`,{base:P,extra:fe,t:p,U:me.buf,outp:le},{n:this.logitsLen,V:ue,AX:de,K:he,cap:15},[Math.ceil(this.logitsLen/256),1,1]),le}clearRecurrent(e,t){for(let n of this.slots[t].gdnState.values())e.clearBuffer(n);for(let n of this.slots[t].gdnHist.values())e.clearBuffer(n)}writeCond(e){let t=/* @__PURE__ */ new Int32Array(8),n=e.speakerRow>=0;t[0]=n?e.speakerRow:-1,t[1]=e.conditionRow>=0?e.conditionRow:-1,t[2]=3;for(let n=0;n<3;n++)t[3+n]=e.conditionRow>=0?e.buckets[n]:0;return this.gpu.write(this.condBuf,0,t),n?(this.gpu.write(this.spkIn,0,e.speaker),!0):!1}async prefill(e,t,n,r={}){let i=t.length/11;if(!Number.isInteger(i)||i<1)throw Error(`empty prompt`);if(i>h)throw Error(`prompt has ${i} rows; maximum is ${h}`);Ma(t,i,n,this.hp);let a=this.gpu,o=r.capture?i:Math.max(1,r.chunk??256),s=/* @__PURE__ */ new Map,c=t=>{if(t===256&&!r.capture)return{prog:this.chunkProg[e],ids:this.chunkIds,logits:this.chunkLogits[e],caps:null};let n=s.get(t);if(!n){let i=new ji(a),o=i.buf(t*11*4,`prefill.ids`),c=r.capture?[]:null,l=this.record(i,t,!1,o,c,e);n={prog:i.finish(),ids:o,logits:l,caps:c},s.set(t,n)}return n},l=this.writeCond(n);this.nPast[e]=0;try{for(let n=0;n<i;n+=o){let r=Math.min(o,i-n),s=n+r>=i,u=c(r);a.write(u.ids,0,t.subarray(n*11,(n+r)*11)),this.dynData[0]=n,this.dynData[1]=0,a.write(this.dyn[e],0,this.dynData);let d=n===0,f=t=>{d&&(this.clearRecurrent(t,e),l&&this.spkProg.encode(t)),u.prog.encode(t),s&&t.copyBufferToBuffer(u.logits,0,this.decodeLogits[e],0,this.logitsLen*4)};if(!s){let e=a.device.createCommandEncoder();f(e),a.device.queue.submit([e.finish()]);continue}let p=u.caps??[],m=await a.submitRead(f,[{buf:u.logits,offset:0,bytes:this.logitsLen*4},...p.map(e=>({buf:e.buf,offset:0,bytes:e.floats*4}))]);this.nPast[e]=i;let h={logits:m[0]};return u.caps&&(h.caps=new Map(u.caps.map((e,t)=>[e.name,m[t+1]]))),h}throw Error(`unreachable`)}finally{for(let e of s.values())e.prog.destroy()}}writeProbe(e,t){let n=new Uint32Array(Ea),r=new Float32Array(n.buffer),i=t!==null&&t.heads.length>0&&t.textLen>0;if(i){if(e!==0)throw Error(`backbone: the alignment probe runs on slot 0 only`);let i=this.nPast[e];if(t.textLen>2048||t.textStart<0||t.textStart+t.textLen>i)throw Error(`zonos3: alignment probe text span [${t.textStart}, +${t.textLen}) must lie in the slot's ${i} cached rows and hold at most ${g} rows (zonos3_batch_features::probe_max_text)`);let a=(e,t)=>4+(Ta.indexOf(e)*16+t)*4,o=(e,t)=>Ta.includes(e)&&Number.isInteger(t)&&t>=0&&t<16;for(let e of t.heads)if(!o(e.layer,e.head))throw Error(`zonos3: align probe head (${e.layer}, ${e.head}) is not an attention head of this model`);for(let e of t.windows)if(!o(e.head.layer,e.head.head))throw Error(`zonos3: align probe window head (${e.head.layer}, ${e.head.head}) is not an attention head of this model`);n[0]=t.textStart,n[1]=t.textLen;for(let e=0;e<Ta.length;e++)for(let r=0;r<16;r++)n[4+(e*16+r)*4+2]=t.textLen-1;for(let e of t.heads)r[a(e.layer,e.head)]=1;for(let e of t.windows){let[r,i]=nr(e.lo,e.hi,t.textLen),o=a(e.head.layer,e.head.head);n[o+1]=r,n[o+2]=i,n[o+3]=1}}return e===0&&this.gpu.write(this.probeBuf,0,n),i?t.textLen:0}checkStep(e,t){if(this.nPast[e]>=h)throw Error(`KV cache full`);let n=this.steerSources.length;if(t&&t.length!==n*1024)throw Error(`zonos3: slot steering delta must hold ${n} sources x ${J} values`)}writeDyn(e,t){this.dynData[0]=this.nPast[e],this.dynData[1]=t&&this.steerSources.length?1:0,this.gpu.write(this.dyn[e],0,this.dynData)}async step(e,t,n,r){this.checkStep(e,n);let i=this.writeProbe(e,r);this.gpu.write(this.ids,0,t),n&&this.steerSources.length&&this.gpu.write(this.steerBuf,0,n),this.writeDyn(e,n!==null);let a=[{buf:this.decodeLogits[e],offset:0,bytes:this.logitsLen*4}];i&&a.push({buf:this.probeAcc,offset:0,bytes:i*4});let o=await this.gpu.submitRead(t=>this.decodeProg[e].encode(t),a);return this.nPast[e]++,{logits:o[0],probe:i?o[1]:null}}async stepPair(e,t,n,r){if(n&&n!==t)throw Error(`backbone: the CFG twin shares the conditional slot's steering delta`);this.checkStep(0,t),this.checkStep(1,n);let i=this.writeProbe(0,r);this.gpu.write(this.ids,0,e),t&&this.steerSources.length&&this.gpu.write(this.steerBuf,0,t),this.writeDyn(0,t!==null),this.writeDyn(1,n!==null);let a=[{buf:this.decodeLogits[0],offset:0,bytes:this.logitsLen*4},{buf:this.decodeLogits[1],offset:0,bytes:this.logitsLen*4}];i&&a.push({buf:this.probeAcc,offset:0,bytes:i*4});let o=await this.gpu.submitRead(e=>{this.decodeProg[0].encode(e),this.decodeProg[1].encode(e)},a);return this.nPast[0]++,this.nPast[1]++,{logits:o[0],twinLogits:o[1],probe:i?o[2]:null}}startSampling(e){this.sampler.start(e)}async sampleFirst(e){let t=this.sampler.next(e),n=await this.gpu.submitRead(e=>t.encode(e),[{buf:this.ids,offset:0,bytes:44}]);return new Int32Array(n[0].buffer)}async stepSample(e,t,n,r,i=0){let a=this.sampler.guided;if(a&&n&&n!==t)throw Error(`backbone: the CFG twin shares the conditional slot's steering delta`);this.checkStep(0,t),a&&this.checkStep(1,n);let o=this.writeProbe(0,r);t&&this.steerSources.length&&this.gpu.write(this.steerBuf,0,t),this.writeDyn(0,t!==null),a&&this.writeDyn(1,n!==null);let s=this.sampler.next(e,i),c=[{buf:this.ids,offset:0,bytes:44}];o&&c.push({buf:this.probeAcc,offset:0,bytes:o*4});let l=this.gpu.submitRead(e=>{this.decodeProg[0].encode(e),a&&this.decodeProg[1].encode(e),s.encode(e)},c);this.nPast[0]++,a&&this.nPast[1]++;let u=await l;return{frame:new Int32Array(u[0].buffer),probe:o?u[1]:null}}withEdit(t){return new e(this.gpu,this.w,this.steerSources,t)}};const Ia=[`gemm_h8_ks4`,`gemm_h8_ks8`,`gemm_h8_r2_8x8`],La=[`gemm_h8_r4_8x8`,`gemm_h8_r8_8x8`,`gemm_h8_r4_16x4`],Ra=e=>Math.ceil(e/32)*32;function za(e,t,n,r){if(t.dtype!==`q8`||!t.scales)throw Error(`repackH8: expected q8 weights, got ${t.dtype}`);let i=r*Ra(n)/2,a=e.buffer(i*4,`h8`),o=new ji(e);o.dispatch(`repack_h8`,{Wq:t.buf,Wsc:t.scales,outp:a},{O:n,IC:r,K:1,words:i},U(Math.ceil(i/256)));let s=o.finish(),c=e.device.createCommandEncoder();return s.encode(c),e.device.queue.submit([c.finish()]),e.device.queue.onSubmittedWorkDone().then(()=>s.destroy()),a}async function Ba(e,t,n,r,i,a){let o=e.buffer(r*a*4,`tune.x`),s=e.buffer(r*i*4,`tune.y`),c=new ji(e);for(let e=0;e<4;e++)K(c,o,t,s,{T:r,O:i,IC:a,kernel:n===`q8`?void 0:n});let l=c.finish(),u=async()=>{let t=e.device.createCommandEncoder();l.encode(t),e.device.queue.submit([t.finish()]),await e.device.queue.onSubmittedWorkDone()};try{await u();let e=1/0;for(let t=0;t<3;t++){let t=performance.now();await u(),e=Math.min(e,performance.now()-t)}return e/4}finally{l.destroy(),o.destroy(),s.destroy()}}async function Va(e,t,n,r,i){let a=t.get(n),[o,s]=a.shape,c={kernel:`q8`,ms:await Ba(e,a,`q8`,r,s,o)},l={buf:za(e,a,s,o),dtype:`h8`,shape:a.shape};try{for(let t of i){let n=await Ba(e,l,t,r,s,o);n<c.ms&&(c={kernel:t,ms:n})}}finally{l.buf.destroy()}return c}async function Ha(e,t){let n=await Va(e,t,`stage.1.l0.ffn1.weight`,32,Ia),r=await Va(e,t,`head.0.pw1.weight`,256,La);return console.info(`zac: gemm skinny=${n.kernel} ${n.ms.toFixed(3)} ms, large=${r.kernel} ${r.ms.toFixed(3)} ms`),{skinny:n.kernel,large:r.kernel}}var Ua=class{n;m;factors=[];wc;ws;cos;sin;leaf=/* @__PURE__ */ new Map;xr;xi;yr;yi;tr;ti;ur;ui;vr;vi;constructor(e){if(this.n=e,!Number.isInteger(e)||e<2||e%2)throw Error(`irfft: n=${e} must be even`);let t=this.m=e/2,n=t;for(let e of[2,3])for(;n%e===0;)this.factors.push(e),n/=e;for(let e=5;n>1;e+=2)for(;n%e===0;)this.factors.push(e),n/=e;this.factors.sort((e,t)=>e-t),this.wc=new Float64Array(t),this.ws=new Float64Array(t),this.cos=new Float64Array(t),this.sin=new Float64Array(t);for(let n=0;n<t;n++)this.wc[n]=Math.cos(2*Math.PI*n/e),this.ws[n]=Math.sin(2*Math.PI*n/e),this.cos[n]=Math.cos(2*Math.PI*n/t),this.sin[n]=Math.sin(2*Math.PI*n/t);for(let e of this.factors){if(e<5||this.leaf.has(e))continue;let t=(e-1)/2,n=new Float64Array(t*t),r=new Float64Array(t*t);for(let i=1;i<=t;i++)for(let a=1;a<=t;a++){let o=2*Math.PI*(i*a%e)/e;n[(i-1)*t+a-1]=Math.cos(o),r[(i-1)*t+a-1]=Math.sin(o)}this.leaf.set(e,{c:n,s:r})}this.xr=new Float64Array(t),this.xi=new Float64Array(t),this.yr=new Float64Array(t),this.yi=new Float64Array(t);let r=this.factors.length?this.factors[this.factors.length-1]:1;this.tr=new Float64Array(r),this.ti=new Float64Array(r);let i=r-1>>1;this.ur=new Float64Array(i),this.ui=new Float64Array(i),this.vr=new Float64Array(i),this.vi=new Float64Array(i)}exec(e,t,n){let{n:r,m:i,xr:a,xi:o,yr:s,yi:c,wc:l,ws:u}=this;for(let t=0;t<i;t++){let n=t?e[2*t-1]:e[0],s=t?e[2*t]:0,c=i-t,d=c===i?e[r-1]:e[2*c-1],f=c===i?0:-e[2*c],p=n+d,m=s+f,h=n-d,g=s-f,_=l[t],v=u[t];a[t]=p-(_*g+v*h),o[t]=m+(_*h-v*g)}this.factors.length?this.rec(0,1,0,0,i):(s[0]=a[0],c[0]=o[0]);for(let e=0;e<i;e++)t[2*e]=s[e]*n,t[2*e+1]=c[e]*n}rec(e,t,n,r,i){let{xr:a,xi:o,yr:s,yi:c,tr:l,ti:u,cos:d,sin:f,m:p}=this,m=this.factors[r],h=i/m;if(h===1){for(let n=0;n<m;n++)l[n]=a[e+n*t],u[n]=o[e+n*t];this.dft(m,n,1);return}for(let i=0;i<m;i++)this.rec(e+i*t,t*m,n+i*h,r+1,h);let g=p/i;if(m===2)for(let e=0,t=0;e<h;e++,t+=g){let r=n+e,i=r+h,a=s[i],o=c[i],l=d[t],u=f[t],p=a*l-o*u,m=a*u+o*l,g=s[r],_=c[r];s[r]=g+p,c[r]=_+m,s[i]=g-p,c[i]=_-m}else for(let e=0;e<h;e++){l[0]=s[n+e],u[0]=c[n+e];for(let t=1,r=e*g;t<m;t++,r+=e*g){let i=s[n+t*h+e],a=c[n+t*h+e],o=d[r],p=f[r];l[t]=i*o-a*p,u[t]=i*p+a*o}this.dft(m,n+e,h)}}dft(e,t,n){let{yr:r,yi:i,tr:a,ti:o}=this;if(e===2){r[t]=a[0]+a[1],i[t]=o[0]+o[1],r[t+n]=a[0]-a[1],i[t+n]=o[0]-o[1];return}if(e===3){let e=-.5,s=Math.sqrt(3)/2,c=a[1]+a[2],l=o[1]+o[2],u=a[1]-a[2],d=o[1]-o[2],f=a[0]+e*c,p=o[0]+e*l;r[t]=a[0]+c,i[t]=o[0]+l,r[t+n]=f-s*d,i[t+n]=p+s*u,r[t+2*n]=f+s*d,i[t+2*n]=p-s*u;return}let{ur:s,ui:c,vr:l,vi:u}=this,{c:d,s:f}=this.leaf.get(e),p=(e-1)/2,m=a[0],h=o[0];for(let t=1;t<=p;t++){let n=a[t],r=o[t],i=a[e-t],d=o[e-t];s[t-1]=n+i,c[t-1]=r+d,l[t-1]=n-i,u[t-1]=r-d,m+=n+i,h+=r+d}r[t]=m,i[t]=h;for(let m=1;m<=p;m++){let h=a[0],g=o[0],_=0,v=0,y=(m-1)*p;for(let e=0;e<p;e++){let t=d[y+e],n=f[y+e];h+=s[e]*t,g+=c[e]*t,_+=u[e]*n,v+=l[e]*n}r[t+m*n]=h-_,i[t+m*n]=g+v,r[t+(e-m)*n]=h+_,i[t+(e-m)*n]=g-v}}},Wa=class{data=/* @__PURE__ */ new Float32Array;len=0;resize(e){if(e>this.data.length){let t=new Float32Array(Math.max(e,2*this.data.length));t.set(this.data.subarray(0,this.len)),this.data=t}else e>this.len&&this.data.fill(0,this.len,e);this.len=e}erase(e){this.data.copyWithin(0,e,this.len),this.len-=e}clear(){this.len=0}},Ga=class{nFft;hop;windows;mixer;fir;maxLogMag;irfft;hc;buf;ola=[new Wa,new Wa];env=[new Wa,new Wa];olaBase=[0,0];mixIn=[new Wa,new Wa];mixAvail=[0,0];mixBase=0;mixNext=0;headFrames=0;headDone=!1;constructor(e){if(this.nFft=e.nFft,this.hop=e.hop,this.fir=e.mixer.length/2,!Number.isInteger(this.fir)||this.fir%2!=1)throw Error(`istft: mixer has ${e.mixer.length} taps, expected 2 x odd`);for(let t=0;t<2;t++)if(e.windows[t].length!==e.nFft[t])throw Error(`istft: window ${t} has ${e.windows[t].length} taps, expected ${e.nFft[t]}`);this.windows=e.windows,this.mixer=e.mixer,this.maxLogMag=e.maxLogMag,this.irfft=[new Ua(e.nFft[0]),new Ua(e.nFft[1])],this.hc=[new Float64Array(e.nFft[0]),new Float64Array(e.nFft[1])],this.buf=[new Float32Array(e.nFft[0]),new Float32Array(e.nFft[1])]}get frames(){return this.headFrames}reset(){for(let e=0;e<2;e++)this.ola[e].clear(),this.env[e].clear(),this.mixIn[e].clear(),this.olaBase[e]=0,this.mixAvail[e]=0;this.mixBase=0,this.mixNext=0,this.headFrames=0,this.headDone=!1}push(e,t,n){if(this.headDone)throw Error(`istft: push after flush`);this.headFrames===0&&this.init();let r=[e,t],i=this.hop;for(let e=0;e<2;e++){let t=this.nFft[e],a=t/2+1;if(r[e].length<n*(t+2))throw Error(`istft: branch ${e} has ${r[e].length} values, expected ${n*(t+2)}`);let o=this.windows[e],s=this.hc[e],c=this.buf[e],l=r[e],u=this.maxLogMag,d=this.ola[e],f=this.env[e];for(let r=0;r<n;r++){let n=this.headFrames+r,p=r*(t+2),m=p+a,h=e=>Math.exp(Math.min(l[p+e],u));s[0]=h(0)*Math.cos(l[m]);for(let e=1;e<t/2;e++){let t=h(e);s[2*e-1]=t*Math.cos(l[m+e]),s[2*e]=t*Math.sin(l[m+e])}s[t-1]=h(t/2)*Math.cos(l[m+t/2]),this.irfft[e].exec(s,c,1/t);let g=n*i+t-this.olaBase[e];d.len<g&&(d.resize(g),f.resize(g));let _=n*i-this.olaBase[e],v=d.data,y=f.data;for(let e=0;e<t;e++)v[_+e]+=o[e]*c[e],y[_+e]+=o[e]*o[e]}}this.headFrames+=n;for(let e=0;e<2;e++)this.olaFinalize(e,this.headFrames*i);return this.mixEmit()}flush(){if(this.headDone||this.headFrames===0)return/* @__PURE__ */ new Float32Array;this.headDone=!0;let e=(this.fir-1)/2;for(let t=0;t<2;t++){this.olaFinalize(t,this.olaBase[t]+this.ola[t].len);let n=e+this.headFrames*this.hop-this.mixBase;this.mixIn[t].resize(n),this.mixIn[t].resize(n+e),this.mixAvail[t]=this.mixBase+n+e}return this.mixEmit()}init(){let e=(this.fir-1)/2;for(let t=0;t<2;t++)this.mixIn[t].clear(),this.mixIn[t].resize(e),this.mixAvail[t]=e;this.mixBase=0,this.mixNext=0}olaFinalize(e,t){let n=this.nFft[e]/2,r=t-this.olaBase[e];if(r<=0)return;let i=this.ola[e],a=this.env[e],o=this.mixIn[e],s=Math.min(r,Math.max(0,n-this.olaBase[e])),c=o.len;o.resize(c+r-s);let l=o.data,u=i.data,d=a.data;for(let e=s;e<r;e++)l[c+e-s]=u[e]/d[e];this.mixAvail[e]+=r-s,i.erase(r),a.erase(r),this.olaBase[e]=t}mixEmit(){let e=this.fir,t=Math.min(this.mixAvail[0],this.mixAvail[1])-e+1;if(t<=this.mixNext)return/* @__PURE__ */ new Float32Array;let n=t-this.mixNext,r=new Float32Array(n);for(let t=0;t<2;t++){let i=this.mixIn[t].data,a=this.mixNext-this.mixBase,o=t*e;for(let t=0;t<e;t++){let e=this.mixer[o+t];for(let o=0;o<n;o++)r[o]+=e*i[a+o+t]}}this.mixNext=t;for(let e=0;e<2;e++)this.mixNext>this.mixBase&&this.mixIn[e].erase(this.mixNext-this.mixBase);return this.mixBase=this.mixNext,r}},Ka=class{kernel;orig;nw;width;buf=/* @__PURE__ */ new Float32Array;len=0;base=0;inCount=0;nextBlock=0;kl;lo;hi;constructor(e,t=736,n=735,r=17){if(this.kernel=e,this.orig=t,this.nw=n,this.width=r,this.kl=2*r+t,e.length!==n*this.kl)throw Error(`resampler: kernel has ${e.length} taps, expected ${n*this.kl}`);this.lo=new Int32Array(n),this.hi=new Int32Array(n);for(let t=0;t<n;t++){let n=t*this.kl,r=0;for(;r<this.kl&&e[n+r]===0;)r++;let i=this.kl;for(;i>r&&e[n+i-1]===0;)i--;this.lo[t]=r,this.hi[t]=i}}push(e){if(this.len+e.length>this.buf.length){let t=new Float32Array(Math.max(this.len+e.length,2*this.buf.length));t.set(this.buf.subarray(0,this.len)),this.buf=t}return this.buf.set(e,this.len),this.len+=e.length,this.inCount+=e.length,this.run(!1)}flush(){return this.run(!0)}reset(){this.len=0,this.base=0,this.inCount=0,this.nextBlock=0}run(e){let{orig:t,nw:n,width:r,kl:i,kernel:a,lo:o,hi:s}=this,c=e?Math.floor((n*this.inCount+t-1)/t):-1,l=[],u=new Float32Array(i);for(;;this.nextBlock++){let d=this.nextBlock,f=d*t-r;if(e?d*n>=c:f+i>this.inCount)break;for(let e=0;e<i;e++){let t=f+e;u[e]=t<0||t>=this.inCount?0:this.buf[t-this.base]}let p=e?Math.min(n,c-d*n):n,m=new Float32Array(p);for(let e=0;e<p;e++){let t=e*i,n=0;for(let r=o[e];r<s[e];r++)n+=a[t+r]*u[r];m[e]=n}l.push(m)}let d=Math.min(this.inCount,Math.max(0,this.nextBlock*t-r));if(d>this.base){let e=d-this.base;this.buf.copyWithin(0,e,this.len),this.len-=e,this.base=d}let f=new Float32Array(l.reduce((e,t)=>e+t.length,0)),p=0;for(let e of l)f.set(e,p),p+=e.length;return f}};function qa(e){let t=new MessageChannel;return e.postMessage({type:`port`},[t.port2]),t.port1}var Ja=class{istft;rs;constructor(e){this.istft=new Ga(e),this.rs=new Ka(e.resampleKernel)}async push(e,t,n){return this.rs.push(this.istft.push(e,t,n))}async flush(){let e=this.rs.push(this.istft.flush()),t=this.rs.flush(),n=new Float32Array(e.length+t.length);return n.set(e),n.set(t,e.length),n}reset(){this.istft.reset(),this.rs.reset()}},Ya=class{port;fifo=[];constructor(e,t){this.port=e,e.onmessage=e=>{let t=this.fifo.shift();if(!t)return;let n=e.data;n.type===`pcm`?t.resolve(n.pcm):t.reject(/* @__PURE__ */ Error(`codec worker: `+n.message))},this.post({type:`init`,...t})}post(e,t=[]){this.port.postMessage(e,t)}reply(){let{promise:e,resolve:t,reject:n}=Promise.withResolvers();return this.fifo.push({resolve:t,reject:n}),e}push(e,t,n){let r=this.reply();return this.post({type:`push`,s0:e,s1:t,cols:n},[e.buffer,t.buffer]),r}flush(){let e=this.reply();return this.post({type:`flush`}),e}reset(){this.post({type:`reset`})}};const Xa=[{inDim:1024,outDim:1280,d:1280,ff:5120,ctx:150,patch:2},{inDim:640,outDim:768,d:768,ff:3072,ctx:300,patch:2},{inDim:384,outDim:768,d:768,ff:3072,ctx:480,patch:2},{inDim:384,outDim:768,d:768,ff:3072,ctx:480,patch:2},{inDim:384,outDim:0,d:768,ff:3072,ctx:480,patch:1}],Za=1024,Qa=2048,$a=2048,eo=[736,2208],to=Xa.reduce((e,t)=>e*t.patch,1),no=1e-5,ro=1e-6;function io(e){let t={"general.architecture":`mossdual_istft`,"stage.d_model":Xa.map(e=>e.d),"stage.context":Xa.map(e=>e.ctx),"stage.patch":Xa.map(e=>e.patch),"stage.out_dim":Xa.map(e=>e.outDim),"head.depth":8,"head.hidden":$a,"head.n_fft":eo,"head.hop":184,"head.fir_kernel":127};for(let[n,r]of Object.entries(t))if(JSON.stringify(e[n])!==JSON.stringify(r))throw Error(`zac: unsupported codec; re-export with pnpm export`);if(typeof e[`head.max_log_magnitude`]!=`number`||typeof e.headroom_db!=`number`)throw Error(`zac: unsupported codec; re-export with pnpm export`);let n=e[`stage.n_layer`];if(!Array.isArray(n)||n.length!==Xa.length||!n.every(e=>Number.isInteger(e)&&e>0))throw Error(`zac: unsupported codec; re-export with pnpm export`);return n}function ao(e){if(e.startsWith(`sem_head.`)||e.startsWith(`stage.0.`))return 16;if(e.startsWith(`stage.1.`))return 32;if(e.startsWith(`stage.2.`))return 64;if(e.startsWith(`stage.3.`))return 128;if(e.startsWith(`stage.4.`)||e.startsWith(`head.`))return 256;throw Error(`zac: ${e} is not a codec matrix`)}const oo=[`sem_head.`,`stage.0.`,`stage.1.`,`stage.2.`,`stage.3.`,`stage.4.`,`head.`];var so=class e{gpu;w;gain;gemmPlan;partialFrames;prog;idx;dyn;dynData=/* @__PURE__ */ new Uint32Array(4);spec;rope;hists=[];needReset=!0;sink;tail=Promise.resolve();nLayer;static async create(t,n,r=e=>new Ja(e),i){i??=await Ha(t,n);for(let e of oo){let r=[];for(let[a,o]of n.t)a.startsWith(e)&&o.dtype===`q8`&&i[ao(a)<=32?`skinny`:`large`]!==`q8`&&(n.t.set(a,{buf:za(t,o,o.shape[1],o.shape[0]),dtype:`h8`,shape:o.shape}),r.push(o.buf,o.scales));if(r.length){await t.device.queue.onSubmittedWorkDone();for(let e of r)e.destroy()}}return new e(t,n,i,r)}constructor(e,t,n,r){this.gpu=e,this.w=t,this.gemmPlan=n,this.nLayer=io(t.meta);let i=e=>{let n=t.host.get(e);if(!n)throw Error(`zac: missing ${e}; re-export with pnpm export`);return n};this.gain=Math.fround(10**(-Number(t.meta.headroom_db)/20)),this.partialFrames=t.has(`res.biases`),this.partialFrames||console.warn(`zac: no per-codebook residual biases (res.biases; re-export with pnpm export): early partial-frame decode off`),this.sink=r({nFft:eo,hop:184,windows:[i(`head.window.0`),i(`head.window.1`)],mixer:i(`head.mixer.weight`),maxLogMag:Number(t.meta[`head.max_log_magnitude`]),resampleKernel:i(`resample.kernel`)}),this.idx=e.buffer(640,`zac.idx`),this.dyn=e.uniform(16,`zac.dyn`),this.rope=e.upload(ya(3088*to,1e4,64),`zac.rope`);let a=new ji(e);this.spec=this.record(a),this.prog=a.finish()}record(e){let t=e=>this.w.get(e).buf,n=e=>this.w.get(e),r=this.dyn,i=1,a=(t,n,a,o,s={})=>K(e,t,n,a,{...o,rowsDyn:i,kernel:n.dtype===`h8`?16*i<=32?this.gemmPlan.skinny:this.gemmPlan.large:void 0},{...s,dyn:r}),o=(t,n)=>{let r=16*i,a=e.tmp((n+r)*t*4,`zac.xf`),o=e.buf(n*t*4,`zac.hist`);return e.copy(o,0,a,0,n*t*4),{xf:a,hist:o,off:n*t}},s=(t,n,r,a)=>{e.copy(t,0,n,0,a*r*4),this.hists.push({hist:n,step:e.steps[e.steps.length-1],rowBytes:r*4,cpf:i})},c=o(768,6);e.dispatch(`zac_embed`,{idx:this.idx,tables:t(`sem.table`),bias:t(`sem.bias`),outp:c.xf,dyn:r},{n:16,C:768,F:16,y_off:c.off,mode:0,rows_dyn:1},[2,16,1]);let l=e.buf(49152,`zac.sem`);for(let u=0;u<4;u++){let d=`sem_head.${u}.`,f=e.tmp(49152,`zac.cn`);Gi(e,c.xf,t(d+`dw.weight`),f,16,768,7,t(d+`dw.bias`),0,0,{dyn:r,rowsDyn:i}),s(c.xf,c.hist,768,6);let p=e.tmp(49152,`zac.cn`);Vi(e,f,t(d+`norm.weight`),t(d+`norm.bias`),p,16,768,ro,0,{dyn:r,rowsDyn:i}),e.release(f);let m=e.tmp(16*Qa*4,`zac.pw1`);a(p,n(d+`pw1.weight`),m,{T:16,O:Qa,IC:768,act:W.gelu},{bias:t(d+`pw1.bias`)}),e.release(p);let h=u+1<4?o(768,6):null;a(m,n(d+`pw2.weight`),h?h.xf:l,{T:16,O:768,IC:Qa,r_off:c.off,y_off:h?h.off:0},{bias:t(d+`pw2.bias`),res:c.xf}),e.release(m),e.release(c.xf),h&&(c=h)}let u=e.buf(16*Za*4,`zac.z`);a(l,n(`sem_head.out.weight`),u,{T:16,O:Za,IC:768},{bias:t(`sem_head.out.bias`)}),e.dispatch(`zac_embed`,{idx:this.idx,tables:t(`res.tables`),bias:t(`res.bias`),outp:u,dyn:r,...this.partialFrames?{biases:t(`res.biases`)}:{}},{n:16,C:Za,F:16,y_off:0,mode:1,rows_dyn:1},[2,16,1]);let d=u,f=null;for(let[s,c]of Xa.entries()){let l=16*i,{d:u,ff:p}=c,m=this.nLayer[s],h=u/64,g=c.ctx-1+l,_=e.buf(l*u*4,`zac.xa`),v=e.buf(l*u*4,`zac.xb`),y=e.buf(l*u*4,`zac.xn`),b=e.buf(l*3*u*4,`zac.qkv`),x=e.buf(l*u*4,`zac.q`),S=e.buf(l*u*4,`zac.ao`),C=e.buf(l*p*4,`zac.f1`),w=`stage.${s}.`,T=c.outDim===0&&c.patch===1;a(d,n(w+`in.weight`),_,{T:l,O:u,IC:c.inDim});for(let d=0;d<m;d++){let E=`${w}l${d}.`,D=e.buf(g*h*64*4,`zac.k${s}.${d}`),O=e.buf(g*h*64*4,`zac.v${s}.${d}`);Vi(e,_,t(E+`norm1.weight`),t(E+`norm1.bias`),y,l,u,no,0,{dyn:r,rowsDyn:i}),a(y,n(E+`qkv.weight`),b,{T:l,O:3*u,IC:u}),Ji(e,b,this.rope,x,D,O,{n:l,nh:h,nkv:h,hd:64,in_stride:3*u,qkNorm:!1,ring:g,posDyn:!0,nDyn:!0,posMul:i},{dyn:r}),qi(e,x,D,O,S,{n:l,nh:h,window:c.ctx,ring:g,scale:1/8,posMul:i},r),a(S,n(E+`wo.weight`),v,{T:l,O:u,IC:u},{scale:t(E+`attn_scale`),res:_}),Vi(e,v,t(E+`norm2.weight`),t(E+`norm2.bias`),y,l,u,no,0,{dyn:r,rowsDyn:i}),a(y,n(E+`ffn1.weight`),C,{T:l,O:p,IC:u,act:W.gelu}),T&&d===m-1?(f=o(u,6),a(C,n(E+`ffn2.weight`),f.xf,{T:l,O:u,IC:p,y_off:f.off},{scale:t(E+`ffn_scale`),res:v})):a(C,n(E+`ffn2.weight`),_,{T:l,O:u,IC:p},{scale:t(E+`ffn_scale`),res:v})}if(T)continue;let E=e.buf(l*c.outDim*4,`zac.sout`);a(_,n(w+`out.weight`),E,{T:l,O:c.outDim,IC:u});let D=e.buf(l*c.outDim*4,`zac.patch`);zi(e,E,D,l,c.outDim/c.patch,c.patch,{dyn:r,rowsDyn:i*c.patch}),d=D,i*=c.patch}if(!f||i!==to)throw Error(`zac: unsupported codec; re-export with pnpm export`);let p=16*i,m=f,h=e.buf(p*768*4,`zac.hnorm`);for(let c=0;c<8;c++){let l=`head.${c}.`,u=e.tmp(p*768*4,`zac.hcn`);Gi(e,m.xf,t(l+`dw.weight`),u,p,768,7,t(l+`dw.bias`),0,0,{dyn:r,rowsDyn:i}),s(m.xf,m.hist,768,6);let d=e.tmp(p*768*4,`zac.hcn`);Vi(e,u,t(l+`norm.weight`),t(l+`norm.bias`),d,p,768,ro,0,{dyn:r,rowsDyn:i}),e.release(u);let f=e.tmp(p*$a*4,`zac.hpw1`);a(d,n(l+`pw1.weight`),f,{T:p,O:$a,IC:768,act:W.gelu},{bias:t(l+`pw1.bias`)}),e.release(d);let g=c+1<8?o(768,6):null,_=g?g.xf:e.tmp(p*768*4,`zac.hout`);a(f,n(l+`pw2.weight`),_,{T:p,O:768,IC:$a,r_off:m.off,y_off:g?g.off:0},{bias:t(l+`pw2.bias`),res:m.xf}),e.release(f),e.release(m.xf),g?m=g:(Vi(e,_,t(`head.norm.weight`),t(`head.norm.bias`),h,p,768,ro,0,{dyn:r,rowsDyn:i}),e.release(_))}let g=eo.map((r,i)=>{let o=e.buf(p*(r+2)*4,`zac.spec${i}`);return a(h,n(`head.out.${i}.weight`),o,{T:p,O:r+2,IC:768},{bias:t(`head.out.${i}.bias`)}),o});return[g[0],g[1]]}reset(){this.needReset=!0,this.tail=this.tail.then(()=>this.sink.reset())}chunk(e,t,n){if(n<1||n>16)throw Error(`zac chunk size ${n} out of range`);if(t+n>3072)throw Error(`zac: utterance exceeds 3072 frames`);this.gpu.write(this.idx,0,e),this.dynData[0]=t,this.dynData[1]=n,this.gpu.write(this.dyn,0,this.dynData);for(let e of this.hists)e.step.srcOff=n*e.cpf*e.rowBytes;let r=this.needReset;this.needReset=!1;let i=n*to,a=this.gpu.submitRead(e=>{if(r)for(let t of this.hists)e.clearBuffer(t.hist,0,t.hist.size);this.prog.encode(e)},[{buf:this.spec[0],offset:0,bytes:i*(eo[0]+2)*4},{buf:this.spec[1],offset:0,bytes:i*(eo[1]+2)*4}]);a.catch(()=>{});let o=this.tail.then(()=>a).then(([e,t])=>this.sink.push(e,t,i));return this.tail=o.then(()=>{},()=>{}),o}async flush(){return await this.tail,this.sink.flush()}};const Y=Math.fround;function co(e,t,n=2){let r=1024,i=new Float32Array((t+1)*r);for(let n=0;n<t;n++)for(let t=0;t<r;t++)i[(n+1)*r+t]=i[n*r+t]+e[n*r+t];let a=new Float32Array(300*r),o=Y(t/300),s=Y(Y(.5*Y(n))*o);for(let n=0;n<300;n++){let c=Y(Y(n+.5)*o),l=Math.min(Math.max(Y(c-s),0),t),u=Math.min(Math.max(Y(c+s),0),t),d=Math.floor(l),f=Math.floor(u),p=Y(l-d),m=Y(u-f),h=Y(u-l),g=Math.min(d,t-1)*r,_=Math.min(f,t-1)*r;for(let t=0;t<r;t++){let o=Y(i[d*r+t]+Y(e[g+t]*p)),s=Y(i[f*r+t]+Y(e[_+t]*m));a[n*r+t]=Y(Y(s-o)/h)}}return a}var lo=class{inputDim;codeDim=8;size=4096;inW;inB;outW;outB;codebook;normalized;normSquared;constructor(e,t){let n=n=>{let r=e.get(`rvq.${t}.${n}`);if(!r)throw Error(`encoder: missing rvq.${t}.${n}; re-export with npm run export`);return r};this.inputDim=t===0?768:1024,this.inW=n(`in_proj.weight`),this.inB=n(`in_proj.bias`),this.outW=n(`out_proj.weight`),this.outB=n(`out_proj.bias`),this.codebook=n(`codebook`);let r=this.codeDim;this.normalized=new Float32Array(this.codebook.length),this.normSquared=new Float32Array(this.size);for(let e=0;e<this.size;e++){let t=0;for(let n=0;n<r;n++){let i=this.codebook[e*r+n];t=Y(t+Y(i*i))}t=Math.max(Y(Math.sqrt(t)),Y(1e-12));let n=0;for(let i=0;i<r;i++){let a=Y(this.codebook[e*r+i]/t);this.normalized[e*r+i]=a,n=Y(n+Y(a*a))}this.normSquared[e]=n}}quantize(e,t){let n=this.inputDim,r=this.codeDim,i=new Int32Array(t),a=new Float32Array(t*n),o=new Float32Array(r),s=new Float32Array(r),c=new Float32Array(r);for(let l=0;l<t;l++){let t=0;for(let i=0;i<r;i++){let r=0;for(let t=0;t<n;t++)r=Y(r+Y(e[l*n+t]*this.inW[i*n+t]));r=Y(r+this.inB[i]),o[i]=r,t=Y(t+Y(r*r))}t=Math.max(Y(Math.sqrt(t)),Y(1e-12));let u=0;for(let e=0;e<r;e++)s[e]=Y(o[e]/t),u=Y(u+Y(s[e]*s[e]));let d=1/0,f=0;for(let e=0;e<this.size;e++){let t=0;for(let n=0;n<r;n++)t=Y(t+Y(s[n]*this.normalized[e*r+n]));let n=Y(Y(u-Y(2*t))+this.normSquared[e]);n<d&&(d=n,f=e)}i[l]=f;for(let e=0;e<r;e++){let t=o[e];c[e]=Y(t+Y(this.codebook[f*r+e]-t))}for(let e=0;e<n;e++){let t=0;for(let n=0;n<r;n++)t=Y(t+Y(c[n]*this.outW[e*r+n]));a[l*n+e]=Y(t+this.outB[e])}}return{ids:i,quantized:a}}};const uo=/* @__PURE__ */ new Float64Array(256),fo=/* @__PURE__ */ new Float64Array(256);for(let e=0;e<256;e++){let t=-2*Math.acos(-1)*e/512;uo[e]=Math.cos(t),fo[e]=Math.sin(t)}function po(e,t){for(let n=1,r=0;n<512;n++){let i=256;for(;r&i;i>>=1)r^=i;if(r^=i,n<r){let i=e[n];e[n]=e[r],e[r]=i,i=t[n],t[n]=t[r],t[r]=i}}for(let n=2;n<=512;n<<=1){let r=512/n,i=n/2;for(let a=0;a<512;a+=n)for(let n=0;n<i;n++){let o=uo[n*r],s=fo[n*r],c=a+n,l=c+i,u=e[l]*o-t[l]*s,d=e[l]*s+t[l]*o;e[l]=e[c]-u,t[l]=t[c]-d,e[c]+=u,t[c]+=d}}}const X=Math.fround,Z=1024,mo=4096;function ho(e,t,n,r,i,a){let o=n=>{let o=e[t+n*r];if(!i)return o;let s=X(o-a);return X(s*s)};if(n<8){let e=-0;for(let t=0;t<n;t++)e=X(e+o(t));return e}if(n<=128){let e=/* @__PURE__ */ new Float32Array(8);for(let t=0;t<8;t++)e[t]=o(t);let t=n-n%8,r=8;for(;r<t;r+=8)for(let t=0;t<8;t++)e[t]=X(e[t]+o(r+t));let i=X(X(X(e[0]+e[1])+X(e[2]+e[3]))+X(X(e[4]+e[5])+X(e[6]+e[7])));for(;r<n;r++)i=X(i+o(r));return i}let s=Math.floor(n/2);return s-=s%8,X(ho(e,t,s,r,i,a)+ho(e,t+s*r,n-s,r,i,a))}function go(e,t,n){let r=e.length,i=r<400?0:1+Math.floor((r-400)/160);if(i<2)throw Error(`ssl: audio too short for normalized fbank`);let a=new Float32Array(i*80),o=/* @__PURE__ */ new Float64Array(512),s=/* @__PURE__ */ new Float64Array(512),c=/* @__PURE__ */ new Float64Array(257);for(let r=0;r<i;r++){let i=r*160,l=0;for(let t=0;t<400;t++)l+=e[i+t]*32768;l/=400;for(let t=0;t<400;t++)o[t]=e[i+t]*32768-l;for(let e=399;e>0;e--)o[e]-=.97*o[e-1];o[0]*=.030000000000000027;for(let e=0;e<400;e++)o[e]*=t[e];o.fill(0,400),s.fill(0),po(o,s);for(let e=0;e<257;e++){let t=X(o[e]),n=X(s[e]);c[e]=t*t+n*n}for(let e=0;e<80;e++){let t=0;for(let r=0;r<257;r++)t+=c[r]*n[r*80+e];a[r*80+e]=Math.log(Math.max(t,1.1920928955078125e-7))}}let l=/* @__PURE__ */ new Float32Array(80),u=/* @__PURE__ */ new Float32Array(80);for(let e=0;e<80;e++)l[e]=X(ho(a,e,i,80,!1,0)/i),u[e]=X(Math.sqrt(X(X(ho(a,e,i,80,!0,l[e])/(i-1))+X(1e-7))));let d=Math.ceil(i/2),f=new Float32Array(d*2*80).fill(1);for(let e=0;e<i;e++)for(let t=0;t<80;t++)f[e*80+t]=X(X(a[e*80+t]-l[t])/u[t]);return{feats:f,T:d}}var _o=class e{gpu;w;prog=null;input;output;resampleKernel;constructor(e,t){this.gpu=e,this.w=t;let n=t.host.get(`frontend.resample_44100`);if(!n||t.meta.n_layer!==16||t.meta.n_embd!==Z)throw Error(`ssl: unsupported teacher; re-export with npm run export`);this.resampleKernel=n}static async load(t,n,r,i=!0){return new e(t,await pa(t,n,`teacher`,r,i))}features(e){if(e.length!==882e3)throw Error(`ssl: teacher lane must have 882000 samples`);let t=new Ka(this.resampleKernel,441,160,17),n=t.push(e),r=t.flush(),i=new Float32Array(n.length+r.length);i.set(n),i.set(r,n.length);let{feats:a,T:o}=go(i,this.w.host.get(`frontend.window`),this.w.host.get(`frontend.mel_filters`));if(o!==999)throw Error(`ssl: unexpected frame count`);return a}async encode(e){this.prog||this.record();let t=e.slice();xt(t),this.gpu.write(this.input,0,t);let[n]=await this.prog.run(this.gpu,[{buf:this.output,offset:0,bytes:999*Z*4}]);return n}record(){let e=this.w,t=t=>e.get(t).buf,n=Number(e.meta.eps??1e-5),r=new ji(this.gpu);this.input=r.buf(639360,`ssl.in`);let i=(e,i,a,o=Z,s=0)=>Vi(r,e,t(i+`.weight`),t(i+`.bias`),a,999,o,n,s),a=(n,i,a,o,s,c,l={})=>K(r,n,e.get(i+`.weight`),a,{T:999,O:o,IC:s,act:l.act,alpha:l.alpha,rnd:c},{bias:l.bias===!1?void 0:t(i+`.bias`),res:l.res}),o=r.buf(639360,`ssl.fpn`);i(this.input,`fp.ln`,o,160);let s=[r.buf(999*Z*4,`ssl.x0`),r.buf(999*Z*4,`ssl.x1`)],c=0;a(o,`fp.proj`,s[0],Z,160,G.bias);let l=r.buf(999*Z*4,`ssl.xn`),u=r.buf(999*mo*4,`ssl.hff`),d=r.buf(999*Z*4,`ssl.q`),f=r.buf(999*Z*4,`ssl.k`),p=r.buf(999*Z*4,`ssl.v`),m=r.buf(999*Z*4,`ssl.att`),h=r.buf(1998*Z*4,`ssl.pw1`),g=r.buf(1029*Z*4,`ssl.xf`),_=r.buf(999*Z*4,`ssl.dw`);for(let e=0;e<16;e++){let n=`enc.${e}.`,o=e===0?G.out:0,v=e=>{e(s[c],s[c^1]),c^=1};v((e,t)=>{i(e,n+`ffn1_ln`,l),a(l,n+`ffn1.up`,u,mo,Z,G.bias|G.act,{act:W.silu}),a(u,n+`ffn1.down`,t,Z,mo,G.bias|G.alpha|o,{alpha:.5,res:e})}),v((e,s)=>{i(e,n+`attn_ln`,l),a(l,n+`attn.q`,d,Z,Z,G.bias),a(l,n+`attn.k`,f,Z,Z,G.bias),a(l,n+`attn.v`,p,Z,Z,G.bias),r.dispatch(`ssl_attention_bf16`,{qb:d,kb:f,vb:p,dist:t(n+`attn.dist`),outp:m},{T:999,scale:.125},[15984,1,1]),a(m,n+`attn.o`,s,Z,Z,G.bias|o,{res:e})}),v((e,s)=>{i(e,n+`conv_ln`,l),a(l,n+`conv.pw1`,h,2*Z,Z,G.acc,{bias:!1}),r.clear(g,0,30*Z*4),Ui(r,Hi.gluSplitBf16,999*Z,h,g,{C:Z,y_off:30*Z}),Gi(r,g,t(n+`conv.dw.weight`),_,999,Z,31,void 0,0,4),i(_,n+`conv.dw_ln`,l,Z,W.silu),a(l,n+`conv.pw2`,s,Z,Z,G.acc|o,{bias:!1,res:e})}),v((e,t)=>{i(e,n+`ffn2_ln`,l),a(l,n+`ffn2.up`,u,mo,Z,G.bias|G.act,{act:W.silu}),a(u,n+`ffn2.down`,t,Z,mo,G.bias|G.alpha|o,{alpha:.5,res:e})}),v((e,t)=>i(e,n+`final_ln`,t)),r.split()}this.output=s[c],this.prog=r.finish()}};const vo=2944,yo=300*vo,bo=yo/10,xo=1024,So=2048,Co=1e-5,wo=G.acc|G.bias,Q=[{inDim:5888,outDim:384,d:768,nh:12,nl:12,ff:3072,ctx:480,patch:23},{inDim:768,outDim:384,d:768,nh:12,nl:12,ff:3072,ctx:480,patch:2},{inDim:768,outDim:384,d:768,nh:12,nl:12,ff:3072,ctx:480,patch:2},{inDim:768,outDim:640,d:768,nh:12,nl:12,ff:3072,ctx:300,patch:2},{inDim:1280,outDim:1024,d:1280,nh:20,nl:32,ff:5120,ctx:150,patch:2}],To=[4800,2400,1200,600,300],Eo=`reference audio encoding failed (maximum ${v} seconds)`;function Do(e){let t={"stage.in_dim":Q.map(e=>e.inDim),"stage.out_dim":Q.map(e=>e.outDim),"stage.d_model":Q.map(e=>e.d),"stage.n_head":Q.map(e=>e.nh),"stage.n_layer":Q.map(e=>e.nl),"stage.n_ff":Q.map(e=>e.ff),"stage.context":Q.map(e=>e.ctx),"stage.patch":Q.map(e=>e.patch),lane_frames:300,context_frames:150};for(let[n,r]of Object.entries(t))if(JSON.stringify(e[n])!==JSON.stringify(r))throw Error(`encoder: unsupported model; re-export with npm run export`)}var Oo=class e{gpu;w;teacher;front;frontIn;frontOut;frontHists=[];stages;stageIn;stageOut;sem;rvq=[];internalKernel;windowRatio;constructor(e,t,n){this.gpu=e,this.w=t,this.teacher=n,Do(t.meta);let r=t.host.get(`resample.kernel`);if(!r)throw Error(`encoder: unsupported model; re-export with npm run export`);this.internalKernel=r,this.windowRatio=Number(t.meta.window_ratio??2);for(let e=0;e<10;e++)this.rvq.push(new lo(t.host,e));this.recordFront(),this.recordStages(),this.sem={enc:this.recordSemantic(!0),dec:this.recordSemantic(!1)}}static async load(t,n,r,i=!0){let[a,o]=await Promise.all([pa(t,n,`encoder`,r,i),_o.load(t,n,r,i)]);return new e(t,a,o)}recordFront(){let e=new ji(this.gpu),t=e=>this.w.get(e).buf,n=e=>this.w.get(e);this.frontIn=e.buf(353344,`enc.xin`);let r=e.tmp(bo*64*4,`enc.act`);K(e,this.frontIn,n(`enc.in.weight`),r,{T:bo/16,O:1024,IC:16,K:2,d:1,nb_bias:64,rnd:wo},{bias:t(`enc.in.bias`)});let i=bo,a=(t,n,r)=>{let i=e.tmp((n+r)*t*4,`enc.xf`),a=e.buf(n*t*4,`enc.hist`);return this.frontHists.push(a),e.copy(a,0,i,0,n*t*4),{xf:i,hist:a}};for(let o=0;o<2;o++){let s=`enc.b${o}`,c=64<<o,l=o===0?2:4;[1,3,9].forEach((o,l)=>{let u=`${s}.res${l}`,d=6*o,f=a(c,d,i);Wi(e,r,t(u+`.snake1.alpha`),t(u+`.snake1.inv_alpha`),f.xf,i,c,d*c);let p=e.tmp(i*c*4,`enc.act`);K(e,f.xf,n(u+`.conv1.weight`),p,{T:i,O:c,IC:c,K:7,d:o,rnd:wo},{bias:t(u+`.conv1.bias`)}),e.copy(f.xf,i*c*4,f.hist,0,d*c*4),e.release(f.xf);let m=e.tmp(i*c*4,`enc.act`);Wi(e,p,t(u+`.snake2.alpha`),t(u+`.snake2.inv_alpha`),m,i,c),e.release(p);let h=e.tmp(i*c*4,`enc.act`);K(e,m,n(u+`.conv2.weight`),h,{T:i,O:c,IC:c,rnd:wo|G.out},{bias:t(u+`.conv2.bias`),res:r}),e.release(m),e.release(r),r=h});let u=i/l,d=l*c,f=a(d,1,u);Wi(e,r,t(s+`.snake.alpha`),t(s+`.snake.inv_alpha`),f.xf,i,c,d),e.release(r);let p=e.tmp(u*2*c*4,`enc.act`);K(e,f.xf,n(s+`.conv.weight`),p,{T:u,O:2*c,IC:d,K:2,d:1,rnd:wo},{bias:t(s+`.conv.bias`)}),e.copy(f.xf,u*d*4,f.hist,0,d*4),e.release(f.xf),r=p,i=u}let o=e.buf(480*Q[0].inDim*4,`enc.pd`);Bi(e,r,o,480,256,Q[0].patch),this.frontOut=e.buf(480*Q[0].d*4,`enc.tileOut`),K(e,o,n(`stage.0.in.weight`),this.frontOut,{T:480,O:Q[0].d,IC:Q[0].inDim,rnd:G.acc}),this.front=e.finish()}recordStages(){let e=this.gpu,t=new ji(e),n=e=>this.w.get(e).buf,r=e=>this.w.get(e),i=Math.max(...Q.map((e,t)=>To[t]*e.d)),a=Math.max(...Q.map((e,t)=>To[t]*e.ff)),o=Math.max(...Q.map((e,t)=>To[t]*e.outDim)),s=Math.max(...Q.slice(1).map((e,t)=>To[t+1]*e.inDim)),c=t.buf(i*4,`enc.xa`),l=t.buf(i*4,`enc.xb`),u=t.buf(i*4,`enc.xn`),d=t.buf(i*4,`enc.q`),f=t.buf(i*4,`enc.ao`),p=t.buf(i*4,`enc.k`),m=t.buf(i*4,`enc.v`),h=t.buf(3*i*4,`enc.qkv`),g=t.buf(a*4,`enc.f1`),_=t.buf(o*4,`enc.sout`),v=t.buf(s*4,`enc.spd`),y=e.upload(ya(To[0],1e4,64),`enc.rope`);this.stageIn=c,this.stageOut=_,Q.forEach((i,a)=>{let o=To[a],s=i.d,b=s/64,x=`stage.${a}.`;a>0&&(Bi(t,_,v,o,Q[a-1].outDim,i.patch),K(t,v,r(x+`in.weight`),c,{T:o,O:s,IC:i.inDim,rnd:G.acc}));let S=e.uniform(16,`enc.dyn${a}`);e.write(S,0,new Uint32Array([0,o,0,0]));for(let e=0;e<i.nl;e++){let a=`${x}l${e}.`;Vi(t,c,n(a+`norm1.weight`),n(a+`norm1.bias`),u,o,s,Co),K(t,u,r(a+`qkv.weight`),h,{T:o,O:3*s,IC:s,rnd:G.acc}),Ji(t,h,y,d,p,m,{n:o,nh:b,nkv:b,hd:64,in_stride:3*s,qkNorm:!1,ring:o,pos0:0,bf16:!0}),qi(t,d,p,m,f,{n:o,nh:b,window:i.ctx,ring:o,scale:1/8,posMul:1},S),K(t,f,r(a+`wo.weight`),l,{T:o,O:s,IC:s,rnd:G.acc},{scale:n(a+`attn_scale`),res:c}),Vi(t,l,n(a+`norm2.weight`),n(a+`norm2.bias`),u,o,s,Co),K(t,u,r(a+`ffn1.weight`),g,{T:o,O:i.ff,IC:s,act:W.gelu,rnd:G.acc|G.act}),K(t,g,r(a+`ffn2.weight`),c,{T:o,O:s,IC:i.ff,rnd:G.acc},{scale:n(a+`ffn_scale`),res:l}),t.split()}K(t,c,r(x+`out.weight`),_,{T:o,O:i.outDim,IC:s,rnd:G.acc})}),this.stages=t.finish()}recordSemantic(e){let t=new ji(this.gpu),n=e=>this.w.get(e).buf,r=e=>this.w.get(e),i=t.buf(300*(e?xo:768)*4,`sem.in`),a=[t.buf(940032,`sem.x0`),t.buf(940032,`sem.x1`)];for(let e of a)t.clear(e,0,18432);let o=4608,s=0;e?K(t,i,r(`sem_enc.in.weight`),a[0],{T:300,O:768,IC:xo,y_off:o,rnd:wo},{bias:n(`sem_enc.in.bias`)}):t.copy(i,0,a[0],o*4,921600);let c=t.buf(921600,`sem.h`),l=t.buf(921600,`sem.hn`),u=t.buf(300*So*4,`sem.h1`);for(let i=0;i<4;i++){let d=`${e?`sem_enc`:`sem_head`}.${i}.`,f=a[s],p=a[s^1];Gi(t,f,n(d+`dw.weight`),c,300,768,7,n(d+`dw.bias`),0,7),Vi(t,c,n(d+`norm.weight`),n(d+`norm.bias`),l,300,768,1e-6),K(t,l,r(d+`pw1.weight`),u,{T:300,O:So,IC:768,act:W.gelu,rnd:G.bias|G.act},{bias:n(d+`pw1.bias`)}),K(t,u,r(d+`pw2.weight`),p,{T:300,O:768,IC:So,r_off:o,y_off:o,rnd:G.bias|(e?G.out:0)},{bias:n(d+`pw2.bias`),res:f}),s^=1}let d,f;return e?(d=a[s],f=230400):(d=t.buf(300*xo*4,`sem.out`),f=300*xo,K(t,a[s],r(`sem_head.out.weight`),d,{T:300,O:xo,IC:768,x_off:o,rnd:wo},{bias:n(`sem_head.out.bias`)})),{prog:t.finish(),input:i,output:e?a[s]:d,outFloats:f}}async acoustic(e){if(e.length!==yo)throw Error(`encoder: acoustic lane must have 883200 samples`);let t=this.gpu,n=/* @__PURE__ */ new Float32Array(88336),r=480*Q[0].d*4;for(let i=0;i<10;i++){let a=i*bo;n.fill(0,0,16),i>0&&n.set(e.subarray(a-16,a),0),n.set(e.subarray(a,a+bo),16),t.write(this.frontIn,0,n),await t.submitRead(e=>{if(i===0)for(let t of this.frontHists)e.clearBuffer(t);this.front.encode(e),e.copyBufferToBuffer(this.frontOut,0,this.stageIn,i*r,r)})}let[i]=await this.stages.run(t,[{buf:this.stageOut,offset:0,bytes:300*xo*4}]);return i}async semantic(e,t){let n=t?this.sem.enc:this.sem.dec;this.gpu.write(n.input,0,e);let r=t?18432:0,[i]=await this.gpu.submitRead(e=>n.prog.encode(e),[{buf:n.output,offset:r,bytes:n.outFloats*4}]);return i}quantize(e,t){return this.rvq[e].quantize(t,300)}async encode(e){let t=e.length;if(t<1||t>v*a||!e.every(Number.isFinite))throw Error(Eo);let n=Math.ceil(t/m),r=new Ka(this.internalKernel,735,736,17),i=r.push(e),o=r.flush(),s=new Float32Array(n*vo);s.set(i.subarray(0,s.length)),s.set(o.subarray(0,Math.max(0,s.length-i.length)),Math.min(i.length,s.length));let c=new Int32Array(n*10),l=new Float32Array(yo),u=/* @__PURE__ */ new Float32Array(882e3);for(let r=0;r<n;){let i=r===0?0:150,a=Math.min(n-r,300-i),o=r-i;l.fill(0),u.fill(0),l.set(s.subarray(o*vo,(o+i+a)*vo));let d=o*m;u.set(e.subarray(d,d+Math.min(t-d,(i+a)*m)));let f=await this.teacher.encode(this.teacher.features(u)),p=await this.acoustic(l),h=await this.semantic(co(f,999,this.windowRatio),!0),g=this.quantize(0,h);for(let e=0;e<a;e++)c[(r+e)*10]=g.ids[i+e];let _=await this.semantic(g.quantized,!1),v=new Float32Array(p.length);for(let e=0;e<v.length;e++)v[e]=p[e]-_[e];for(let e=1;e<10;e++){let t=this.quantize(e,v);for(let n=0;n<a;n++)c[(r+n)*10+e]=t.ids[i+n];for(let e=0;e<v.length;e++)v[e]-=t.quantized[e]}r+=a}return c}};const ko=[`<i4`,`<i8`,`<u4`,`<u8`,`<f4`,`<f8`];function Ao(e){let t=new Uint8Array(e),n=e=>{throw Error(e)};(t.length<8||t[0]!==147||String.fromCharCode(...t.subarray(1,6))!==`NUMPY`||t[7]!==0||t[6]!==1&&t[6]!==2&&t[6]!==3)&&n(`invalid NPY reference header`);let r=t[6]===1?2:4;t.length<8+r&&n(`truncated NPY header`);let i=0;for(let e=r-1;e>=0;e--)i=i*256+t[8+e];i>65536&&n(`oversized NPY reference header`);let a=8+r;t.length<a+i&&n(`truncated NPY header`);let o=String.fromCharCode(...t.subarray(a,a+i)),s=o.indexOf(`fortran_order`),c=o.indexOf(`shape`),l=o.indexOf(`descr`);(s<0||c<0||l<0)&&n(`invalid NPY reference metadata`);let d=o.indexOf(`:`,s);for(d<0&&n(`invalid NPY array order`),d+=1;d<o.length&&(o[d]===` `||o[d]===`	`);)d++;(d>=o.length||!o.startsWith(`False`,d))&&n(`reference NPY must be C-order`),d=o.indexOf(`:`,l),d<0&&n(`invalid NPY dtype`);let f=o.slice(d+1).search(/['"]/);f<0&&n(`invalid NPY dtype`);let p=d+1+f,m=o.indexOf(o[p],p+1);m<0&&n(`invalid NPY dtype`);let h=o.slice(p+1,m);ko.includes(h)||n(`reference NPY needs little-endian i4/i8/u4/u8/f4/f8 dtype`);let g=`reference codes must have shape [T,10], T >= 1`;d=o.indexOf(`(`,c);let _=d<0?null:/^\(\s*([+-]?\d+)\s*,\s*([+-]?\d+)\s*/.exec(o.slice(d));if(!_)return n(g);let v=Number(_[1]),y=Number(_[2]);for((v<1||y!==10)&&n(g),d+=_[0].length;d<o.length&&(o[d]===` `||o[d]===`,`);)d++;(d===o.length||o[d]!==`)`)&&n(`reference codes must be two-dimensional`);let b=h.charCodeAt(2)-48,x=a+i,S=v*10;t.length<x+S*b&&n(`truncated reference codes`);let C=new DataView(e,x),w=Math.min(v,u)*10,T=new Int32Array(w);for(let e=0;e<S;e++){let t=e*b,r;r=h[1]===`f`?b===4?C.getFloat32(t,!0):C.getFloat64(t,!0):h[1]===`i`?b===4?C.getInt32(t,!0):Number(C.getBigInt64(t,!0)):b===4?C.getUint32(t,!0):Number(C.getBigUint64(t,!0)),(!Number.isFinite(r)||r<0||r>4095||r!==Math.floor(r))&&n(`reference codes must be ordinary integer codec IDs 0..4095`),e<w&&(T[e]=r)}return t.length>x+S*b&&n(`unexpected trailing data in reference NPY`),T}const $=2560,jo=10240,Mo=`speaker embedding computation failed`,No=`spk: tensor layout does not match MECT_B2`,Po=(e,t)=>Array.from({length:e},()=>t),Fo=[Po(2,{cnn:3,outCh:32,sF:1,sT:1,expansion:4}),[{cnn:3,outCh:64,sF:2,sT:1,expansion:2},...Po(3,{cnn:3,outCh:64,sF:1,sT:2,expansion:2})],[{cnn:3,outCh:128,sF:2,sT:1,expansion:2},...Po(4,{cnn:3,outCh:128,sF:1,sT:2,expansion:2})],[{cnn:3,outCh:256,sF:2,sT:1,expansion:1},...Po(2,{cnn:2,outCh:256,sF:1,sT:2,expansion:1})]];function Io(e){for(let[t,n]of Object.entries({"general.architecture":`mect_spk`,backbone:`MECT_B2`,sample_rate:16e3,max_seconds:60,embedding_length:192,n_mels:80,frame_length:400,frame_shift:160,n_fft:512,n_heads:4,n_experts:4,pos_kernel:113}))if(e[t]!==n)throw Error(`spk: unsupported or incomplete MECT-B2 speaker encoder metadata`)}var Lo=class e{gpu;w;head;maxSeconds;maxBytes;progs=/* @__PURE__ */ new Map;queue=Promise.resolve();resampleKernel;window;melBanks;preemph;waveScale;logFloor;lnEps;varFloor;constructor(e,t,n){this.gpu=e,this.w=t,this.head=n;let r=e=>{let n=t.host.get(e);if(!n)throw Error(`spk: missing ${e}`);return n};this.resampleKernel=r(`frontend.resample_44100`),this.window=r(`frontend.window`),this.melBanks=r(`frontend.mel_banks`);let i=t.meta;this.preemph=Number(i.preemphasis),this.waveScale=Number(i.waveform_scale),this.logFloor=Number(i.log_floor),this.lnEps=Number(i.ln_eps),this.varFloor=Number(i.pool_var_floor);let a=e.device.limits;this.maxBytes=Math.min(a.maxStorageBufferBindingSize,a.maxBufferSize);let o=Math.floor(this.maxBytes/(jo*4));if(this.maxSeconds=Math.min(60,Math.floor(o/100)),this.maxSeconds<1)throw Error(`${Mo} (maximum 0 seconds)`)}static async load(t,n,r,i=!0){let a=await pa(t,n,`spk`,r,i);Io(a.meta);let o=await t.read(a.get(`bn.scale`).buf,0,2*$*4),s=await t.read(a.get(`bn.shift`).buf,0,2*$*4),c=await t.read(a.get(`linear.weight`).buf,0,384*$*4);return new e(t,a,{bnScale:o,bnShift:s,linear:c})}async embed(e){let{fbank:t,T:n}=this.features(e),{embedding:r}=await this.run(t,n);if(!r.every(Number.isFinite))throw Error(Mo);return r}features(e){let t=new Ka(this.resampleKernel,441,160,17),n=t.push(e.subarray(0,(this.maxSeconds+1)*44100)),r=t.flush(),i=Math.min(n.length+r.length,96e4,this.maxSeconds*16e3);if(i<400)throw Error(`spk: audio shorter than 25 ms`);let a=new Float32Array(i);a.set(n.subarray(0,i)),i>n.length&&a.set(r.subarray(0,i-n.length),n.length);let o=1+Math.floor((i-400)/160),s=new Float32Array(o*80),c=/* @__PURE__ */ new Float64Array(400),l=/* @__PURE__ */ new Float64Array(512),u=/* @__PURE__ */ new Float64Array(512),d=/* @__PURE__ */ new Float64Array(257),{preemph:f,waveScale:p,window:m,melBanks:h,logFloor:g}=this;for(let e=0;e<o;e++){let t=e*160,n=0;for(let e=0;e<400;e++)c[e]=a[t+e]*p,n+=c[e];n/=400;for(let e=0;e<400;e++)c[e]-=n;l.fill(0),u.fill(0);for(let e=399;e>=1;e--)l[e]=(c[e]-f*c[e-1])*m[e];l[0]=(c[0]-f*c[0])*m[0],po(l,u);for(let e=0;e<257;e++)d[e]=l[e]*l[e]+u[e]*u[e];for(let t=0;t<80;t++){let n=t*257,r=0;for(let e=0;e<257;e++)r+=h[n+e]*d[e];s[e*80+t]=Math.log(Math.max(r,g))}}return{fbank:s,T:o}}run(e,t,n=!1){let r=this.queue.then(()=>this.runNow(e,t,n));return this.queue=r.catch(()=>{}),r}async runNow(e,t,n){if(e.length!==t*80)throw Error(`spk: fbank must be [T][80]`);if(t*jo*4>this.maxBytes)throw Error(`${Mo} (maximum ${this.maxSeconds} seconds)`);let r=new Float32Array(t*80);for(let n=0;n<80;n++){let i=0;for(let r=0;r<t;r++)i+=e[r*80+n];i/=t;for(let a=0;a<t;a++)r[a*80+n]=e[a*80+n]-i}let i=this.program(t,n);this.gpu.write(i.input,0,r);let[a,...o]=await i.prog.run(this.gpu,[{buf:i.pooled,offset:0,bytes:2*$*4},...i.feats.map(e=>({buf:e,offset:0,bytes:t*$*4}))]),{bnScale:s,bnShift:c,linear:l}=this.head,u=new Float64Array(2*$);for(let e=0;e<2*$;e++)u[e]=a[e]*s[e]+c[e];let d=/* @__PURE__ */ new Float32Array(192);for(let e=0;e<192;e++){let t=e*2*$,n=0;for(let e=0;e<2*$;e++)n+=l[t+e]*u[e];d[e]=n}return{embedding:d,pooled:a,feats:o}}program(e,t){let n=`${e}:${+!!t}`,r=this.progs.get(n);if(r)this.progs.delete(n);else if(r=this.record(e,t),this.progs.size>=4){let[e,t]=this.progs.entries().next().value;t.prog.destroy(),this.progs.delete(e)}return this.progs.set(n,r),r}record(e,t){let n=new ji(this.gpu),r=e=>this.w.get(e).buf,i=n.buf(e*80*4,`spk.in`),a=[n.buf(e*$*4,`spk.s0`),n.buf(e*$*4,`spk.s1`)],o=n.buf(e*$*4,`spk.fused`),s=n.buf(2*$*4,`spk.pooled`),c=t?Fo.map((t,r)=>n.buf(e*$*4,`spk.feat${r+1}`)):[];ea(n,i,r(`fe.head.conv.weight`),a[0],{T_in:e,F_in:80,IC:1,OC:32,a:1,s_f:1,s_t:1},{bias:r(`fe.head.conv.bias`),scale:r(`fe.head.bn.scale`),shift:r(`fe.head.bn.shift`)});let l=0,u=32,d=80;Fo.forEach((i,s)=>{i.forEach((t,r)=>{[u,d]=this.block(n,a[l],a[l^1],e,u,d,t,`fe.b${s+1}.${r}.`),l^=1,n.split()}),ia(n,a[l],r(`fe.dense_w`),o,e,$,s),t&&n.copy(a[l],0,c[s],0,e*$*4)});let f=n.tmp(e*128*4,`spk.pool1`),p=a[l^1];return q(n,o,this.w.get(`pool.l1.weight`),f,{T:e,O:128,IC:$,act:W.tanh},{bias:r(`pool.l1.bias`)}),q(n,f,this.w.get(`pool.l2.weight`),p,{T:e,O:$,IC:128},{bias:r(`pool.l2.bias`)}),aa(n,p,o,s,e,$,this.varFloor),{prog:n.finish(),input:i,pooled:s,feats:c}}block(e,t,n,r,i,a,o,s){let c=this.w,l=e=>c.get(e).buf,u=t,d=r,f=i,p=a;for(let n=0;n<o.cnn;n++){let r=this.resBlock(e,u,d,p,f,`${s}cnn.${n}.`,n===0?o.sF:1,n===0?o.sT:1);u!==t&&e.release(u),u=r.buf,d=r.T,p=r.F,f=r.C}if(c.has(s+`reduce.weight`)){let t=c.get(s+`reduce.weight`),n=t.shape[3],r=e.tmp(d*p*n*4,`spk.reduce`);q(e,u,t,r,{T:d*p,O:n,IC:f},{bias:l(s+`reduce.bias`),scale:l(s+`reduce.bn.scale`),shift:l(s+`reduce.bn.shift`)}),e.release(u),u=r,f=n}if(f*p!==$||i*a!==$)throw Error(No);let m=u,h=d,g=h*64*4,_=e.tmp(g,`spk.hA`),v=e.tmp(g,`spk.hB`),y=e.tmp(g,`spk.hC`),b=e.tmp(g,`spk.q`),x=e.tmp(g,`spk.k`),S=e.tmp(g,`spk.v`),C=e.tmp(g,`spk.att`),w=e.tmp((h+112)*64*4,`spk.hp`),T=e.tmp(h*4*4,`spk.gate`),E=e.tmp(h*4*64*4,`spk.experts`),D=e.tmp(g,`spk.mix`),O=(t,n,r,i,a,o={})=>q(e,t,c.get(n+`.weight`),r,{T:h,O:i,IC:a,act:o.act,alpha:o.alpha},{bias:o.bias===!1?void 0:l(n+`.bias`),res:o.res}),k=(t,n,r)=>Vi(e,t,l(n+`.weight`),l(n+`.bias`),r,h,64,this.lnEps);O(m,s+`rproj`,_,64,$),k(_,s+`rproj.ln`,v),e.clear(w,0,14336),e.copy(v,0,w,14336,g),e.clear(w,(56+h)*64*4,14336),Gi(e,w,l(s+`pos.dw.weight`),_,h,64,113,l(s+`pos.dw.bias`),W.gelu),O(_,s+`pos.pw`,y,64,64,{res:v}),O(y,s+`attn.q`,b,64,64,{alpha:1/4}),O(y,s+`attn.k`,x,64,64),O(y,s+`attn.v`,S,64,64),Ki(e,b,x,S,C,{n:h,nh:4,nkv:4,hd:16,window:h,ring:h,scale:1,pos0:h-1}),O(C,s+`attn.o`,_,64,64,{res:y}),k(_,s+`ln1`,v),q(e,v,c.get(s+`moe.gate.weight`),T,{T:h,O:4,IC:64}),q(e,v,c.get(s+`moe.experts.weight`),E,{T:h,O:256,IC:64,act:W.newgelu}),na(e,T,E,D,h),O(D,s+`ffn_out`,_,64,64,{res:v}),k(_,s+`ln2`,y);let A=e.tmp(h*$*4,`spk.e`);O(y,s+`eproj`,A,$,64,{res:m}),ra(e,A,t,n,r,$,o.sT);for(let t of[m,_,v,y,b,x,S,C,w,T,E,D,A])e.release(t);return[f,p]}resBlock(e,t,n,r,i,a,o,s){let c=this.w,l=e=>c.get(e).buf,u=c.get(a+`conv1.weight`),d=c.get(a+`conv2.weight`),f=u.shape[3],p=Math.floor((n-1)/s)+1,m=Math.floor((r-1)/o)+1,h=p*m*f*4,g=e.tmp(h,`spk.rA`),_=e.tmp(h,`spk.rB`);ea(e,t,u.buf,g,{T_in:n,F_in:r,IC:i,OC:f,a:u.shape[2],s_f:o,s_t:s}),q(e,g,c.get(a+`pw1.weight`),_,{T:p*m,O:f,IC:f,act:W.relu,actAfterShift:!0},{bias:l(a+`pw1.bias`),scale:l(a+`bn1.scale`),shift:l(a+`bn1.shift`)}),ea(e,_,d.buf,g,{T_in:p,F_in:m,IC:f,OC:f,a:d.shape[2],s_f:1,s_t:1});let v=t,y=null;if(c.has(a+`sc.weight`)){let n=t;s>1&&(n=e.tmp(p*r*i*4,`spk.sub`),ta(e,t,n,p,r*i,s)),y=e.tmp(h,`spk.sc`),q(e,n,c.get(a+`sc.weight`),y,{T:p*m,O:f,IC:i,x_stride:o*i},{scale:l(a+`sc.bn.scale`),shift:l(a+`sc.bn.shift`)}),n!==t&&e.release(n),v=y}else if(o>1||s>1||i!==f)throw Error(No);return q(e,g,c.get(a+`pw2.weight`),_,{T:p*m,O:f,IC:f,act:W.relu,actAfterShift:!0},{bias:l(a+`pw2.bias`),scale:l(a+`bn2.scale`),shift:l(a+`bn2.shift`),res:v}),e.release(g),y&&e.release(y),{buf:_,T:p,F:m,C:f}}};const Ro=(e,t=[])=>self.postMessage(e,t);let zo=null;const Bo=/* @__PURE__ */ new Set;let Vo=Promise.resolve();async function Ho(e,t){let n=await fetch(new URL(`companions/`+t,e).href);if(n.status===404)return null;if(!n.ok)throw Error(`failed to fetch companions/${t}: ${n.status}`);return n.arrayBuffer()}async function Uo(e){let t=/* @__PURE__ */ new Map,n=await fetch(new URL(`laci/index.json`,e).href);if(n.status===404)return t;if(!n.ok)throw Error(`failed to fetch laci/index.json: ${n.status}`);let r=await n.json(),i=/* @__PURE__ */ new Map;for(let t of new Set(Object.values(r))){let n=await(await fetch(new URL(`laci/`+t,e).href)).text();i.set(t,Er.parse(n,t))}for(let[e,n]of Object.entries(r))t.set(e,i.get(n));return t}async function Wo(e,t){let n=await fetch(new URL(t+`/manifest.json`,e).href);if(n.status===404)return null;if(!n.ok)throw Error(`failed to fetch ${t}/manifest.json: ${n.status}`);return(await n.json()).meta}async function Go(e,t,n,r,i){let[a,o]=await Promise.all([Wo(t,`edit`),Wo(t,`aligner`)]);if(!a||!o)return null;let s=me(a);if(s.spanEndId===null||s.textExtraTokens<1)return null;let c=null,l=null;return{hp:s,backbone(){return c??=fa(t,[`edit`],i).then(r=>pa(e,t,`edit`,r,n)).then(e=>r.withEdit(e)).catch(e=>{throw c=null,e})},async align(r,a){return(await(l??=fa(t,[`aligner`],i).then(r=>va.load(e,t,r,n)).catch(e=>{throw l=null,e}))).align(r,a)}}}const Ko=[{dir:`zac-full_mr`,checkpoint:`zac.gguf`}];function qo(e,t){let n=e[`head.variant`];if(typeof n!=`string`||!n)throw Error(`${t}: no head.variant in its manifest; re-export with pnpm export`);return n}async function Jo(e,t,n,r,i,a,o){let s=[{id:qo(i,`zac`),checkpoint:`zac-keep2.gguf`,headroomDb:Number(i.headroom_db??3),codec:async()=>r}];for(let{dir:i,checkpoint:c}of Ko){let l=await Wo(t,i);if(!l)continue;let u=qo(l,i);if(s.some(e=>e.id===u))throw Error(`${i}: decoder ${u} is exported twice`);let d=null;s.push({id:u,checkpoint:c,headroomDb:Number(l.headroom_db??3),codec(){return d??=fa(t,[i],o).then(r=>pa(e,t,i,r,n)).then(t=>so.create(e,t,e=>new Ya(qa(a),e),r.gemmPlan)).then(async e=>(await Zo(e),e)).catch(e=>{throw d=null,e})}})}return s}async function Yo(e,t,n,r){let i=new Di(await Si(e=>Ro({type:`fatal`,message:e}))),a=e=>Ro({type:`progress`,...e}),o=new URL(`voices/`,e).href,s=await ca(o+`voices.json`),c=async e=>{let t=new URL(e,o).href,n=await fetch(t);if(!n.ok)throw Error(`failed to fetch ${t}: ${n.status}`);return n.arrayBuffer()},l=Promise.all(s.map(e=>Promise.all([c(e.codes),c(e.embedding)]))),u=await fa(e,[`backbone`,`zac`],a),d=await pa(i,e,`backbone`,u,t),f=await pa(i,e,`zac`,u,t),p=me(d.meta),m=(await l).map(([e,t],r)=>{let i=s[r];return{id:i.id,label:i.label,file:i.file,pcm:n[i.id]??null,codes:Ao(e),embedding:p.speakerDim>0?gt(new Uint8Array(t),p.speakerDim,i.embedding):null}}),h=await Ho(e,`steer.gguf`),g=h?Ae(xe(h),{nEmbd:p.nEmbd,nLayer:p.nLayer,speakerDim:p.speakerDim}):null,_=await Uo(e),v=new Fa(i,d,g?g.sources:[]),y=await so.create(i,f,e=>new Ya(r,e)),b=ue();await Xo(v,y,p);let x=await Go(i,e,t,v,a),S=await Jo(i,e,t,y,f.meta,r,a),C=null,w=null;zo=new ci({hp:p,modelFile:`backbone-ptq.gguf`,backbone:v,decoders:S,tokenizer:b,steer:g,controlsDoc:g?je(g,p.speakerDim):null,laci:_,voices:m,async embedSpeaker(n){return(await(C??=fa(e,[`spk`],a).then(n=>Lo.load(i,e,n,t)).catch(e=>{throw C=null,e}))).embed(n)},async encodeReference(n){return(await(w??=fa(e,[`encoder`,`teacher`],a).then(n=>Oo.load(i,e,n,t)).catch(e=>{throw w=null,e}))).encode(n)},edit:x})}async function Xo(e,t,n){let r=ue(),i=he(r,`Hi.`,{buckets:[],silencePrefill:3},n),a=he(r,`Hi.`,{referenceCodes:/* @__PURE__ */ new Int32Array(3e3),buckets:[],silencePrefill:3},n);for(let t of[0,1])await e.prefill(t,i.ids,i.cond),await e.prefill(t,a.ids,a.cond);for(let t of[null,1.5])e.startSampling({sp:Xt(),minFrames:0,cfgScale:t}),await e.sampleFirst(0),await e.stepSample(1,null,null,null);await Zo(t)}async function Zo(e){await e.chunk(/* @__PURE__ */ new Int32Array(160),0,16),e.reset()}async function Qo(e){let t=e.id,n={start:(e,n)=>Ro({type:`res`,id:t,status:e,headers:n}),chunk:e=>{let n=e.slice().buffer;Ro({type:`chunk`,id:t,data:n},[n])},end:()=>Ro({type:`end`,id:t})};try{if(!zo){n.start(503,{"content-type":`application/json`}),n.chunk(new TextEncoder().encode(JSON.stringify({detail:`engine not initialized`}))),n.end();return}await zo.handle({method:e.method,path:e.path,headers:e.headers,body:e.body,pcm:e.pcm,pcmSeconds:e.pcmSeconds},n,()=>Bo.has(t))}finally{Bo.delete(t)}}self.onmessage=e=>{let t=e.data;t.type===`init`?Yo(t.base,t.cache,t.voicesPcm,t.codecPort).then(()=>Ro({type:`ready`}),e=>Ro({type:`fatal`,message:e instanceof Error?e.message:String(e)})):t.type===`req`?Vo=Vo.then(()=>Qo(t)):t.type===`abort`&&Bo.add(t.id)};

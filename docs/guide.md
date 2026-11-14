@@ -438,6 +438,9 @@ spec gains `start` (`{id, marker}`) and `pauses` (`{ids, markers, seconds}`); `/
 - Text normalization keeps both markers in place and verbalizes the text around them. Speech-edit `target_text`
   refuses them. In the Studio, a Direct line's "Start immediately" toggle (shown when the checkpoint has a start
   token) sends `start_immediately`; there is no pause-insertion UI.
+- **Short texts** use the 0.5 s marker: a text of one or two words (`short_text`, default `auto`) runs as the text,
+  U+E004 and a filler sentence under LACI and is cut where the filler starts, so only the text is sent (see
+  [features: Short texts](features.md#short-texts)).
 
 ## Literal angle-bracket text
 

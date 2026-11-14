@@ -10,6 +10,8 @@
 
 #include "wav.h"
 #include "zonos3-languages.h"
+#include "zonos3-short-text.h"
+#include "zonos3-text.h"
 
 #include <algorithm>
 #include <cmath>
@@ -254,12 +256,9 @@ void resolve_span_follow(const ServerState & s, const json & body, GenReq & gr) 
     gr.follow_lag = num(body, "control_span_lag", defaults.lag);
 }
 
-// The tokenizer's follow tokens (span_follow.span_token_ranges): each span's characters in the request text -> the
-// text-span positions [a, b) of the tokens spelling them in the normalized text.
-void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
-    if (!gr.follow) return;
-    const auto & tok = s.model.tok;
-    const std::u32string text = utf8_to_u32(gr.raw_text), final_ = utf8_to_u32(gr.text);
+// span_follow.token_char_ranges over the loaded tokenizer: the character range of `text` behind each id of its text
+// span (SuperBPE offsets with the checkpoint's text markers; one range per UTF-8 byte without a SuperBPE tokenizer).
+std::vector<zonos3_follow::Range> text_token_ranges(const zonos3_tokenizer & tok, const std::u32string & text) {
     zonos3_follow::BpeOffsets bpe;
     if (!tok.vocab.empty()) {
         // SuperBPE offsets: each byte-level token symbol is one code point per UTF-8 byte; a token's characters run
@@ -288,11 +287,71 @@ void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
                                                                                utf8_to_u32(tok.phonemes.close_marker)};
     text_markers.start = tok.start_id >= 0;
     text_markers.pauses = !tok.pause_ids.empty();
+    return zonos3_follow::token_char_ranges(text, bpe, text_markers);
+}
+
+// The tokenizer's follow tokens (span_follow.span_token_ranges): each span's characters in the request text -> the
+// text-span positions [a, b) of the tokens spelling them in the normalized text.
+void resolve_follow_tokens(const ServerState & s, GenReq & gr) {
+    if (!gr.follow) return;
+    const std::u32string text = utf8_to_u32(gr.raw_text), final_ = utf8_to_u32(gr.text);
     std::vector<zonos3_follow::Range> spans;
     for (const auto & sp : gr.steering.spans) spans.push_back({sp.char_start, sp.char_end});
-    const auto ranges = zonos3_follow::token_char_ranges(final_, bpe, text_markers);
-    const auto tokens = zonos3_follow::span_token_ranges(text, final_, spans, ranges);
+    const auto tokens = zonos3_follow::span_token_ranges(text, final_, spans, text_token_ranges(s.model.tok, final_));
     gr.follow_tokens.assign(tokens.begin(), tokens.end());
+}
+
+// R17 (zonos3.tts.plan.request_rules' short_text): the request may run as a short text -- short_text "auto" (else
+// "off"), its language has alignment heads, and no CFG twin, control spans or LACI duration target.
+bool short_text_allowed(const ServerState & s, const json & body, const std::string & language, double speaker_cfg,
+                        double controls_cfg, bool duration_target) {
+    const std::string mode = set(body, "short_text") ? body["short_text"].get<std::string>() : "auto";
+    if (mode != "auto" && mode != "off") fail(400, "short_text must be 'auto' or 'off'");
+    return mode == "auto" && s.laci.count(language) && !truthy(body, "control_spans") && speaker_cfg == 1.0 &&
+           controls_cfg == 1.0 && !duration_target;
+}
+
+// zonos3.tts.short_text.prompt: a qualifying normalized text gets the pause marker and its language's filler; returns
+// the text-span index of the filler's first token (the first past the marker that is not all whitespace), else
+// nullopt (the text unchanged).
+std::optional<int> short_text_prompt(const ServerState & s, const std::string & language, std::string & text) {
+    const auto & tok = s.model.tok;
+    const auto & reg = zonos3_short::registry();
+    const uint32_t marker = utf8_to_u32(reg.pause_marker)[0];
+    const int bucket = (int) marker - 0xE003;
+    if (tok.vocab.empty() || bucket < 0 || bucket >= (int) tok.pause_ids.size()) return std::nullopt;
+    const auto filler = reg.fillers.find(language);
+    if (filler == reg.fillers.end()) return std::nullopt;
+    const std::u32string t32 = utf8_to_u32(text);
+    int words = 0;
+    bool in_word = false;
+    for (char32_t c : t32) {
+        if (c == 0xE000 || c == 0xE001 || (c >= 0xE002 && c <= 0xE00A)) return std::nullopt;  // markers
+        const bool space = is_py_space(c);
+        words += !space && !in_word;
+        in_word = !space;
+    }
+    if (words > reg.max_words) return std::nullopt;
+    std::vector<int32_t> ids, filler_ids;
+    std::string err;
+    if (!zonos3_payload_ids(tok, text, ids, err) || !zonos3_payload_ids(tok, filler->second, filler_ids, err))
+        return std::nullopt;
+    if (ids.empty() || (int64_t) ids.size() * reg.max_ratio[1] > (int64_t) filler_ids.size() * reg.max_ratio[0])
+        return std::nullopt;
+    const std::string full = text + reg.pause_marker + filler->second;
+    const std::u32string f32 = utf8_to_u32(full);
+    const auto ranges = text_token_ranges(tok, f32);
+    for (size_t i = 0; i < ranges.size(); ++i) {
+        const auto [a, b] = ranges[i];
+        if (a <= (int) t32.size() || a >= b) continue;
+        bool all_space = true;
+        for (int c = a; c < b; ++c) all_space = all_space && is_py_space(f32[c]);
+        if (!all_space) {
+            text = full;
+            return (int) i;
+        }
+    }
+    throw std::runtime_error("short text: the filler has no token");
 }
 
 // zonos3.server.speech.resolve_stream_decode for a streaming response.
@@ -304,9 +363,10 @@ bool resolve_prefix(const ServerState & s, const json & body, bool streaming) {
 
 // GenerateRequest -> GenReq in the rules' order (zonos3.tts.plan.request_head + request_rules, which sgl
 // _tts_generate_msg runs): speaker mode, condition rows, speaker, language, max_tokens, silence prefill,
-// stream codebooks, accent, controls, stream decode, speaker CFG, text markers (start_immediately), LACI; then the
-// scheduler's CFG twin choice.
-GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session) {
+// stream codebooks, accent, controls, stream decode, speaker CFG, text markers (start_immediately), LACI, short text;
+// then the scheduler's CFG twin choice. `duration_target`: a LACI duration-target take.
+GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std::string> & session,
+                     bool duration_target) {
     GeneratePlan out;
     GenReq & gr = out.gr;
     const std::string text = body["text"].get<std::string>();
@@ -386,6 +446,7 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     if (start_flag && s.model.tok.start_id < 0) fail(400, "start_immediately needs a checkpoint with a start token");
     check_laci(s, body, gr.language);
     if (set(body, "laci") && body["laci"].get<bool>()) gr.laci = &s.laci.at(gr.language);
+    const bool short_allowed = short_text_allowed(s, body, gr.language, speaker_cfg, controls_cfg, duration_target);
 
     // sampling (TTSSamplingParams): gr.sp starts at the registry's defaults; the request overrides what it sets.
     if (set(body, "temperature")) gr.sp.temperature = (float) body["temperature"].get<double>();
@@ -416,6 +477,10 @@ GeneratePlan resolve(ServerState & s, const json & body, const std::optional<std
     // text normalization (the tokenizer's: TTSTextNormalizer when enabled and requested)
     gr.text = normalize_text(s, text, gr.language, !set(body, "text_normalization") || body["text_normalization"].get<bool>());
     if (start && gr.text.rfind(ZONOS3_START_MARKER, 0) != 0) gr.text = ZONOS3_START_MARKER + gr.text;  // with_start_marker
+    if (short_allowed) {
+        gr.short_text = short_text_prompt(s, gr.language, gr.text);
+        if (gr.short_text) gr.laci = &s.laci.at(gr.language);
+    }
     resolve_follow_tokens(s, gr);
     return out;
 }
@@ -549,8 +614,9 @@ bool load_accent_adapters(ServerState & s, std::string & err) {
     return true;
 }
 
-GeneratePlan plan_generate(ServerState & s, const json & body, const std::optional<std::string> & session) {
-    GeneratePlan plan = resolve(s, body, session);
+GeneratePlan plan_generate(ServerState & s, const json & body, const std::optional<std::string> & session,
+                           bool duration_target) {
+    GeneratePlan plan = resolve(s, body, session, duration_target);
     const GenReq & gr = plan.gr;
     zonos3_prompt_options opt;
     if (gr.speaker_mode == "reference" && !gr.reference_codes.empty()) {
@@ -606,7 +672,7 @@ std::shared_ptr<ReqJob> make_job(ServerState & s, GeneratePlan && plan) {
 std::shared_ptr<ReqJob> plan_laci_take(ServerState & s, const LaciTake & take, const std::optional<std::string> & session) {
     const json & body = take.request;
     if (!(set(body, "laci") && body["laci"].get<bool>())) fail(400, "A LACI duration target needs laci=true");
-    GeneratePlan plan = plan_generate(s, body, session);
+    GeneratePlan plan = plan_generate(s, body, session, /*duration_target=*/true);
     GenReq & gr = plan.gr;
     gr.stream = false;
     gr.prefix = false;

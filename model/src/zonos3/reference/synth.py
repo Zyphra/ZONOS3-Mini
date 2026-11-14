@@ -869,6 +869,7 @@ def _laci(lm, plan: P.PromptPlan, assets, sampling, accents, follower, text_star
         rates=rates,
         condition_values=None if plan.cond.condition_values is None else list(plan.cond.condition_values),
         follower=follower,
+        short_text=plan.short_text,
     )
     template = plan.cond.input_ids
     prompt = template[: len(template) - session.n_prefill]
